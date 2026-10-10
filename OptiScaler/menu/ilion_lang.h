@@ -260,6 +260,28 @@ inline constexpr Translation kSpanish[] = {
     { "FSR version", "Versión FSR" },
     { "Latency", "Latencia" },
 
+    // Hardware readings of the overlay
+    { "N/A", "N/D" },
+    { "Usage", "Uso" },
+    { "Hardware monitoring", "Monitorización de hardware" },
+    { "GPU usage", "Uso de GPU" },
+    { "GPU temperature", "Temperatura de GPU" },
+    { "GPU hotspot", "Hotspot de GPU" },
+    { "VRAM used / total", "VRAM usada / total" },
+    { "VRAM used", "VRAM usada" },
+    { "CPU usage", "Uso de CPU" },
+    { "CPU temperature", "Temperatura de CPU" },
+    { "Source", "Fuente" },
+    { "Auto (HWiNFO, then MSI Afterburner)", "Auto (HWiNFO, luego MSI Afterburner)" },
+    { "detected", "detectado" },
+    { "not detected", "no detectado" },
+    { "Readings come from HWiNFO or MSI Afterburner while they are running, about once per second.\n"
+      "HWiNFO needs Shared Memory Support enabled in its settings (12 hours per run in the free version).\n"
+      "A reading that no program provides is shown as N/A, nothing is estimated.",
+      "Las lecturas vienen de HWiNFO o MSI Afterburner mientras están en ejecución, una vez por segundo aprox.\n"
+      "HWiNFO necesita Shared Memory Support activado en sus ajustes (12 horas por sesión en la versión gratuita).\n"
+      "Una lectura que ningún programa ofrece se muestra como N/D; no se estima nada." },
+
     // Status tab
     { "Unofficial modified build, not an OptiScaler release",
       "Compilación modificada no oficial, no es una versión de OptiScaler" },

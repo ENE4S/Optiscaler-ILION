@@ -353,6 +353,15 @@ class Config
     CustomOptional<int> ShortcutKey { VK_INSERT };
     CustomOptional<bool> ExtendedLimits { false };
     CustomOptional<bool> ShowFps { false };
+
+    // Hardware readings of the overlay, from HWiNFO or MSI Afterburner
+    CustomOptional<bool> HwGpuUsage { false };
+    CustomOptional<bool> HwGpuTemp { false };
+    CustomOptional<bool> HwGpuHotspot { false };
+    CustomOptional<bool> HwVram { false };
+    CustomOptional<bool> HwCpuUsage { false };
+    CustomOptional<bool> HwCpuTemp { false };
+    CustomOptional<int> HwSource { 0 }; // 0 = auto, 1 = HWiNFO, 2 = MSI Afterburner
     /// 0 Top Left, 1 Top Right, 2 Bottom Left, 3 Bottom Right
     CustomOptional<FpsOverlayPos> FpsOverlayPosition { FpsOverlayPos_TopLeft };
     /// 0 Only FPS, 1 +Avg FPS & Upscaler info 2 +Frame Time,

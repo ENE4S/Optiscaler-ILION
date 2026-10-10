@@ -10,6 +10,7 @@
 #include <proxies/FfxApi_Proxy.h>
 #include <upscalers/ffx/FFXFeature.h>
 #include <fsr4/FSR4Comparison.h>
+#include <misc/HwTelemetry.h>
 #include "ilion_lang.h"
 #include <proxies/Streamline_Proxy.h>
 
@@ -1759,6 +1760,116 @@ void MenuCommon::UpdateRenderTiming(RenderMenuContext& ctx)
     state.frameTimes.push_back(frameTime);
 }
 
+// Not available text of a hardware reading, nothing gets shown in its place
+static const char* HwNotAvailable() { return Tr("N/A"); }
+
+// Starts or stops the hardware readings depending on what the overlay shows
+static void UpdateHardwareTelemetry(decltype(Config::Instance()) config)
+{
+    const bool wanted = config->ShowFps.value_or_default() &&
+                        (config->HwGpuUsage.value_or_default() || config->HwGpuTemp.value_or_default() ||
+                         config->HwGpuHotspot.value_or_default() || config->HwVram.value_or_default() ||
+                         config->HwCpuUsage.value_or_default() || config->HwCpuTemp.value_or_default());
+
+    HwTelemetry::SetPreferred((HwTelemetry::Preferred) std::clamp(config->HwSource.value_or_default(), 0, 2));
+    HwTelemetry::SetEnabled(wanted);
+
+    // Name and memory of the GPU in use, to pick the right one from the sources and for the VRAM total
+    static bool hintSet = false;
+
+    if (wanted && !hintSet)
+    {
+        hintSet = true;
+
+        State::Instance().vulkanSkipHooks = true;
+        const auto primaryGpu = IdentifyGpu::getPrimaryGpu();
+        State::Instance().vulkanSkipHooks = false;
+
+        HwTelemetry::SetGpuHint(primaryGpu.name, primaryGpu.dedicatedVramInBytes);
+    }
+}
+
+// GPU readings on the left, CPU readings on the right, only the ones that are enabled
+static void DrawHardwareTelemetry(decltype(Config::Instance()) config, float scale)
+{
+    const bool gpuUsage = config->HwGpuUsage.value_or_default();
+    const bool gpuTemp = config->HwGpuTemp.value_or_default();
+    const bool gpuHotspot = config->HwGpuHotspot.value_or_default();
+    const bool vram = config->HwVram.value_or_default();
+    const bool cpuUsage = config->HwCpuUsage.value_or_default();
+    const bool cpuTemp = config->HwCpuTemp.value_or_default();
+
+    const bool anyGpu = gpuUsage || gpuTemp || gpuHotspot || vram;
+    const bool anyCpu = cpuUsage || cpuTemp;
+
+    if (!anyGpu && !anyCpu)
+        return;
+
+    const auto snapshot = HwTelemetry::Get();
+
+    // Readings that stopped arriving aren't shown as current
+    const bool stale = snapshot.polledTick == 0 || GetTickCount64() - snapshot.polledTick > 5000;
+
+    const auto row = [&](const char* label, HwTelemetry::Metric metric, const char* format)
+    {
+        const auto& value = snapshot.values[metric];
+
+        if (stale || !value.valid)
+            ImGui::Text("%-8s %s", label, HwNotAvailable());
+        else
+            ImGui::Text("%-8s %s", label, StrFmt(format, value.value).c_str());
+    };
+
+    ImGui::Spacing();
+
+    if (anyGpu)
+    {
+        ImGui::BeginGroup();
+        ImGui::TextDisabled("GPU");
+
+        if (gpuUsage)
+            row(Tr("Usage"), HwTelemetry::GpuUsage, "%3.0f %%");
+
+        if (gpuTemp)
+            row(Tr("Temp"), HwTelemetry::GpuTemp, "%3.0f \xC2\xB0""C");
+
+        if (gpuHotspot)
+            row("Hotspot", HwTelemetry::GpuHotspot, "%3.0f \xC2\xB0""C");
+
+        if (vram)
+        {
+            const auto& used = snapshot.values[HwTelemetry::VramUsed];
+            const auto& total = snapshot.values[HwTelemetry::VramTotal];
+
+            if (stale || !used.valid)
+                ImGui::Text("%-8s %s", "VRAM", HwNotAvailable());
+            else if (total.valid)
+                ImGui::Text("%-8s %.1f / %.1f GB", "VRAM", used.value / 1024.0f, total.value / 1024.0f);
+            else
+                ImGui::Text("%-8s %.1f GB", "VRAM", used.value / 1024.0f);
+        }
+
+        ImGui::EndGroup();
+    }
+
+    if (anyCpu)
+    {
+        if (anyGpu)
+            ImGui::SameLine(0.0f, 24.0f * scale);
+
+        ImGui::BeginGroup();
+        ImGui::TextDisabled("CPU");
+
+        if (cpuUsage)
+            row(Tr("Usage"), HwTelemetry::CpuUsage, "%3.0f %%");
+
+        if (cpuTemp)
+            row(Tr("Temp"), HwTelemetry::CpuTemp, "%3.0f \xC2\xB0""C");
+
+        ImGui::EndGroup();
+    }
+}
+
 // Feeds the FSR 4 comparison with the frame time that was just measured and the dll that executed the upscaling
 static void UpdateFsr4Comparison(State& state, double frameTime, double now)
 {
@@ -2706,6 +2817,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
 #endif
             }
 
+            DrawHardwareTelemetry(config, fpsScale);
             DrawFsr4ComparisonPanel(fpsScale);
         }
 
@@ -7632,6 +7744,72 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
         bool useTheme = config->OverlaysUseTheme.value_or_default();
         if (ImGui::Checkbox("Use Theme Colors", &useTheme))
             config->OverlaysUseTheme = useTheme;
+
+        // Hardware readings, every one can be shown on its own
+        ImGui::Spacing();
+        ImGui::SeparatorText(Tr("Hardware monitoring"));
+        ShowTooltip("Readings come from HWiNFO or MSI Afterburner while they are running, about once per second.\n"
+                    "HWiNFO needs Shared Memory Support enabled in its settings (12 hours per run in the free version).\n"
+                    "A reading that no program provides is shown as N/A, nothing is estimated.");
+
+        // Keeps the sources below up to date while this section is on screen
+        HwTelemetry::KeepAlive();
+
+        if (ImGui::BeginTable("hwMetrics", 2, ImGuiTableFlags_SizingStretchSame))
+        {
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("GPU");
+            ConfigCheckbox("GPU usage", config->HwGpuUsage, nullptr);
+            ConfigCheckbox("GPU temperature", config->HwGpuTemp, nullptr);
+            ConfigCheckbox("GPU hotspot", config->HwGpuHotspot, nullptr);
+            ConfigCheckbox("VRAM used / total", config->HwVram, nullptr);
+
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("CPU");
+            ConfigCheckbox("CPU usage", config->HwCpuUsage, nullptr);
+            ConfigCheckbox("CPU temperature", config->HwCpuTemp, nullptr);
+
+            ImGui::EndTable();
+        }
+
+        const char* hwSources[] = { "Auto (HWiNFO, then MSI Afterburner)", "HWiNFO", "MSI Afterburner" };
+        const int hwSource = std::clamp(config->HwSource.value_or_default(), 0, 2);
+
+        if (ImGui::BeginCombo(TrL("Source"), Tr(hwSources[hwSource])))
+        {
+            for (int n = 0; n < (int) std::size(hwSources); n++)
+            {
+                if (ImGui::Selectable(Tr(hwSources[n]), hwSource == n))
+                    config->HwSource = n;
+            }
+
+            ImGui::EndCombo();
+        }
+
+        const auto hwSnapshot = HwTelemetry::Get();
+
+        ImGui::TextDisabled("HWiNFO: %s  |  MSI Afterburner: %s",
+                            Tr(hwSnapshot.hwinfoAvailable ? "detected" : "not detected"),
+                            Tr(hwSnapshot.afterburnerAvailable ? "detected" : "not detected"));
+
+        // Where every reading comes from and how its sensor is called there
+        const auto hwSourceRow = [&](const char* name, HwTelemetry::Metric metric)
+        {
+            const auto& value = hwSnapshot.values[metric];
+
+            if (value.valid)
+                ImGui::TextDisabled("  %s: %s (%s)", Tr(name), HwTelemetry::SourceName(value.source), value.label);
+            else
+                ImGui::TextDisabled("  %s: %s", Tr(name), HwNotAvailable());
+        };
+
+        hwSourceRow("GPU usage", HwTelemetry::GpuUsage);
+        hwSourceRow("GPU temperature", HwTelemetry::GpuTemp);
+        hwSourceRow("GPU hotspot", HwTelemetry::GpuHotspot);
+        hwSourceRow("VRAM used", HwTelemetry::VramUsed);
+        hwSourceRow("VRAM total", HwTelemetry::VramTotal);
+        hwSourceRow("CPU usage", HwTelemetry::CpuUsage);
+        hwSourceRow("CPU temperature", HwTelemetry::CpuTemp);
     }
 }
 
@@ -9616,6 +9794,8 @@ bool MenuCommon::RenderMenu()
 
     // Menu language follows the config, Spanish unless it says English
     Ilion::SetLang(Ilion::ParseLang(ctx.config->MenuLanguage.value_or_default()));
+
+    UpdateHardwareTelemetry(ctx.config);
     ctx.currentFeature = ctx.state.currentFeature;
 
     // 1) Collect timing and input state before any ImGui drawing.

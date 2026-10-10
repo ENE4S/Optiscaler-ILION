@@ -441,6 +441,16 @@ bool Config::Reload(std::filesystem::path iniPath)
             ShortcutKey.set_from_config(readInt("Menu", "ShortcutKey"));
             ExtendedLimits.set_from_config(readBool("Menu", "ExtendedLimits"));
             ShowFps.set_from_config(readBool("Menu", "ShowFps"));
+
+            HwGpuUsage.set_from_config(readBool("Menu", "HwGpuUsage"));
+            HwGpuTemp.set_from_config(readBool("Menu", "HwGpuTemp"));
+            HwGpuHotspot.set_from_config(readBool("Menu", "HwGpuHotspot"));
+            HwVram.set_from_config(readBool("Menu", "HwVram"));
+            HwCpuUsage.set_from_config(readBool("Menu", "HwCpuUsage"));
+            HwCpuTemp.set_from_config(readBool("Menu", "HwCpuTemp"));
+
+            if (auto setting = readInt("Menu", "HwSource"); setting.has_value() && setting >= 0 && setting <= 2)
+                HwSource.set_from_config(setting);
             UseHQFont.set_from_config(readBool("Menu", "UseHQFont"));
             DisableSplash.set_from_config(readBool("Menu", "DisableSplash"));
 
@@ -1246,6 +1256,13 @@ bool Config::SaveIni()
 
         ini.SetValue("Menu", "ExtendedLimits", GetBoolValue(Instance()->ExtendedLimits.value_for_config()).c_str());
         ini.SetValue("Menu", "ShowFps", GetBoolValue(Instance()->ShowFps.value_for_config()).c_str());
+        ini.SetValue("Menu", "HwGpuUsage", GetBoolValue(Instance()->HwGpuUsage.value_for_config()).c_str());
+        ini.SetValue("Menu", "HwGpuTemp", GetBoolValue(Instance()->HwGpuTemp.value_for_config()).c_str());
+        ini.SetValue("Menu", "HwGpuHotspot", GetBoolValue(Instance()->HwGpuHotspot.value_for_config()).c_str());
+        ini.SetValue("Menu", "HwVram", GetBoolValue(Instance()->HwVram.value_for_config()).c_str());
+        ini.SetValue("Menu", "HwCpuUsage", GetBoolValue(Instance()->HwCpuUsage.value_for_config()).c_str());
+        ini.SetValue("Menu", "HwCpuTemp", GetBoolValue(Instance()->HwCpuTemp.value_for_config()).c_str());
+        ini.SetValue("Menu", "HwSource", GetIntValue(Instance()->HwSource.value_for_config()).c_str());
         ini.SetValue("Menu", "UseHQFont", GetBoolValue(Instance()->UseHQFont.value_for_config()).c_str());
         ini.SetValue("Menu", "DisableSplash", GetBoolValue(Instance()->DisableSplash.value_for_config()).c_str());
 

@@ -258,6 +258,10 @@ inline std::string StrFmt(const char* fmt, ...)
 using Ilion::Tr;
 using Ilion::TrL;
 
+// Set only while the Basic Mode panel is being drawn. The section functions below stop after their main
+// controls when it's set, so both modes run the same code on the same config and state.
+static bool basicView = false;
+
 static void DrawCardTitle(const char* label)
 {
     label = Tr(label);
@@ -382,10 +386,12 @@ bool ScopedCard::TryTitle(const char* label)
 bool ScopedCard::Shows(const char* id)
 {
     // Inside of a card everything belongs to that card
-    return _filter == nullptr || _current != nullptr || strcmp(_filter, id) == 0;
+    return _filter == nullptr || (_current != nullptr && !_strictFilter) || strcmp(_filter, id) == 0;
 }
 
 void ScopedCard::SetFilter(const char* id) { _filter = id; }
+
+void ScopedCard::SetStrictFilter(bool strict) { _strictFilter = strict; }
 
 void MenuCommon::RenderCard(RenderMenuContext& ctx, void (*render)(RenderMenuContext&))
 {
@@ -2748,6 +2754,36 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
     }
 }
 
+// Basic | Full, only changes what is drawn. Saved with the rest of the settings
+static void RenderModeSelector(decltype(Config::Instance()) config)
+{
+    const bool basic = config->MenuBasicMode.value_or_default();
+
+    const auto modeButton = [&](const char* label, const char* id, bool selected)
+    {
+        const ImVec2 size = ImGui::CalcTextSize(label);
+        const ImVec2 pos = ImGui::GetCursorScreenPos();
+
+        const bool clicked = ImGui::InvisibleButton(id, size);
+        const bool highlighted = selected || ImGui::IsItemHovered();
+
+        ImGui::GetWindowDrawList()->AddText(pos, ImGui::GetColorU32(highlighted ? ImGuiCol_Text : ImGuiCol_TextDisabled),
+                                            label);
+
+        return clicked && !selected;
+    };
+
+    if (modeButton(Tr("Basic"), "##ModeBasic", basic))
+        config->MenuBasicMode = true;
+
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+
+    if (modeButton(Tr("Full"), "##ModeFull", !basic))
+        config->MenuBasicMode = false;
+}
+
 // ES | EN, applies right away and is saved with the rest of the settings
 static void RenderLanguageSelector(decltype(Config::Instance()) config)
 {
@@ -2953,7 +2989,8 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
     SectionTitle("Upscalers");
 
     // Row - API | GPU | Upscaler input
-    ImGui::TextWrapped("%s%s | %s | Input: %s", ApiName(state.api),
+    if (!basicView)
+        ImGui::TextWrapped("%s%s | %s | Input: %s", ApiName(state.api),
                        IdentifyGpu::gameUsesDxvk()          ? " (DXVK)"
                        : IdentifyGpu::gameUsesVkd3dProton() ? " (VKD3D)"
                                                             : "",
@@ -2985,10 +3022,13 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
     ImGui::PopItemWidth();
 
-    ImGui::SameLine();
-    ImGui::TextDisabled("%dx%d -> %dx%d (%.2fx)", currentFeature->RenderWidth(), currentFeature->RenderHeight(),
-                        currentFeature->TargetWidth(), currentFeature->TargetHeight(),
-                        (float) currentFeature->TargetWidth() / (float) currentFeature->RenderWidth());
+    if (!basicView)
+    {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%dx%d -> %dx%d (%.2fx)", currentFeature->RenderWidth(), currentFeature->RenderHeight(),
+                            currentFeature->TargetWidth(), currentFeature->TargetHeight(),
+                            (float) currentFeature->TargetWidth() / (float) currentFeature->RenderWidth());
+    }
 
     if (!usesDlssd)
     {
@@ -3012,7 +3052,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
     }
 
     // Dx11 with Dx12
-    if (state.api == DX11 && currentFeature->IsWithDx12())
+    if (state.api == DX11 && currentFeature->IsWithDx12() && !basicView)
     {
         ImGui::Spacing();
         if (auto ch = ScopedCollapsingHeader("Dx11 with Dx12 Settings"); ch.IsHeaderOpen())
@@ -3029,7 +3069,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
         }
     }
 
-    if (state.api == Vulkan && currentFeature->IsWithDx12())
+    if (state.api == Vulkan && currentFeature->IsWithDx12() && !basicView)
     {
         ImGui::Spacing();
         if (auto ch = ScopedCollapsingHeader("Vulkan with Dx12 Settings"); ch.IsHeaderOpen())
@@ -3085,6 +3125,8 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             }
             ShowTooltip("Likely doesn't do much");
 
+            if (!basicView)
+            {
             if (bool dbg = state.xessDebug; ImGui::Checkbox("Dump (Shift+Del)", &dbg))
                 state.xessDebug = dbg;
 
@@ -3103,6 +3145,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             }
 
             ImGui::PopItemWidth();
+            }
 
             ImGui::Spacing();
             ImGui::Spacing();
@@ -3188,6 +3231,9 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                 defaultSrDll = FfxApiProxy::SrVariantDllPath(L"");
             }
 
+            // Path, hash, diagnostics and comparison stay in the full menu only
+            if (!basicView)
+            {
             const auto activeSrPath = FfxApiProxy::Dx12Module_SR_Path();
             ImGui::TextDisabled("%s", wstring_to_string(activeSrPath).c_str());
 
@@ -3336,6 +3382,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                         "MIN / MAX = slowest / fastest single frame, as fps (not 1%% lows)\n\n"
                         "The first 2 seconds after a switch aren't counted.\n"
                         "Enabling it starts a new session and shows the performance overlay.");
+            }
         }
 
         if (auto versions = GetFfxVersionList(currentBackend, state.api);
@@ -3369,6 +3416,9 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
             ShowTooltip("List of upscalers reported by FFX SDK");
         }
+
+        if (basicView)
+            return;
 
         auto majorFsrVersion = currentFeature->Version().major;
 
@@ -3631,6 +3681,9 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             }
         }
     }
+
+    if (basicView)
+        return;
 
     // DLSS -----------------
     if ((config->DLSSEnabled.value_or_default() &&
@@ -4121,6 +4174,10 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
         ImGui::EndDisabled();
 
+        // Input, output and the multiplier are all the Basic Mode shows of this section
+        if (basicView)
+            return;
+
         if (state.dlssgGameDMFGSupported && !dlssgInputOrOutput)
         {
             ImGui::SameLine(0.0f, 16.0f);
@@ -4451,7 +4508,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             if (_ffxFGIndex < 0)
                 _ffxFGIndex = config->FfxFGIndex.value_or_default();
 
-            if (state.ffxFGVersionNames.size() > 0)
+            if (state.ffxFGVersionNames.size() > 0 && !basicView)
             {
                 ImGui::PushItemWidth(115.0f * menuResScale);
 
@@ -4478,6 +4535,9 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             }
 
             RenderFGModeCombo(ctx, "Frame Gen##fsrfg", 1, nullptr);
+
+            if (basicView)
+                return;
 
             bool fgAsync = config->FGAsync.value_or_default();
             if (ImGui::Checkbox("Allow Async", &fgAsync))
@@ -4748,6 +4808,12 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         RenderFGModeCombo(ctx, "Frame Gen##xefg", fgOutput->GetMaxInterpolationCount(),
                           &config->FGXeFGInterpolationCount);
 
+        if (basicView)
+        {
+            ImGui::EndDisabled();
+            return;
+        }
+
         ImGui::SameLine(0.0f, 16.0f);
         ImGui::BeginDisabled(!fgOutput->IsUsingHudlessAny() || XeFGProxy::SetUiCompositionState() == nullptr);
         bool fgCompositeUI = config->FGXeFGUIComposition.value_or_default();
@@ -4869,6 +4935,9 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
         RenderFGModeCombo(ctx, "Frame Gen##dlssg", fgOutput->GetMaxInterpolationCount(),
                           &config->FGDLSSGInterpolationCount);
+
+        if (basicView)
+            return;
 
         if (fgOutput->GetMaxInterpolationCount() > 1)
         {
@@ -9251,6 +9320,121 @@ void MenuCommon::RenderHudlessResourcesWindow(RenderMenuContext& ctx, ImGuiWindo
     }
 }
 
+// BASIC MODE -----------------------------
+// One panel made of the section functions of the full menu, called with basicView set so they stop after
+// their main controls. Nothing is stored here, both modes read and write the same config and state.
+void MenuCommon::RenderBasicPanel(RenderMenuContext& ctx)
+{
+    auto& state = ctx.state;
+    auto config = ctx.config;
+    auto& currentFeature = ctx.currentFeature;
+    auto& menuResScale = ctx.menuResScale;
+    const auto& style = ImGui::GetStyle();
+
+    const float bottomBarHeight = 1.0f + style.ItemSpacing.y * 2.0f + ImGui::GetFrameHeight();
+
+    ImGui::BeginChild("##BasicPanel", ImVec2(0.0f, -bottomBarHeight));
+    {
+        ScopedCard card;
+
+        basicView = true;
+        ScopedCard::SetStrictFilter(true);
+
+        // 1 - Upscaling: technology, model or version, FSR versions
+        if (IsUpscalerActive(currentFeature))
+        {
+            RenderActiveUpscalerSettings(ctx);
+        }
+        else
+        {
+            SectionTitle("Upscalers");
+            RenderUpscalerStateMessage(ctx);
+        }
+
+        // 2 - Frame generation: input and output, then the mode combo of the FG that's in use.
+        // Every FG keeps its own checks, the settings function is asked for one card at a time.
+        ImGui::Spacing();
+        RenderFrameGenerationSelection(ctx);
+
+        for (const char* id : { "fg_fsrfg", "fg_xefg", "fg_dlssg" })
+        {
+            ScopedCard::SetFilter(id);
+            RenderFrameGenerationRuntimeSettings(ctx);
+        }
+
+        ScopedCard::SetFilter(nullptr);
+
+        // 3 - Latency
+        ImGui::Spacing();
+#ifdef LOW_LATENCY_INPUTS
+        RenderLowLatencySettings(ctx);
+#else
+        RenderFakenvapiSettings(ctx);
+#endif
+
+        ScopedCard::SetStrictFilter(false);
+        basicView = false;
+
+        // 4 - Current status, read only
+        ImGui::Spacing();
+        SectionTitle("Current Status");
+
+        const auto statusRow = [&](bool on, const char* name, const std::string& value)
+        {
+            const float size = ImGui::GetTextLineHeight();
+            const ImVec2 pos = ImGui::GetCursorScreenPos();
+            const ImU32 color = on ? ImGui::ColorConvertFloat4ToU32(toneMapColor(ImVec4(0.3f, 1.0f, 0.3f, 1.0f)))
+                                   : ImGui::GetColorU32(ImGuiCol_TextDisabled);
+
+            ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(pos.x + size * 0.5f, pos.y + size * 0.5f),
+                                                        size * 0.28f, color);
+            ImGui::Dummy(ImVec2(size, size));
+            ImGui::SameLine(0.0f, 4.0f * menuResScale);
+            ImGui::TextDisabled("%s", on ? "ON " : "OFF");
+            ImGui::SameLine(0.0f, 10.0f * menuResScale);
+            ImGui::Text("%s: %s", Tr(name), value.c_str());
+        };
+
+        const bool upscalerOn = IsUpscalerActive(currentFeature) && currentFeature->IsInited();
+
+        statusRow(upscalerOn, "Upscaler",
+                  upscalerOn ? StrFmt("%s %u.%u.%u", currentFeature->ShortName().c_str(),
+                                      currentFeature->Version().major, currentFeature->Version().minor,
+                                      currentFeature->Version().patch)
+                             : std::string(Tr("None")));
+
+        // Dll that's really executing the upscaling, from the hot-swap diagnostics
+        if (upscalerOn && currentBackend == Upscaler::FFX && state.api == DX12)
+        {
+            const auto diag = FfxApiProxy::SrDiagGetSnapshot();
+            std::string value = Tr(diag.activeName.c_str());
+
+            if (diag.statusLevel != 0)
+                value += std::string("  (") + Tr(diag.status.c_str()) + ")";
+
+            statusRow(diag.statusLevel == 0, "FSR version", value);
+        }
+
+        const auto fg = state.currentFG;
+        const bool fgOn = fg != nullptr && fg->IsActive() && !fg->IsPaused();
+
+        statusRow(fgOn, "Frame Generation",
+                  fgOn ? StrFmt("%s %ux", fg->Name(), fg->GetInterpolatedFrameCount() + 1) : std::string(Tr("Off")));
+
+        const auto latencyMode = fakenvapi::getCurrentMode();
+        const bool latencyOn = latencyMode != LowLatencyMode::None;
+
+        statusRow(latencyOn, "Latency",
+                  latencyOn ? std::string(magic_enum::enum_name(latencyMode)) : std::string(Tr("Off")));
+    }
+    ImGui::EndChild();
+
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    RenderMainMenuBottomBar(ctx);
+}
+
 void MenuCommon::RenderMainMenuWindow(RenderMenuContext& ctx)
 {
     auto& state = ctx.state;
@@ -9338,17 +9522,27 @@ void MenuCommon::RenderMainMenuWindow(RenderMenuContext& ctx)
 
     if (ImGui::Begin(windowTitle.c_str(), NULL, mainFlags))
     {
-        // Language of the menu, small and right aligned above everything else
+        // Interface mode on the left, language on the right, small and above everything else
+        RenderModeSelector(config);
+        ImGui::SameLine();
         RenderLanguageSelector(config);
 
         // Update and config notices shown above the tabs.
         RenderMainMenuHeaderMessages(ctx);
 
-        // Tabs on the left, tab content on the right.
-        RenderMainMenuTabs(ctx);
+        if (config->MenuBasicMode.value_or_default())
+        {
+            // Compact panel made of the same sections as the tabs below
+            RenderBasicPanel(ctx);
+        }
+        else
+        {
+            // Tabs on the left, tab content on the right.
+            RenderMainMenuTabs(ctx);
 
-        // Graphs and buttons, always visible regardless of the selected tab.
-        RenderMainMenuFooter(ctx);
+            // Graphs and buttons, always visible regardless of the selected tab.
+            RenderMainMenuFooter(ctx);
+        }
 
         auto winSize = ImGui::GetWindowSize();
         auto winPos = ImGui::GetWindowPos();

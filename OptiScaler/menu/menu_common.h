@@ -42,10 +42,14 @@ class ScopedCard
     // With a filter set, only the box with the same id is drawn
     static bool Shows(const char* id);
     static void SetFilter(const char* id);
+    static void SetStrictFilter(bool strict);
 
   private:
     inline static ScopedCard* _current = nullptr;
     inline static const char* _filter = nullptr;
+
+    // With it set, the filter also applies to cards drawn inside of another card
+    inline static bool _strictFilter = false;
 
     ImGuiWindow* _window = nullptr;
     ImDrawListSplitter _splitter;
@@ -253,6 +257,7 @@ class MenuCommon
     static void RenderUpscalerTimeGraph(RenderMenuContext& ctx);
     static void RenderShaderTimes(RenderMenuContext& ctx);
     static void RenderMainMenuBottomBar(RenderMenuContext& ctx);
+    static void RenderBasicPanel(RenderMenuContext& ctx);
     static void RenderMipmapBiasWindow(RenderMenuContext& ctx, ImGuiWindowFlags flags);
     static void RenderHudlessResourcesWindow(RenderMenuContext& ctx, ImGuiWindowFlags flags);
 

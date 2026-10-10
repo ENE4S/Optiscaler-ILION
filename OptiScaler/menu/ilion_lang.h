@@ -252,6 +252,14 @@ inline constexpr Translation kSpanish[] = {
       "Los primeros 2 segundos tras un cambio no se cuentan.\n"
       "Al activarlo empieza una sesión nueva y se muestra el overlay de rendimiento." },
 
+    // Interface mode and the Basic Mode panel
+    { "Basic", "Básico" },
+    { "Full", "Completo" },
+    { "Current Status", "Estado actual" },
+    { "Upscaler", "Escalador" },
+    { "FSR version", "Versión FSR" },
+    { "Latency", "Latencia" },
+
     // Status tab
     { "Unofficial modified build, not an OptiScaler release",
       "Compilación modificada no oficial, no es una versión de OptiScaler" },

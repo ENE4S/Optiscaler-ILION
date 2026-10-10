@@ -3103,10 +3103,24 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
                 for (const auto& variant : srVariants)
                 {
-                    const bool variantActive = FfxApiProxy::IsActiveSrDll(variant.dllPath);
+                    const bool variantActive =
+                        !variant.dllPath.empty() && FfxApiProxy::IsActiveSrDll(variant.dllPath);
 
-                    if (ImGui::Selectable(wstring_to_string(variant.name).c_str(), variantActive) && !variantActive)
+                    auto label = wstring_to_string(variant.name);
+
+                    if (!variant.version.empty())
+                        label += StrFmt("  (%s)", variant.version.c_str());
+
+                    // Dlls that didn't pass the checks stay listed so it's visible why they can't be used
+                    ImGui::BeginDisabled(!variant.valid);
+
+                    if (ImGui::Selectable(label.c_str(), variantActive) && !variantActive)
                         selectSrVariant(variant.name);
+
+                    ImGui::EndDisabled();
+
+                    if (!variant.valid && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                        ImGui::SetTooltip("Can't be used: %s", variant.problem.c_str());
                 }
 
                 ImGui::EndCombo();
@@ -3115,7 +3129,9 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             ImGui::PopItemWidth();
 
             ShowTooltip("Switches amd_fidelityfx_upscaler_dx12.dll without restarting the game.\n"
-                        "Each subfolder of OptiScaler\\FSR4 with its own dll is listed here.\n\n"
+                        "Every subfolder of ILION\\FSR_Versions (next to the game exe) that has its own\n"
+                        "amd_fidelityfx_upscaler_dx12.dll is listed here, the folder name is the version name.\n"
+                        "Add a folder and press Rescan, no restart needed.\n\n"
                         "Dlls stay loaded once used. Only affects upscaling, not frame generation.");
 
             ImGui::SameLine();
@@ -3126,7 +3142,28 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                 defaultSrDll = FfxApiProxy::SrVariantDllPath(L"");
             }
 
-            ImGui::TextDisabled("%s", wstring_to_string(FfxApiProxy::Dx12Module_SR_Path()).c_str());
+            const auto activeSrPath = FfxApiProxy::Dx12Module_SR_Path();
+            ImGui::TextDisabled("%s", wstring_to_string(activeSrPath).c_str());
+
+            // Hash of the dll in use, calculated in the background and looked up again only until it's there
+            static std::wstring hashedSrPath;
+            static std::string activeSrHash;
+            static double lastHashLookup = 0.0;
+
+            if (hashedSrPath != activeSrPath)
+            {
+                hashedSrPath = activeSrPath;
+                activeSrHash.clear();
+                FSR4Versions::RequestHash(activeSrPath);
+            }
+
+            if (activeSrHash.empty() && ctx.now - lastHashLookup > 500.0)
+            {
+                lastHashLookup = ctx.now;
+                activeSrHash = FSR4Versions::HashForPath(activeSrPath);
+            }
+
+            ImGui::TextDisabled("SHA-256: %s", activeSrHash.empty() ? "calculating..." : activeSrHash.c_str());
 
             // Read-only, everything comes from the dispatch calls that were actually made
             if (ImGui::TreeNodeEx("FSR 4 HOT-SWAP DIAGNOSTICS", ImGuiTreeNodeFlags_DefaultOpen))

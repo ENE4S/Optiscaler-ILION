@@ -13,6 +13,7 @@
 
 #include <fsr4/FSR4ModelSelection.h>
 #include <fsr4/FSR4VisualVerify.h>
+#include <fsr4/FSR4Versions.h>
 
 #include "ffx_api.h"
 #include <detours/detours.h>
@@ -115,6 +116,9 @@ class FfxApiProxy
     inline static ankerl::unordered_dense::map<ffxContext, SrContextFns> _srContexts;
     inline static std::optional<std::wstring> _srPending;
 
+    // Dll that was in use before the last switch, kept until the new one has created a context
+    inline static std::optional<FfxModule> _srRevertTarget;
+
     static bool IsSamePath(const std::wstring& a, const std::wstring& b)
     {
         auto pathA = std::filesystem::path(a).lexically_normal().wstring();
@@ -206,8 +210,8 @@ class FfxApiProxy
         if (IsSamePath(path.parent_path().wstring(), optiPath.wstring()))
             return "Default";
 
-        if (IsSamePath(path.parent_path().parent_path().wstring(), (optiPath / L"FSR4").wstring()))
-            return wstring_to_string(path.parent_path().filename().wstring());
+        if (const auto versionName = FSR4Versions::NameFromPath(dllPath); !versionName.empty())
+            return wstring_to_string(versionName);
 
         return "Custom path";
     }
@@ -471,47 +475,19 @@ class FfxApiProxy
         return result;
     }
 
-    struct SrVariant
-    {
-        std::wstring name;
-        std::wstring dllPath;
-    };
+    // Versions found by FSR4Versions, every folder with its own amd_fidelityfx_upscaler_dx12.dll
+    using SrVariant = FSR4Versions::Entry;
 
-    // Subfolders of "OptiDllPath/FSR4" that have their own amd_fidelityfx_upscaler_dx12.dll
-    static std::vector<SrVariant> SrVariants()
-    {
-        std::vector<SrVariant> result;
-        std::error_code ec;
-
-        auto root = std::filesystem::path(Config::Instance()->MainDllPath.value_or(L"")) / L"FSR4";
-
-        if (!std::filesystem::is_directory(root, ec))
-            return result;
-
-        for (const auto& entry : std::filesystem::directory_iterator(root, ec))
-        {
-            if (!entry.is_directory(ec))
-                continue;
-
-            auto dllPath = entry.path() / L"amd_fidelityfx_upscaler_dx12.dll";
-
-            if (std::filesystem::exists(dllPath, ec))
-                result.push_back({ entry.path().filename().wstring(), dllPath.wstring() });
-        }
-
-        std::sort(result.begin(), result.end(), [](const SrVariant& a, const SrVariant& b) { return a.name < b.name; });
-
-        return result;
-    }
+    static std::vector<SrVariant> SrVariants() { return FSR4Versions::Scan(); }
 
     // Empty name is the dll in OptiDllPath, returns empty when the dll doesn't exist
     static std::wstring SrVariantDllPath(const std::wstring& name)
     {
+        if (!name.empty())
+            return FSR4Versions::DllPathFor(name);
+
         std::error_code ec;
         auto dllPath = std::filesystem::path(Config::Instance()->MainDllPath.value_or(L""));
-
-        if (!name.empty())
-            dllPath = dllPath / L"FSR4" / std::filesystem::path(name).filename();
 
         dllPath /= L"amd_fidelityfx_upscaler_dx12.dll";
 
@@ -832,6 +808,16 @@ class FfxApiProxy
 
         if (target.dll == nullptr)
         {
+            // Checked from the file, a dll that isn't a 64 bit FSR upscaler never gets loaded
+            if (std::string problem; !FSR4Versions::Validate(targetPath, &problem))
+            {
+                LOG_ERROR("{} can't be used: {}", wstring_to_string(targetPath), problem);
+                ImGui::InsertNotification(
+                    { ImGuiToastType::Error, 10000, "Selected FSR version isn't a compatible upscaler dll" });
+                SrDiagSetSwitchResult(diagFrom, diagTo, "FAILED, " + problem);
+                return;
+            }
+
             target.dll = NtdllProxy::LoadLibraryExW_Ldr(targetPath.c_str(), NULL, 0);
 
             if (target.dll == nullptr)
@@ -886,11 +872,64 @@ class FfxApiProxy
             LOG_INFO("Switching upscaler dll: {} -> {}", wstring_to_string(upscaling_dx12.filePath),
                      wstring_to_string(target.filePath));
 
+            _srRevertTarget = upscaling_dx12;
             upscaling_dx12 = target;
         }
 
         // Only tells that the function table was switched, execution is confirmed by SrDiagOnDispatch
         SrDiagSetSwitchResult(diagFrom, diagTo, "function table switched");
+    }
+
+    // The dll that was just switched to couldn't create a context. Nothing of it is in use at this point,
+    // so the previous dll becomes the active one again. Both stay loaded.
+    static void RevertSrVariantAfterFailure()
+    {
+        if (!_srRevertTarget.has_value())
+            return;
+
+        const FfxModule previous = *_srRevertTarget;
+        _srRevertTarget.reset();
+
+        const auto failedName = SrDiagNameFromPath(upscaling_dx12.filePath);
+        const auto previousName = SrDiagNameFromPath(previous.filePath);
+
+        FSR4ModelSelection::Hook(previous.dll, FSR4Source::SDK, true);
+
+        {
+            std::scoped_lock lock(_srMutex);
+
+            bool failedStored = false;
+
+            for (const auto& loaded : _srLoaded)
+                failedStored = failedStored || loaded.dll == upscaling_dx12.dll;
+
+            if (!failedStored)
+                _srLoaded.push_back(upscaling_dx12);
+
+            upscaling_dx12 = previous;
+        }
+
+        // Selection follows what's really in use again
+        const auto previousVersion = FSR4Versions::NameFromPath(previous.filePath);
+
+        if (previousVersion.empty())
+            Config::Instance()->Fsr4SrVariant.reset();
+        else
+            Config::Instance()->Fsr4SrVariant = previousVersion;
+
+        {
+            std::scoped_lock lock(_srDiagMutex);
+            _srDiagSelectedSet = true;
+            _srDiagSelectedName = previousName;
+            _srDiagSelectedPath = previous.filePath;
+        }
+
+        LOG_ERROR("FSR version {} couldn't create a context, {} is active again", failedName, previousName);
+        ImGui::InsertNotification({ ImGuiToastType::Error, 10000,
+                                    "Selected FSR version failed to start, the previous one was restored.\n"
+                                    "Select FSR again to keep using it." });
+
+        SrDiagSetSwitchResult(failedName, previousName, "REVERTED, the new dll couldn't create a context");
     }
 
     static FFXStructType GetType(ffxStructType_t type)
@@ -1123,7 +1162,16 @@ class FfxApiProxy
                 auto overridePath = Config::Instance()->FfxDx12SRPath.value_or(L"");
 
                 if (overridePath.empty() && Config::Instance()->Fsr4SrVariant.has_value())
+                {
                     overridePath = SrVariantDllPath(Config::Instance()->Fsr4SrVariant.value());
+
+                    // A dll that doesn't pass the checks isn't loaded, the default one gets used
+                    if (std::string problem; !overridePath.empty() && !FSR4Versions::Validate(overridePath, &problem))
+                    {
+                        LOG_ERROR("Saved FSR version can't be used ({}): {}", problem, wstring_to_string(overridePath));
+                        overridePath.clear();
+                    }
+                }
 
                 if (upscaling_dx12_hooked.dll == nullptr)
                 {
@@ -1944,6 +1992,11 @@ class FfxApiProxy
                 RegisterSrContext(context);
 
             SrDiagOnCreate(result);
+
+            if (result == FFX_API_RETURN_OK)
+                _srRevertTarget.reset();
+            else
+                RevertSrVariantAfterFailure();
 
             LOG_DEBUG("Created with upscaling_dx12: {:X}", (size_t) *context);
             return result;

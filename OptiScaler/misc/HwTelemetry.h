@@ -156,6 +156,25 @@ class HwTelemetry
         if (!result.values[VramTotal].valid && vramTotalHintMB > 0.0f)
             SetValue(result.values[VramTotal], vramTotalHintMB, Source::Adapter, "Dedicated video memory");
 
+        // Values that can't be real aren't shown: more memory in use than the card has, or out of range readings
+        if (result.values[VramUsed].valid && result.values[VramTotal].valid &&
+            result.values[VramUsed].value > result.values[VramTotal].value * 1.05f)
+        {
+            result.values[VramUsed].valid = false;
+        }
+
+        for (const Metric metric : { GpuUsage, CpuUsage })
+        {
+            if (result.values[metric].valid && (result.values[metric].value < 0.0f || result.values[metric].value > 100.5f))
+                result.values[metric].valid = false;
+        }
+
+        for (const Metric metric : { GpuTemp, GpuHotspot, CpuTemp })
+        {
+            if (result.values[metric].valid && (result.values[metric].value <= 0.0f || result.values[metric].value > 150.0f))
+                result.values[metric].valid = false;
+        }
+
         return result;
     }
 
@@ -429,10 +448,15 @@ class HwTelemetry
                 if (_stricmp(label, "GPU Temperature") == 0)
                     Offer(candidates[GpuTemp], 100 + hintBonus, reading.value, label);
 
-                if (gpuSensor && (ContainsNoCase(label, "Hot Spot") || ContainsNoCase(label, "Hotspot")) &&
-                    !ContainsNoCase(label, "Memory"))
+                // The overall hot spot wins over the per die ones some cards also list (GCD, MCD1..)
+                if (_stricmp(label, "GPU Hot Spot Temperature") == 0 || _stricmp(label, "GPU Hotspot Temperature") == 0)
                 {
                     Offer(candidates[GpuHotspot], 100 + hintBonus, reading.value, label);
+                }
+                else if (gpuSensor && (ContainsNoCase(label, "Hot Spot") || ContainsNoCase(label, "Hotspot")) &&
+                         !ContainsNoCase(label, "Memory"))
+                {
+                    Offer(candidates[GpuHotspot], 50 + hintBonus, reading.value, label);
                 }
 
                 if (!gpuSensor)
@@ -466,15 +490,16 @@ class HwTelemetry
                 }
             }
 
-            // Memory in MB is listed as usage or as "other" depending on the vendor, only MB values are taken
+            // Only values in MB are taken. Dedicated memory as Windows reports it comes first: it exists for every
+            // vendor, and "GPU Memory Usage" was seen reporting more than the card has on an RX 7900 XTX.
             if (gpuSensor && _stricmp(reading.unit, "MB") == 0)
             {
-                if (_stricmp(label, "GPU Memory Usage") == 0)
+                if (_stricmp(label, "GPU D3D Memory Dedicated") == 0)
                     Offer(candidates[VramUsed], 100 + hintBonus, reading.value, label);
                 else if (_stricmp(label, "GPU Memory Allocated") == 0)
-                    Offer(candidates[VramUsed], 95 + hintBonus, reading.value, label);
-                else if (_stricmp(label, "GPU D3D Memory Dedicated") == 0)
-                    Offer(candidates[VramUsed], 80 + hintBonus, reading.value, label);
+                    Offer(candidates[VramUsed], 90 + hintBonus, reading.value, label);
+                else if (_stricmp(label, "GPU Memory Usage") == 0)
+                    Offer(candidates[VramUsed], 60 + hintBonus, reading.value, label);
             }
         }
 

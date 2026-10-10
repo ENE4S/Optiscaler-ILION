@@ -2721,7 +2721,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                     if (fg != nullptr)
                         localFrameCount = fg->FrameCount();
 
-                    ImGui::Text("FGId: %llu, RfxId: %llu", localFrameCount, state.reflexFrameId);
+                    // Frame ids are shown in Help / Status instead, they only added noise here
                     ImGui::Text("Low latency timings, whole frame: %.1fms", rangeInNs / 1000.0);
 
                     const auto maxWidth =
@@ -2781,7 +2781,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                     if (fg != nullptr)
                         localFrameCount = fg->FrameCount();
 
-                    ImGui::Text("FGId: %llu, RfxId: %llu", localFrameCount, state.reflexFrameId);
+                    // Frame ids are shown in Help / Status instead, they only added noise here
                     ImGui::Text("Reflex timings, whole frame: %.1fms", rangeInNs / 1000.0);
 
                     const auto maxWidth =
@@ -3347,7 +3347,6 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             if (!basicView)
             {
             const auto activeSrPath = FfxApiProxy::Dx12Module_SR_Path();
-            ImGui::TextDisabled("%s", wstring_to_string(activeSrPath).c_str());
 
             // Hash of the dll in use, calculated in the background and looked up again only until it's there
             static std::wstring hashedSrPath;
@@ -3367,10 +3366,17 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                 activeSrHash = FSR4Versions::HashForPath(activeSrPath);
             }
 
-            ImGui::TextDisabled("SHA-256: %s", activeSrHash.empty() ? Tr("calculating...") : activeSrHash.c_str());
+            // Path and hash of the dll that's loaded, closed unless the user opens it
+            if (ImGui::TreeNode(TrL("Loaded DLL path")))
+            {
+                ImGui::TextWrapped("%s", wstring_to_string(activeSrPath).c_str());
+                ImGui::TextDisabled("SHA-256: %s", activeSrHash.empty() ? Tr("calculating...") : activeSrHash.c_str());
+
+                ImGui::TreePop();
+            }
 
             // Read-only, everything comes from the dispatch calls that were actually made
-            if (ImGui::TreeNodeEx(TrL("FSR 4 HOT-SWAP DIAGNOSTICS"), ImGuiTreeNodeFlags_DefaultOpen))
+            if (ImGui::TreeNode(TrL("FSR 4 HOT-SWAP DIAGNOSTICS")))
             {
                 const auto diag = FfxApiProxy::SrDiagGetSnapshot();
 
@@ -3404,7 +3410,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             }
 
             // Experimental, the marker color is keyed to the dll that recorded the GPU work, not to the selection
-            if (ImGui::TreeNodeEx(TrL("FSR 4 VISUAL VERIFICATION"), ImGuiTreeNodeFlags_DefaultOpen))
+            if (ImGui::TreeNode(TrL("FSR 4 VISUAL VERIFICATION")))
             {
                 bool visualEnabled = FSR4VisualVerify::Enabled();
 
@@ -8342,6 +8348,11 @@ void MenuCommon::RenderDetectedInfo(RenderMenuContext& ctx)
         ImGui::EndTable();
     }
 
+    // Frame ids that used to be in the performance overlay
+    const auto statusFg = state.currentFG;
+    ImGui::TextDisabled("FGId: %llu, RfxId: %llu", statusFg != nullptr ? (UINT64) statusFg->FrameCount() : 0ull,
+                        (UINT64) state.reflexFrameId);
+
     ImGui::TextDisabled("%s", Tr("Unofficial modified build, not an OptiScaler release"));
     ImGui::TextDisabled(Tr("Based on %s"), BuildInfo::ProductName());
     ImGui::TextDisabled("%s %s", state.gameExe.c_str(), state.gameName.c_str());
@@ -8850,7 +8861,8 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
         { "ADVANCED", "Menu", "Menu scale, theme, FPS overlay and keybinds." },
         { "ADVANCED", "Quirks", "Game specific quirks applied by OptiScaler.",
 +          [](RenderMenuContext& c) { RenderCard(c, RenderQuirksSettings); }, false,
-+          [](RenderMenuContext& c) { return !c.state.detectedQuirks.empty(); } },
+           // Only a list of texts, the same list is in Help / Status > System. Kept out of the sidebar.
++          [](RenderMenuContext& c) { return false; } },
         { "ADVANCED", "Help / Status", "Support info. Filled dot: on or found, hollow dot: off or missing.", nullptr, true },
     };
     // clang-format on
@@ -9695,7 +9707,7 @@ void MenuCommon::RenderMainMenuWindow(RenderMenuContext& ctx)
     if (windowTitle.empty())
     {
         // Name of this modified build, the OptiScaler build it is based on is shown in the Status tab
-        windowTitle = "OptiScaler-ILION V1.0";
+        windowTitle = "OptiScaler - ILION V1.1";
     }
 
     if (ImGui::Begin(windowTitle.c_str(), NULL, mainFlags))

@@ -103,6 +103,8 @@ inline constexpr Translation kSpanish[] = {
     { "\n\nAfter changing this option, please Save Settings.\nIt will be applied on next launch.",
       "\n\nDespués de cambiar esta opción, pulsa Guardar ajustes.\nSe aplicará en el próximo inicio." },
 
+    { "Loaded DLL path", "Ruta de DLL cargada" },
+
     // FSR versions selector
     { "FSR Upscaler DLL", "DLL del escalador FSR" },
     { "Default", "Predeterminada" },

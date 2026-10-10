@@ -220,7 +220,9 @@ class HwTelemetry
                         _snapshot = snapshot;
                     }
 
-                    Sleep(1000);
+                    // HWiNFO and MSI Afterburner refresh at their own pace (2 s and 1 s by default), reading
+                    // twice per second only shortens the wait for a new value
+                    Sleep(500);
                 }
             })
             .detach();

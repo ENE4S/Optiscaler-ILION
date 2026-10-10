@@ -10,6 +10,7 @@
 #include <proxies/FfxApi_Proxy.h>
 #include <upscalers/ffx/FFXFeature.h>
 #include <fsr4/FSR4Comparison.h>
+#include "ilion_lang.h"
 #include <proxies/Streamline_Proxy.h>
 
 #include <framegen/nvngx/Nvngx_FG.h>
@@ -254,8 +255,13 @@ inline std::string StrFmt(const char* fmt, ...)
 }
 
 // CARDS -----------------------------
+using Ilion::Tr;
+using Ilion::TrL;
+
 static void DrawCardTitle(const char* label)
 {
+    label = Tr(label);
+
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     ImGui::TextUnformatted(label, ImGui::FindRenderedTextEnd(label));
     ImGui::PopStyleColor();
@@ -278,7 +284,7 @@ static void DrawCardTitle(const char* label)
 static void SectionTitle(const char* label)
 {
     if (!ScopedCard::TryTitle(label))
-        ImGui::SeparatorText(label);
+        ImGui::SeparatorText(Tr(label));
 }
 
 ScopedCard::ScopedCard(const char* title)
@@ -434,7 +440,7 @@ void MenuCommon::ShowTooltip(const char* tip)
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
     {
         ImGui::BeginTooltip();
-        ImGui::Text(tip);
+        ImGui::Text(Tr(tip));
         ImGui::EndTooltip();
     }
 }
@@ -443,7 +449,7 @@ template <typename TOption>
 bool MenuCommon::ConfigCheckbox(const char* label, TOption& option, const char* tip, bool needsRestart)
 {
     bool value = option.value_or_default();
-    const bool changed = ImGui::Checkbox(label, &value);
+    const bool changed = ImGui::Checkbox(TrL(label), &value);
 
     if (changed)
         option = value;
@@ -451,8 +457,8 @@ bool MenuCommon::ConfigCheckbox(const char* label, TOption& option, const char* 
     if (tip != nullptr)
     {
         if (needsRestart)
-            ShowTooltip((std::string(tip) + "\n\nAfter changing this option, please Save Settings.\n"
-                                            "It will be applied on next launch.")
+            ShowTooltip((std::string(Tr(tip)) + Tr("\n\nAfter changing this option, please Save Settings.\n"
+                                                   "It will be applied on next launch."))
                             .c_str());
         else
             ShowTooltip(tip);
@@ -1813,12 +1819,13 @@ static void DrawFsr4ComparisonPanel(float scale)
                           current ? 2.0f * scale : 1.0f);
 
         char average[16] = "--";
-        char minMax[40] = "min --  max --";
+        char minMax[48] = "";
+        snprintf(minMax, sizeof(minMax), "%s", Tr("min --  max --"));
 
         if (box.HasResult())
         {
             snprintf(average, sizeof(average), "%.1f", box.AvgFps());
-            snprintf(minMax, sizeof(minMax), "min %.0f  max %.0f", box.MinFps(), box.MaxFps());
+            snprintf(minMax, sizeof(minMax), Tr("min %.0f  max %.0f"), box.MinFps(), box.MaxFps());
         }
 
         ImU32 statusColor = dimColor;
@@ -1839,7 +1846,7 @@ static void DrawFsr4ComparisonPanel(float scale)
         centered(minMax, smallSize, left, y, dimColor);
         y += smallSize + lineGap;
 
-        centered(FSR4Comparison::StatusName(box.status), smallSize, left, y, statusColor);
+        centered(Tr(FSR4Comparison::StatusName(box.status)), smallSize, left, y, statusColor);
 
         fgSeen = fgSeen || box.fgSeen;
     }
@@ -1847,10 +1854,10 @@ static void DrawFsr4ComparisonPanel(float scale)
     ImGui::Dummy(ImVec2(boxWidth * 3.0f + gap * 2.0f, boxHeight));
 
     if (FSR4Comparison::OtherDllActive())
-        ImGui::TextDisabled("Active dll isn't Official, Community or Lite, not measured");
+        ImGui::TextDisabled("%s", Tr("Active dll isn't Official, Community or Lite, not measured"));
 
     if (fgSeen)
-        ImGui::TextDisabled("Includes frames presented by frame generation");
+        ImGui::TextDisabled("%s", Tr("Includes frames presented by frame generation"));
 }
 
 void MenuCommon::UpdateMenuInputMode(RenderMenuContext& ctx)
@@ -2741,6 +2748,45 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
     }
 }
 
+// ES | EN, applies right away and is saved with the rest of the settings
+static void RenderLanguageSelector(decltype(Config::Instance()) config)
+{
+    const auto current = Ilion::CurrentLang();
+    const auto& style = ImGui::GetStyle();
+
+    const float width = ImGui::CalcTextSize("ES").x + ImGui::CalcTextSize("|").x + ImGui::CalcTextSize("EN").x +
+                        style.ItemSpacing.x * 2.0f;
+
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - width);
+
+    const auto languageButton = [&](const char* label, Ilion::Lang lang)
+    {
+        const ImVec2 size = ImGui::CalcTextSize(label);
+        const ImVec2 pos = ImGui::GetCursorScreenPos();
+
+        ImGui::PushID(label);
+        const bool clicked = ImGui::InvisibleButton("##Language", size);
+        ImGui::PopID();
+
+        const bool highlighted = current == lang || ImGui::IsItemHovered();
+
+        ImGui::GetWindowDrawList()->AddText(pos, ImGui::GetColorU32(highlighted ? ImGuiCol_Text : ImGuiCol_TextDisabled),
+                                            label);
+
+        if (clicked && current != lang)
+        {
+            config->MenuLanguage = std::string(Ilion::LangCode(lang));
+            Ilion::SetLang(lang);
+        }
+    };
+
+    languageButton("ES", Ilion::Lang::ES);
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+    languageButton("EN", Ilion::Lang::EN);
+}
+
 void MenuCommon::RenderMainMenuHeaderMessages(RenderMenuContext& ctx)
 {
     auto& state = ctx.state;
@@ -3085,7 +3131,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             };
 
             const bool defaultActive = !defaultSrDll.empty() && FfxApiProxy::IsActiveSrDll(defaultSrDll);
-            std::string activeSrName = defaultActive ? "Default" : "Custom path";
+            std::string activeSrName = defaultActive ? Tr("Default") : Tr("Custom path");
 
             for (const auto& variant : srVariants)
             {
@@ -3096,9 +3142,9 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             ImGui::Spacing();
             ImGui::PushItemWidth(150.0f * menuResScale);
 
-            if (ImGui::BeginCombo("FSR Upscaler DLL", activeSrName.c_str()))
+            if (ImGui::BeginCombo(TrL("FSR Upscaler DLL"), activeSrName.c_str()))
             {
-                if (!defaultSrDll.empty() && ImGui::Selectable("Default", defaultActive) && !defaultActive)
+                if (!defaultSrDll.empty() && ImGui::Selectable(TrL("Default"), defaultActive) && !defaultActive)
                     selectSrVariant(L"");
 
                 for (const auto& variant : srVariants)
@@ -3120,7 +3166,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                     ImGui::EndDisabled();
 
                     if (!variant.valid && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                        ImGui::SetTooltip("Can't be used: %s", variant.problem.c_str());
+                        ImGui::SetTooltip(Tr("Can't be used: %s"), Tr(variant.problem.c_str()));
                 }
 
                 ImGui::EndCombo();
@@ -3136,7 +3182,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
             ImGui::SameLine();
 
-            if (ImGui::Button("Rescan##SrVariants"))
+            if (ImGui::Button(TrL("Rescan##SrVariants")))
             {
                 srVariants = FfxApiProxy::SrVariants();
                 defaultSrDll = FfxApiProxy::SrVariantDllPath(L"");
@@ -3163,10 +3209,10 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                 activeSrHash = FSR4Versions::HashForPath(activeSrPath);
             }
 
-            ImGui::TextDisabled("SHA-256: %s", activeSrHash.empty() ? "calculating..." : activeSrHash.c_str());
+            ImGui::TextDisabled("SHA-256: %s", activeSrHash.empty() ? Tr("calculating...") : activeSrHash.c_str());
 
             // Read-only, everything comes from the dispatch calls that were actually made
-            if (ImGui::TreeNodeEx("FSR 4 HOT-SWAP DIAGNOSTICS", ImGuiTreeNodeFlags_DefaultOpen))
+            if (ImGui::TreeNodeEx(TrL("FSR 4 HOT-SWAP DIAGNOSTICS"), ImGuiTreeNodeFlags_DefaultOpen))
             {
                 const auto diag = FfxApiProxy::SrDiagGetSnapshot();
 
@@ -3174,24 +3220,24 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                                            : diag.statusLevel == 2 ? ImVec4(1.f, 0.2f, 0.2f, 1.f)
                                                                    : ImVec4(1.f, 0.8f, 0.f, 1.f);
 
-                ImGui::Text("Selected: %s", diag.selectedName.c_str());
-                ImGui::Text("Active: %s", diag.activeName.c_str());
+                ImGui::Text(Tr("Selected: %s"), Tr(diag.selectedName.c_str()));
+                ImGui::Text(Tr("Active: %s"), Tr(diag.activeName.c_str()));
                 ShowTooltip("Dll that owns the ffxDispatch function called by the last upscale dispatch");
-                ImGui::TextWrapped("DLL Path: %s",
+                ImGui::TextWrapped(Tr("DLL Path: %s"),
                                    diag.activePath.empty() ? "-" : wstring_to_string(diag.activePath).c_str());
-                ImGui::TextColored(toneMapColor(statusColor), "Status: %s", diag.status.c_str());
-                ImGui::Text("Dispatch Count: %llu (errors: %llu)", diag.activeDispatchCount, diag.activeErrorCount);
+                ImGui::TextColored(toneMapColor(statusColor), Tr("Status: %s"), Tr(diag.status.c_str()));
+                ImGui::Text(Tr("Dispatch Count: %llu (errors: %llu)"), diag.activeDispatchCount, diag.activeErrorCount);
 
                 for (const auto& module : diag.modules)
                     ImGui::TextDisabled("  %s: %llu", module.name.c_str(), module.dispatchCount);
 
-                ImGui::Text("Last Switch: %s", diag.observedSwitch.empty() ? "-" : diag.observedSwitch.c_str());
+                ImGui::Text(Tr("Last Switch: %s"), diag.observedSwitch.empty() ? "-" : diag.observedSwitch.c_str());
                 ShowTooltip("Change of the dll that executes the dispatch, as seen in the dispatch calls");
-                ImGui::TextDisabled("Request: %s", diag.switchResult.empty() ? "-" : diag.switchResult.c_str());
-                ImGui::TextDisabled("Context: %s", diag.createResult.empty() ? "-" : diag.createResult.c_str());
-                ImGui::TextDisabled("Traced by: %s", diag.resolvedBy.c_str());
-                ImGui::TextDisabled("Driver provider: %s",
-                                    diag.driverProvider.empty() ? "not requested" : diag.driverProvider.c_str());
+                ImGui::TextDisabled(Tr("Request: %s"), diag.switchResult.empty() ? "-" : diag.switchResult.c_str());
+                ImGui::TextDisabled(Tr("Context: %s"), diag.createResult.empty() ? "-" : diag.createResult.c_str());
+                ImGui::TextDisabled(Tr("Traced by: %s"), Tr(diag.resolvedBy.c_str()));
+                ImGui::TextDisabled(Tr("Driver provider: %s"),
+                                    diag.driverProvider.empty() ? Tr("not requested") : diag.driverProvider.c_str());
                 ShowTooltip("Result of amdxcffx64's provider update for the upscaler dll that asked for it.\n"
                             "When it succeeds the dll may run the driver's FSR 4 instead of its own,\n"
                             "that can't be told apart from the dispatch call.");
@@ -3200,11 +3246,11 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             }
 
             // Experimental, the marker color is keyed to the dll that recorded the GPU work, not to the selection
-            if (ImGui::TreeNodeEx("FSR 4 VISUAL VERIFICATION", ImGuiTreeNodeFlags_DefaultOpen))
+            if (ImGui::TreeNodeEx(TrL("FSR 4 VISUAL VERIFICATION"), ImGuiTreeNodeFlags_DefaultOpen))
             {
                 bool visualEnabled = FSR4VisualVerify::Enabled();
 
-                if (ImGui::Checkbox("Color marker on upscaler output", &visualEnabled))
+                if (ImGui::Checkbox(TrL("Color marker on upscaler output"), &visualEnabled))
                     FSR4VisualVerify::SetEnabled(visualEnabled);
 
                 ShowTooltip("Writes color bars into the output of the upscale dispatch, before the game's post\n"
@@ -3217,39 +3263,39 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
                 if (!evidence.enabled)
                 {
-                    ImGui::TextDisabled("Disabled");
+                    ImGui::TextDisabled("%s", Tr("Disabled"));
                 }
                 else if (!evidence.hasFrame || evidence.msSinceLastFrame > 1000)
                 {
                     ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.8f, 0.f, 1.f)),
-                                       "Verdict: NO DATA (no upscale dispatch in the last second)");
+                                       "%s", Tr("Verdict: NO DATA (no upscale dispatch in the last second)"));
                 }
                 else
                 {
                     std::wstring execPath;
                     const auto execName = FfxApiProxy::SrDiagDescribeModule(evidence.execModule, &execPath);
 
-                    ImGui::Text("Executing DLL: %s", execName.c_str());
-                    ImGui::TextWrapped("DLL Path: %s", execPath.empty() ? "-" : wstring_to_string(execPath).c_str());
-                    ImGui::Text("Context created by: %s",
-                                evidence.ownerModule == nullptr           ? "unknown"
-                                : evidence.ownerModule == evidence.execModule ? "the same dll"
-                                                                              : "A DIFFERENT DLL");
-                    ImGui::Text("Compute dispatches: %u by this dll, %u by others", evidence.computeFromExec,
+                    ImGui::Text(Tr("Executing DLL: %s"), Tr(execName.c_str()));
+                    ImGui::TextWrapped(Tr("DLL Path: %s"), execPath.empty() ? "-" : wstring_to_string(execPath).c_str());
+                    ImGui::Text(Tr("Context created by: %s"),
+                                Tr(evidence.ownerModule == nullptr               ? "unknown"
+                                   : evidence.ownerModule == evidence.execModule ? "the same dll"
+                                                                                 : "A DIFFERENT DLL"));
+                    ImGui::Text(Tr("Compute dispatches: %u by this dll, %u by others"), evidence.computeFromExec,
                                 evidence.computeFromOther);
 
                     if (evidence.otherModule != nullptr)
                     {
-                        ImGui::Text("Other module: %s",
+                        ImGui::Text(Tr("Other module: %s"),
                                     FfxApiProxy::SrDiagDescribeModule(evidence.otherModule).c_str());
                     }
 
-                    ImGui::Text("Marker: %s", FSR4VisualVerify::MarkerName(evidence.marker));
-                    ImGui::TextDisabled("Marker draw: %s", FSR4VisualVerify::DrawStatusName(evidence.draw));
+                    ImGui::Text(Tr("Marker: %s"), Tr(FSR4VisualVerify::MarkerName(evidence.marker)));
+                    ImGui::TextDisabled(Tr("Marker draw: %s"), Tr(FSR4VisualVerify::DrawStatusName(evidence.draw)));
 
                     if (evidence.verified)
                     {
-                        ImGui::TextColored(toneMapColor(ImVec4(0.3f, 1.f, 0.3f, 1.f)), "Verdict: VERIFIED");
+                        ImGui::TextColored(toneMapColor(ImVec4(0.3f, 1.f, 0.3f, 1.f)), "%s", Tr("Verdict: VERIFIED"));
                     }
                     else
                     {
@@ -3262,11 +3308,11 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                                              : evidence.computeFromExec == 0    ? "no compute dispatch seen"
                                                                                 : "dispatch failed";
 
-                        ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.2f, 0.2f, 1.f)), "Verdict: NOT VERIFIED (%s)",
-                                           reason);
+                        ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.2f, 0.2f, 1.f)),
+                                           Tr("Verdict: NOT VERIFIED (%s)"), Tr(reason));
                     }
 
-                    ImGui::TextDisabled("Frames: %llu verified of %llu", evidence.verifiedFrames, evidence.frames);
+                    ImGui::TextDisabled(Tr("Frames: %llu verified of %llu"), evidence.verifiedFrames, evidence.frames);
                 }
 
                 ImGui::TreePop();
@@ -3275,7 +3321,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             // Not saved, results are shown under the performance overlay
             bool comparisonEnabled = FSR4Comparison::Enabled();
 
-            if (ImGui::Checkbox("FSR 4 Comparison Mode", &comparisonEnabled))
+            if (ImGui::Checkbox(TrL("FSR 4 Comparison Mode"), &comparisonEnabled))
             {
                 FSR4Comparison::SetEnabled(comparisonEnabled);
 
@@ -3287,7 +3333,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             ShowTooltip("Measures every upscaler dll while it's the one executing the upscaling and shows\n"
                         "the results under the performance overlay. Switch the dll above to measure the next one.\n\n"
                         "AVG = counted frames / their total time\n"
-                        "MIN / MAX = slowest / fastest single frame, as fps (not 1% lows)\n\n"
+                        "MIN / MAX = slowest / fastest single frame, as fps (not 1%% lows)\n\n"
                         "The first 2 seconds after a switch aren't counted.\n"
                         "Enabling it starts a new session and shows the performance overlay.");
         }
@@ -8049,8 +8095,8 @@ void MenuCommon::RenderDetectedInfo(RenderMenuContext& ctx)
         ImGui::EndTable();
     }
 
-    ImGui::TextDisabled("Unofficial modified build, not an OptiScaler release");
-    ImGui::TextDisabled("Based on %s", BuildInfo::ProductName());
+    ImGui::TextDisabled("%s", Tr("Unofficial modified build, not an OptiScaler release"));
+    ImGui::TextDisabled(Tr("Based on %s"), BuildInfo::ProductName());
     ImGui::TextDisabled("%s %s", state.gameExe.c_str(), state.gameName.c_str());
 }
 
@@ -8622,7 +8668,7 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
                 if (lastGroup != nullptr)
                     ImGui::Dummy(ImVec2(0.0f, style.ItemSpacing.y));
 
-                ImGui::TextDisabled("%s", tabs[i].group);
+                ImGui::TextDisabled("%s", Tr(tabs[i].group));
                 lastGroup = tabs[i].group;
             }
 
@@ -8644,7 +8690,7 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
 
             drawList->AddText(
                 ImVec2(rectMin.x + 10.0f * menuResScale, rectMin.y + (tabHeight - ImGui::GetTextLineHeight()) * 0.5f),
-                ImGui::GetColorU32(ImGuiCol_Text), tabs[i].label);
+                ImGui::GetColorU32(ImGuiCol_Text), Tr(tabs[i].label));
         }
 
         // OptiPatcher status only visible when used
@@ -8663,9 +8709,9 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
         ImGui::TextDisabled("SR");
         ImGui::SameLine(0.0f, 8.0f * menuResScale);
         if (currentFeature == nullptr || !currentFeature->IsInited())
-            ImGui::TextDisabled("None");
+            ImGui::TextDisabled("%s", Tr("None"));
         else if (currentFeature->IsFrozen())
-            ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.8f, 0.f, 1.f)), "Idle");
+            ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.8f, 0.f, 1.f)), "%s", Tr("Idle"));
         else
         {
             const float renderWidth = (float) currentFeature->RenderWidth();
@@ -8691,7 +8737,7 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
             ImGui::TextColored(toneMapColor(ImVec4(0.35f, 0.85f, 0.45f, 1.f)), "%s %ux", fgName.c_str(), multiplier);
         }
         else
-            ImGui::TextDisabled("Off");
+            ImGui::TextDisabled("%s", Tr("Off"));
 
         const bool spoofing = config->DxgiSpoofing.value_or_default();
         ImGui::TextDisabled("Spoof");
@@ -8921,7 +8967,7 @@ void MenuCommon::RenderMainMenuBottomBar(RenderMenuContext& ctx)
     auto& io = ctx.io;
 
     // BOTTOM LINE ---------------
-    if (ImGui::Button("Open Wiki"))
+    if (ImGui::Button(TrL("Open Wiki")))
     {
         auto pIO = &ImGui::GetPlatformIO();
         auto ctx = ImGui::GetCurrentContext();
@@ -8935,17 +8981,18 @@ void MenuCommon::RenderMainMenuBottomBar(RenderMenuContext& ctx)
 
     auto& style = ImGui::GetStyle();
     float rightButtonsWidth =
-        ImGui::CalcTextSize("Save Settings").x + ImGui::CalcTextSize("Close").x + style.FramePadding.x * 4.0f + 6.0f;
+        ImGui::CalcTextSize(Tr("Save Settings")).x + ImGui::CalcTextSize(Tr("Close")).x +
+        style.FramePadding.x * 4.0f + 6.0f;
 
     float avail = ImGui::GetContentRegionAvail().x;
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail - rightButtonsWidth);
 
-    if (ImGui::Button("Save Settings"))
+    if (ImGui::Button(TrL("Save Settings")))
         config->SaveIni();
 
     ImGui::SameLine(0.0f, 6.0f);
 
-    if (ImGui::Button("Close"))
+    if (ImGui::Button(TrL("Close")))
     {
         _isVisible = false;
         hasGamepad = (io.BackendFlags | ImGuiBackendFlags_HasGamepad) > 0;
@@ -9291,6 +9338,9 @@ void MenuCommon::RenderMainMenuWindow(RenderMenuContext& ctx)
 
     if (ImGui::Begin(windowTitle.c_str(), NULL, mainFlags))
     {
+        // Language of the menu, small and right aligned above everything else
+        RenderLanguageSelector(config);
+
         // Update and config notices shown above the tabs.
         RenderMainMenuHeaderMessages(ctx);
 
@@ -9369,6 +9419,9 @@ bool MenuCommon::RenderMenu()
 
     RenderMenuContext ctx { State::Instance(), Config::Instance(), ImGui::GetIO() };
     ctx.now = Util::MillisecondsNow();
+
+    // Menu language follows the config, Spanish unless it says English
+    Ilion::SetLang(Ilion::ParseLang(ctx.config->MenuLanguage.value_or_default()));
     ctx.currentFeature = ctx.state.currentFeature;
 
     // 1) Collect timing and input state before any ImGui drawing.

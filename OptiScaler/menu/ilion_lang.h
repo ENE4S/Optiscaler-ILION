@@ -1,0 +1,308 @@
+﻿#pragma once
+
+// This file is saved as UTF-8 with BOM and its literals have to stay UTF-8 in the binary, ImGui expects that.
+// Popped at the end of the file so the files that include this one keep their own setting.
+#pragma execution_character_set(push, "utf-8")
+
+#include <atomic>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+
+// Menu language of ILION.
+//
+// The English text is the key. Tr("Close") gives the Spanish text when Spanish is selected and a translation
+// exists, otherwise the English text comes back unchanged. So a text without a translation just stays English,
+// and adding a language entry never needs a code change besides the table below.
+//
+// TrL is for widget labels: the translated label keeps the English text as its ImGui id ("Cerrar###Close"),
+// so widgets don't lose their state when the language changes.
+//
+// Names of technologies, dlls and identifiers aren't translated.
+namespace Ilion
+{
+enum class Lang : int
+{
+    ES = 0,
+    EN = 1,
+};
+
+inline std::atomic<int> g_lang { (int) Lang::ES };
+
+inline Lang CurrentLang() { return (Lang) g_lang.load(std::memory_order_relaxed); }
+inline void SetLang(Lang lang) { g_lang.store((int) lang, std::memory_order_relaxed); }
+
+// Spanish unless the config says English
+inline Lang ParseLang(const std::string& code) { return _stricmp(code.c_str(), "en") == 0 ? Lang::EN : Lang::ES; }
+inline const char* LangCode(Lang lang) { return lang == Lang::EN ? "en" : "es"; }
+
+struct Translation
+{
+    const char* en;
+    const char* es;
+};
+
+// Format specifiers (%s, %llu, %.0f, %%) have to stay the same and in the same order as in the English text
+inline constexpr Translation kSpanish[] = {
+    // Tabs and sidebar
+    { "Custom", "Personal" },
+    { "Upscaling", "Escalado" },
+    { "Latency & FPS", "Latencia y FPS" },
+    { "Textures", "Texturas" },
+    { "Compatibility", "Compatibilidad" },
+    { "Menu", "Menú" },
+    { "Help / Status", "Ayuda / Estado" },
+    { "MAIN", "PRINCIPAL" },
+    { "SYSTEM", "SISTEMA" },
+    { "ADVANCED", "AVANZADO" },
+    { "None", "Ninguno" },
+    { "Idle", "En espera" },
+    { "Off", "Apagado" },
+    { "Yes", "Sí" },
+
+    // Section and card titles
+    { "Upscalers", "Escaladores" },
+    { "Low Latency", "Baja latencia" },
+    { "Sharpness", "Nitidez" },
+    { "Upscale Ratio Override", "Forzar relación de escalado" },
+    { "Output Scaling", "Escalado de salida" },
+    { "Init Flags", "Flags de inicialización" },
+    { "Active Quirks", "Quirks activos" },
+    { "Logging", "Registro (log)" },
+    { "Accent Colour", "Color de acento" },
+    { "Background Colour", "Color de fondo" },
+    { "FPS Overlay", "Overlay de FPS" },
+    { "Upscaler Inputs", "Entradas del escalador" },
+    { "V-Sync Settings", "Ajustes de V-Sync" },
+    { "Keybinds", "Atajos de teclado" },
+    { "Custom Tab", "Pestaña personal" },
+    { "Per shader GPU times", "Tiempos de GPU por shader" },
+    { "FSR FG Settings", "Ajustes de FSR FG" },
+    { "XeFG Settings", "Ajustes de XeFG" },
+    { "DLSSG Settings", "Ajustes de DLSSG" },
+    { "Reprojection Settings", "Ajustes de reproyección" },
+    { "OptiFG Settings", "Ajustes de OptiFG" },
+    { "Plugins / Startup", "Plugins / Inicio" },
+    { "Shaders / Limits", "Shaders / Límites" },
+    { "Resource Barriers", "Barreras de recursos" },
+    { "Anisotropic Filtering", "Filtrado anisotrópico" },
+    { "Detected", "Detectado" },
+    { "System", "Sistema" },
+    { "Hooks / Config", "Hooks / Configuración" },
+
+    // Bottom bar
+    { "Open Wiki", "Abrir Wiki" },
+    { "Save Settings", "Guardar ajustes" },
+    { "Close", "Cerrar" },
+    { "Click to open the OptiScaler Wiki page\nin your default browser\n\n"
+      "Compatibility list with known game issues\nand workarounds, FG options explained\n"
+      "and other useful info",
+      "Abre la Wiki de OptiScaler\nen tu navegador predeterminado\n\n"
+      "Lista de compatibilidad con problemas conocidos\ny soluciones, explicación de las opciones de FG\n"
+      "y otra información útil" },
+    { "\n\nAfter changing this option, please Save Settings.\nIt will be applied on next launch.",
+      "\n\nDespués de cambiar esta opción, pulsa Guardar ajustes.\nSe aplicará en el próximo inicio." },
+
+    // FSR versions selector
+    { "FSR Upscaler DLL", "DLL del escalador FSR" },
+    { "Default", "Predeterminada" },
+    { "Custom path", "Ruta personalizada" },
+    { "Rescan##SrVariants", "Actualizar lista" },
+    { "calculating...", "calculando..." },
+    { "Can't be used: %s", "No se puede usar: %s" },
+    { "file can't be opened", "no se puede abrir el archivo" },
+    { "not a dll", "no es una dll" },
+    { "not a 64 bit dll", "no es una dll de 64 bits" },
+    { "damaged dll", "dll dañada" },
+    { "dll has no exports", "la dll no tiene exportaciones" },
+    { "not an FSR upscaler dll (ffx exports missing)",
+      "no es una dll de escalado FSR (faltan las exportaciones ffx)" },
+    { "the dll has to be named amd_fidelityfx_upscaler_dx12.dll",
+      "la dll tiene que llamarse amd_fidelityfx_upscaler_dx12.dll" },
+    { "Switches amd_fidelityfx_upscaler_dx12.dll without restarting the game.\n"
+      "Every subfolder of ILION\\FSR_Versions (next to the game exe) that has its own\n"
+      "amd_fidelityfx_upscaler_dx12.dll is listed here, the folder name is the version name.\n"
+      "Add a folder and press Rescan, no restart needed.\n\n"
+      "Dlls stay loaded once used. Only affects upscaling, not frame generation.",
+      "Cambia amd_fidelityfx_upscaler_dx12.dll sin reiniciar el juego.\n"
+      "Aquí aparece cada subcarpeta de ILION\\FSR_Versions (junto al exe del juego) que tenga su propia\n"
+      "amd_fidelityfx_upscaler_dx12.dll; el nombre de la carpeta es el nombre de la versión.\n"
+      "Añade una carpeta y pulsa Actualizar lista, no hace falta reiniciar.\n\n"
+      "Las dll siguen cargadas una vez usadas. Solo afecta al escalado, no a frame generation." },
+
+    // Notifications of the versions switch
+    { "Can't find the dll of the selected FSR variant", "No se encuentra la dll de la versión FSR seleccionada" },
+    { "Can't load the dll of the selected FSR variant", "No se puede cargar la dll de la versión FSR seleccionada" },
+    { "Selected FSR variant is not a valid upscaler dll",
+      "La versión FSR seleccionada no es una dll de escalado válida" },
+    { "Selected FSR version isn't a compatible upscaler dll",
+      "La versión FSR seleccionada no es una dll de escalado compatible" },
+    { "Selected FSR version failed to start, the previous one was restored.\n"
+      "Select FSR again to keep using it.",
+      "La versión FSR seleccionada no pudo iniciarse y se restauró la anterior.\n"
+      "Vuelve a seleccionar FSR para seguir usándola." },
+
+    // Hot-swap diagnostics
+    { "FSR 4 HOT-SWAP DIAGNOSTICS", "DIAGNÓSTICO DE HOT-SWAP FSR 4" },
+    { "Selected: %s", "Seleccionada: %s" },
+    { "Active: %s", "Activa: %s" },
+    { "DLL Path: %s", "Ruta de la DLL: %s" },
+    { "Status: %s", "Estado: %s" },
+    { "Dispatch Count: %llu (errors: %llu)", "Dispatch ejecutados: %llu (errores: %llu)" },
+    { "Last Switch: %s", "Último cambio: %s" },
+    { "Request: %s", "Solicitud: %s" },
+    { "Context: %s", "Contexto: %s" },
+    { "Traced by: %s", "Rastreado por: %s" },
+    { "Driver provider: %s", "Proveedor del driver: %s" },
+    { "not requested", "no solicitado" },
+    { "code address", "dirección de código" },
+    { "hook trampoline target", "destino del trampolín del hook" },
+    { "ACTIVE", "ACTIVA" },
+    { "MISMATCH", "NO COINCIDE" },
+    { "UNVERIFIED (no upscale dispatch seen yet)", "SIN VERIFICAR (aún no se ha visto ningún dispatch de escalado)" },
+    { "UNVERIFIED (dispatch function can't be traced to a dll)",
+      "SIN VERIFICAR (la función de dispatch no se puede rastrear hasta una dll)" },
+    { "UNVERIFIED (no upscale dispatch in the last second)",
+      "SIN VERIFICAR (ningún dispatch de escalado en el último segundo)" },
+    { "UNVERIFIED (selected dll not found)", "SIN VERIFICAR (no se encuentra la dll seleccionada)" },
+    { "SWITCHING (waiting for a dispatch with the selected dll)",
+      "CAMBIANDO (esperando un dispatch con la dll seleccionada)" },
+    { "Dll that owns the ffxDispatch function called by the last upscale dispatch",
+      "Dll a la que pertenece la función ffxDispatch llamada en el último dispatch de escalado" },
+    { "Change of the dll that executes the dispatch, as seen in the dispatch calls",
+      "Cambio de la dll que ejecuta el dispatch, observado en las propias llamadas" },
+    { "Result of amdxcffx64's provider update for the upscaler dll that asked for it.\n"
+      "When it succeeds the dll may run the driver's FSR 4 instead of its own,\n"
+      "that can't be told apart from the dispatch call.",
+      "Resultado de la petición de proveedor a amdxcffx64 hecha por la dll de escalado.\n"
+      "Si tiene éxito, la dll puede ejecutar el FSR 4 del driver en lugar del suyo;\n"
+      "eso no se puede distinguir desde la llamada de dispatch." },
+
+    // Visual verification
+    { "FSR 4 VISUAL VERIFICATION", "VERIFICACIÓN VISUAL FSR 4" },
+    { "Color marker on upscaler output", "Marcador de color en la salida del escalador" },
+    { "Disabled", "Desactivado" },
+    { "Verdict: NO DATA (no upscale dispatch in the last second)",
+      "Veredicto: SIN DATOS (ningún dispatch de escalado en el último segundo)" },
+    { "Executing DLL: %s", "DLL que ejecuta: %s" },
+    { "Context created by: %s", "Contexto creado por: %s" },
+    { "unknown", "desconocido" },
+    { "the same dll", "la misma dll" },
+    { "A DIFFERENT DLL", "OTRA DLL DISTINTA" },
+    { "Compute dispatches: %u by this dll, %u by others", "Dispatch de cómputo: %u de esta dll, %u de otros" },
+    { "Other module: %s", "Otro módulo: %s" },
+    { "Marker: %s", "Marcador: %s" },
+    { "Marker draw: %s", "Dibujo del marcador: %s" },
+    { "Verdict: VERIFIED", "Veredicto: VERIFICADO" },
+    { "Verdict: NOT VERIFIED (%s)", "Veredicto: NO VERIFICADO (%s)" },
+    { "Frames: %llu verified of %llu", "Fotogramas: %llu verificados de %llu" },
+    { "command list can't be observed", "no se puede observar la lista de comandos" },
+    { "dispatch function not traced", "función de dispatch no rastreada" },
+    { "context owner unknown", "dueño del contexto desconocido" },
+    { "context belongs to another dll", "el contexto pertenece a otra dll" },
+    { "GPU work recorded by another module", "trabajo de GPU emitido por otro módulo" },
+    { "no compute dispatch seen", "no se observó ningún dispatch de cómputo" },
+    { "dispatch failed", "el dispatch falló" },
+    { "blue (Official)", "azul (Official)" },
+    { "green (Community)", "verde (Community)" },
+    { "magenta (Lite)", "magenta (Lite)" },
+    { "white (other dll)", "blanco (otra dll)" },
+    { "yellow, top only (not verified)", "amarillo, solo arriba (no verificado)" },
+    { "none", "ninguno" },
+    { "written to the upscaler output", "escrito en la salida del escalador" },
+    { "skipped, dispatch failed", "omitido, el dispatch falló" },
+    { "skipped, no command list or output", "omitido, sin lista de comandos o sin salida" },
+    { "skipped, not a direct command list", "omitido, no es una lista de comandos directa" },
+    { "skipped, output is not in UAV state", "omitido, la salida no está en estado UAV" },
+    { "skipped, output format isn't supported", "omitido, formato de salida no admitido" },
+    { "skipped, can't create the marker texture", "omitido, no se puede crear la textura del marcador" },
+    { "not run", "no ejecutado" },
+    { "Writes color bars into the output of the upscale dispatch, before the game's post\n"
+      "processing. Top and bottom bars: the dll below recorded the compute work of the frame.\n"
+      "Blue = Official, Green = Community, Magenta = Lite, White = any other dll.\n"
+      "Yellow top bar only = could not be verified.\n\n"
+      "The bars are drawn by OptiScaler, not by the dll. Not saved, off on next launch.",
+      "Escribe barras de color en la salida del dispatch de escalado, antes del posprocesado\n"
+      "del juego. Barras arriba y abajo: la dll indicada emitió el trabajo de cómputo del fotograma.\n"
+      "Azul = Official, Verde = Community, Magenta = Lite, Blanco = cualquier otra dll.\n"
+      "Solo barra amarilla arriba = no se pudo verificar.\n\n"
+      "Las barras las dibuja OptiScaler, no la dll. No se guarda; desactivado en el próximo inicio." },
+
+    // Comparison mode
+    { "FSR 4 Comparison Mode", "Modo de comparación FSR 4" },
+    { "WAITING", "ESPERANDO" },
+    { "STABILIZING", "ESTABILIZANDO" },
+    { "RECORDING", "MIDIENDO" },
+    { "SAVED", "GUARDADO" },
+    { "min --  max --", "mín --  máx --" },
+    { "min %.0f  max %.0f", "mín %.0f  máx %.0f" },
+    { "Active dll isn't Official, Community or Lite, not measured",
+      "La dll activa no es Official, Community ni Lite; no se mide" },
+    { "Includes frames presented by frame generation", "Incluye fotogramas presentados por frame generation" },
+    { "Measures every upscaler dll while it's the one executing the upscaling and shows\n"
+      "the results under the performance overlay. Switch the dll above to measure the next one.\n\n"
+      "AVG = counted frames / their total time\n"
+      "MIN / MAX = slowest / fastest single frame, as fps (not 1%% lows)\n\n"
+      "The first 2 seconds after a switch aren't counted.\n"
+      "Enabling it starts a new session and shows the performance overlay.",
+      "Mide cada dll de escalado mientras es la que ejecuta el escalado y muestra\n"
+      "los resultados bajo el overlay de rendimiento. Cambia la dll arriba para medir la siguiente.\n\n"
+      "AVG = fotogramas contados / su tiempo total\n"
+      "MIN / MAX = fotograma más lento / más rápido, en fps (no son 1%% lows)\n\n"
+      "Los primeros 2 segundos tras un cambio no se cuentan.\n"
+      "Al activarlo empieza una sesión nueva y se muestra el overlay de rendimiento." },
+
+    // Status tab
+    { "Unofficial modified build, not an OptiScaler release",
+      "Compilación modificada no oficial, no es una versión de OptiScaler" },
+    { "Based on %s", "Basado en %s" },
+};
+
+struct TranslationEntry
+{
+    const char* es = nullptr;
+    std::string label;
+};
+
+inline const std::unordered_map<std::string_view, TranslationEntry>& SpanishTable()
+{
+    static const std::unordered_map<std::string_view, TranslationEntry> table = []
+    {
+        std::unordered_map<std::string_view, TranslationEntry> result;
+        result.reserve(std::size(kSpanish));
+
+        for (const auto& translation : kSpanish)
+            result[translation.en] = { translation.es, std::string(translation.es) + "###" + translation.en };
+
+        return result;
+    }();
+
+    return table;
+}
+
+// Text in the selected language, the English text itself when there's no translation
+inline const char* Tr(const char* english)
+{
+    if (english == nullptr || CurrentLang() == Lang::EN)
+        return english;
+
+    const auto& table = SpanishTable();
+    const auto it = table.find(english);
+
+    return it != table.end() ? it->second.es : english;
+}
+
+// Same for widget labels, the ImGui id stays the English label
+inline const char* TrL(const char* english)
+{
+    if (english == nullptr || CurrentLang() == Lang::EN)
+        return english;
+
+    const auto& table = SpanishTable();
+    const auto it = table.find(english);
+
+    return it != table.end() ? it->second.label.c_str() : english;
+}
+} // namespace Ilion
+
+#pragma execution_character_set(pop)

@@ -484,6 +484,7 @@ bool Config::Reload(std::filesystem::path iniPath)
             if (auto setting = readFloat("Menu", "BlurStrength"); setting.has_value())
                 MenuBlurStrength.set_from_config(std::clamp(setting.value(), 0.0f, 4.0f));
             CustomTabEnabled.set_from_config(readBool("Menu", "CustomTabEnabled"));
+            MenuLanguage.set_from_config(readString("Menu", "Language"));
             CustomTabCards.set_from_config(readString("Menu", "CustomTabCards"));
         }
 
@@ -1281,6 +1282,7 @@ bool Config::SaveIni()
         ini.SetValue("Menu", "Blur", GetBoolValue(Instance()->MenuBlur.value_for_config()).c_str());
         ini.SetValue("Menu", "BlurStrength", GetFloatValue(Instance()->MenuBlurStrength.value_for_config()).c_str());
         ini.SetValue("Menu", "CustomTabEnabled", GetBoolValue(Instance()->CustomTabEnabled.value_for_config()).c_str());
+        ini.SetValue("Menu", "Language", Instance()->MenuLanguage.value_for_config_or("auto").c_str());
         ini.SetValue("Menu", "CustomTabCards", Instance()->CustomTabCards.value_for_config_or("auto").c_str());
     }
 

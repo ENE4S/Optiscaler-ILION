@@ -14,6 +14,7 @@
 #include <fsr4/FSR4ModelSelection.h>
 #include <fsr4/FSR4VisualVerify.h>
 #include <fsr4/FSR4Versions.h>
+#include <menu/ilion_lang.h>
 
 #include "ffx_api.h"
 #include <detours/detours.h>
@@ -780,7 +781,7 @@ class FfxApiProxy
         {
             LOG_ERROR("Can't find amd_fidelityfx_upscaler_dx12.dll for variant: {}", variantName);
             ImGui::InsertNotification(
-                { ImGuiToastType::Error, 10000, "Can't find the dll of the selected FSR variant" });
+                { ImGuiToastType::Error, 10000, Ilion::Tr("Can't find the dll of the selected FSR variant") });
             SrDiagSetSwitchResult(diagFrom, diagTo, "FAILED, dll not found");
             return;
         }
@@ -813,7 +814,7 @@ class FfxApiProxy
             {
                 LOG_ERROR("{} can't be used: {}", wstring_to_string(targetPath), problem);
                 ImGui::InsertNotification(
-                    { ImGuiToastType::Error, 10000, "Selected FSR version isn't a compatible upscaler dll" });
+                    { ImGuiToastType::Error, 10000, Ilion::Tr("Selected FSR version isn't a compatible upscaler dll") });
                 SrDiagSetSwitchResult(diagFrom, diagTo, "FAILED, " + problem);
                 return;
             }
@@ -824,7 +825,7 @@ class FfxApiProxy
             {
                 LOG_ERROR("Can't load {}", wstring_to_string(targetPath));
                 ImGui::InsertNotification(
-                    { ImGuiToastType::Error, 10000, "Can't load the dll of the selected FSR variant" });
+                    { ImGuiToastType::Error, 10000, Ilion::Tr("Can't load the dll of the selected FSR variant") });
                 SrDiagSetSwitchResult(diagFrom, diagTo, "FAILED, dll can't be loaded");
                 return;
             }
@@ -846,7 +847,7 @@ class FfxApiProxy
             {
                 LOG_ERROR("Missing ffx exports in {}", wstring_to_string(target.filePath));
                 ImGui::InsertNotification(
-                    { ImGuiToastType::Error, 10000, "Selected FSR variant is not a valid upscaler dll" });
+                    { ImGuiToastType::Error, 10000, Ilion::Tr("Selected FSR variant is not a valid upscaler dll") });
                 SrDiagSetSwitchResult(diagFrom, diagTo, "FAILED, dll is missing ffx exports");
                 return;
             }
@@ -926,8 +927,8 @@ class FfxApiProxy
 
         LOG_ERROR("FSR version {} couldn't create a context, {} is active again", failedName, previousName);
         ImGui::InsertNotification({ ImGuiToastType::Error, 10000,
-                                    "Selected FSR version failed to start, the previous one was restored.\n"
-                                    "Select FSR again to keep using it." });
+                                    Ilion::Tr("Selected FSR version failed to start, the previous one was restored.\n"
+                                              "Select FSR again to keep using it.") });
 
         SrDiagSetSwitchResult(failedName, previousName, "REVERTED, the new dll couldn't create a context");
     }

@@ -381,6 +381,7 @@ class Config
     CustomOptional<bool> MenuBlur { true };
     CustomOptional<float> MenuBlurStrength { 1.0f };
     CustomOptional<bool> CustomTabEnabled { true };
+    CustomOptional<std::string> MenuLanguage { "es" };
     CustomOptional<std::string> CustomTabCards { "upscaler,sharpness,fg_selection,fg_fsrfg,fg_xefg,fg_dlssg,fg_"
                                                  "reprojection,fg_optifg,fg_nvngx,fg_fsrfg_inputs,fg_sl_"
                                                  "inputs,framerate" }; // Comma separated ids of the boxes

@@ -101,12 +101,14 @@ uint64_t FSR4ModelSelection::hkcreateModelSDK2(void* context, uint32_t preset, v
     return result;
 }
 
-void FSR4ModelSelection::Hook(HMODULE module, FSR4Source source)
+void FSR4ModelSelection::Hook(HMODULE module, FSR4Source source, bool rehook)
 {
     if (module == nullptr)
         return;
 
-    if (source == FSR4Source::SDK && (o_getModelBlobSDK || o_createModelSDK))
+    const bool rehookSDK2 = rehook && source == FSR4Source::SDK && o_createModelSDK2;
+
+    if (source == FSR4Source::SDK && (o_getModelBlobSDK || o_createModelSDK || rehookSDK2))
     {
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
@@ -117,12 +119,18 @@ void FSR4ModelSelection::Hook(HMODULE module, FSR4Source source)
         if (o_createModelSDK)
             DetourDetach(&(PVOID&) o_createModelSDK, hkcreateModelSDK);
 
+        if (rehookSDK2)
+            DetourDetach(&(PVOID&) o_createModelSDK2, hkcreateModelSDK2);
+
         if (DetourTransactionCommit() == NO_ERROR)
         {
             LOG_DEBUG("Unhooked old model selection hooks for SDK");
 
             o_createModelSDK = nullptr;
             o_getModelBlobSDK = nullptr;
+
+            if (rehookSDK2)
+                o_createModelSDK2 = nullptr;
         }
     }
     else if (source == FSR4Source::DriverDll && (o_getModelBlobDriver || o_createModelDriver))

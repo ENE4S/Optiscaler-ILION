@@ -9,6 +9,7 @@
 #include <proxies/XeFG_Proxy.h>
 #include <proxies/FfxApi_Proxy.h>
 #include <upscalers/ffx/FFXFeature.h>
+#include <fsr4/FSR4Comparison.h>
 #include <proxies/Streamline_Proxy.h>
 
 #include <framegen/nvngx/Nvngx_FG.h>
@@ -1746,6 +1747,112 @@ void MenuCommon::UpdateRenderTiming(RenderMenuContext& ctx)
     state.frameTimes.push_back(frameTime);
 }
 
+// Feeds the FSR 4 comparison with the frame time that was just measured and the dll that executed the upscaling
+static void UpdateFsr4Comparison(State& state, double frameTime, double now)
+{
+    if (!FSR4Comparison::Enabled())
+        return;
+
+    const auto active = FfxApiProxy::SrDiagGetActive();
+    const auto fg = state.currentFG;
+    const bool fgActive = fg != nullptr && fg->IsActive() && !fg->IsPaused();
+
+    FSR4Comparison::OnFrame(frameTime, now, active.module, active.name, active.slot, active.dispatchCount,
+                            active.errorCount, active.requestTick, fgActive);
+}
+
+// Three boxes under the performance overlay's own lines, drawn with the window's draw list
+static void DrawFsr4ComparisonPanel(float scale)
+{
+    if (!FSR4Comparison::Enabled())
+        return;
+
+    ImGui::Spacing();
+
+    const auto font = ImGui::GetFont();
+    const float textSize = ImGui::GetFontSize();
+    const float smallSize = textSize * 0.85f;
+    const float bigSize = textSize * 1.8f;
+    const float padding = 5.0f * scale;
+    const float gap = 6.0f * scale;
+    const float lineGap = 2.0f * scale;
+
+    const float minBoxWidth = textSize * 7.5f;
+    const float availWidth = ImGui::GetContentRegionAvail().x;
+    const float boxWidth = std::max(minBoxWidth, (availWidth - gap * 2.0f) / 3.0f);
+    const float boxHeight = padding * 2.0f + smallSize * 3.0f + bigSize + lineGap * 3.0f;
+
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    auto drawList = ImGui::GetWindowDrawList();
+
+    const ImU32 textColor = ImGui::GetColorU32(ImGuiCol_Text);
+    const ImU32 dimColor = ImGui::GetColorU32(ImGuiCol_Text, 0.6f);
+    const ImU32 borderColor = ImGui::GetColorU32(ImGuiCol_Text, 0.25f);
+    const ImU32 recordingColor = ImGui::ColorConvertFloat4ToU32(toneMapColor(ImVec4(0.3f, 1.0f, 0.3f, 1.0f)));
+    const ImU32 stabilizingColor = ImGui::ColorConvertFloat4ToU32(toneMapColor(ImVec4(1.0f, 0.8f, 0.0f, 1.0f)));
+
+    const auto centered = [&](const char* text, float size, float boxLeft, float y, ImU32 color)
+    {
+        const float width = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text).x;
+        drawList->AddText(font, size, ImVec2(boxLeft + (boxWidth - width) * 0.5f, y), color, text);
+    };
+
+    bool fgSeen = false;
+
+    for (int i = 0; i < FSR4Comparison::BoxCount; i++)
+    {
+        const auto& box = FSR4Comparison::GetBox(i);
+        const bool current = i == FSR4Comparison::CurrentBox() && (box.status == FSR4Comparison::Status::Recording ||
+                                                                   box.status == FSR4Comparison::Status::Stabilizing);
+
+        const float left = origin.x + (boxWidth + gap) * (float) i;
+        const ImVec2 boxMin(left, origin.y);
+        const ImVec2 boxMax(left + boxWidth, origin.y + boxHeight);
+
+        drawList->AddRect(boxMin, boxMax, current ? recordingColor : borderColor, 3.0f * scale, 0,
+                          current ? 2.0f * scale : 1.0f);
+
+        char average[16] = "--";
+        char minMax[40] = "min --  max --";
+
+        if (box.HasResult())
+        {
+            snprintf(average, sizeof(average), "%.1f", box.AvgFps());
+            snprintf(minMax, sizeof(minMax), "min %.0f  max %.0f", box.MinFps(), box.MaxFps());
+        }
+
+        ImU32 statusColor = dimColor;
+
+        if (box.status == FSR4Comparison::Status::Recording)
+            statusColor = recordingColor;
+        else if (box.status == FSR4Comparison::Status::Stabilizing)
+            statusColor = stabilizingColor;
+
+        float y = origin.y + padding;
+
+        centered(box.label, smallSize, left, y, dimColor);
+        y += smallSize + lineGap;
+
+        centered(average, bigSize, left, y, textColor);
+        y += bigSize + lineGap;
+
+        centered(minMax, smallSize, left, y, dimColor);
+        y += smallSize + lineGap;
+
+        centered(FSR4Comparison::StatusName(box.status), smallSize, left, y, statusColor);
+
+        fgSeen = fgSeen || box.fgSeen;
+    }
+
+    ImGui::Dummy(ImVec2(boxWidth * 3.0f + gap * 2.0f, boxHeight));
+
+    if (FSR4Comparison::OtherDllActive())
+        ImGui::TextDisabled("Active dll isn't Official, Community or Lite, not measured");
+
+    if (fgSeen)
+        ImGui::TextDisabled("Includes frames presented by frame generation");
+}
+
 void MenuCommon::UpdateMenuInputMode(RenderMenuContext& ctx)
 {
     auto& io = ctx.io;
@@ -2585,6 +2692,8 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                 }
 #endif
             }
+
+            DrawFsr4ComparisonPanel(fpsScale);
         }
 
         // Restore the style
@@ -2957,6 +3066,195 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
     // FFX -----------------
     if (!usesDlssd && (currentBackend == Upscaler::FFX || currentBackend == Upscaler::FFX_on12))
     {
+        // Upscaler dll selection, kept outside of the version checks so it's still reachable when a dll fails
+        if (currentBackend == Upscaler::FFX && state.api == DX12)
+        {
+            static std::vector<FfxApiProxy::SrVariant> srVariants = FfxApiProxy::SrVariants();
+            static std::wstring defaultSrDll = FfxApiProxy::SrVariantDllPath(L"");
+
+            auto selectSrVariant = [&](const std::wstring& name)
+            {
+                if (name.empty())
+                    config->Fsr4SrVariant.reset();
+                else
+                    config->Fsr4SrVariant = name;
+
+                FfxApiProxy::RequestSrVariant(name);
+                state.newBackend = currentBackend;
+                MARK_ALL_BACKENDS_CHANGED();
+            };
+
+            const bool defaultActive = !defaultSrDll.empty() && FfxApiProxy::IsActiveSrDll(defaultSrDll);
+            std::string activeSrName = defaultActive ? "Default" : "Custom path";
+
+            for (const auto& variant : srVariants)
+            {
+                if (FfxApiProxy::IsActiveSrDll(variant.dllPath))
+                    activeSrName = wstring_to_string(variant.name);
+            }
+
+            ImGui::Spacing();
+            ImGui::PushItemWidth(150.0f * menuResScale);
+
+            if (ImGui::BeginCombo("FSR Upscaler DLL", activeSrName.c_str()))
+            {
+                if (!defaultSrDll.empty() && ImGui::Selectable("Default", defaultActive) && !defaultActive)
+                    selectSrVariant(L"");
+
+                for (const auto& variant : srVariants)
+                {
+                    const bool variantActive = FfxApiProxy::IsActiveSrDll(variant.dllPath);
+
+                    if (ImGui::Selectable(wstring_to_string(variant.name).c_str(), variantActive) && !variantActive)
+                        selectSrVariant(variant.name);
+                }
+
+                ImGui::EndCombo();
+            }
+
+            ImGui::PopItemWidth();
+
+            ShowTooltip("Switches amd_fidelityfx_upscaler_dx12.dll without restarting the game.\n"
+                        "Each subfolder of OptiScaler\\FSR4 with its own dll is listed here.\n\n"
+                        "Dlls stay loaded once used. Only affects upscaling, not frame generation.");
+
+            ImGui::SameLine();
+
+            if (ImGui::Button("Rescan##SrVariants"))
+            {
+                srVariants = FfxApiProxy::SrVariants();
+                defaultSrDll = FfxApiProxy::SrVariantDllPath(L"");
+            }
+
+            ImGui::TextDisabled("%s", wstring_to_string(FfxApiProxy::Dx12Module_SR_Path()).c_str());
+
+            // Read-only, everything comes from the dispatch calls that were actually made
+            if (ImGui::TreeNodeEx("FSR 4 HOT-SWAP DIAGNOSTICS", ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                const auto diag = FfxApiProxy::SrDiagGetSnapshot();
+
+                const ImVec4 statusColor = diag.statusLevel == 0   ? ImVec4(0.3f, 1.f, 0.3f, 1.f)
+                                           : diag.statusLevel == 2 ? ImVec4(1.f, 0.2f, 0.2f, 1.f)
+                                                                   : ImVec4(1.f, 0.8f, 0.f, 1.f);
+
+                ImGui::Text("Selected: %s", diag.selectedName.c_str());
+                ImGui::Text("Active: %s", diag.activeName.c_str());
+                ShowTooltip("Dll that owns the ffxDispatch function called by the last upscale dispatch");
+                ImGui::TextWrapped("DLL Path: %s",
+                                   diag.activePath.empty() ? "-" : wstring_to_string(diag.activePath).c_str());
+                ImGui::TextColored(toneMapColor(statusColor), "Status: %s", diag.status.c_str());
+                ImGui::Text("Dispatch Count: %llu (errors: %llu)", diag.activeDispatchCount, diag.activeErrorCount);
+
+                for (const auto& module : diag.modules)
+                    ImGui::TextDisabled("  %s: %llu", module.name.c_str(), module.dispatchCount);
+
+                ImGui::Text("Last Switch: %s", diag.observedSwitch.empty() ? "-" : diag.observedSwitch.c_str());
+                ShowTooltip("Change of the dll that executes the dispatch, as seen in the dispatch calls");
+                ImGui::TextDisabled("Request: %s", diag.switchResult.empty() ? "-" : diag.switchResult.c_str());
+                ImGui::TextDisabled("Context: %s", diag.createResult.empty() ? "-" : diag.createResult.c_str());
+                ImGui::TextDisabled("Traced by: %s", diag.resolvedBy.c_str());
+                ImGui::TextDisabled("Driver provider: %s",
+                                    diag.driverProvider.empty() ? "not requested" : diag.driverProvider.c_str());
+                ShowTooltip("Result of amdxcffx64's provider update for the upscaler dll that asked for it.\n"
+                            "When it succeeds the dll may run the driver's FSR 4 instead of its own,\n"
+                            "that can't be told apart from the dispatch call.");
+
+                ImGui::TreePop();
+            }
+
+            // Experimental, the marker color is keyed to the dll that recorded the GPU work, not to the selection
+            if (ImGui::TreeNodeEx("FSR 4 VISUAL VERIFICATION", ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                bool visualEnabled = FSR4VisualVerify::Enabled();
+
+                if (ImGui::Checkbox("Color marker on upscaler output", &visualEnabled))
+                    FSR4VisualVerify::SetEnabled(visualEnabled);
+
+                ShowTooltip("Writes color bars into the output of the upscale dispatch, before the game's post\n"
+                            "processing. Top and bottom bars: the dll below recorded the compute work of the frame.\n"
+                            "Blue = Official, Green = Community, Magenta = Lite, White = any other dll.\n"
+                            "Yellow top bar only = could not be verified.\n\n"
+                            "The bars are drawn by OptiScaler, not by the dll. Not saved, off on next launch.");
+
+                const auto evidence = FSR4VisualVerify::GetEvidence();
+
+                if (!evidence.enabled)
+                {
+                    ImGui::TextDisabled("Disabled");
+                }
+                else if (!evidence.hasFrame || evidence.msSinceLastFrame > 1000)
+                {
+                    ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.8f, 0.f, 1.f)),
+                                       "Verdict: NO DATA (no upscale dispatch in the last second)");
+                }
+                else
+                {
+                    std::wstring execPath;
+                    const auto execName = FfxApiProxy::SrDiagDescribeModule(evidence.execModule, &execPath);
+
+                    ImGui::Text("Executing DLL: %s", execName.c_str());
+                    ImGui::TextWrapped("DLL Path: %s", execPath.empty() ? "-" : wstring_to_string(execPath).c_str());
+                    ImGui::Text("Context created by: %s",
+                                evidence.ownerModule == nullptr           ? "unknown"
+                                : evidence.ownerModule == evidence.execModule ? "the same dll"
+                                                                              : "A DIFFERENT DLL");
+                    ImGui::Text("Compute dispatches: %u by this dll, %u by others", evidence.computeFromExec,
+                                evidence.computeFromOther);
+
+                    if (evidence.otherModule != nullptr)
+                    {
+                        ImGui::Text("Other module: %s",
+                                    FfxApiProxy::SrDiagDescribeModule(evidence.otherModule).c_str());
+                    }
+
+                    ImGui::Text("Marker: %s", FSR4VisualVerify::MarkerName(evidence.marker));
+                    ImGui::TextDisabled("Marker draw: %s", FSR4VisualVerify::DrawStatusName(evidence.draw));
+
+                    if (evidence.verified)
+                    {
+                        ImGui::TextColored(toneMapColor(ImVec4(0.3f, 1.f, 0.3f, 1.f)), "Verdict: VERIFIED");
+                    }
+                    else
+                    {
+                        const char* reason = !evidence.instrumented             ? "command list can't be observed"
+                                             : evidence.execModule == nullptr   ? "dispatch function not traced"
+                                             : evidence.ownerModule == nullptr  ? "context owner unknown"
+                                             : evidence.ownerModule != evidence.execModule
+                                                 ? "context belongs to another dll"
+                                             : evidence.computeFromOther > 0    ? "GPU work recorded by another module"
+                                             : evidence.computeFromExec == 0    ? "no compute dispatch seen"
+                                                                                : "dispatch failed";
+
+                        ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.2f, 0.2f, 1.f)), "Verdict: NOT VERIFIED (%s)",
+                                           reason);
+                    }
+
+                    ImGui::TextDisabled("Frames: %llu verified of %llu", evidence.verifiedFrames, evidence.frames);
+                }
+
+                ImGui::TreePop();
+            }
+
+            // Not saved, results are shown under the performance overlay
+            bool comparisonEnabled = FSR4Comparison::Enabled();
+
+            if (ImGui::Checkbox("FSR 4 Comparison Mode", &comparisonEnabled))
+            {
+                FSR4Comparison::SetEnabled(comparisonEnabled);
+
+                // The results panel is part of the performance overlay
+                if (comparisonEnabled && !config->ShowFps.value_or_default())
+                    config->ShowFps.set_volatile_value(true);
+            }
+
+            ShowTooltip("Measures every upscaler dll while it's the one executing the upscaling and shows\n"
+                        "the results under the performance overlay. Switch the dll above to measure the next one.\n\n"
+                        "AVG = counted frames / their total time\n"
+                        "MIN / MAX = slowest / fastest single frame, as fps (not 1% lows)\n\n"
+                        "The first 2 seconds after a switch aren't counted.\n"
+                        "Enabling it starts a new session and shows the performance overlay.");
+        }
+
         if (auto versions = GetFfxVersionList(currentBackend, state.api);
             versions != nullptr && !versions->names.empty())
         {
@@ -7713,6 +8011,10 @@ void MenuCommon::RenderDetectedInfo(RenderMenuContext& ctx)
 
         ImGui::EndTable();
     }
+
+    ImGui::TextDisabled("Unofficial modified build, not an OptiScaler release");
+    ImGui::TextDisabled("Based on %s", BuildInfo::ProductName());
+    ImGui::TextDisabled("%s %s", state.gameExe.c_str(), state.gameName.c_str());
 }
 
 // Same dense look as the Status tab
@@ -8946,8 +9248,8 @@ void MenuCommon::RenderMainMenuWindow(RenderMenuContext& ctx)
     // Main menu window
     if (windowTitle.empty())
     {
-        windowTitle = StrFmt("%s - %s %s", BuildInfo::ProductName(), state.gameExe.c_str(),
-                             state.gameName.empty() ? "" : StrFmt("- %s", state.gameName.c_str()).c_str());
+        // Name of this modified build, the OptiScaler build it is based on is shown in the Status tab
+        windowTitle = "OptiScaler-ILION V1.0";
     }
 
     if (ImGui::Begin(windowTitle.c_str(), NULL, mainFlags))
@@ -9034,6 +9336,7 @@ bool MenuCommon::RenderMenu()
 
     // 1) Collect timing and input state before any ImGui drawing.
     UpdateRenderTiming(ctx);
+    UpdateFsr4Comparison(ctx.state, ctx.frameTime, ctx.now);
     UpdateMenuInputMode(ctx);
     HandleMenuShortcuts(ctx);
 

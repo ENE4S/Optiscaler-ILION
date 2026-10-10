@@ -28,7 +28,8 @@ class FSR4ModelSelection
     static PFN_createModel2 o_createModelDriver2;
 
   public:
-    static void Hook(HMODULE module, FSR4Source source);
+    // rehook: also drop the createModel2 hook so that a different module of the same source can be hooked
+    static void Hook(HMODULE module, FSR4Source source, bool rehook = false);
     static bool IsCreateModelDriver2Hooked() { return o_createModelDriver2; };
     static bool IsInt8FsrHooked() { return o_createModelSDK2 || o_createModelDriver2; };
 };

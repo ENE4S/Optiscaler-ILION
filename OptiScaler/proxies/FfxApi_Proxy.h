@@ -12,6 +12,7 @@
 #include <inputs/FfxApi_Vk.h>
 
 #include <fsr4/FSR4ModelSelection.h>
+#include <fsr4/FSR4VisualVerify.h>
 
 #include "ffx_api.h"
 #include <detours/detours.h>
@@ -19,6 +20,9 @@
 #include <ffx_upscale.h>
 
 #include <magic_enum.hpp>
+#include <mutex>
+#include <array>
+#include <atomic>
 
 // A mess to be able to import both
 #define FFX_API_CONFIGURE_FG_SWAPCHAIN_KEY_WAITCALLBACK FFX_API_CONFIGURE_FG_SWAPCHAIN_KEY_WAITCALLBACK_DX12
@@ -92,6 +96,312 @@ class FfxApiProxy
 
     inline static bool _skipDestroyCalls = false;
 
+    // FSR upscaler dll variants
+    // Every upscaler dll that got loaded stays loaded, switching only changes which one is upscaling_dx12.
+    // Contexts remember the module that created them as the old feature gets destroyed after the switch.
+    struct SrContextFns
+    {
+        PfnFfxDestroyContext DestroyContext = nullptr;
+        PfnFfxConfigure Configure = nullptr;
+        PfnFfxQuery Query = nullptr;
+        PfnFfxDispatch Dispatch = nullptr;
+
+        // Dll that created the context, only read by the visual verification
+        HMODULE owner = nullptr;
+    };
+
+    inline static std::mutex _srMutex;
+    inline static std::vector<FfxModule> _srLoaded;
+    inline static ankerl::unordered_dense::map<ffxContext, SrContextFns> _srContexts;
+    inline static std::optional<std::wstring> _srPending;
+
+    static bool IsSamePath(const std::wstring& a, const std::wstring& b)
+    {
+        auto pathA = std::filesystem::path(a).lexically_normal().wstring();
+        auto pathB = std::filesystem::path(b).lexically_normal().wstring();
+
+        return _wcsicmp(pathA.c_str(), pathB.c_str()) == 0;
+    }
+
+    static void RegisterSrContext(ffxContext* context)
+    {
+        if (context == nullptr || *context == nullptr)
+            return;
+
+        std::scoped_lock lock(_srMutex);
+        _srContexts[*context] = { upscaling_dx12.DestroyContext, upscaling_dx12.Configure, upscaling_dx12.Query,
+                                  upscaling_dx12.Dispatch, upscaling_dx12.dll };
+    }
+
+    static std::optional<SrContextFns> FindSrContext(ffxContext* context, bool remove = false)
+    {
+        if (context == nullptr || *context == nullptr)
+            return std::nullopt;
+
+        std::scoped_lock lock(_srMutex);
+
+        auto it = _srContexts.find(*context);
+        if (it == _srContexts.end())
+            return std::nullopt;
+
+        auto result = it->second;
+
+        if (remove)
+            _srContexts.erase(it);
+
+        return result;
+    }
+
+    // Hot-swap diagnostics, observation only
+    // A slot is created per distinct ffxDispatch pointer that was actually called for an upscale dispatch.
+    // The pointer is resolved to the module that owns the code it leads to, not to what was selected or loaded.
+    struct SrDiagSlot
+    {
+        std::atomic<void*> fn { nullptr };
+        HMODULE module = nullptr;
+        std::wstring path;
+        std::string name;
+        bool viaTrampoline = false;
+        std::atomic<uint64_t> dispatchCount { 0 };
+        std::atomic<uint64_t> errorCount { 0 };
+    };
+
+    inline static std::array<SrDiagSlot, 16> _srDiagSlots;
+    inline static std::atomic<int> _srDiagSlotCount { 0 };
+    inline static std::atomic<int> _srDiagLastSlot { -1 };
+    inline static std::atomic<uint64_t> _srDiagLastDispatchTick { 0 };
+    inline static std::atomic<uint64_t> _srDiagRequestTick { 0 };
+    inline static std::atomic<int> _srDiagLastResult { 0 };
+
+    // Rarely written text, guarded by _srDiagMutex
+    inline static std::mutex _srDiagMutex;
+    inline static bool _srDiagSelectedSet = false;
+    inline static std::string _srDiagSelectedName;
+    inline static std::wstring _srDiagSelectedPath;
+    inline static std::string _srDiagSwitchResult;
+    inline static std::string _srDiagObservedSwitch;
+    inline static std::string _srDiagCreateResult;
+    inline static std::string _srDiagDriverProvider;
+
+    static std::wstring SrDiagModulePath(HMODULE module)
+    {
+        if (module == nullptr)
+            return L"";
+
+        wchar_t modulePath[MAX_PATH] = { 0 };
+        GetModuleFileNameW(module, modulePath, MAX_PATH);
+
+        return std::wstring(modulePath);
+    }
+
+    // Variant folder name for a dll path, based on the path only
+    static std::string SrDiagNameFromPath(const std::wstring& dllPath)
+    {
+        if (dllPath.empty())
+            return "Unknown";
+
+        auto path = std::filesystem::path(dllPath);
+        auto optiPath = std::filesystem::path(Config::Instance()->MainDllPath.value_or(L""));
+
+        if (IsSamePath(path.parent_path().wstring(), optiPath.wstring()))
+            return "Default";
+
+        if (IsSamePath(path.parent_path().parent_path().wstring(), (optiPath / L"FSR4").wstring()))
+            return wstring_to_string(path.parent_path().filename().wstring());
+
+        return "Custom path";
+    }
+
+    // Function pointers of a dll that got hooked by us point to a Detours trampoline instead of the dll.
+    // x64 trampoline layout: rbCode[30], cbCode, cbCodeBreak, rbRestore[30], cbRestore, cbRestoreBreak, rAlign[8],
+    // pbRemain (rest of the original function), pbDetour (our hook).
+    // Only trusted when pbDetour is inside OptiScaler and pbRemain is inside a loaded module.
+    static HMODULE SrDiagModuleFromTrampoline(void* fn)
+    {
+        constexpr size_t remainOffset = 72;
+        constexpr size_t detourOffset = 80;
+
+        MEMORY_BASIC_INFORMATION mbi {};
+        if (VirtualQuery(fn, &mbi, sizeof(mbi)) == 0 || mbi.State != MEM_COMMIT || mbi.Type == MEM_IMAGE ||
+            (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0)
+        {
+            return nullptr;
+        }
+
+        auto start = (const BYTE*) fn;
+        auto regionEnd = (const BYTE*) mbi.BaseAddress + mbi.RegionSize;
+
+        if (start + detourOffset + sizeof(void*) > regionEnd)
+            return nullptr;
+
+        auto remain = *(void* const*) (start + remainOffset);
+        auto detour = *(void* const*) (start + detourOffset);
+
+        if (remain == nullptr || detour == nullptr || Util::GetCallerModule(detour) != dllModule)
+            return nullptr;
+
+        auto module = Util::GetCallerModule(remain);
+
+        return module != dllModule ? module : nullptr;
+    }
+
+    static int SrDiagSlotFor(void* fn)
+    {
+        const int count = _srDiagSlotCount.load(std::memory_order_acquire);
+
+        for (int i = 0; i < count; i++)
+        {
+            if (_srDiagSlots[i].fn.load(std::memory_order_relaxed) == fn)
+                return i;
+        }
+
+        std::scoped_lock lock(_srDiagMutex);
+
+        const int lockedCount = _srDiagSlotCount.load(std::memory_order_acquire);
+
+        for (int i = count; i < lockedCount; i++)
+        {
+            if (_srDiagSlots[i].fn.load(std::memory_order_relaxed) == fn)
+                return i;
+        }
+
+        if (lockedCount >= (int) _srDiagSlots.size())
+            return -1;
+
+        auto& slot = _srDiagSlots[lockedCount];
+
+        slot.module = Util::GetCallerModule(fn);
+
+        if (slot.module == nullptr)
+        {
+            slot.module = SrDiagModuleFromTrampoline(fn);
+            slot.viaTrampoline = slot.module != nullptr;
+        }
+
+        slot.path = SrDiagModulePath(slot.module);
+        slot.name = SrDiagNameFromPath(slot.path);
+        slot.fn.store(fn, std::memory_order_relaxed);
+
+        if (slot.module != nullptr)
+        {
+            LOG_INFO("[SR-DIAG] ffxDispatch {:X} belongs to module {:X} ({}), resolved by {}", (size_t) fn,
+                     (size_t) slot.module, wstring_to_string(slot.path),
+                     slot.viaTrampoline ? "detour trampoline target" : "code address");
+        }
+        else
+        {
+            LOG_ERROR("[SR-DIAG] ffxDispatch {:X} can't be resolved to a module", (size_t) fn);
+        }
+
+        _srDiagSlotCount.store(lockedCount + 1, std::memory_order_release);
+
+        return lockedCount;
+    }
+
+    // Called after every upscale dispatch with the pointer that was called
+    static void SrDiagOnDispatch(void* fn, ffxReturnCode_t result)
+    {
+        const int slot = SrDiagSlotFor(fn);
+
+        if (slot >= 0)
+        {
+            _srDiagSlots[slot].dispatchCount.fetch_add(1, std::memory_order_relaxed);
+
+            if (result != FFX_API_RETURN_OK)
+                _srDiagSlots[slot].errorCount.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        _srDiagLastDispatchTick.store(GetTickCount64(), std::memory_order_relaxed);
+
+        // Logged only when the result changes, not per frame
+        if (_srDiagLastResult.exchange((int) result, std::memory_order_relaxed) != (int) result &&
+            result != FFX_API_RETURN_OK)
+        {
+            LOG_ERROR("[SR-DIAG] upscale dispatch failed: {} ({})", ReturnCodeToString(result),
+                      slot >= 0 ? wstring_to_string(_srDiagSlots[slot].path) : std::string("unknown module"));
+        }
+
+        const int previous = _srDiagLastSlot.exchange(slot, std::memory_order_relaxed);
+
+        if (previous == slot)
+            return;
+
+        const auto describe = [](int index)
+        {
+            if (index < 0)
+                return std::string("none");
+
+            return _srDiagSlots[index].module != nullptr ? _srDiagSlots[index].name : std::string("unresolved");
+        };
+
+        auto observed = std::format("{} -> {}", describe(previous), describe(slot));
+
+        LOG_INFO("[SR-DIAG] first upscale dispatch executed by {} ({}), previous: {}", describe(slot),
+                 slot >= 0 ? wstring_to_string(_srDiagSlots[slot].path) : std::string(""), describe(previous));
+
+        std::scoped_lock lock(_srDiagMutex);
+        _srDiagObservedSwitch = observed;
+    }
+
+    // Calls the given ffxDispatch of an upscaler dll and feeds the diagnostics with what was really called.
+    // owner is the dll that created the context, nullptr when that isn't known.
+    static ffxReturnCode_t DispatchSrObserved(PfnFfxDispatch dispatchFn, HMODULE owner, ffxContext* context,
+                                              const ffxDispatchDescHeader* desc)
+    {
+        if (desc->type != FFX_API_DISPATCH_DESC_TYPE_UPSCALE)
+            return dispatchFn(context, desc);
+
+        if (!FSR4VisualVerify::Enabled())
+        {
+            const auto result = dispatchFn(context, desc);
+            SrDiagOnDispatch((void*) dispatchFn, result);
+            return result;
+        }
+
+        const auto upscaleDesc = (const ffxDispatchDescUpscale*) desc;
+
+        // Module that owns the code of the function that's about to be called
+        const int slot = SrDiagSlotFor((void*) dispatchFn);
+        const HMODULE execModule = slot >= 0 ? _srDiagSlots[slot].module : nullptr;
+        const std::string execName = execModule != nullptr ? _srDiagSlots[slot].name : std::string("Unresolved");
+
+        FSR4VisualVerify::Begin(upscaleDesc->commandList, execModule);
+
+        const auto result = dispatchFn(context, desc);
+
+        FSR4VisualVerify::End(upscaleDesc->commandList, result == FFX_API_RETURN_OK, execModule, owner, execName,
+                              (ID3D12Resource*) upscaleDesc->output.resource,
+                              upscaleDesc->output.state == FFX_API_RESOURCE_STATE_UNORDERED_ACCESS,
+                              upscaleDesc->upscaleSize.width, upscaleDesc->upscaleSize.height);
+
+        SrDiagOnDispatch((void*) dispatchFn, result);
+
+        return result;
+    }
+
+    static void SrDiagSetSwitchResult(const std::string& from, const std::string& to, const std::string& result)
+    {
+        LOG_INFO("[SR-DIAG] switch {} -> {}: {}", from, to, result);
+
+        std::scoped_lock lock(_srDiagMutex);
+        _srDiagSwitchResult = std::format("{} -> {}: {}", from, to, result);
+    }
+
+    static void SrDiagOnCreate(ffxReturnCode_t result)
+    {
+        auto path = Dx12Module_SR_Path();
+        auto text = std::format("{} with {}", ReturnCodeToString(result), SrDiagNameFromPath(path));
+
+        if (result == FFX_API_RETURN_OK)
+            LOG_INFO("[SR-DIAG] upscale context created with {}", wstring_to_string(path));
+        else
+            LOG_ERROR("[SR-DIAG] upscale context creation failed: {}, dll: {}", ReturnCodeToString(result),
+                      wstring_to_string(path));
+
+        std::scoped_lock lock(_srDiagMutex);
+        _srDiagCreateResult = text;
+    }
+
     static bool IsLoader(const std::wstring& filePath)
     {
         auto size = std::filesystem::file_size(filePath);
@@ -108,7 +418,11 @@ class FfxApiProxy
     static HMODULE Dx12Module_Radiance() { return radiance_dx12.dll; }
 
     static std::wstring Dx12Module_Path() { return main_dx12.filePath; }
-    static std::wstring Dx12Module_SR_Path() { return upscaling_dx12.filePath; }
+    static std::wstring Dx12Module_SR_Path()
+    {
+        std::scoped_lock lock(_srMutex);
+        return upscaling_dx12.filePath;
+    }
     static std::wstring Dx12Module_FG_Path() { return fg_dx12.filePath; }
     static std::wstring Dx12Module_Denoiser_Path() { return denoiser_dx12.filePath; }
     static std::wstring Dx12Module_Radiance_Path() { return radiance_dx12.filePath; }
@@ -155,6 +469,428 @@ class FfxApiProxy
                                         "Can't load amd_fidelityfx_dx12\nDid you forget to extract that dll?" });
 
         return result;
+    }
+
+    struct SrVariant
+    {
+        std::wstring name;
+        std::wstring dllPath;
+    };
+
+    // Subfolders of "OptiDllPath/FSR4" that have their own amd_fidelityfx_upscaler_dx12.dll
+    static std::vector<SrVariant> SrVariants()
+    {
+        std::vector<SrVariant> result;
+        std::error_code ec;
+
+        auto root = std::filesystem::path(Config::Instance()->MainDllPath.value_or(L"")) / L"FSR4";
+
+        if (!std::filesystem::is_directory(root, ec))
+            return result;
+
+        for (const auto& entry : std::filesystem::directory_iterator(root, ec))
+        {
+            if (!entry.is_directory(ec))
+                continue;
+
+            auto dllPath = entry.path() / L"amd_fidelityfx_upscaler_dx12.dll";
+
+            if (std::filesystem::exists(dllPath, ec))
+                result.push_back({ entry.path().filename().wstring(), dllPath.wstring() });
+        }
+
+        std::sort(result.begin(), result.end(), [](const SrVariant& a, const SrVariant& b) { return a.name < b.name; });
+
+        return result;
+    }
+
+    // Empty name is the dll in OptiDllPath, returns empty when the dll doesn't exist
+    static std::wstring SrVariantDllPath(const std::wstring& name)
+    {
+        std::error_code ec;
+        auto dllPath = std::filesystem::path(Config::Instance()->MainDllPath.value_or(L""));
+
+        if (!name.empty())
+            dllPath = dllPath / L"FSR4" / std::filesystem::path(name).filename();
+
+        dllPath /= L"amd_fidelityfx_upscaler_dx12.dll";
+
+        if (!std::filesystem::exists(dllPath, ec))
+            return L"";
+
+        return dllPath.wstring();
+    }
+
+    static bool IsActiveSrDll(const std::wstring& dllPath) { return IsSamePath(dllPath, Dx12Module_SR_Path()); }
+
+    struct SrDiagModule
+    {
+        HMODULE module = nullptr;
+        std::string name;
+        std::wstring path;
+        uint64_t dispatchCount = 0;
+        uint64_t errorCount = 0;
+    };
+
+    struct SrDiagSnapshot
+    {
+        std::string selectedName;
+        std::wstring selectedPath;
+
+        // Module that executed the most recent upscale dispatch
+        std::string activeName = "-";
+        std::wstring activePath;
+        std::string resolvedBy = "-";
+        uint64_t activeDispatchCount = 0;
+        uint64_t activeErrorCount = 0;
+
+        // 0 = verified, 1 = can't tell, 2 = mismatch
+        int statusLevel = 1;
+        std::string status;
+
+        std::vector<SrDiagModule> modules;
+
+        std::string switchResult;
+        std::string observedSwitch;
+        std::string createResult;
+        std::string driverProvider;
+    };
+
+    static SrDiagSnapshot SrDiagGetSnapshot()
+    {
+        SrDiagSnapshot snapshot;
+        const auto now = GetTickCount64();
+
+        {
+            std::scoped_lock lock(_srDiagMutex);
+
+            // Nothing was selected in this session yet, selection is what the config asked for at startup
+            if (!_srDiagSelectedSet)
+            {
+                std::error_code ec;
+                auto overridePath = Config::Instance()->FfxDx12SRPath.value_or(L"");
+
+                if (!overridePath.empty())
+                {
+                    auto path = std::filesystem::absolute(overridePath, ec);
+
+                    if (std::filesystem::is_directory(path, ec))
+                        path /= L"amd_fidelityfx_upscaler_dx12.dll";
+
+                    _srDiagSelectedName = "FfxDx12SRPath";
+                    _srDiagSelectedPath = path.wstring();
+                }
+                else
+                {
+                    auto name = Config::Instance()->Fsr4SrVariant.value_or(L"");
+
+                    _srDiagSelectedName = name.empty() ? "Default" : wstring_to_string(name);
+                    _srDiagSelectedPath = SrVariantDllPath(name);
+                }
+
+                _srDiagSelectedSet = true;
+            }
+
+            snapshot.selectedName = _srDiagSelectedName;
+            snapshot.selectedPath = _srDiagSelectedPath;
+            snapshot.switchResult = _srDiagSwitchResult;
+            snapshot.observedSwitch = _srDiagObservedSwitch;
+            snapshot.createResult = _srDiagCreateResult;
+            snapshot.driverProvider = _srDiagDriverProvider;
+        }
+
+        // A hooked and a not hooked pointer can lead to the same dll, merge by module
+        const int count = _srDiagSlotCount.load(std::memory_order_acquire);
+
+        for (int i = 0; i < count; i++)
+        {
+            const auto& slot = _srDiagSlots[i];
+            SrDiagModule* entry = nullptr;
+
+            for (auto& existing : snapshot.modules)
+            {
+                if (existing.module == slot.module)
+                    entry = &existing;
+            }
+
+            if (entry == nullptr)
+            {
+                snapshot.modules.push_back(
+                    { slot.module, slot.module != nullptr ? slot.name : "Unresolved", slot.path, 0, 0 });
+                entry = &snapshot.modules.back();
+            }
+
+            entry->dispatchCount += slot.dispatchCount.load(std::memory_order_relaxed);
+            entry->errorCount += slot.errorCount.load(std::memory_order_relaxed);
+        }
+
+        const int last = _srDiagLastSlot.load(std::memory_order_relaxed);
+        const auto lastTick = _srDiagLastDispatchTick.load(std::memory_order_relaxed);
+
+        if (lastTick == 0)
+        {
+            snapshot.status = "UNVERIFIED (no upscale dispatch seen yet)";
+            return snapshot;
+        }
+
+        if (last < 0 || _srDiagSlots[last].module == nullptr)
+        {
+            snapshot.status = "UNVERIFIED (dispatch function can't be traced to a dll)";
+            return snapshot;
+        }
+
+        const auto& slot = _srDiagSlots[last];
+
+        snapshot.activeName = slot.name;
+        snapshot.activePath = slot.path;
+        snapshot.resolvedBy = slot.viaTrampoline ? "hook trampoline target" : "code address";
+
+        for (const auto& entry : snapshot.modules)
+        {
+            if (entry.module == slot.module)
+            {
+                snapshot.activeDispatchCount = entry.dispatchCount;
+                snapshot.activeErrorCount = entry.errorCount;
+            }
+        }
+
+        if (now - lastTick > 1000)
+        {
+            snapshot.status = "UNVERIFIED (no upscale dispatch in the last second)";
+        }
+        else if (snapshot.selectedPath.empty())
+        {
+            snapshot.status = "UNVERIFIED (selected dll not found)";
+        }
+        else if (IsSamePath(snapshot.selectedPath, snapshot.activePath))
+        {
+            snapshot.status = "ACTIVE";
+            snapshot.statusLevel = 0;
+        }
+        else if (now - _srDiagRequestTick.load(std::memory_order_relaxed) < 2000)
+        {
+            snapshot.status = "SWITCHING (waiting for a dispatch with the selected dll)";
+        }
+        else
+        {
+            snapshot.status = "MISMATCH";
+            snapshot.statusLevel = 2;
+        }
+
+        return snapshot;
+    }
+
+    // Dll that executed the most recent upscale dispatch, read only and lock free.
+    // dispatchCount / errorCount are the totals of the function that was called, they move with every dispatch.
+    struct SrDiagActive
+    {
+        HMODULE module = nullptr;
+        const char* name = nullptr;
+        int slot = -1;
+        uint64_t dispatchCount = 0;
+        uint64_t errorCount = 0;
+        uint64_t requestTick = 0;
+    };
+
+    static SrDiagActive SrDiagGetActive()
+    {
+        SrDiagActive active;
+        active.requestTick = _srDiagRequestTick.load(std::memory_order_relaxed);
+        active.slot = _srDiagLastSlot.load(std::memory_order_relaxed);
+
+        if (active.slot < 0 || active.slot >= _srDiagSlotCount.load(std::memory_order_acquire))
+        {
+            active.slot = -1;
+            return active;
+        }
+
+        // Slot fields other than the counters never change after the slot got published
+        const auto& slot = _srDiagSlots[active.slot];
+
+        active.module = slot.module;
+        active.name = slot.name.c_str();
+        active.dispatchCount = slot.dispatchCount.load(std::memory_order_relaxed);
+        active.errorCount = slot.errorCount.load(std::memory_order_relaxed);
+
+        return active;
+    }
+
+    // Variant name and path of a loaded module, for display
+    static std::string SrDiagDescribeModule(HMODULE module, std::wstring* path = nullptr)
+    {
+        auto modulePath = SrDiagModulePath(module);
+
+        if (path != nullptr)
+            *path = modulePath;
+
+        if (module == nullptr)
+            return "-";
+
+        auto name = SrDiagNameFromPath(modulePath);
+
+        // Not one of the upscaler dll locations, show the file name instead
+        if (name == "Custom path")
+            return wstring_to_string(std::filesystem::path(modulePath).filename().wstring());
+
+        return name;
+    }
+
+    // Result of the driver's (amdxcffx64) provider update asked by an upscaler dll
+    static void SrDiagOnDriverProvider(HMODULE sdkModule, HRESULT result)
+    {
+        auto text = std::format("{}: 0x{:X} ({})", SrDiagNameFromPath(SrDiagModulePath(sdkModule)), (UINT) result,
+                                SUCCEEDED(result) ? "succeeded" : "failed");
+
+        std::scoped_lock lock(_srDiagMutex);
+
+        if (text == _srDiagDriverProvider)
+            return;
+
+        LOG_INFO("[SR-DIAG] amdxcffx64 provider update for upscaler dll {}", text);
+        _srDiagDriverProvider = text;
+    }
+
+    static void SrDiagOnRequest(const std::wstring& name)
+    {
+        auto displayName = name.empty() ? std::string("Default") : wstring_to_string(name);
+        auto path = SrVariantDllPath(name);
+
+        LOG_INFO("[SR-DIAG] switch requested: {} ({})", displayName,
+                 path.empty() ? std::string("dll not found") : wstring_to_string(path));
+
+        _srDiagRequestTick.store(GetTickCount64(), std::memory_order_relaxed);
+
+        std::scoped_lock lock(_srDiagMutex);
+        _srDiagSelectedSet = true;
+        _srDiagSelectedName = displayName;
+        _srDiagSelectedPath = path;
+    }
+
+    // Applied by ApplyPendingSrVariant when the next FFX feature is created
+    static void RequestSrVariant(const std::wstring& name)
+    {
+        SrDiagOnRequest(name);
+
+        std::scoped_lock lock(_srMutex);
+        _srPending = name;
+    }
+
+    static void ApplyPendingSrVariant()
+    {
+        std::optional<std::wstring> pending;
+
+        {
+            std::scoped_lock lock(_srMutex);
+            pending.swap(_srPending);
+        }
+
+        if (!pending.has_value())
+            return;
+
+        const auto diagFrom = SrDiagNameFromPath(upscaling_dx12.filePath);
+        const auto diagTo = pending->empty() ? std::string("Default") : wstring_to_string(*pending);
+
+        // Nothing loaded yet, InitFfxDx12_SR will use the variant from the config
+        if (upscaling_dx12.dll == nullptr)
+        {
+            SrDiagSetSwitchResult("none", diagTo, "deferred, no upscaler dll is loaded yet");
+            return;
+        }
+
+        auto variantName = pending->empty() ? std::string("default") : wstring_to_string(*pending);
+        auto targetPath = SrVariantDllPath(*pending);
+
+        if (targetPath.empty())
+        {
+            LOG_ERROR("Can't find amd_fidelityfx_upscaler_dx12.dll for variant: {}", variantName);
+            ImGui::InsertNotification(
+                { ImGuiToastType::Error, 10000, "Can't find the dll of the selected FSR variant" });
+            SrDiagSetSwitchResult(diagFrom, diagTo, "FAILED, dll not found");
+            return;
+        }
+
+        if (IsSamePath(targetPath, upscaling_dx12.filePath))
+        {
+            SrDiagSetSwitchResult(diagFrom, diagTo, "already in use, nothing changed");
+            return;
+        }
+
+        FfxModule target {};
+
+        {
+            std::scoped_lock lock(_srMutex);
+
+            for (const auto& loaded : _srLoaded)
+            {
+                if (IsSamePath(targetPath, loaded.filePath))
+                {
+                    target = loaded;
+                    break;
+                }
+            }
+        }
+
+        if (target.dll == nullptr)
+        {
+            target.dll = NtdllProxy::LoadLibraryExW_Ldr(targetPath.c_str(), NULL, 0);
+
+            if (target.dll == nullptr)
+            {
+                LOG_ERROR("Can't load {}", wstring_to_string(targetPath));
+                ImGui::InsertNotification(
+                    { ImGuiToastType::Error, 10000, "Can't load the dll of the selected FSR variant" });
+                SrDiagSetSwitchResult(diagFrom, diagTo, "FAILED, dll can't be loaded");
+                return;
+            }
+
+            wchar_t modulePath[MAX_PATH];
+            GetModuleFileNameW(target.dll, modulePath, MAX_PATH);
+            target.filePath = std::wstring(modulePath);
+
+            target.Configure = (PfnFfxConfigure) KernelBaseProxy::GetProcAddress_()(target.dll, "ffxConfigure");
+            target.CreateContext =
+                (PfnFfxCreateContext) KernelBaseProxy::GetProcAddress_()(target.dll, "ffxCreateContext");
+            target.DestroyContext =
+                (PfnFfxDestroyContext) KernelBaseProxy::GetProcAddress_()(target.dll, "ffxDestroyContext");
+            target.Dispatch = (PfnFfxDispatch) KernelBaseProxy::GetProcAddress_()(target.dll, "ffxDispatch");
+            target.Query = (PfnFfxQuery) KernelBaseProxy::GetProcAddress_()(target.dll, "ffxQuery");
+
+            if (target.CreateContext == nullptr || target.DestroyContext == nullptr || target.Configure == nullptr ||
+                target.Dispatch == nullptr || target.Query == nullptr)
+            {
+                LOG_ERROR("Missing ffx exports in {}", wstring_to_string(target.filePath));
+                ImGui::InsertNotification(
+                    { ImGuiToastType::Error, 10000, "Selected FSR variant is not a valid upscaler dll" });
+                SrDiagSetSwitchResult(diagFrom, diagTo, "FAILED, dll is missing ffx exports");
+                return;
+            }
+
+            LOG_INFO("Variant {} loaded from {}, module: {:X}", variantName, wstring_to_string(target.filePath),
+                     (size_t) target.dll);
+        }
+
+        // Model selection hooks are per source, move them to the module that's going to be used
+        FSR4ModelSelection::Hook(target.dll, FSR4Source::SDK, true);
+
+        {
+            std::scoped_lock lock(_srMutex);
+
+            bool currentStored = false;
+
+            for (const auto& loaded : _srLoaded)
+                currentStored = currentStored || loaded.dll == upscaling_dx12.dll;
+
+            if (!currentStored)
+                _srLoaded.push_back(upscaling_dx12);
+
+            LOG_INFO("Switching upscaler dll: {} -> {}", wstring_to_string(upscaling_dx12.filePath),
+                     wstring_to_string(target.filePath));
+
+            upscaling_dx12 = target;
+        }
+
+        // Only tells that the function table was switched, execution is confirmed by SrDiagOnDispatch
+        SrDiagSetSwitchResult(diagFrom, diagTo, "function table switched");
     }
 
     static FFXStructType GetType(ffxStructType_t type)
@@ -385,6 +1121,9 @@ class FfxApiProxy
                 LOG_DEBUG("Trying to load {}", wstring_to_string(dllNames[i]));
 
                 auto overridePath = Config::Instance()->FfxDx12SRPath.value_or(L"");
+
+                if (overridePath.empty() && Config::Instance()->Fsr4SrVariant.has_value())
+                    overridePath = SrVariantDllPath(Config::Instance()->Fsr4SrVariant.value());
 
                 if (upscaling_dx12_hooked.dll == nullptr)
                 {
@@ -1200,6 +1939,12 @@ class FfxApiProxy
             LOG_DEBUG("Creating with upscaling_dx12");
             result = upscaling_dx12.CreateContext(context, desc, memCb);
             contextToType[*context] = type;
+
+            if (result == FFX_API_RETURN_OK)
+                RegisterSrContext(context);
+
+            SrDiagOnCreate(result);
+
             LOG_DEBUG("Created with upscaling_dx12: {:X}", (size_t) *context);
             return result;
         }
@@ -1249,6 +1994,14 @@ class FfxApiProxy
     {
         ffxReturnCode_t result = FFX_API_RETURN_ERROR;
         auto type = FFXStructType::Unknown;
+
+        // Created by an upscaler dll, might not be the active one anymore
+        if (auto srContext = FindSrContext(context, true); srContext.has_value())
+        {
+            LOG_DEBUG("Destroying with the upscaler dll that created the context");
+            contextToType.erase(*context);
+            return srContext->DestroyContext(context, memCb);
+        }
 
         if (contextToType.contains(*context))
         {
@@ -1357,6 +2110,8 @@ class FfxApiProxy
 
         if (isFg && fg_dx12.dll != nullptr)
             return fg_dx12.Configure(context, desc);
+        else if (auto srContext = FindSrContext(context); type == FFXStructType::Upscaling && srContext.has_value())
+            return srContext->Configure(context, desc);
         else if (type == FFXStructType::Upscaling && upscaling_dx12.dll != nullptr)
             return upscaling_dx12.Configure(context, desc);
         else if (type == FFXStructType::Denoiser && denoiser_dx12.dll != nullptr)
@@ -1394,6 +2149,8 @@ class FfxApiProxy
 
         if (isFg && fg_dx12.dll != nullptr)
             return fg_dx12.Query(context, desc);
+        else if (auto srContext = FindSrContext(context); type == FFXStructType::Upscaling && srContext.has_value())
+            return srContext->Query(context, desc);
         else if (type == FFXStructType::Upscaling && upscaling_dx12.dll != nullptr)
             return upscaling_dx12.Query(context, desc);
         else if (type == FFXStructType::Denoiser && denoiser_dx12.dll != nullptr)
@@ -1431,8 +2188,14 @@ class FfxApiProxy
 
         if (isFg && fg_dx12.dll != nullptr)
             return fg_dx12.Dispatch(context, desc);
+        else if (auto srContext = FindSrContext(context); type == FFXStructType::Upscaling && srContext.has_value())
+        {
+            return DispatchSrObserved(srContext->Dispatch, srContext->owner, context, desc);
+        }
         else if (type == FFXStructType::Upscaling && upscaling_dx12.dll != nullptr)
-            return upscaling_dx12.Dispatch(context, desc);
+        {
+            return DispatchSrObserved(upscaling_dx12.Dispatch, nullptr, context, desc);
+        }
         else if (type == FFXStructType::Denoiser && denoiser_dx12.dll != nullptr)
             return denoiser_dx12.Dispatch(context, desc);
         else if (type == FFXStructType::RadianceCache && radiance_dx12.dll != nullptr)

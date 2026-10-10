@@ -487,6 +487,7 @@ class Config
     // FSR4
     CustomOptional<FSR4Support> Fsr4ForceModel { FSR4Support::None };
     CustomOptional<uint32_t, NoDefault> Fsr4Preset;
+    CustomOptional<std::wstring, NoDefault> Fsr4SrVariant;
     CustomOptional<bool> Fsr4EnableWatermark { false };
     CustomOptional<bool> Fsr4DoNotLoadAmdxc64 { false };
 

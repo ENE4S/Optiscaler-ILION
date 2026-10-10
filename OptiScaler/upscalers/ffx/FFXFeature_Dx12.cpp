@@ -19,6 +19,9 @@ FFXFeatureDx12::FFXFeatureDx12(unsigned int InHandleId, NVSDK_NGX_Parameter* InP
 {
     FfxApiProxy::InitFfxDx12();
 
+    // Old feature is already released at this point, safe to change the upscaler dll
+    FfxApiProxy::ApplyPendingSrVariant();
+
     _moduleLoaded = FfxApiProxy::IsSRReady();
 
     if (_moduleLoaded)

@@ -159,6 +159,9 @@ HRESULT STDMETHODCALLTYPE AmdExtFfxApi::UpdateFfxApiProvider(void* pData, uint32
         auto level = SUCCEEDED(result) ? spdlog::level::info : spdlog::level::err;
         spdlog::log(level, "UpdateFfxApiProviderEx for: {}, result: 0x{:X}", effect, (UINT) result);
 
+        if (effectType == FFXStructType::Upscaling)
+            FfxApiProxy::SrDiagOnDriverProvider(callerModule, result);
+
         State::EnableChecks(owner);
         return result;
     }
@@ -172,6 +175,9 @@ HRESULT STDMETHODCALLTYPE AmdExtFfxApi::UpdateFfxApiProvider(void* pData, uint32
 
         auto level = SUCCEEDED(result) ? spdlog::level::info : spdlog::level::err;
         spdlog::log(level, "UpdateFfxApiProvider for: {}, result: 0x{:X}", effect, (UINT) result);
+
+        if (effectType == FFXStructType::Upscaling)
+            FfxApiProxy::SrDiagOnDriverProvider(callerModule, result);
 
         State::EnableChecks(owner);
         return result;

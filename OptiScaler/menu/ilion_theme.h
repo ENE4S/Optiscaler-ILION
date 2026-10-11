@@ -143,8 +143,42 @@ inline void ApplyStyle(ImGuiStyle& style, float backgroundAlpha)
     c[ImGuiCol_ModalWindowDimBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.60f);
 }
 
-// A lever switch for an on/off option. Same arguments, same id and same result as ImGui::Checkbox: the lever is
-// at the right with the green lamp lit when the option is on, at the left with the lamp out when it is off.
+// A round pilot lamp behind glass in a metal ring. Lit: bright green with the light gathered in its middle.
+// Out: dull olive, no light. Only drawn for a state that exists.
+inline void DrawLamp(ImDrawList* draw, const ImVec2& center, float radius, bool lit, bool hovered = false,
+                     bool held = false)
+{
+    // Light spilled on the panel around a lit lamp
+    if (lit)
+    {
+        draw->AddCircleFilled(center, radius * 1.30f, ImGui::GetColorU32(Alpha(LampGreen, 0.10f)));
+        draw->AddCircleFilled(center, radius * 1.12f, ImGui::GetColorU32(Alpha(LampGreen, 0.14f)));
+    }
+
+    // Ring: a dark seat, the metal and the dark gap between metal and glass
+    draw->AddCircleFilled(center, radius, ImGui::GetColorU32(Shadow));
+    draw->AddCircleFilled(center, radius - 1.0f, ImGui::GetColorU32(hovered ? MetalLight : Metal));
+    draw->AddCircleFilled(center, radius * 0.76f, ImGui::GetColorU32(GraphiteDeep));
+
+    // Glass
+    const float glass = radius * 0.64f;
+    const ImVec2 shine(center.x - glass * 0.28f, center.y - glass * 0.28f);
+
+    if (lit)
+    {
+        draw->AddCircleFilled(center, glass, ImGui::GetColorU32(held ? LampGreenDim : LampGreen));
+        draw->AddCircleFilled(center, glass * 0.55f, ImGui::GetColorU32(ImVec4(0.62f, 1.0f, 0.50f, held ? 0.4f : 0.85f)));
+        draw->AddCircleFilled(shine, glass * 0.20f, ImGui::GetColorU32(ImVec4(0.92f, 1.0f, 0.88f, 0.90f)));
+    }
+    else
+    {
+        draw->AddCircleFilled(center, glass, ImGui::GetColorU32(held ? Olive : OliveDim));
+        draw->AddCircleFilled(shine, glass * 0.20f, ImGui::GetColorU32(Alpha(MetalLight, 0.18f)));
+    }
+}
+
+// The on/off control of the industrial theme: a pilot lamp that is pressed, with the name of the option next to
+// it. Same arguments, same id and same result as ImGui::Checkbox.
 inline bool Switch(const char* label, bool* value)
 {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
@@ -158,10 +192,9 @@ inline bool Switch(const char* label, bool* value)
     const ImVec2 labelSize = ImGui::CalcTextSize(label, nullptr, true);
 
     const float height = ImGui::GetFrameHeight();
-    const float width = ImFloor(height * 1.8f);
     const ImVec2 pos = window->DC.CursorPos;
 
-    const ImRect bounds(pos, ImVec2(pos.x + width + (labelSize.x > 0.0f ? style.ItemInnerSpacing.x + labelSize.x : 0.0f),
+    const ImRect bounds(pos, ImVec2(pos.x + height + (labelSize.x > 0.0f ? style.ItemInnerSpacing.x + labelSize.x : 0.0f),
                                     pos.y + labelSize.y + style.FramePadding.y * 2.0f));
 
     ImGui::ItemSize(bounds, style.FramePadding.y);
@@ -180,44 +213,11 @@ inline bool Switch(const char* label, bool* value)
 
     ImGui::RenderNavCursor(bounds, id);
 
-    ImDrawList* draw = window->DrawList;
-    const bool on = *value;
-
-    // Housing, sunk into the panel
-    const ImVec2 housingMin = pos;
-    const ImVec2 housingMax(pos.x + width, pos.y + height);
-
-    draw->AddRectFilled(housingMin, housingMax, ImGui::GetColorU32(GraphiteDeep), 1.0f);
-    draw->AddRect(housingMin, housingMax, ImGui::GetColorU32(hovered ? MetalLight : Metal), 1.0f);
-
-    // Lamp in the half the lever leaves uncovered
-    const float inset = ImMax(2.0f, ImFloor(height * 0.16f));
-    const float half = ImFloor(width * 0.5f);
-    const ImVec2 lampMin(on ? housingMin.x + inset : housingMin.x + half, housingMin.y + inset);
-    const ImVec2 lampMax(on ? housingMin.x + half : housingMax.x - inset, housingMax.y - inset);
-
-    draw->AddRectFilled(lampMin, lampMax, ImGui::GetColorU32(on ? LampGreen : OliveDim));
-
-    // Lever, with a light edge above and a dark one below
-    const ImVec2 leverMin(on ? housingMin.x + half : housingMin.x + 1.0f, housingMin.y + 1.0f);
-    const ImVec2 leverMax(on ? housingMax.x - 1.0f : housingMin.x + half, housingMax.y - 1.0f);
-
-    draw->AddRectFilled(leverMin, leverMax, ImGui::GetColorU32(held ? MetalDark : hovered ? MetalLight : Metal));
-    draw->AddLine(leverMin, ImVec2(leverMax.x, leverMin.y), ImGui::GetColorU32(Alpha(MetalLight, held ? 0.3f : 0.9f)));
-    draw->AddLine(ImVec2(leverMin.x, leverMax.y - 1.0f), ImVec2(leverMax.x, leverMax.y - 1.0f),
-                  ImGui::GetColorU32(Alpha(Shadow, 0.8f)));
-
-    // Grip lines of the lever
-    const float middle = ImFloor((leverMin.x + leverMax.x) * 0.5f);
-
-    for (int i = -1; i <= 1; i++)
-    {
-        draw->AddLine(ImVec2(middle + i * 3.0f, leverMin.y + inset), ImVec2(middle + i * 3.0f, leverMax.y - inset),
-                      ImGui::GetColorU32(Alpha(Shadow, 0.55f)));
-    }
+    DrawLamp(window->DrawList, ImVec2(ImFloor(pos.x + height * 0.5f), ImFloor(pos.y + height * 0.5f)),
+             ImFloor(height * 0.5f) - 1.0f, *value, hovered, held);
 
     if (labelSize.x > 0.0f)
-        ImGui::RenderText(ImVec2(housingMax.x + style.ItemInnerSpacing.x, pos.y + style.FramePadding.y), label);
+        ImGui::RenderText(ImVec2(pos.x + height + style.ItemInnerSpacing.x, pos.y + style.FramePadding.y), label);
 
     return pressed;
 }
@@ -226,6 +226,71 @@ inline bool Switch(const char* label, bool* value)
 inline bool Checkbox(const char* label, bool* value)
 {
     return industrial ? Switch(label, value) : ImGui::Checkbox(label, value);
+}
+
+// The button of the theme in use. In the industrial one it is a push button: a cap seated in a dark metal frame,
+// lit from above, that sinks while it is held. Same arguments, id, size and result as ImGui::Button, and the
+// colours pushed for a button still apply to its cap.
+inline bool Button(const char* label, const ImVec2& sizeArg = ImVec2(0.0f, 0.0f))
+{
+    if (!industrial)
+        return ImGui::Button(label, sizeArg);
+
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+
+    if (window->SkipItems)
+        return false;
+
+    ImGuiContext& g = *GImGui;
+    const ImGuiStyle& style = g.Style;
+    const ImGuiID id = window->GetID(label);
+    const ImVec2 labelSize = ImGui::CalcTextSize(label, nullptr, true);
+
+    const ImVec2 pos = window->DC.CursorPos;
+    const ImVec2 size = ImGui::CalcItemSize(sizeArg, labelSize.x + style.FramePadding.x * 2.0f,
+                                            labelSize.y + style.FramePadding.y * 2.0f);
+    const ImRect bounds(pos, ImVec2(pos.x + size.x, pos.y + size.y));
+
+    ImGui::ItemSize(size, style.FramePadding.y);
+
+    if (!ImGui::ItemAdd(bounds, id))
+        return false;
+
+    bool hovered = false, held = false;
+    const bool pressed = ImGui::ButtonBehavior(bounds, id, &hovered, &held);
+    const bool down = held && hovered;
+
+    ImGui::RenderNavCursor(bounds, id);
+
+    ImDrawList* draw = window->DrawList;
+
+    // Frame the cap sits in
+    draw->AddRectFilled(bounds.Min, bounds.Max, ImGui::GetColorU32(Shadow), 1.0f);
+    draw->AddRect(bounds.Min, bounds.Max, ImGui::GetColorU32(hovered ? Metal : MetalDark), 1.0f);
+
+    // Cap
+    const ImVec2 capMin(bounds.Min.x + 2.0f, bounds.Min.y + 2.0f);
+    const ImVec2 capMax(bounds.Max.x - 2.0f, bounds.Max.y - 2.0f);
+
+    draw->AddRectFilled(capMin, capMax,
+                        ImGui::GetColorU32(down ? ImGuiCol_ButtonActive : hovered ? ImGuiCol_ButtonHovered : ImGuiCol_Button));
+
+    const ImU32 light = ImGui::GetColorU32(Alpha(MetalLight, 0.50f));
+    const ImU32 shade = ImGui::GetColorU32(Alpha(Shadow, 0.75f));
+
+    // Raised: light on the upper and left edges, shade on the others. Held down: the other way round.
+    draw->AddLine(capMin, ImVec2(capMax.x - 1.0f, capMin.y), down ? shade : light);
+    draw->AddLine(capMin, ImVec2(capMin.x, capMax.y - 1.0f), down ? shade : light);
+    draw->AddLine(ImVec2(capMin.x, capMax.y - 1.0f), ImVec2(capMax.x, capMax.y - 1.0f), down ? light : shade);
+    draw->AddLine(ImVec2(capMax.x - 1.0f, capMin.y), ImVec2(capMax.x - 1.0f, capMax.y), down ? light : shade);
+
+    const float sink = down ? 1.0f : 0.0f;
+
+    ImGui::RenderTextClipped(ImVec2(bounds.Min.x + style.FramePadding.x + sink, bounds.Min.y + style.FramePadding.y + sink),
+                             ImVec2(bounds.Max.x - style.FramePadding.x + sink, bounds.Max.y - style.FramePadding.y + sink),
+                             label, nullptr, &labelSize, style.ButtonTextAlign, &bounds);
+
+    return pressed;
 }
 
 // A button of something that can't be undone, red in the industrial theme. The same button otherwise.
@@ -238,7 +303,7 @@ inline bool DangerButton(const char* label)
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, RedLit);
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, LampRed);
 
-    const bool pressed = ImGui::Button(label);
+    const bool pressed = Button(label);
 
     ImGui::PopStyleColor(3);
 

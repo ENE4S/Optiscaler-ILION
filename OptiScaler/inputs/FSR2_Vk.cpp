@@ -15,6 +15,7 @@
 #include "fsr2/vk/ffx_fsr2_vk.h"
 
 #include <nvsdk_ngx_vk.h>
+#include "inputs/NVNGX_Compat_Vk.h"
 #include <nvsdk_ngx_helpers_vk.h>
 
 typedef FfxErrorCode (*PFN_ffxFsr2ContextCreate)(FfxFsr2Context* context,

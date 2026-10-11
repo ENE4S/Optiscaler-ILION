@@ -7,6 +7,7 @@
 #include "menu/menu_overlay_vk.h"
 
 #include <nvsdk_ngx_vk.h>
+#include "inputs/NVNGX_Compat_Vk.h"
 
 static UINT64 _handleCounter = 23370000;
 static UINT64 _frameCounter = 0;

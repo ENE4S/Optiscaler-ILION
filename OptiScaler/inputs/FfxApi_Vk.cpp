@@ -12,6 +12,7 @@
 #include <vk/ffx_api_vk.h>
 
 #include <nvsdk_ngx_vk.h>
+#include "inputs/NVNGX_Compat_Vk.h"
 #include <nvsdk_ngx_helpers_vk.h>
 
 static std::unordered_map<ffxContext, ffxCreateContextDescUpscale> _initParams;

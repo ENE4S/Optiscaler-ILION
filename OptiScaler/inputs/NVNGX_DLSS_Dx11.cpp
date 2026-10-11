@@ -7,6 +7,7 @@
 #include <upscalers/FeatureProvider_Dx11.h>
 
 #include "NVNGX_DLSS.h"
+#include "NVNGX_Compat.h"
 #include "NVNGX_Parameter.h"
 #include "proxies/NVNGX_Proxy.h"
 
@@ -205,7 +206,8 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_Init_Ext(unsigned long long InApp
     return NVSDK_NGX_Result_Success;
 }
 
-NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_Init(unsigned long long InApplicationId,
+NVNGX_COMPAT_EXPORT(NVSDK_NGX_D3D11_Init)
+NVSDK_NGX_Result NVSDK_NGX_D3D11_Init(unsigned long long InApplicationId,
                                                     const wchar_t* InApplicationDataPath, ID3D11Device* InDevice,
                                                     const NVSDK_NGX_FeatureCommonInfo* InFeatureInfo,
                                                     NVSDK_NGX_Version InSDKVersion)
@@ -299,7 +301,8 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_Init_ProjectID(const char* InProj
 }
 
 // Not sure about this one, original nvngx does not export this method
-NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_Init_with_ProjectID(
+NVNGX_COMPAT_EXPORT(NVSDK_NGX_D3D11_Init_with_ProjectID)
+NVSDK_NGX_Result NVSDK_NGX_D3D11_Init_with_ProjectID(
     const char* InProjectId, NVSDK_NGX_EngineType InEngineType, const char* InEngineVersion,
     const wchar_t* InApplicationDataPath, ID3D11Device* InDevice, const NVSDK_NGX_FeatureCommonInfo* InFeatureInfo,
     NVSDK_NGX_Version InSDKVersion)
@@ -712,9 +715,12 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_GetFeatureRequirements(
 
 NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_EvaluateFeature(ID3D11DeviceContext* InDevCtx,
                                                                const NVSDK_NGX_Handle* InFeatureHandle,
-                                                               NVSDK_NGX_Parameter* InParameters,
+                                                               const NVSDK_NGX_Parameter* InConstParameters,
                                                                PFN_NVSDK_NGX_ProgressCallback InCallback)
 {
+    // The SDK declares the parameters const; the same object is read and written below, as it always was
+    auto InParameters = const_cast<NVSDK_NGX_Parameter*>(InConstParameters);
+
     if (InFeatureHandle == nullptr)
     {
         LOG_DEBUG("InFeatureHandle is null");

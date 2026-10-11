@@ -443,3 +443,6 @@ CyberFSR/imgui.ini
 
 # Optional DirectX Agility SDK runtime, installed locally by whoever wants it (see README.md)
 external/directx_agility_sdk/lib/
+
+# Official NVIDIA DLSS SDK headers, obtained from NVIDIA by whoever builds (see README.md). Never commit them.
+external/nvidia_dlss_sdk/

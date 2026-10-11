@@ -258,6 +258,7 @@ class MenuCommon
     static void RenderShaderTimes(RenderMenuContext& ctx);
     static void RenderMainMenuBottomBar(RenderMenuContext& ctx);
     static void RenderBasicPanel(RenderMenuContext& ctx);
+    static void RenderBenchmark(RenderMenuContext& ctx);
     static void RenderMipmapBiasWindow(RenderMenuContext& ctx, ImGuiWindowFlags flags);
     static void RenderHudlessResourcesWindow(RenderMenuContext& ctx, ImGuiWindowFlags flags);
 

@@ -116,6 +116,7 @@ class FfxApiProxy
     inline static std::vector<FfxModule> _srLoaded;
     inline static ankerl::unordered_dense::map<ffxContext, SrContextFns> _srContexts;
     inline static std::optional<std::wstring> _srPending;
+    inline static std::atomic<bool> _srSwitchLocked { false };
 
     // Dll that was in use before the last switch, kept until the new one has created a context
     inline static std::optional<FfxModule> _srRevertTarget;
@@ -743,9 +744,19 @@ class FfxApiProxy
         _srDiagSelectedPath = path;
     }
 
+    // While set, switching the upscaler dll is refused. Used by the benchmark, a test belongs to one dll.
+    static void SetSrSwitchLocked(bool locked) { _srSwitchLocked.store(locked, std::memory_order_relaxed); }
+    static bool SrSwitchLocked() { return _srSwitchLocked.load(std::memory_order_relaxed); }
+
     // Applied by ApplyPendingSrVariant when the next FFX feature is created
     static void RequestSrVariant(const std::wstring& name)
     {
+        if (SrSwitchLocked())
+        {
+            LOG_WARN("Upscaler dll switch refused, a benchmark is running");
+            return;
+        }
+
         SrDiagOnRequest(name);
 
         std::scoped_lock lock(_srMutex);

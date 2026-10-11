@@ -11,6 +11,7 @@
 #include <upscalers/ffx/FFXFeature.h>
 #include <fsr4/FSR4Comparison.h>
 #include <misc/HwTelemetry.h>
+#include <misc/IlionBenchmark.h>
 #include "ilion_lang.h"
 #include <proxies/Streamline_Proxy.h>
 
@@ -1760,6 +1761,52 @@ void MenuCommon::UpdateRenderTiming(RenderMenuContext& ctx)
     state.frameTimes.push_back(frameTime);
 }
 
+// Feeds the running benchmark with the frame that was just presented
+static void UpdateBenchmark(State& state, double frameTime, double now)
+{
+    const bool running = IlionBenchmark::Running();
+
+    // The upscaler dll can't be switched in the middle of a test
+    FfxApiProxy::SetSrSwitchLocked(running);
+
+    static int lastSlot = -1;
+    static uint64_t lastDispatchCount = 0;
+
+    const auto active = FfxApiProxy::SrDiagGetActive();
+    const bool dispatched = active.slot >= 0 && (active.slot != lastSlot || active.dispatchCount != lastDispatchCount);
+
+    lastSlot = active.slot;
+    lastDispatchCount = active.dispatchCount;
+
+    if (!running)
+        return;
+
+    // Hardware readings are taken during a test even when the overlay doesn't show them
+    HwTelemetry::KeepAlive();
+
+    const auto fg = state.currentFG;
+    const bool fgActive = fg != nullptr && fg->IsActive() && !fg->IsPaused();
+
+    IlionBenchmark::OnFrame(frameTime, now, active.module, dispatched, fgActive,
+                            fgActive ? (int) fg->GetInterpolatedFrameCount() + 1 : 1, HwTelemetry::Get());
+}
+
+// One line in the performance overlay while a test runs, so it can be followed with the menu closed
+static void DrawBenchmarkStatus(double now)
+{
+    const auto benchState = IlionBenchmark::GetState();
+
+    if (benchState == IlionBenchmark::State::Stabilizing)
+    {
+        ImGui::Text("Benchmark: %s %.1f s", Tr("STABILIZING"), IlionBenchmark::StabilizeLeftMs(now) / 1000.0);
+    }
+    else if (benchState == IlionBenchmark::State::Recording)
+    {
+        ImGui::Text("Benchmark: %s %.0f / %d s", Tr("RECORDING"), IlionBenchmark::ElapsedMs() / 1000.0,
+                    IlionBenchmark::RequestedSeconds());
+    }
+}
+
 // Not available text of a hardware reading, nothing gets shown in its place
 static const char* HwNotAvailable() { return Tr("N/A"); }
 
@@ -2817,6 +2864,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
 #endif
             }
 
+            DrawBenchmarkStatus(now);
             DrawHardwareTelemetry(config, fpsScale);
             DrawFsr4ComparisonPanel(fpsScale);
         }
@@ -3275,6 +3323,10 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
             auto selectSrVariant = [&](const std::wstring& name)
             {
+                // Not while a benchmark is running
+                if (FfxApiProxy::SrSwitchLocked())
+                    return;
+
                 if (name.empty())
                     config->Fsr4SrVariant.reset();
                 else
@@ -8643,6 +8695,8 @@ const MenuCommon::MenuBox* MenuCommon::GetMenuBoxes(size_t& count)
 #endif
         { "vsync", "Latency & FPS", "V-Sync", [](RenderMenuContext& c) { RenderCard(c, RenderVsyncSettings); } },
 
+        { "benchmark", "Benchmark", "Benchmark", [](RenderMenuContext& c) { RenderCard(c, RenderBenchmark); } },
+
         { "mipmap", "Textures", "Mipmap Bias", nullptr, RenderApiAndTextureSettings },
         { "anisotropy", "Textures", "Anisotropic Filtering", nullptr, RenderApiAndTextureSettings },
 
@@ -8856,6 +8910,7 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
         { "MAIN", "Upscaling", "Backend, sharpness and output scaling.", RenderUpscalerStateMessage },
         { "MAIN", "Frame Gen", "Frame generation source, output and pacing." },
         { "MAIN", "Latency & FPS", "Frame limiter, low latency and V-Sync." },
+        { "MAIN", "Benchmark", "Manual performance tests of the upscaler in use." },
         { "SYSTEM", "Textures", "Mipmap bias and anisotropic filtering." },
         { "SYSTEM", "Compatibility", "Init flags, hooks, plugins and game specific workarounds." },
         { "ADVANCED", "Menu", "Menu scale, theme, FPS overlay and keybinds." },
@@ -9510,6 +9565,291 @@ void MenuCommon::RenderHudlessResourcesWindow(RenderMenuContext& ctx, ImGuiWindo
     }
 }
 
+// BENCHMARK -----------------------------
+// Manual test of what's in use right now. The user starts it, nothing gets switched by it.
+void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
+{
+    auto& state = ctx.state;
+    auto config = ctx.config;
+    auto& currentFeature = ctx.currentFeature;
+    auto& menuResScale = ctx.menuResScale;
+
+    SectionTitle("Benchmark");
+    ScopedID sectionId { "Benchmark" };
+
+    const auto benchState = IlionBenchmark::GetState();
+    const bool running = IlionBenchmark::Running();
+    const bool busy = running || benchState == IlionBenchmark::State::Processing;
+
+    // What would be tested, taken from what's really running
+    const bool upscalerOn = IsUpscalerActive(currentFeature) && currentFeature->IsInited();
+    const bool fsrObservable = upscalerOn && currentBackend == Upscaler::FFX && state.api == DX12;
+    const auto active = FfxApiProxy::SrDiagGetActive();
+
+    std::wstring activeDllPath;
+    std::string activeFsrName;
+
+    if (fsrObservable && active.module != nullptr)
+        activeFsrName = FfxApiProxy::SrDiagDescribeModule(active.module, &activeDllPath);
+
+    const std::string upscalerText =
+        upscalerOn ? StrFmt("%s %u.%u.%u", currentFeature->ShortName().c_str(), currentFeature->Version().major,
+                            currentFeature->Version().minor, currentFeature->Version().patch)
+                   : std::string(Tr("None"));
+
+    ImGui::Text("%s: %s", Tr("Upscaler"), upscalerText.c_str());
+
+    if (fsrObservable)
+        ImGui::Text("%s: %s", Tr("FSR version"), activeFsrName.empty() ? "-" : Tr(activeFsrName.c_str()));
+
+    ImGui::BeginDisabled(busy);
+
+    if (ImGui::Button(TrL("Change FSR version")))
+        requestedMenuTab = "Upscaling";
+
+    ShowTooltip("Opens the Upscaling tab, the FSR version is selected there.\n"
+                "It can't be changed while a test is running.");
+
+    // Duration
+    static int benchSeconds = 60;
+
+    ImGui::Spacing();
+    ImGui::TextDisabled("%s", Tr("Duration"));
+    ImGui::SameLine();
+
+    for (const int seconds : { 30, 60, 120 })
+    {
+        if (ImGui::RadioButton(StrFmt("%d s", seconds).c_str(), benchSeconds == seconds))
+            benchSeconds = seconds;
+
+        ImGui::SameLine();
+    }
+
+    ImGui::NewLine();
+    ImGui::EndDisabled();
+
+    // Start | Stop | Cancel | Save
+    ImGui::Spacing();
+    ImGui::BeginDisabled(busy);
+
+    if (ImGui::Button(TrL("Start")))
+    {
+        IlionBenchmark::Conditions conditions;
+        conditions.game = state.gameExe;
+        conditions.upscaler = upscalerOn ? upscalerText : std::string("None");
+        conditions.upscaleObservable = fsrObservable;
+        conditions.frameGeneration = "Off";
+
+        if (upscalerOn)
+        {
+            conditions.resolution = StrFmt("%ux%u -> %ux%u", currentFeature->RenderWidth(), currentFeature->RenderHeight(),
+                                           currentFeature->TargetWidth(), currentFeature->TargetHeight());
+        }
+
+        if (const auto fg = state.currentFG; fg != nullptr && fg->IsActive() && !fg->IsPaused())
+            conditions.frameGeneration = StrFmt("%s %ux", fg->Name(), fg->GetInterpolatedFrameCount() + 1);
+
+        if (fsrObservable && active.module != nullptr)
+        {
+            conditions.fsrVersion = activeFsrName;
+            conditions.dllPath = wstring_to_string(activeDllPath);
+            conditions.dllSha256 = FSR4Versions::HashForPath(activeDllPath);
+
+            // Hash is calculated in the background, asked for again when the result gets saved
+            if (conditions.dllSha256.empty())
+                FSR4Versions::RequestHash(activeDllPath);
+
+            version_t dllVersion;
+
+            if (Util::GetFileVersion(activeDllPath, &dllVersion))
+            {
+                conditions.dllFileVersion =
+                    StrFmt("%u.%u.%u.%u", dllVersion.major, dllVersion.minor, dllVersion.patch, dllVersion.reserved);
+            }
+        }
+
+        LOG_INFO("[BENCHMARK] start: {} s, upscaler: {}, fsr version: {}, dll: {}", benchSeconds, conditions.upscaler,
+                 conditions.fsrVersion, conditions.dllPath);
+
+        IlionBenchmark::Start(benchSeconds, ctx.now, conditions, fsrObservable ? active.module : nullptr);
+    }
+
+    ShowTooltip("Starts a test of what's in use right now. Recording begins after 2 seconds.\n"
+                "The test keeps running with the menu closed, the performance overlay shows its progress.");
+
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!running);
+
+    if (ImGui::Button(TrL("Stop")))
+        IlionBenchmark::Stop();
+
+    ShowTooltip("Ends the test now and keeps what was recorded");
+
+    ImGui::SameLine();
+
+    if (ImGui::Button(TrL("Cancel")))
+        IlionBenchmark::Cancel();
+
+    ShowTooltip("Ends the test and discards it");
+
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+
+    static std::string saveError;
+    const bool canSave = benchState == IlionBenchmark::State::Finished && IlionBenchmark::GetResult().savedPath.empty();
+
+    ImGui::BeginDisabled(!canSave);
+
+    if (ImGui::Button(TrL("Save")))
+    {
+        // Hash of the dll might have finished after the test started
+        if (IlionBenchmark::GetResult().conditions.dllSha256.empty() &&
+            !IlionBenchmark::GetResult().conditions.dllPath.empty())
+        {
+            IlionBenchmark::SetDllSha256(
+                FSR4Versions::HashForPath(string_to_wstring(IlionBenchmark::GetResult().conditions.dllPath)));
+        }
+
+        saveError.clear();
+
+        const auto folder = Util::ExePath().parent_path() / L"ILION" / L"Benchmarks";
+
+        if (IlionBenchmark::Save(folder, &saveError))
+            LOG_INFO("[BENCHMARK] saved: {}", IlionBenchmark::GetResult().savedPath);
+        else
+            LOG_ERROR("[BENCHMARK] save failed: {}", saveError);
+    }
+
+    ShowTooltip("Writes the result to ILION\\Benchmarks next to the game exe:\n"
+                "one json per test, the frame times, and a line in benchmarks.csv.\n"
+                "Existing files are never overwritten.");
+
+    ImGui::EndDisabled();
+
+    // Status
+    ImGui::Spacing();
+
+    if (benchState == IlionBenchmark::State::Stabilizing)
+    {
+        ImGui::Text("%s  %.1f s", Tr("STABILIZING"), IlionBenchmark::StabilizeLeftMs(ctx.now) / 1000.0);
+    }
+    else if (benchState == IlionBenchmark::State::Recording)
+    {
+        const float elapsed = (float) (IlionBenchmark::ElapsedMs() / 1000.0);
+
+        ImGui::Text("%s  %.0f / %d s", Tr("RECORDING"), elapsed, IlionBenchmark::RequestedSeconds());
+        ImGui::ProgressBar(elapsed / (float) IlionBenchmark::RequestedSeconds(), ImVec2(-1.0f, 0.0f), "");
+    }
+    else if (benchState == IlionBenchmark::State::Processing)
+    {
+        ImGui::TextDisabled("%s", Tr("Calculating..."));
+    }
+    else if (benchState == IlionBenchmark::State::Aborted)
+    {
+        ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.2f, 0.2f, 1.f)), "%s", Tr(IlionBenchmark::AbortReason()));
+    }
+    else if (benchState == IlionBenchmark::State::Idle)
+    {
+        ImGui::TextDisabled("%s", Tr("No test yet"));
+    }
+
+    // Result
+    if (benchState == IlionBenchmark::State::Finished)
+    {
+        const auto& result = IlionBenchmark::GetResult();
+        const std::string notAvailable = HwNotAvailable();
+
+        ImGui::SeparatorText(Tr("Result"));
+
+        if (ImGui::BeginTable("benchResult", 2, ImGuiTableFlags_SizingStretchSame))
+        {
+            const auto row = [&](const char* label, const std::string& value)
+            {
+                ImGui::TableNextColumn();
+                ImGui::TextDisabled("%s", Tr(label));
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(value.c_str());
+            };
+
+            row("Upscaler", result.conditions.upscaler);
+
+            if (!result.conditions.fsrVersion.empty())
+                row("FSR version", result.conditions.fsrVersion);
+
+            row("Test time", StrFmt("%.1f s (%llu %s)%s", result.durationMs / 1000.0, result.frames, Tr("frames"),
+                                    result.stoppedEarly ? Tr(", stopped early") : ""));
+            row("Average FPS", StrFmt("%.1f", result.avgFps));
+            row("Median FPS", StrFmt("%.1f", result.medianFps));
+            row("1% low", result.low1Valid ? StrFmt("%.1f", result.low1Fps) : notAvailable);
+            row("0.1% low", result.low01Valid ? StrFmt("%.1f", result.low01Fps) : notAvailable);
+            row("Frame time mean / median", StrFmt("%.2f / %.2f ms", result.meanMs, result.medianMs));
+            row("Frame time P95 / P99", StrFmt("%.2f / %.2f ms", result.p95Ms, result.p99Ms));
+            row("Frame time min / max", StrFmt("%.2f / %.2f ms", result.minMs, result.maxMs));
+            row("Variability", StrFmt("%.2f ms (%.1f %%)", result.stdevMs, result.variationPercent));
+            row("Stutter", StrFmt("%llu (%.1f / min, %.0f ms, max %.1f ms)", result.stutterCount,
+                                  result.stutterPerMinute, result.stutterTotalMs, result.stutterLongestMs));
+
+            if (result.conditions.upscaleObservable)
+                row("Frames without upscaling", StrFmt("%llu", result.framesWithoutUpscale));
+
+            const auto hardware = [&](const char* label, HwTelemetry::Metric metric, const char* format)
+            {
+                const auto& stat = result.hardware[metric];
+
+                if (stat.Valid())
+                    row(label, StrFmt(format, stat.Average(), stat.max) + "  [" + stat.source + "]");
+            };
+
+            hardware("GPU usage", HwTelemetry::GpuUsage, "%.0f / %.0f %%");
+            hardware("GPU temperature", HwTelemetry::GpuTemp, "%.0f / %.0f \xC2\xB0""C");
+            hardware("GPU hotspot", HwTelemetry::GpuHotspot, "%.0f / %.0f \xC2\xB0""C");
+            hardware("VRAM used", HwTelemetry::VramUsed, "%.0f / %.0f MB");
+            hardware("CPU usage", HwTelemetry::CpuUsage, "%.0f / %.0f %%");
+            hardware("CPU temperature", HwTelemetry::CpuTemp, "%.0f / %.0f \xC2\xB0""C");
+
+            ImGui::EndTable();
+        }
+
+        ImGui::TextDisabled("%s", Tr("Hardware values: average / maximum during the test"));
+
+        if (result.fgSeen)
+        {
+            ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.8f, 0.f, 1.f)), Tr("Frame generation was active (x%d):"),
+                               result.fgMultiplier);
+            ImGui::TextWrapped("%s", Tr("FPS values are presented frames and include generated ones."));
+        }
+
+        if (!result.savedPath.empty())
+            ImGui::TextWrapped("%s %s", Tr("Saved:"), result.savedPath.c_str());
+        else if (!saveError.empty())
+            ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.2f, 0.2f, 1.f)), "%s", Tr(saveError.c_str()));
+    }
+
+    // Existing tools, the same state as their own controls
+    ImGui::SeparatorText(Tr("Tools"));
+
+    bool comparisonEnabled = FSR4Comparison::Enabled();
+
+    if (ImGui::Checkbox(TrL("FSR 4 Comparison Mode"), &comparisonEnabled))
+    {
+        FSR4Comparison::SetEnabled(comparisonEnabled);
+
+        if (comparisonEnabled && !config->ShowFps.value_or_default())
+            config->ShowFps.set_volatile_value(true);
+    }
+
+    ImGui::SameLine(0.0f, 16.0f * menuResScale);
+
+    bool fpsEnabled = config->ShowFps.value_or_default();
+
+    if (ImGui::Checkbox(TrL("Performance overlay"), &fpsEnabled))
+        config->ShowFps = fpsEnabled;
+
+    if (ImGui::Button(TrL("Overlay and hardware settings")))
+        requestedMenuTab = "Menu";
+}
+
 // BASIC MODE -----------------------------
 // One panel made of the section functions of the full menu, called with basicView set so they stop after
 // their main controls. Nothing is stored here, both modes read and write the same config and state.
@@ -9813,6 +10153,7 @@ bool MenuCommon::RenderMenu()
     // 1) Collect timing and input state before any ImGui drawing.
     UpdateRenderTiming(ctx);
     UpdateFsr4Comparison(ctx.state, ctx.frameTime, ctx.now);
+    UpdateBenchmark(ctx.state, ctx.frameTime, ctx.now);
     UpdateMenuInputMode(ctx);
     HandleMenuShortcuts(ctx);
 

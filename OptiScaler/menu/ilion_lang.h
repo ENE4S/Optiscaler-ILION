@@ -284,6 +284,52 @@ inline constexpr Translation kSpanish[] = {
       "HWiNFO necesita Shared Memory Support activado en sus ajustes (12 horas por sesión en la versión gratuita).\n"
       "Una lectura que ningún programa ofrece se muestra como N/D; no se estima nada." },
 
+    // Benchmark
+    { "Change FSR version", "Cambiar versión FSR" },
+    { "Opens the Upscaling tab, the FSR version is selected there.\nIt can't be changed while a test is running.",
+      "Abre la pestaña Escalado; la versión FSR se selecciona allí.\nNo se puede cambiar mientras hay una prueba en curso." },
+    { "Duration", "Duración" },
+    { "Start", "Iniciar" },
+    { "Stop", "Detener" },
+    { "Cancel", "Cancelar" },
+    { "Save", "Guardar" },
+    { "Starts a test of what's in use right now. Recording begins after 2 seconds.\n"
+      "The test keeps running with the menu closed, the performance overlay shows its progress.",
+      "Inicia una prueba de lo que está en uso ahora. La medición empieza a los 2 segundos.\n"
+      "La prueba sigue con el menú cerrado; el overlay de rendimiento muestra su progreso." },
+    { "Ends the test now and keeps what was recorded", "Termina la prueba ahora y conserva lo medido" },
+    { "Ends the test and discards it", "Termina la prueba y la descarta" },
+    { "Writes the result to ILION\\Benchmarks next to the game exe:\n"
+      "one json per test, the frame times, and a line in benchmarks.csv.\n"
+      "Existing files are never overwritten.",
+      "Escribe el resultado en ILION\\Benchmarks junto al exe del juego:\n"
+      "un json por prueba, los tiempos de fotograma y una línea en benchmarks.csv.\n"
+      "Nunca se sobrescriben archivos existentes." },
+    { "Calculating...", "Calculando..." },
+    { "No test yet", "Aún no hay ninguna prueba" },
+    { "The upscaler dll changed during the test", "La dll de escalado cambió durante la prueba" },
+    { "Result", "Resultado" },
+    { "Test time", "Tiempo de prueba" },
+    { "frames", "fotogramas" },
+    { ", stopped early", ", detenida antes" },
+    { "Average FPS", "FPS promedio" },
+    { "Median FPS", "FPS mediano" },
+    { "Frame time mean / median", "Frametime medio / mediano" },
+    { "Frame time P95 / P99", "Frametime P95 / P99" },
+    { "Frame time min / max", "Frametime mín / máx" },
+    { "Variability", "Variabilidad" },
+    { "Frames without upscaling", "Fotogramas sin escalado" },
+    { "Hardware values: average / maximum during the test", "Valores de hardware: media / máximo durante la prueba" },
+    { "Frame generation was active (x%d):", "Frame generation estuvo activo (x%d):" },
+    { "FPS values are presented frames and include generated ones.",
+      "Los FPS son fotogramas presentados e incluyen los generados." },
+    { "Saved:", "Guardado:" },
+    { "A result with this id already exists", "Ya existe un resultado con este identificador" },
+    { "Can't write to the benchmarks folder", "No se puede escribir en la carpeta de benchmarks" },
+    { "Tools", "Herramientas" },
+    { "Performance overlay", "Overlay de rendimiento" },
+    { "Overlay and hardware settings", "Ajustes del overlay y del hardware" },
+
     // Status tab
     { "Unofficial modified build, not an OptiScaler release",
       "Compilación modificada no oficial, no es una versión de OptiScaler" },

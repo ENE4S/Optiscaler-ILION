@@ -14,6 +14,7 @@
 #include <misc/IlionBenchmark.h>
 #include <misc/IlionCompare.h>
 #include <misc/IlionCapture.h>
+#include <misc/IlionVisual.h>
 #include "ilion_lang.h"
 #include <proxies/Streamline_Proxy.h>
 
@@ -27,11 +28,16 @@
 #include <version_check.h>
 
 #include <imgui/imgui_internal.h>
+#include "ilion_visual_panel.h"
 #include <imgui/ImGuiNotify.hpp>
 #include <imgui/imgui_impl_win32.h>
 #include <imgui/imgui_impl_uwp.h>
 
 #include <mutex>
+#include <atomic>
+#include <functional>
+#include <map>
+#include <thread>
 #include <cstdarg>
 
 #include <array>
@@ -1985,6 +1991,1254 @@ static std::vector<CompareConclusion> BuildCompareConclusions(const IlionCompare
     return result;
 }
 
+// --- Visual comparison of the captures ---------------------------------------------------------------------
+
+static bool showVisualCompare = false;
+static bool visualCompareReload = true;
+
+static std::filesystem::path CaptureFolder() { return Util::ExePath().parent_path() / L"ILION" / L"Captures"; }
+
+// Difference in SSIM two captures need to be told apart
+static constexpr double VisualSsimMargin = 0.002;
+
+// Most captures looked at together, each one is a whole picture in memory
+static constexpr size_t VisualMaxSelected = 4;
+
+// Reading the pictures and measuring them takes too long for a frame, a thread does one thing at a time
+struct VisualWork
+{
+    std::mutex mutex;
+    std::map<std::string, std::shared_ptr<const IlionVisual::Image>> images; // by capture id, empty = unreadable
+    std::map<std::string, IlionVisual::Metrics> metrics;                     // by "reference|test"
+    std::atomic<bool> busy { false };
+};
+
+static VisualWork& GetVisualWork()
+{
+    // Never freed, a thread may still be using it when the process ends
+    static VisualWork* work = new VisualWork();
+    return *work;
+}
+
+static std::string VisualPairKey(const std::string& referenceId, const std::string& testId)
+{
+    return referenceId + "|" + testId;
+}
+
+static void StartVisualLoad(const IlionVisual::Capture& capture)
+{
+    auto& work = GetVisualWork();
+    work.busy = true;
+
+    std::thread([id = capture.id, path = capture.path, &work]()
+                {
+                    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+
+                    auto image = std::make_shared<IlionVisual::Image>();
+                    IlionVisual::LoadPng(path, *image);
+
+                    {
+                        std::scoped_lock lock(work.mutex);
+                        work.images[id] = image;
+                    }
+
+                    work.busy = false;
+                })
+        .detach();
+}
+
+static void StartVisualMeasure(const std::string& key, std::shared_ptr<const IlionVisual::Image> reference,
+                               std::shared_ptr<const IlionVisual::Image> test, IlionVisual::SavedResult saved,
+                               const std::filesystem::path& folder)
+{
+    auto& work = GetVisualWork();
+    work.busy = true;
+
+    std::thread([key, reference, test, saved, folder, &work]() mutable
+                {
+                    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+
+                    const auto metrics = IlionVisual::Compare(*reference, *test);
+
+                    // Kept on disk for the conclusions of the benchmark comparison
+                    if (metrics.valid)
+                    {
+                        saved.ssim = metrics.ssim;
+                        saved.meanDifference = metrics.meanDifference;
+                        saved.differentPercent = metrics.differentPercent;
+                        saved.edgeChangePercent = metrics.edgeChangePercent;
+                        saved.edgesKeptPercent = metrics.edgesKeptPercent;
+                        saved.overshootPercent = metrics.overshootPercent;
+                        saved.unreliable = metrics.Unreliable();
+                        IlionVisual::SaveResult(folder, saved);
+                    }
+
+                    {
+                        std::scoped_lock lock(work.mutex);
+                        work.metrics[key] = metrics;
+                    }
+
+                    work.busy = false;
+                })
+        .detach();
+}
+
+static std::string VisualCaptureName(const IlionVisual::Capture& capture)
+{
+    const std::string name = capture.Name();
+    return capture.fsrVersion.empty() && name == "Native" ? std::string(Tr("Native")) : name;
+}
+
+// Made with the same dll, or both without any upscaling
+static bool SameVisualVersion(const IlionVisual::Capture& a, const IlionVisual::Capture& b)
+{
+    // The same dll upscaling and at native resolution are not the same thing
+    if (!a.dllSha256.empty() || !b.dllSha256.empty())
+        return a.dllSha256 == b.dllSha256 && a.resolution == b.resolution;
+
+    return a.hasMeta && b.hasMeta && a.fsrVersion.empty() && b.fsrVersion.empty() &&
+           a.GetOrigin() == IlionVisual::Origin::Native && b.GetOrigin() == IlionVisual::Origin::Native;
+}
+
+// A picture to measure fidelity against: native resolution and not made by any of the versions that are compared.
+// The native antialiasing of an FSR dll is that dll's own picture.
+static bool NeutralVisualReference(const IlionVisual::Capture& capture)
+{
+    return capture.GetOrigin() == IlionVisual::Origin::Native && capture.fsrVersion.empty() && capture.dllSha256.empty();
+}
+
+struct VisualEntry
+{
+    const IlionVisual::Capture* capture = nullptr;
+    const IlionVisual::Metrics* metrics = nullptr; // nullptr while it is being measured
+};
+
+// A few lines on what was measured. A capture is only called closer to the reference when the reference is a
+// native image and the difference is bigger than the margin and than what the scene changes by itself.
+static std::vector<CompareConclusion> BuildVisualSummary(const IlionVisual::Capture& reference,
+                                                         const std::vector<VisualEntry>& entries)
+{
+    std::vector<CompareConclusion> result;
+    std::vector<VisualEntry> valid;
+
+    for (const auto& entry : entries)
+    {
+        if (entry.metrics != nullptr && entry.metrics->valid)
+            valid.push_back(entry);
+    }
+
+    if (valid.empty())
+    {
+        result.push_back({ Tr("VISUAL RESULT INCONCLUSIVE"),
+                           Tr("None of the selected captures can be measured against the reference."), 2 });
+        return result;
+    }
+
+    for (const auto& entry : valid)
+    {
+        if (entry.metrics->Unreliable())
+        {
+            result.push_back({ Tr("VISUAL RESULT INCONCLUSIVE"),
+                               Tr("At least one capture doesn't show the same picture as the reference: the scene or "
+                                  "the camera changed between them. Capture again without moving."),
+                               2 });
+            return result;
+        }
+    }
+
+    // Captures of the reference's own version tell how much the picture changes by itself
+    double noise = -1.0;
+    std::vector<VisualEntry> candidates;
+
+    for (const auto& entry : valid)
+    {
+        if (SameVisualVersion(reference, *entry.capture))
+            noise = (std::max)(noise, 1.0 - entry.metrics->ssim);
+        else
+            candidates.push_back(entry);
+    }
+
+    if (candidates.empty())
+    {
+        result.push_back({ Tr("VISUAL RESULT INCONCLUSIVE"),
+                           StrFmt(Tr("Only captures of the same version as the reference were selected. Their SSIM of "
+                                     "%.4f is how much the picture changes by itself from one capture to the next."),
+                                  1.0 - noise),
+                           1 });
+        return result;
+    }
+
+    // Captures of one version count as one, with the mean of their SSIM. How far apart they are is also what
+    // the picture changes by itself.
+    struct Version
+    {
+        const IlionVisual::Capture* capture;
+        double ssim = 0.0;
+        double lowest = 1.0, highest = 0.0;
+        int captures = 0;
+    };
+
+    std::vector<Version> versions;
+
+    for (const auto& entry : candidates)
+    {
+        auto version = std::find_if(versions.begin(), versions.end(),
+                                    [&](const Version& v) { return SameVisualVersion(*v.capture, *entry.capture); });
+
+        if (version == versions.end())
+        {
+            versions.push_back({ entry.capture });
+            version = versions.end() - 1;
+        }
+
+        version->ssim += entry.metrics->ssim;
+        version->lowest = (std::min)(version->lowest, entry.metrics->ssim);
+        version->highest = (std::max)(version->highest, entry.metrics->ssim);
+        version->captures++;
+    }
+
+    bool repeats = noise >= 0.0;
+
+    for (auto& version : versions)
+    {
+        version.ssim /= version.captures;
+
+        if (version.captures > 1)
+        {
+            noise = (std::max)(noise, version.highest - version.lowest);
+            repeats = true;
+        }
+    }
+
+    std::sort(versions.begin(), versions.end(), [](const Version& a, const Version& b) { return a.ssim > b.ssim; });
+
+    const auto versionName = [&](const Version& version) -> std::string
+    {
+        if (version.captures > 1)
+        {
+            return StrFmt(Tr("%s (average of %d captures)"), VisualCaptureName(*version.capture).c_str(),
+                          version.captures);
+        }
+
+        return VisualCaptureName(*version.capture);
+    };
+
+    // Two captures of one version are told apart by their time
+    const auto name = [&](const VisualEntry& entry)
+    {
+        std::string text = VisualCaptureName(*entry.capture);
+
+        for (const auto& other : candidates)
+        {
+            if (other.capture != entry.capture && VisualCaptureName(*other.capture) == text)
+                return text + " (" + (entry.capture->dateTime.empty() ? entry.capture->id : entry.capture->dateTime) + ")";
+        }
+
+        return text;
+    };
+
+    const double margin = (std::max)(VisualSsimMargin, noise);
+    const bool native = NeutralVisualReference(reference);
+    const auto& best = versions.front();
+
+    CompareConclusion main;
+
+    if (!native)
+    {
+        main.title = Tr("VISUAL DIFFERENCES, without a fidelity verdict");
+        main.text = StrFmt(Tr("The reference isn't a native image without upscaler: the values tell how much each "
+                              "capture differs from %s, not which one is more faithful."),
+                           VisualCaptureName(reference).c_str());
+
+        if (noise >= 0.0 && 1.0 - versions.back().ssim <= noise * 1.5)
+            main.text += Tr(" The differences are no bigger than those between two captures of one same version.");
+    }
+    else if (versions.size() == 1)
+    {
+        main.title = Tr("VISUAL: one version measured");
+        main.text = StrFmt(Tr("%s has an SSIM of %.4f against the native reference. With one version there is nothing "
+                              "to rank."),
+                           versionName(best).c_str(), best.ssim);
+    }
+    else if (best.ssim - versions[1].ssim > margin)
+    {
+        main.title = StrFmt(Tr("CLOSEST TO THE NATIVE REFERENCE: %s"), versionName(best).c_str());
+        main.text = StrFmt(Tr("SSIM of %.4f against %.4f for %s, the margin used is %.4f."), best.ssim,
+                           versions[1].ssim, versionName(versions[1]).c_str(), margin);
+        main.level = 0;
+    }
+    else
+    {
+        main.title = Tr("VISUAL RESULT INCONCLUSIVE");
+        main.text = StrFmt(Tr("%s and %s are %.4f of SSIM apart, within the margin of %.4f."), versionName(best).c_str(),
+                           versionName(versions[1]).c_str(), best.ssim - versions[1].ssim, margin);
+    }
+
+    if (native && !repeats)
+        main.text += Tr(" Without a second capture of one same version, how much the picture changes by itself is unknown.");
+
+    result.push_back(main);
+
+    // Edges, a reading and not a verdict
+    std::string edges;
+
+    for (const auto& entry : candidates)
+    {
+        const double change = entry.metrics->edgeChangePercent;
+
+        if (std::abs(change) < 5.0)
+            continue;
+
+        edges += StrFmt(Tr(change > 0.0 ? "%s has stronger edges than the reference (%+.1f%%). "
+                                        : "%s has softer edges than the reference (%+.1f%%). "),
+                        name(entry).c_str(), change);
+
+        if (change > 0.0 && entry.metrics->overshootPercent >= 1.0)
+        {
+            edges += StrFmt(Tr("Its overshoot next to edges (%.1f%%) may be over-sharpening or halos. "),
+                            entry.metrics->overshootPercent);
+        }
+    }
+
+    if (!edges.empty())
+        result.push_back({ Tr("EDGES AND SHARPNESS (exploratory)"), edges, 1 });
+
+    return result;
+}
+
+// What the saved visual analyses say about the versions of the tests of a benchmark comparison. Its own
+// category next to performance and stability, no score mixes them.
+static void AddVisualConclusions(std::vector<CompareConclusion>& result, const IlionCompare::Analysis& analysis,
+                                 const std::vector<const IlionCompare::Test*>& tests,
+                                 const std::vector<IlionVisual::SavedResult>& saved)
+{
+    struct Covered
+    {
+        int candidate;
+        double ssim;
+    };
+
+    // Per native capture used as reference, the versions measured against it. Later rows are newer.
+    std::map<std::string, std::vector<Covered>> byReference;
+
+    for (const auto& row : saved)
+    {
+        if (row.referenceOrigin != "native" || row.unreliable || row.testSha256.empty())
+            continue;
+
+        for (int i = 0; i < (int) analysis.candidates.size(); i++)
+        {
+            const auto& candidate = analysis.candidates[i];
+
+            if (candidate.tests.empty())
+                continue;
+
+            const auto* test = tests[candidate.tests.front()];
+
+            if (test->dllSha256 != row.testSha256 || test->game != row.game)
+                continue;
+
+            auto& covered = byReference[row.referenceId];
+            const auto existing =
+                std::find_if(covered.begin(), covered.end(), [&](const Covered& c) { return c.candidate == i; });
+
+            if (existing != covered.end())
+                existing->ssim = row.ssim;
+            else
+                covered.push_back({ i, row.ssim });
+        }
+    }
+
+    // The reference that covers the most versions, the newest one among equals
+    const std::string* referenceId = nullptr;
+    std::vector<Covered> covered;
+
+    for (const auto& [id, list] : byReference)
+    {
+        if (list.size() >= covered.size())
+        {
+            referenceId = &id;
+            covered = list;
+        }
+    }
+
+    if (referenceId == nullptr)
+    {
+        result.push_back({ Tr("VISUAL QUALITY: not analyzed"),
+                           Tr("No saved visual analysis against a native capture covers these versions. Capture them "
+                              "and a native image in the same spot, then compare them in Visual analysis."),
+                           1 });
+        return;
+    }
+
+    std::sort(covered.begin(), covered.end(), [](const Covered& a, const Covered& b) { return a.ssim > b.ssim; });
+
+    const auto name = [&](int index) { return analysis.candidates[index].name; };
+
+    CompareConclusion conclusion;
+
+    if (covered.size() == 1)
+    {
+        conclusion.title = Tr("VISUAL QUALITY: one version analyzed");
+        conclusion.text = StrFmt(Tr("%s has an SSIM of %.4f against the native capture %s. The other versions have no "
+                                    "analysis against that capture."),
+                                 name(covered[0].candidate).c_str(), covered[0].ssim, referenceId->c_str());
+    }
+    else if (covered[0].ssim - covered[1].ssim > VisualSsimMargin)
+    {
+        conclusion.title = StrFmt(Tr("VISUALLY CLOSEST TO NATIVE: %s"), name(covered[0].candidate).c_str());
+        conclusion.text = StrFmt(Tr("SSIM of %.4f against %.4f for %s, from still captures measured against %s."),
+                                 covered[0].ssim, covered[1].ssim, name(covered[1].candidate).c_str(),
+                                 referenceId->c_str());
+        conclusion.level = 0;
+
+        if (analysis.performance.kind == IlionCompare::Kind::Winner)
+        {
+            if (analysis.performance.winner == covered[0].candidate)
+            {
+                conclusion.text += Tr(" It is also the performance winner.");
+            }
+            else
+            {
+                conclusion.text += StrFmt(Tr(" %s is faster: which one suits better depends on the priority."),
+                                          name(analysis.performance.winner).c_str());
+            }
+        }
+    }
+    else
+    {
+        conclusion.title = Tr("VISUAL QUALITY: no clear difference");
+        conclusion.text = StrFmt(Tr("%s and %s are %.4f of SSIM apart against the native capture %s, within the margin "
+                                    "of %.4f."),
+                                 name(covered[0].candidate).c_str(), name(covered[1].candidate).c_str(),
+                                 covered[0].ssim - covered[1].ssim, referenceId->c_str(), VisualSsimMargin);
+    }
+
+    if (covered.size() > 1 && covered.size() < analysis.candidates.size())
+        conclusion.text += Tr(" Not every version has an analysis against that capture.");
+
+    conclusion.text += Tr(" ILION can't check that the captures are from the scene of the tests.");
+
+    result.push_back(conclusion);
+}
+
+static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
+{
+    using Capture = IlionVisual::Capture;
+    using Metrics = IlionVisual::Metrics;
+    using Origin = IlionVisual::Origin;
+
+    static std::vector<Capture> captures;
+    static std::vector<std::string> selectedIds; // in the order they were picked
+    static std::string referenceId;
+    static std::string panelIds[2];
+    static int viewMode = 0;      // 0 = side by side, 1 = the right picture is the difference
+    static int differenceGain = 8;
+    static double viewZoom = 0.0; // 0 = the whole picture
+    static double viewCenterX = 0.0, viewCenterY = 0.0;
+    static bool holding = false;
+
+    auto& work = GetVisualWork();
+
+    MaintainVisualTextures();
+
+    if (!showVisualCompare)
+    {
+        // Closed: the pictures and their textures are let go, the selection stays
+        if (holding)
+        {
+            holding = false;
+
+            for (auto& panel : visualPanels)
+            {
+                RetireVisualTexture(panel.texture);
+                panel.shown.clear();
+            }
+
+            std::scoped_lock lock(work.mutex);
+            work.images.clear();
+            work.metrics.clear();
+        }
+
+        return;
+    }
+
+    holding = true;
+
+    if (visualCompareReload)
+    {
+        visualCompareReload = false;
+        captures = IlionVisual::ListCaptures(CaptureFolder());
+
+        std::erase_if(selectedIds, [&](const std::string& id)
+                      { return std::none_of(captures.begin(), captures.end(), [&](const Capture& c) { return c.id == id; }); });
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(std::min(1180.0f * scale, io.DisplaySize.x - 20.0f),
+                                    std::min(860.0f * scale, io.DisplaySize.y - 20.0f)),
+                             ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_FirstUseEver,
+                            ImVec2(0.5f, 0.5f));
+
+    if (!ImGui::Begin(TrL("Visual comparison of captures"), &showVisualCompare,
+                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse))
+    {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::TextDisabled("%s", Tr("Still captures against a reference you pick. What happens in motion is not measured."));
+
+    if (ImGui::Button(TrL("Back to Benchmark")))
+        showVisualCompare = false;
+
+    ImGui::SameLine();
+
+    if (ImGui::Button(TrL("Reload")))
+        visualCompareReload = true;
+
+    ImGui::SameLine();
+
+    if (ImGui::Button(TrL("Clear selection")))
+        selectedIds.clear();
+
+    ImGui::SameLine();
+
+    // Not while a picture of the selection may be open in the thread
+    ImGui::BeginDisabled(selectedIds.empty() || work.busy.load());
+
+    if (ImGui::Button(TrL("Delete captures")))
+        ImGui::OpenPopup("##DeleteCaptures");
+
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    {
+        ImGui::SetTooltip("%s", Tr("Deletes the selected captures for good: their PNG, their data and their saved "
+                                   "measurements.\nClear selection only unticks them."));
+    }
+
+    ImGui::EndDisabled();
+
+    if (ImGui::BeginPopupModal("##DeleteCaptures", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar |
+                                   ImGuiWindowFlags_NoSavedSettings))
+    {
+        ImGui::Text(Tr("Delete %d selected captures for good?"), (int) selectedIds.size());
+        ImGui::TextDisabled("%s", Tr("Their files are removed from disk. This can't be undone."));
+        ImGui::Spacing();
+
+        if (ImGui::Button(TrL("Delete")))
+        {
+            const int removed = IlionVisual::DeleteCaptures(captures, selectedIds);
+            IlionVisual::ForgetResults(CaptureFolder(), selectedIds);
+
+            LOG_INFO("[CAPTURE] deleted {} of {} selected captures", removed, selectedIds.size());
+
+            selectedIds.clear();
+            visualCompareReload = true;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::Button(TrL("Cancel")))
+            ImGui::CloseCurrentPopup();
+
+        ImGui::EndPopup();
+    }
+
+    ImGui::SameLine();
+    ImGui::TextDisabled(Tr("%d captures, %d selected (up to %d)"), (int) captures.size(), (int) selectedIds.size(),
+                        (int) VisualMaxSelected);
+
+    if (captures.empty())
+    {
+        ImGui::Spacing();
+        ImGui::TextWrapped("%s", Tr("No captures yet. Use Capture image in the Benchmark tab, or copy PNG files into "
+                                    "ILION\\Captures."));
+        ImGui::End();
+        return;
+    }
+
+    const auto isSelected = [&](const std::string& id)
+    { return std::find(selectedIds.begin(), selectedIds.end(), id) != selectedIds.end(); };
+
+    const auto originText = [](const Capture& capture)
+    {
+        const Origin origin = capture.GetOrigin();
+        return Tr(origin == Origin::Native ? "Native" : origin == Origin::Upscaled ? "Upscaled" : "External");
+    };
+
+    // Captures, newest first
+    const float listHeight = ImGui::GetTextLineHeightWithSpacing() * 6.5f;
+
+    if (ImGui::BeginTable("visualCaptures", 7,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY |
+                              ImGuiTableFlags_SizingFixedFit,
+                          ImVec2(0.0f, listHeight)))
+    {
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn("##pick");
+        ImGui::TableSetupColumn(Tr("Capture"));
+        ImGui::TableSetupColumn(Tr("Date and time"));
+        ImGui::TableSetupColumn(Tr("Type"));
+        ImGui::TableSetupColumn(Tr("Size"));
+        ImGui::TableSetupColumn(Tr("Resolution"));
+        ImGui::TableSetupColumn("Frame Generation", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableHeadersRow();
+
+        for (int i = (int) captures.size() - 1; i >= 0; i--)
+        {
+            const auto& capture = captures[i];
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+
+            bool picked = isSelected(capture.id);
+
+            ImGui::PushID(i);
+            ImGui::BeginDisabled(!picked && selectedIds.size() >= VisualMaxSelected);
+
+            if (ImGui::Checkbox("##pick", &picked))
+            {
+                if (picked)
+                    selectedIds.push_back(capture.id);
+                else
+                    std::erase(selectedIds, capture.id);
+            }
+
+            ImGui::EndDisabled();
+            ImGui::PopID();
+
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(VisualCaptureName(capture).c_str());
+
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", capture.path.filename().string().c_str());
+
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(capture.dateTime.empty() ? "-" : capture.dateTime.c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(originText(capture));
+            ImGui::TableNextColumn();
+            ImGui::Text("%dx%d%s", capture.width, capture.height, capture.hdr ? " HDR10" : "");
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(capture.resolution.empty() ? "-" : capture.resolution.c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(capture.frameGeneration.empty() ? "-" : capture.frameGeneration.c_str());
+        }
+
+        ImGui::EndTable();
+    }
+
+    // Selected captures in the order they were picked
+    std::vector<const Capture*> picked;
+
+    for (const auto& id : selectedIds)
+    {
+        for (const auto& capture : captures)
+        {
+            if (capture.id == id)
+                picked.push_back(&capture);
+        }
+    }
+
+    // Pictures and measurements the thread has ready. Pictures that aren't selected anymore are let go.
+    std::map<std::string, std::shared_ptr<const IlionVisual::Image>> images;
+    std::map<std::string, Metrics> metrics;
+
+    {
+        std::scoped_lock lock(work.mutex);
+        std::erase_if(work.images, [&](const auto& item) { return !isSelected(item.first); });
+        images = work.images;
+        metrics = work.metrics;
+    }
+
+    if (picked.size() < 2)
+    {
+        ImGui::Spacing();
+        ImGui::TextWrapped("%s", Tr("Select two or more captures to compare them."));
+        ImGui::End();
+        return;
+    }
+
+    const auto find = [&](const std::string& id) -> const Capture*
+    {
+        for (const auto* capture : picked)
+        {
+            if (capture->id == id)
+                return capture;
+        }
+
+        return nullptr;
+    };
+
+    // The reference is the user's choice. A native capture is offered first, never one version over another.
+    if (find(referenceId) == nullptr)
+    {
+        referenceId = picked.front()->id;
+
+        for (const auto* capture : picked)
+        {
+            if (NeutralVisualReference(*capture))
+            {
+                referenceId = capture->id;
+                break;
+            }
+        }
+    }
+
+    const Capture* reference = find(referenceId);
+
+    const auto columnName = [&](const Capture& capture)
+    {
+        return StrFmt("%s  %s", VisualCaptureName(capture).c_str(),
+                      capture.dateTime.empty() ? capture.id.c_str() : capture.dateTime.c_str());
+    };
+
+    ImGui::Spacing();
+    ImGui::SetNextItemWidth(360.0f * scale);
+
+    if (ImGui::BeginCombo(TrL("Reference"), columnName(*reference).c_str()))
+    {
+        for (const auto* capture : picked)
+        {
+            if (ImGui::Selectable(StrFmt("%s##%s", columnName(*capture).c_str(), capture->id.c_str()).c_str(),
+                                  capture->id == referenceId))
+                referenceId = capture->id;
+        }
+
+        ImGui::EndCombo();
+    }
+
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", Tr(NeutralVisualReference(*reference)
+                                     ? "Native image: the measurements tell how close each capture is to it."
+                                     : "Not a native image without upscaler: the measurements only tell how much the "
+                                       "captures differ."));
+
+    reference = find(referenceId);
+
+    // One thing at a time for the thread: first the pictures, then the measurements against the reference
+    if (!work.busy.load())
+    {
+        const Capture* toLoad = nullptr;
+
+        for (const auto* capture : picked)
+        {
+            if (!images.contains(capture->id))
+            {
+                toLoad = capture;
+                break;
+            }
+        }
+
+        if (toLoad != nullptr)
+        {
+            StartVisualLoad(*toLoad);
+        }
+        else
+        {
+            for (const auto* capture : picked)
+            {
+                const std::string key = VisualPairKey(referenceId, capture->id);
+
+                if (capture == reference || metrics.contains(key))
+                    continue;
+
+                SYSTEMTIME time;
+                GetLocalTime(&time);
+
+                IlionVisual::SavedResult saved;
+                saved.dateTime = StrFmt("%04d-%02d-%02d %02d:%02d:%02d", time.wYear, time.wMonth, time.wDay,
+                                        time.wHour, time.wMinute, time.wSecond);
+                saved.game = capture->game;
+                saved.referenceId = reference->id;
+                saved.referenceName = reference->Name();
+                saved.referenceSha256 = reference->dllSha256;
+                // Only a neutral native picture counts as such for the conclusions of the benchmarks
+                saved.referenceOrigin = NeutralVisualReference(*reference)                    ? "native"
+                                        : reference->GetOrigin() == Origin::Native ? "native_by_version"
+                                                                                   : IlionVisual::OriginText(reference->GetOrigin());
+                saved.testId = capture->id;
+                saved.testName = capture->Name();
+                saved.testSha256 = capture->dllSha256;
+
+                StartVisualMeasure(key, images[referenceId], images[capture->id], saved, CaptureFolder());
+                break;
+            }
+        }
+    }
+
+    // --- Comparator: two pictures that always show the same part ---------------------------------------------
+    ImGui::SeparatorText(Tr("Comparator"));
+
+    if (find(panelIds[0]) == nullptr)
+        panelIds[0] = referenceId;
+
+    if (find(panelIds[1]) == nullptr || panelIds[1] == panelIds[0])
+    {
+        for (const auto* capture : picked)
+        {
+            if (capture->id != panelIds[0])
+            {
+                panelIds[1] = capture->id;
+                break;
+            }
+        }
+    }
+
+    const IlionVisual::Image* pictures[2] = { nullptr, nullptr };
+    bool unreadable[2] = { false, false };
+
+    for (int i = 0; i < 2; i++)
+    {
+        const auto found = images.find(panelIds[i]);
+
+        if (found == images.end())
+            continue;
+
+        if (found->second->Empty())
+            unreadable[i] = true;
+        else
+            pictures[i] = found->second.get();
+    }
+
+    ImGui::RadioButton(TrL("Side by side"), &viewMode, 0);
+    ImGui::SameLine();
+    ImGui::RadioButton(TrL("Difference"), &viewMode, 1);
+
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("%s", Tr("The right picture shows where the two captures differ: black is equal,\n"
+                                   "brighter is more different. The amplification makes small differences visible."));
+    }
+
+    if (viewMode == 1)
+    {
+        static const int gains[] = { 1, 4, 8, 16, 32 };
+
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80.0f * scale);
+
+        if (ImGui::BeginCombo("##gain", StrFmt("x%d", differenceGain).c_str()))
+        {
+            for (const int gain : gains)
+            {
+                if (ImGui::Selectable(StrFmt("x%d", gain).c_str(), gain == differenceGain))
+                    differenceGain = gain;
+            }
+
+            ImGui::EndCombo();
+        }
+    }
+
+    ImGui::SameLine(0.0f, 16.0f * scale);
+
+    if (ImGui::Button(TrL("Fit")))
+        viewZoom = 0.0;
+
+    for (const int level : { 1, 2, 4, 8 })
+    {
+        ImGui::SameLine();
+
+        if (ImGui::Button(StrFmt(level == 1 ? "1:1" : "%dx", level).c_str()))
+            viewZoom = level;
+    }
+
+    // The part with the biggest difference between the two captures that are shown, when it was measured
+    {
+        const Metrics* pair = nullptr;
+
+        if (const auto it = metrics.find(VisualPairKey(panelIds[0], panelIds[1])); it != metrics.end())
+            pair = &it->second;
+        else if (const auto it2 = metrics.find(VisualPairKey(panelIds[1], panelIds[0])); it2 != metrics.end())
+            pair = &it2->second;
+
+        if (pair != nullptr && pair->valid && !pair->identical && pictures[0] != nullptr)
+        {
+            ImGui::SameLine(0.0f, 16.0f * scale);
+
+            if (ImGui::Button(TrL("Go to the most different area")))
+            {
+                viewCenterX = (pair->worstRegionX + 0.5) * pictures[0]->width / Metrics::GridX;
+                viewCenterY = (pair->worstRegionY + 0.5) * pictures[0]->height / Metrics::GridY;
+                viewZoom = (std::max)(1.0, viewZoom);
+            }
+        }
+    }
+
+    const IlionVisual::Image* base = pictures[0] != nullptr ? pictures[0] : pictures[1];
+
+    if (base == nullptr)
+    {
+        ImGui::TextDisabled("%s", Tr(unreadable[0] || unreadable[1] ? "This PNG can't be read" : "Loading the captures..."));
+    }
+    else
+    {
+        const float gap = ImGui::GetStyle().ItemSpacing.x;
+        const int panelWidth = (std::max)(128, (int) ((ImGui::GetContentRegionAvail().x - gap) * 0.5f));
+        const int panelHeight = std::clamp((int) (panelWidth * (double) base->height / base->width), 128,
+                                           (std::max)(128, (int) (io.DisplaySize.y * 0.45f)));
+
+        const double fitZoom =
+            (std::min)((double) panelWidth / base->width, (double) panelHeight / base->height);
+        const double zoom = viewZoom > 0.0 ? viewZoom : fitZoom;
+
+        if (viewZoom <= 0.0)
+        {
+            viewCenterX = base->width * 0.5;
+            viewCenterY = base->height * 0.5;
+        }
+
+        viewCenterX = std::clamp(viewCenterX, 0.0, (double) base->width);
+        viewCenterY = std::clamp(viewCenterY, 0.0, (double) base->height);
+
+        ImGui::SameLine(0.0f, 16.0f * scale);
+        ImGui::TextDisabled(Tr("Zoom %.0f%%. Wheel: zoom, drag: move."), zoom * 100.0);
+
+        // Changes of the view apply to both pictures on the next frame
+        double nextZoom = viewZoom, nextCenterX = viewCenterX, nextCenterY = viewCenterY;
+
+        for (int i = 0; i < 2; i++)
+        {
+            auto& panel = visualPanels[i];
+            const bool difference = i == 1 && viewMode == 1;
+
+            if (i == 1)
+                ImGui::SameLine();
+
+            ImGui::BeginGroup();
+            ImGui::PushID(i);
+
+            const Capture* shownCapture = find(panelIds[i]);
+            std::string label = shownCapture != nullptr ? columnName(*shownCapture) : std::string("-");
+
+            if (difference)
+                label = StrFmt(Tr("Difference with %s"), label.c_str());
+
+            ImGui::SetNextItemWidth((float) panelWidth);
+
+            if (ImGui::BeginCombo("##capture", label.c_str()))
+            {
+                for (const auto* capture : picked)
+                {
+                    if (ImGui::Selectable(StrFmt("%s##%s", columnName(*capture).c_str(), capture->id.c_str()).c_str(),
+                                          capture->id == panelIds[i]))
+                    {
+                        // Picking the one of the other side swaps them
+                        if (capture->id == panelIds[1 - i])
+                            panelIds[1 - i] = panelIds[i];
+
+                        panelIds[i] = capture->id;
+                    }
+                }
+
+                ImGui::EndCombo();
+            }
+
+            const ImVec2 corner = ImFloor(ImGui::GetCursorScreenPos());
+            const ImVec2 size((float) panelWidth, (float) panelHeight);
+            const char* message = nullptr;
+            bool drawn = false;
+
+            const std::string view =
+                StrFmt("%.2f|%.2f|%.4f|%d|%d", viewCenterX, viewCenterY, zoom, panelWidth, panelHeight);
+
+            if (difference)
+            {
+                if (pictures[0] == nullptr || pictures[1] == nullptr)
+                {
+                    message = unreadable[0] || unreadable[1] ? "This PNG can't be read" : "Loading the captures...";
+                }
+                else if (pictures[0]->width != pictures[1]->width || pictures[0]->height != pictures[1]->height)
+                {
+                    message = "The two captures don't have the same size";
+                }
+                else
+                {
+                    UpdateVisualPanel(panel, panelWidth, panelHeight,
+                                      StrFmt("d|%s|%s|%d|%s", panelIds[0].c_str(), panelIds[1].c_str(), differenceGain,
+                                             view.c_str()),
+                                      [&](uint8_t* out)
+                                      {
+                                          IlionVisual::RenderDifference(*pictures[0], *pictures[1], viewCenterX,
+                                                                        viewCenterY, zoom, differenceGain, panelWidth,
+                                                                        panelHeight, out);
+                                      });
+                    drawn = true;
+                }
+            }
+            else if (pictures[i] == nullptr)
+            {
+                message = unreadable[i] ? "This PNG can't be read" : "Loading the captures...";
+            }
+            else
+            {
+                UpdateVisualPanel(panel, panelWidth, panelHeight, StrFmt("v|%s|%s", panelIds[i].c_str(), view.c_str()),
+                                  [&](uint8_t* out)
+                                  {
+                                      IlionVisual::RenderView(*pictures[i], viewCenterX, viewCenterY, zoom, panelWidth,
+                                                              panelHeight, out);
+                                  });
+                drawn = true;
+            }
+
+            ImGui::SetCursorScreenPos(corner);
+
+            // The texture exists from the frame after it was asked for
+            if (drawn && panel.texture != nullptr && panel.texture->GetTexID() != ImTextureID_Invalid)
+            {
+                ImGui::Image(panel.texture->GetTexRef(), size, ImVec2(0.0f, 0.0f),
+                             ImVec2((float) panelWidth / panel.texture->Width, (float) panelHeight / panel.texture->Height));
+            }
+            else
+            {
+                ImGui::Dummy(size);
+                ImGui::GetWindowDrawList()->AddRectFilled(corner, ImVec2(corner.x + size.x, corner.y + size.y),
+                                                          IM_COL32(18, 18, 20, 255));
+
+                if (message != nullptr)
+                {
+                    ImGui::GetWindowDrawList()->AddText(ImVec2(corner.x + 8.0f * scale, corner.y + 8.0f * scale),
+                                                        ImGui::GetColorU32(ImGuiCol_TextDisabled), Tr(message));
+                }
+            }
+
+            // Dragging moves the picture, the wheel zooms on what is under the pointer
+            ImGui::SetCursorScreenPos(corner);
+            ImGui::InvisibleButton("##view", size);
+            ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+
+            if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f))
+            {
+                nextCenterX -= io.MouseDelta.x / zoom;
+                nextCenterY -= io.MouseDelta.y / zoom;
+
+                // Moving a picture that is shown whole keeps its zoom
+                if (nextZoom <= 0.0)
+                    nextZoom = fitZoom;
+            }
+
+            if (ImGui::IsItemHovered() && io.MouseWheel != 0.0f)
+            {
+                double wanted = io.MouseWheel > 0.0f ? zoom * 2.0 : zoom * 0.5;
+
+                // On the way up it stops at one pixel per pixel, from there on whole pixels
+                if (io.MouseWheel > 0.0f && zoom < 1.0)
+                    wanted = (std::min)(1.0, wanted);
+
+                wanted = (std::min)(wanted, 16.0);
+
+                if (io.MouseWheel < 0.0f && wanted <= fitZoom * 1.001)
+                {
+                    nextZoom = 0.0;
+                }
+                else
+                {
+                    const double pointerX = io.MousePos.x - (corner.x + size.x * 0.5);
+                    const double pointerY = io.MousePos.y - (corner.y + size.y * 0.5);
+
+                    nextCenterX = viewCenterX + pointerX / zoom - pointerX / wanted;
+                    nextCenterY = viewCenterY + pointerY / zoom - pointerY / wanted;
+                    nextZoom = wanted;
+                }
+            }
+
+            ImGui::PopID();
+            ImGui::EndGroup();
+        }
+
+        viewZoom = nextZoom;
+        viewCenterX = nextCenterX;
+        viewCenterY = nextCenterY;
+    }
+
+    // --- Measurements of every capture against the reference -------------------------------------------------
+    std::vector<VisualEntry> entries;
+    bool pending = false;
+
+    for (const auto* capture : picked)
+    {
+        if (capture == reference)
+            continue;
+
+        VisualEntry entry;
+        entry.capture = capture;
+
+        if (const auto it = metrics.find(VisualPairKey(referenceId, capture->id)); it != metrics.end())
+            entry.metrics = &it->second;
+        else
+            pending = true;
+
+        entries.push_back(entry);
+    }
+
+    ImGui::SeparatorText(Tr("Visual summary"));
+
+    if (pending)
+    {
+        ImGui::TextDisabled("%s", Tr("Measuring..."));
+    }
+    else
+    {
+        for (const auto& conclusion : BuildVisualSummary(*reference, entries))
+        {
+            const ImVec4 color = conclusion.level == 0   ? ImVec4(0.3f, 1.0f, 0.3f, 1.0f)
+                                 : conclusion.level == 2 ? ImVec4(1.0f, 0.8f, 0.0f, 1.0f)
+                                                         : ImGui::GetStyleColorVec4(ImGuiCol_Text);
+
+            ImGui::TextColored(conclusion.level == 1 ? color : toneMapColor(color), "%s", conclusion.title.c_str());
+            ImGui::TextWrapped("%s", conclusion.text.c_str());
+        }
+    }
+
+    // What keeps a capture from being measured, or makes its numbers doubtful
+    const ImVec4 blockingColor = toneMapColor(ImVec4(1.0f, 0.4f, 0.3f, 1.0f));
+    const ImVec4 warningColor = toneMapColor(ImVec4(1.0f, 0.8f, 0.0f, 1.0f));
+
+    bool generatedFrames = reference->frameGeneration != "Off" && !reference->frameGeneration.empty();
+    bool differentGame = false;
+    bool hdrValues = reference->hdr;
+
+    for (const auto& entry : entries)
+    {
+        const std::string name = columnName(*entry.capture);
+
+        generatedFrames |= entry.capture->frameGeneration != "Off" && !entry.capture->frameGeneration.empty();
+        differentGame |= !entry.capture->game.empty() && !reference->game.empty() && entry.capture->game != reference->game;
+        hdrValues |= entry.capture->hdr;
+
+        if (entry.metrics == nullptr)
+            continue;
+
+        if (entry.metrics->sizeMismatch)
+        {
+            ImGui::TextColored(blockingColor, Tr("%s: %dx%d against the %dx%d of the reference, it can't be measured."),
+                               name.c_str(), entry.capture->width, entry.capture->height, reference->width,
+                               reference->height);
+        }
+        else if (entry.metrics->depthMismatch)
+        {
+            ImGui::TextColored(blockingColor, Tr("%s: one is HDR10 and the other isn't, it can't be measured."),
+                               name.c_str());
+        }
+        else if (!entry.metrics->valid)
+        {
+            ImGui::TextColored(blockingColor, Tr("%s: the picture can't be read or is too small."), name.c_str());
+        }
+        else if (entry.metrics->sceneMismatch)
+        {
+            ImGui::TextColored(warningColor, Tr("%s: doesn't seem to show the same scene as the reference."),
+                               name.c_str());
+        }
+        else if (entry.metrics->shifted)
+        {
+            ImGui::TextColored(warningColor,
+                               Tr("%s: displaced %d, %d pixels from the reference, the camera moved between captures."),
+                               name.c_str(), entry.metrics->shiftX, entry.metrics->shiftY);
+        }
+    }
+
+    if (differentGame)
+        ImGui::TextColored(warningColor, "%s", Tr("The captures are from different games."));
+
+    if (generatedFrames)
+    {
+        ImGui::TextColored(warningColor, "%s",
+                           Tr("Frame generation was on in at least one capture, its frame may be a generated one."));
+    }
+
+    if (hdrValues)
+        ImGui::TextDisabled("%s", Tr("HDR10 captures are shown and measured over their PQ values reduced to 8 bit."));
+
+    ImGui::SeparatorText(Tr("Measurements against the reference"));
+
+    if (ImGui::BeginTable("visualMetrics", (int) entries.size() + 1,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit))
+    {
+        ImGui::TableSetupColumn("##metric");
+
+        for (const auto& entry : entries)
+            ImGui::TableSetupColumn(StrFmt("%s##%s", columnName(*entry.capture).c_str(), entry.capture->id.c_str()).c_str());
+
+        ImGui::TableHeadersRow();
+
+        const auto row = [&](const char* label, const char* tooltip, const auto& value)
+        {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(Tr(label));
+
+            if (tooltip != nullptr && ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", Tr(tooltip));
+
+            for (const auto& entry : entries)
+            {
+                ImGui::TableNextColumn();
+
+                if (entry.metrics == nullptr)
+                    ImGui::TextDisabled("...");
+                else if (!entry.metrics->valid)
+                    ImGui::TextDisabled("%s", Tr("N/A"));
+                else
+                    ImGui::TextUnformatted(value(*entry.metrics).c_str());
+            }
+        };
+
+        row("SSIM (structure)",
+            "Structural similarity of the brightness, in windows of 8x8 pixels.\n"
+            "1 is the same structure as the reference.",
+            [](const Metrics& m) { return StrFmt("%.4f", m.ssim); });
+
+        row("PSNR", "Signal to noise ratio of the brightness against the reference, higher is closer.",
+            [](const Metrics& m) { return m.identical ? std::string(Tr("identical")) : StrFmt("%.1f dB", m.psnr); });
+
+        row("Mean difference", "Mean difference of the brightness, in levels out of 255.",
+            [](const Metrics& m) { return StrFmt("%.2f", m.meanDifference); });
+
+        row("Pixels that differ", "Pixels with a color channel more than 2 levels out of 255 apart.",
+            [](const Metrics& m) { return StrFmt("%.1f %%", m.differentPercent); });
+
+        row("Pixels that clearly differ", "Pixels with a color channel more than 16 levels out of 255 apart.",
+            [](const Metrics& m) { return StrFmt("%.1f %%", m.clearlyPercent); });
+
+        row("Edge strength",
+            "Mean step of brightness between neighbouring pixels, against the one of the reference.\n"
+            "Higher is a sharper or noisier picture, lower is a softer one.",
+            [](const Metrics& m) { return StrFmt("%.2f (%+.1f %%)", m.edgeStrengthTest, m.edgeChangePercent); });
+
+        row("Edges of the reference kept",
+            "Edges of the reference that are still at least half as strong in the capture.",
+            [](const Metrics& m)
+            { return m.edgesAvailable ? StrFmt("%.1f %%", m.edgesKeptPercent) : std::string(Tr("N/A")); });
+
+        row("Overshoot next to edges (exploratory)",
+            "Pixels next to an edge that are brighter or darker than everything around them in the reference.\n"
+            "Halos and the ringing of sharpening read like this, but so does fine detail the reference lacks.",
+            [](const Metrics& m) { return StrFmt("%.2f %%", m.overshootPercent); });
+
+        row("Most different area", "Where the mean difference is biggest, in a grid of 6 columns and 4 rows.",
+            [](const Metrics& m)
+            {
+                return m.identical ? std::string("-")
+                                   : StrFmt(Tr("column %d, row %d (%.2f)"), m.worstRegionX + 1, m.worstRegionY + 1,
+                                            m.regionDifference[m.worstRegionY][m.worstRegionX]);
+            });
+
+        row("Displacement", "Movement of the whole picture that matches the reference best. It should be none.",
+            [](const Metrics& m)
+            { return m.shifted ? StrFmt("%d, %d px", m.shiftX, m.shiftY) : std::string(Tr("none")); });
+
+        ImGui::EndTable();
+    }
+
+    ImGui::TextDisabled(Tr("Margin used: %.4f of SSIM, or the difference between captures of one same version when it "
+                           "is bigger. No overall score is given."),
+                        VisualSsimMargin);
+
+    ImGui::End();
+}
+
 static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
 {
     if (!showBenchmarkCompare)
@@ -1996,11 +3250,13 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
     static std::vector<Test> history;
     static std::vector<std::string> selectedIds; // in the order they were picked, one column each
     static std::string referenceId;
+    static std::vector<IlionVisual::SavedResult> visualResults;
 
     if (benchmarkCompareReload)
     {
         benchmarkCompareReload = false;
         history = IlionCompare::LoadHistory(BenchmarkFolder() / L"benchmarks.csv");
+        visualResults = IlionVisual::LoadResults(CaptureFolder());
 
         // Tests that aren't in the file anymore drop out of the selection
         std::erase_if(selectedIds, [&](const std::string& id)
@@ -2020,7 +3276,8 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
         return;
     }
 
-    ImGui::TextDisabled("%s", Tr("Performance and stability comparison. Image quality is not evaluated."));
+    ImGui::TextDisabled("%s", Tr("Performance and stability comparison. Image quality only comes from the visual "
+                                 "analyses that were saved."));
 
     if (ImGui::Button(TrL("Back to Benchmark")))
         showBenchmarkCompare = false;
@@ -2216,7 +3473,13 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
 
     ImGui::SeparatorText(Tr("Conclusions"));
 
-    for (const auto& conclusion : BuildCompareConclusions(analysis, tests))
+    auto conclusions = BuildCompareConclusions(analysis, tests);
+
+    // Image quality is a category of its own, taken from the visual analyses of the same dlls
+    if (analysis.candidates.size() >= 2 && analysis.blocking.empty())
+        AddVisualConclusions(conclusions, analysis, tests, visualResults);
+
+    for (const auto& conclusion : conclusions)
     {
         const ImVec4 color = conclusion.level == 0   ? ImVec4(0.3f, 1.0f, 0.3f, 1.0f)
                              : conclusion.level == 2 ? ImVec4(1.0f, 0.8f, 0.0f, 1.0f)
@@ -10491,7 +11754,8 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
     {
         IlionCapture::Meta meta;
         meta.game = state.gameExe;
-        meta.upscaler = upscalerText;
+        // Not the translated text, the comparison reads it back
+        meta.upscaler = upscalerOn ? upscalerText : std::string("None");
         meta.frameGeneration = "Off";
 
         if (upscalerOn)
@@ -10520,7 +11784,7 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
 
         IlionCapture::Dismiss();
 
-        if (IlionCapture::Request(meta, Util::ExePath().parent_path() / L"ILION" / L"Captures"))
+        if (IlionCapture::Request(meta, CaptureFolder()))
             LOG_INFO("[CAPTURE] requested, fsr version: {}, dll: {}", meta.fsrVersion, meta.dllPath);
     }
 
@@ -10553,6 +11817,15 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
         ImGui::TextDisabled("%s", Tr("No capture yet"));
     }
 
+    // Saved captures side by side and measured, in a window of its own
+    if (ImGui::Button(TrL("Compare captures")))
+    {
+        showVisualCompare = true;
+        visualCompareReload = true;
+    }
+
+    ShowTooltip("Opens the saved captures. Pick two or more to see them side by side,\n"
+                "zoom into the same spot of each and measure them against a reference.");
     // Existing tools, the same state as their own controls
     ImGui::SeparatorText(Tr("Tools"));
 
@@ -10851,6 +12124,7 @@ void MenuCommon::RenderMainMenuWindow(RenderMenuContext& ctx)
     RenderMipmapBiasWindow(ctx, flags);
     RenderHudlessResourcesWindow(ctx, flags);
     DrawBenchmarkCompareWindow(menuResScale, io);
+    DrawVisualCompareWindow(menuResScale, io);
 
     if (config->UseHQFont.value_or_default())
         ImGui::PopFontSize();

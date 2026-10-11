@@ -2035,6 +2035,63 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
         selectedIds.clear();
 
     ImGui::SameLine();
+
+    // Deletes the picked tests from disk, asked for twice
+    static std::string deleteError;
+
+    ImGui::BeginDisabled(selectedIds.empty());
+
+    if (ImGui::Button(TrL("Delete tests")))
+    {
+        deleteError.clear();
+        ImGui::OpenPopup("##DeleteTests");
+    }
+
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    {
+        ImGui::SetTooltip("%s", Tr("Deletes the selected tests for good: their saved result and their frame times.\n"
+                                   "Clear selection only unticks them."));
+    }
+
+    ImGui::EndDisabled();
+
+    if (ImGui::BeginPopupModal("##DeleteTests", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar |
+                                   ImGuiWindowFlags_NoSavedSettings))
+    {
+        ImGui::Text(Tr("Delete %d selected tests for good?"), (int) selectedIds.size());
+        ImGui::TextDisabled("%s", Tr("Their saved results and frame times are removed from disk. This can't be undone."));
+        ImGui::Spacing();
+
+        if (ImGui::Button(TrL("Delete")))
+        {
+            const int removed = IlionCompare::DeleteTests(BenchmarkFolder(), selectedIds, &deleteError);
+
+            LOG_INFO("[BENCHMARK] deleted {} of {} selected tests {}", removed, selectedIds.size(), deleteError);
+
+            // Deleted tests leave the selection, the list and everything below is built again from disk
+            if (deleteError.empty())
+                selectedIds.clear();
+
+            benchmarkCompareReload = true;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::Button(TrL("Cancel")))
+            ImGui::CloseCurrentPopup();
+
+        ImGui::EndPopup();
+    }
+
+    if (!deleteError.empty())
+    {
+        ImGui::SameLine();
+        ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.4f, 0.3f, 1.0f)), "%s", Tr(deleteError.c_str()));
+    }
+
+    ImGui::SameLine();
     ImGui::TextDisabled(Tr("%d saved tests, %d selected"), (int) history.size(), (int) selectedIds.size());
 
     if (history.empty())
@@ -10278,6 +10335,20 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
     ShowTooltip("Writes the result to ILION\\Benchmarks next to the game exe:\n"
                 "one json per test, the frame times, and a line in benchmarks.csv.\n"
                 "Existing files are never overwritten.");
+
+    ImGui::EndDisabled();
+
+    // Takes the last result off the screen. Saved tests and the upscaler stay as they are.
+    ImGui::SameLine();
+    ImGui::BeginDisabled(benchState != IlionBenchmark::State::Finished && benchState != IlionBenchmark::State::Aborted);
+
+    if (ImGui::Button(TrL("Clear result")))
+    {
+        IlionBenchmark::Dismiss();
+        saveError.clear();
+    }
+
+    ShowTooltip("Removes the last result from this panel.\nSaved tests are not deleted.");
 
     ImGui::EndDisabled();
 

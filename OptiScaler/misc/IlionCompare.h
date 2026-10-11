@@ -282,6 +282,100 @@ class IlionCompare
         return tests;
     }
 
+    // Removes saved tests for good: their rows of benchmarks.csv, their json and their frame times file.
+    // Only files named exactly after one of the ids are touched. Returns how many tests were removed.
+    static int DeleteTests(const std::filesystem::path& folder, const std::vector<std::string>& ids,
+                           std::string* error = nullptr)
+    {
+        const auto fail = [&](const char* text)
+        {
+            if (error != nullptr)
+                *error = text;
+
+            return 0;
+        };
+
+        // An id is a file name made by the benchmark, never a path
+        for (const auto& id : ids)
+        {
+            if (id.empty() || id.find_first_of("\\/:*?\"<>|") != std::string::npos || id.find("..") != std::string::npos)
+                return fail("Invalid test id");
+        }
+
+        const auto wanted = [&](const std::string& id) { return std::find(ids.begin(), ids.end(), id) != ids.end(); };
+
+        const auto csvPath = folder / "benchmarks.csv";
+        const auto tempPath = folder / "benchmarks.csv.tmp";
+
+        std::vector<std::string> removed;
+
+        {
+            std::ifstream input(csvPath, std::ios::binary);
+
+            if (!input)
+                return fail("Can't read the saved tests");
+
+            std::ofstream output(tempPath, std::ios::binary | std::ios::trunc);
+
+            if (!output)
+                return fail("Can't write to the benchmarks folder");
+
+            std::string line;
+            bool header = true;
+
+            while (std::getline(input, line))
+            {
+                if (!line.empty() && line.back() == '\r')
+                    line.pop_back();
+
+                if (line.empty())
+                    continue;
+
+                if (!header)
+                {
+                    const auto fields = ParseCsvLine(line);
+
+                    if (!fields.empty() && wanted(fields[0]))
+                    {
+                        removed.push_back(fields[0]);
+                        continue;
+                    }
+                }
+
+                header = false;
+                output << line << '\n';
+            }
+
+            if (!output.good())
+                return fail("Can't write to the benchmarks folder");
+        }
+
+        std::error_code ec;
+
+        if (removed.empty())
+        {
+            std::filesystem::remove(tempPath, ec);
+            return 0;
+        }
+
+        // The list is replaced first, a test without its row doesn't exist for ILION anymore
+        std::filesystem::rename(tempPath, csvPath, ec);
+
+        if (ec)
+        {
+            std::filesystem::remove(tempPath, ec);
+            return fail("Can't update the saved tests");
+        }
+
+        for (const auto& id : removed)
+        {
+            std::filesystem::remove(folder / (id + ".json"), ec);
+            std::filesystem::remove(folder / (id + "_frametimes.csv"), ec);
+        }
+
+        return (int) removed.size();
+    }
+
     static Analysis Analyze(const std::vector<const Test*>& tests)
     {
         Analysis analysis;

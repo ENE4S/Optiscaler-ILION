@@ -435,6 +435,23 @@ inline constexpr Translation kSpanish[] = {
     { "ILION can't check that the same scene was played in every test.",
       "ILION no puede comprobar que en todas las pruebas se jugó la misma escena." },
 
+    // Managing results
+    { "Clear result", "Limpiar resultado" },
+    { "Removes the last result from this panel.\nSaved tests are not deleted.",
+      "Quita de este panel el último resultado.\nNo se borran las pruebas guardadas." },
+    { "Delete tests", "Eliminar pruebas" },
+    { "Deletes the selected tests for good: their saved result and their frame times.\n"
+      "Clear selection only unticks them.",
+      "Elimina definitivamente las pruebas seleccionadas: su resultado guardado y sus tiempos de fotograma.\n"
+      "Quitar selección solo las desmarca." },
+    { "Delete %d selected tests for good?", "¿Eliminar definitivamente %d pruebas seleccionadas?" },
+    { "Their saved results and frame times are removed from disk. This can't be undone.",
+      "Sus resultados guardados y tiempos de fotograma se borran del disco. No se puede deshacer." },
+    { "Delete", "Eliminar" },
+    { "Invalid test id", "Identificador de prueba no válido" },
+    { "Can't read the saved tests", "No se pueden leer las pruebas guardadas" },
+    { "Can't update the saved tests", "No se pueden actualizar las pruebas guardadas" },
+
     // Status tab
     { "Unofficial modified build, not an OptiScaler release",
       "Compilación modificada no oficial, no es una versión de OptiScaler" },

@@ -765,6 +765,15 @@ inline constexpr Translation kSpanish[] = {
     { "The DLL that executes is not the selected one", "La DLL que se ejecuta no es la seleccionada" },
     { "Active", "Activa" },
 
+    // Vertical overlay
+    { "PERFORMANCE", "RENDIMIENTO" },
+    { "PROCESSING TIMES", "TIEMPOS DE PROCESO" },
+    { "Frame time", "Frametime" },
+    { "FPS, average", "FPS promedio" },
+    { "Frame time, average", "Frametime promedio" },
+    { "Upscaler, average", "Escalador, promedio" },
+    { "Whole frame", "Fotograma completo" },
+
     // Theme
     { "Theme", "Tema" },
     { "Industrial", "Industrial" },

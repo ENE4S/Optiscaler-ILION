@@ -5020,8 +5020,40 @@ static void UpdateHardwareTelemetry(decltype(Config::Instance()) config)
     }
 }
 
-// GPU readings on the left, CPU readings on the right, only the ones that are enabled
-static void DrawHardwareTelemetry(decltype(Config::Instance()) config, float scale)
+// Rows of the vertical overlay of the industrial theme: the label at the left, the value with its unit against
+// the right edge of a column of a fixed width.
+static void OverlayRow(const char* label, const std::string& value, float width, const ImVec4* valueColor = nullptr)
+{
+    ImGui::TextDisabled("%s", label);
+    ImGui::SameLine(ImGui::GetStyle().WindowPadding.x + width - ImGui::CalcTextSize(value.c_str()).x);
+
+    if (valueColor != nullptr)
+        ImGui::TextColored(*valueColor, "%s", value.c_str());
+    else
+        ImGui::TextUnformatted(value.c_str());
+}
+
+// Name of a block of rows over a metal rule as wide as the column. Blocks after the first one keep their distance.
+static void OverlayBlockTitle(const char* title, float width, bool first)
+{
+    const float gap = ImGui::GetStyle().ItemSpacing.y;
+
+    if (!first)
+        ImGui::Dummy(ImVec2(0.0f, gap));
+
+    ImGui::TextColored(IlionTheme::TextTitle, "%s", title);
+
+    const ImVec2 min = ImGui::GetItemRectMin();
+    const float y = ImGui::GetItemRectMax().y + gap * 0.5f;
+
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(min.x, y), ImVec2(min.x + width, y),
+                                        ImGui::GetColorU32(IlionTheme::Metal));
+    ImGui::Dummy(ImVec2(0.0f, gap * 0.5f));
+}
+
+// GPU readings on the left, CPU readings on the right, only the ones that are enabled.
+// With alignedWidth they are stacked as rows of that width instead, the same readings.
+static void DrawHardwareTelemetry(decltype(Config::Instance()) config, float scale, float alignedWidth = 0.0f)
 {
     const bool gpuUsage = config->HwGpuUsage.value_or_default();
     const bool gpuTemp = config->HwGpuTemp.value_or_default();
@@ -5045,6 +5077,65 @@ static void DrawHardwareTelemetry(decltype(Config::Instance()) config, float sca
     const ImVec4 componentColor = toneMapColor(ImVec4(57.0f / 255.0f, 1.0f, 20.0f / 255.0f, 1.0f));
     const ImVec4 temperatureColor = toneMapColor(ImVec4(204.0f / 255.0f, 0.0f, 0.0f, 1.0f));
     const ImVec4 hotspotColor = toneMapColor(ImVec4(1.0f, 106.0f / 255.0f, 0.0f, 1.0f));
+
+    if (alignedWidth > 0.0f)
+    {
+        const auto aligned = [&](const char* label, HwTelemetry::Metric metric, const char* format,
+                                 const ImVec4* valueColor = nullptr)
+        {
+            const auto& value = snapshot.values[metric];
+
+            if (stale || !value.valid)
+                OverlayRow(label, HwNotAvailable(), alignedWidth);
+            else
+                OverlayRow(label, StrFmt(format, value.value), alignedWidth, valueColor);
+        };
+
+        OverlayBlockTitle("HARDWARE", alignedWidth, false);
+
+        if (anyGpu)
+        {
+            ImGui::TextColored(componentColor, "GPU");
+
+            if (gpuUsage)
+                aligned(Tr("Usage"), HwTelemetry::GpuUsage, "%.0f %%");
+
+            if (gpuTemp)
+                aligned(Tr("Temp"), HwTelemetry::GpuTemp, "%.0f \xC2\xB0""C", &temperatureColor);
+
+            if (gpuHotspot)
+                aligned("Hotspot", HwTelemetry::GpuHotspot, "%.0f \xC2\xB0""C", &hotspotColor);
+
+            if (vram)
+            {
+                const auto& used = snapshot.values[HwTelemetry::VramUsed];
+                const auto& total = snapshot.values[HwTelemetry::VramTotal];
+
+                if (stale || !used.valid)
+                    OverlayRow("VRAM", HwNotAvailable(), alignedWidth);
+                else if (total.valid)
+                    OverlayRow("VRAM", StrFmt("%.1f / %.1f GB", used.value / 1024.0f, total.value / 1024.0f), alignedWidth);
+                else
+                    OverlayRow("VRAM", StrFmt("%.1f GB", used.value / 1024.0f), alignedWidth);
+            }
+        }
+
+        if (anyCpu)
+        {
+            if (anyGpu)
+                ImGui::Dummy(ImVec2(0.0f, ImGui::GetStyle().ItemSpacing.y * 0.5f));
+
+            ImGui::TextColored(componentColor, "CPU");
+
+            if (cpuUsage)
+                aligned(Tr("Usage"), HwTelemetry::CpuUsage, "%.0f %%");
+
+            if (cpuTemp)
+                aligned(Tr("Temp"), HwTelemetry::CpuTemp, "%.0f \xC2\xB0""C", &temperatureColor);
+        }
+
+        return;
+    }
 
     const auto row = [&](const char* label, HwTelemetry::Metric metric, const char* format,
                          const ImVec4* valueColor = nullptr)
@@ -5842,6 +5933,13 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
             else
                 firstLine = StrFmt("%s | %s%s%s", api.c_str(), fpsPart.c_str(), fgText.c_str(), featurePart.c_str());
 
+            // Industrial theme and a vertical overlay: blocks of aligned rows instead of lines of text. The
+            // values are the same ones, taken from the same places.
+            const bool industrialVertical = IlionTheme::industrial && !config->FpsOverlayHorizontal.value_or_default() &&
+                                            overlayType != FpsOverlay_JustFPS;
+            float rowWidth = 0.0f;
+            bool processingTitled = false;
+
             // Prepare Line 2
             if (config->FpsOverlayType.value_or_default() >= FpsOverlay_Detailed)
             {
@@ -5851,7 +5949,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                     ImGui::Text(" | ");
                     ImGui::SameLine(0.0f, 0.0f);
                 }
-                else
+                else if (!industrialVertical)
                 {
                     ImGui::Spacing();
                 }
@@ -5890,6 +5988,83 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                 plotSize = { plotWidth, fpsScale * 30 };
             }
 
+            if (industrialVertical)
+            {
+                // What the first line carries after the numbers
+                std::string upscalerValue = featurePart.size() > 3 ? featurePart.substr(3) : std::string();
+                std::string fgValue = fgText;
+
+                if (fgValue.size() > 3 && fgValue.rfind(" (", 0) == 0 && fgValue.back() == ')')
+                    fgValue = fgValue.substr(2, fgValue.size() - 3);
+
+                const char* upscalerLabel = Tr("Upscaler");
+                const float gap = ImGui::CalcTextSize("  ").x;
+
+                // Wide enough for the longest row, never a narrow strip
+                rowWidth = fpsScale * 280.0f;
+                rowWidth = std::max(rowWidth, ImGui::CalcTextSize(upscalerLabel).x + gap + ImGui::CalcTextSize(upscalerValue.c_str()).x);
+                rowWidth = std::max(rowWidth, ImGui::CalcTextSize("Frame Gen").x + gap + ImGui::CalcTextSize(fgValue.c_str()).x);
+
+                plotSize = { rowWidth, fpsScale * 34 };
+
+                OverlayBlockTitle(Tr("PERFORMANCE"), rowWidth, true);
+
+                OverlayRow("FPS",
+                           interpolatedFrameCount
+                               ? StrFmt("%.1f / %.1f", frameRate, frameRate / (double) (interpolatedFrameCount + 1))
+                               : StrFmt("%.1f", frameRate),
+                           rowWidth);
+
+                if (overlayType == FpsOverlay_Simple)
+                {
+                    OverlayRow(Tr("Frame time"), StrFmt("%.2f ms", frameTime), rowWidth);
+                }
+                else
+                {
+                    OverlayRow(Tr("FPS, average"), StrFmt("%.1f", 1000.0f / averageFrameTime), rowWidth);
+                }
+
+                if (overlayType >= FpsOverlay_Detailed)
+                {
+                    OverlayRow(Tr("Frame time"), StrFmt("%.2f ms", state.frameTimes.back()), rowWidth);
+                    OverlayRow(Tr("Frame time, average"), StrFmt("%.2f ms", averageFrameTime), rowWidth);
+                }
+
+                if (overlayType >= FpsOverlay_DetailedGraph)
+                {
+                    ImGui::PlotLines(
+                        "##FrameTimeGraph",
+                        [](void* rb, int idx) -> float { return static_cast<RingBuffer<float, plotWidth>*>(rb)->At(idx); },
+                        &gFrameTimes, plotWidth, 0, nullptr, 0.0f, 66.6f, plotSize);
+                }
+
+                OverlayRow("API", api, rowWidth);
+
+                if (!upscalerValue.empty())
+                    OverlayRow(upscalerLabel, upscalerValue, rowWidth);
+
+                if (!fgValue.empty())
+                    OverlayRow("Frame Gen", fgValue, rowWidth);
+
+                if (overlayType >= FpsOverlay_Full)
+                {
+                    OverlayBlockTitle(Tr("PROCESSING TIMES"), rowWidth, false);
+                    processingTitled = true;
+
+                    OverlayRow(Tr("Upscaler"), StrFmt("%.2f ms", state.upscaleTimes.back()), rowWidth);
+                    OverlayRow(Tr("Upscaler, average"), StrFmt("%.2f ms", averageUpscalerFT), rowWidth);
+                }
+
+                if (overlayType >= FpsOverlay_FullGraph)
+                {
+                    ImGui::PlotLines(
+                        "##UpscalerFrameTimeGraph",
+                        [](void* rb, int idx) -> float { return static_cast<RingBuffer<float, plotWidth>*>(rb)->At(idx); },
+                        &gUpscalerTimes, plotWidth, 0, nullptr, 0.0f, 20.0f, plotSize);
+                }
+            }
+            else
+            {
             // Draw the overlay
             ImGui::Text(firstLine.c_str());
 
@@ -5949,6 +6124,8 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                     &gUpscalerTimes, plotWidth, 0, nullptr, 0.0f, 20.0f, plotSize);
             }
 
+            }
+
             if (config->FpsOverlayType.value_or_default() >= FpsOverlay_ReflexTimings)
             {
                 constexpr auto delayBetweenPollsMs = 500;
@@ -5977,7 +6154,17 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                         localFrameCount = fg->FrameCount();
 
                     // Frame ids are shown in Help / Status instead, they only added noise here
-                    ImGui::Text("Low latency timings, whole frame: %.1fms", rangeInNs / 1000.0);
+                    if (industrialVertical)
+                    {
+                        if (!processingTitled)
+                            OverlayBlockTitle(Tr("PROCESSING TIMES"), rowWidth, false);
+
+                        OverlayRow(Tr("Whole frame"), StrFmt("%.1f ms", rangeInNs / 1000.0), rowWidth);
+                    }
+                    else
+                    {
+                        ImGui::Text("Low latency timings, whole frame: %.1fms", rangeInNs / 1000.0);
+                    }
 
                     const auto maxWidth =
                         config->FpsOverlayHorizontal.value_or_default() ? ImGui::GetWindowWidth() : plotSize.x;
@@ -5991,6 +6178,13 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
 
                         const auto& timing = timingOpt.value();
                         float duration = static_cast<float>(timing.length * rangeInNs / 1000.0);
+
+                        // The value in its row, without the bar
+                        if (industrialVertical)
+                        {
+                            OverlayRow(desc, StrFmt("%.1f ms", duration), rowWidth);
+                            return;
+                        }
 
                         ImGui::TextColored(toneMappedColor, "%-12s %4.1fms", desc, duration);
 
@@ -6037,7 +6231,17 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                         localFrameCount = fg->FrameCount();
 
                     // Frame ids are shown in Help / Status instead, they only added noise here
-                    ImGui::Text("Reflex timings, whole frame: %.1fms", rangeInNs / 1000.0);
+                    if (industrialVertical)
+                    {
+                        if (!processingTitled)
+                            OverlayBlockTitle(Tr("PROCESSING TIMES"), rowWidth, false);
+
+                        OverlayRow(Tr("Whole frame"), StrFmt("%.1f ms", rangeInNs / 1000.0), rowWidth);
+                    }
+                    else
+                    {
+                        ImGui::Text("Reflex timings, whole frame: %.1fms", rangeInNs / 1000.0);
+                    }
 
                     const auto maxWidth =
                         config->FpsOverlayHorizontal.value_or_default() ? ImGui::GetWindowWidth() : plotSize.x;
@@ -6051,6 +6255,14 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
 
                         auto& timing = timingData[type].value();
                         float duration = static_cast<float>(timing.length * rangeInNs / 1000.0);
+
+                        // The value in its row, without the bar
+                        if (industrialVertical)
+                        {
+                            OverlayRow(desc, StrFmt("%.1f ms", duration), rowWidth);
+                            return;
+                        }
+
                         ImGui::TextColored(toneMappedColor, "%-12s %4.1fms", desc, duration);
                         auto leftLimit = ImGui::GetItemRectMin().x + offsetForText * fpsScale;
                         auto start = static_cast<float>(leftLimit + (ImGui::GetItemRectMin().x + maxWidth - leftLimit) *
@@ -6073,7 +6285,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
             }
 
             DrawBenchmarkStatus(now);
-            DrawHardwareTelemetry(config, fpsScale);
+            DrawHardwareTelemetry(config, fpsScale, industrialVertical ? rowWidth : 0.0f);
             DrawFsr4ComparisonPanel(fpsScale);
         }
 

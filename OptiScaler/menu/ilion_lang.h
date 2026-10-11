@@ -765,6 +765,15 @@ inline constexpr Translation kSpanish[] = {
     { "The DLL that executes is not the selected one", "La DLL que se ejecuta no es la seleccionada" },
     { "Active", "Activa" },
 
+    // Theme
+    { "Theme", "Tema" },
+    { "Industrial", "Industrial" },
+    { "Classic", "Clásico" },
+    { "Industrial: the instrument panel look of ILION, with its own colours.\n"
+      "Classic: the original look, with the colour settings below.",
+      "Industrial: el aspecto de panel de instrumentación de ILION, con sus propios colores.\n"
+      "Clásico: el aspecto original, con los ajustes de color de abajo." },
+
     // Image captures
     { "Visual analysis", "Análisis visual" },
     { "Capture image", "Capturar imagen" },

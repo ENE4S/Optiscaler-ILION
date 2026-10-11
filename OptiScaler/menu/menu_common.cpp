@@ -29,6 +29,7 @@
 
 #include <imgui/imgui_internal.h>
 #include "ilion_visual_panel.h"
+#include "ilion_theme.h"
 #include <imgui/ImGuiNotify.hpp>
 #include <imgui/imgui_impl_win32.h>
 #include <imgui/imgui_impl_uwp.h>
@@ -313,13 +314,24 @@ static void DrawCardTitle(const char* label)
 {
     label = Tr(label);
 
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::PushStyleColor(ImGuiCol_Text, IlionTheme::industrial ? IlionTheme::TextTitle
+                                                                : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     ImGui::TextUnformatted(label, ImGui::FindRenderedTextEnd(label));
     ImGui::PopStyleColor();
 
     // Spacing below is not an item the tooltips should attach to
     const ImRect titleRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
     const ImGuiID titleId = ImGui::GetItemID();
+
+    // Plate of the panel: a metal rule under its name, from edge to edge
+    if (IlionTheme::industrial)
+    {
+        const ImGuiWindow* window = ImGui::GetCurrentWindow();
+        const float y = titleRect.Max.y + ImGui::GetStyle().ItemSpacing.y * 0.5f;
+
+        window->DrawList->AddLine(ImVec2(titleRect.Min.x, y), ImVec2(window->WorkRect.Max.x, y),
+                                  ImGui::GetColorU32(IlionTheme::MetalDark));
+    }
 
     ImGui::Spacing();
     ImGui::Spacing();
@@ -407,7 +419,20 @@ ScopedCard::~ScopedCard()
 
     _splitter.SetCurrentChannel(drawList, 0);
     // drawList->AddRectFilled(_min, max, ImGui::GetColorU32(ImGuiCol_WindowBg), style.ChildRounding);
-    drawList->AddRect(_min, max, ImGui::GetColorU32(ImGuiCol_Separator), style.ChildRounding);
+
+    if (IlionTheme::industrial)
+    {
+        // A plate screwed onto the cabinet: its own tone, a metal edge, light from above
+        drawList->AddRectFilled(_min, max, ImGui::GetColorU32(IlionTheme::Alpha(IlionTheme::Panel, 0.45f)));
+        drawList->AddRect(_min, max, ImGui::GetColorU32(IlionTheme::MetalDark));
+        drawList->AddLine(ImVec2(_min.x + 1.0f, _min.y + 1.0f), ImVec2(max.x - 1.0f, _min.y + 1.0f),
+                          ImGui::GetColorU32(IlionTheme::Alpha(IlionTheme::MetalLight, 0.25f)));
+    }
+    else
+    {
+        drawList->AddRect(_min, max, ImGui::GetColorU32(ImGuiCol_Separator), style.ChildRounding);
+    }
+
     _splitter.Merge(drawList);
 
     // Registers the size of the card and leaves a gap before the next one
@@ -502,7 +527,7 @@ template <typename TOption>
 bool MenuCommon::ConfigCheckbox(const char* label, TOption& option, const char* tip, bool needsRestart)
 {
     bool value = option.value_or_default();
-    const bool changed = ImGui::Checkbox(TrL(label), &value);
+    const bool changed = IlionTheme::Checkbox(TrL(label), &value);
 
     if (changed)
         option = value;
@@ -1509,6 +1534,16 @@ void MenuCommon::ApplyThemeStyle()
     auto conf = Config::Instance();
     bool lightTheme = conf->LightTheme.value_or_default();
 
+    // The industrial theme has its own fixed palette, the color settings below belong to the classic one
+    IlionTheme::industrial = conf->IndustrialTheme.value_or_default();
+
+    if (IlionTheme::industrial)
+    {
+        IlionTheme::ApplyStyle(style, conf->MenuBGColorA.value_or_default());
+        return;
+    }
+
+    style.ChildBorderSize = 1.0f;
     style.WindowRounding = 2.0f;
     style.ChildRounding = 1.0f;
     style.FrameRounding = 2.0f;
@@ -2559,7 +2594,7 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
     // Not while a picture of the selection may be open in the thread
     ImGui::BeginDisabled(selectedIds.empty() || work.busy.load());
 
-    if (ImGui::Button(TrL("Delete captures")))
+    if (IlionTheme::DangerButton(TrL("Delete captures")))
         ImGui::OpenPopup("##DeleteCaptures");
 
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
@@ -2578,7 +2613,7 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
         ImGui::TextDisabled("%s", Tr("Their files are removed from disk. This can't be undone."));
         ImGui::Spacing();
 
-        if (ImGui::Button(TrL("Delete")))
+        if (IlionTheme::DangerButton(TrL("Delete")))
         {
             const int removed = IlionVisual::DeleteCaptures(captures, selectedIds);
             IlionVisual::ForgetResults(CaptureFolder(), selectedIds);
@@ -3689,7 +3724,7 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
 
     ImGui::BeginDisabled(selectedIds.empty());
 
-    if (ImGui::Button(TrL("Delete tests")))
+    if (IlionTheme::DangerButton(TrL("Delete tests")))
     {
         deleteError.clear();
         ImGui::OpenPopup("##DeleteTests");
@@ -3711,7 +3746,7 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
         ImGui::TextDisabled("%s", Tr("Their saved results and frame times are removed from disk. This can't be undone."));
         ImGui::Spacing();
 
-        if (ImGui::Button(TrL("Delete")))
+        if (IlionTheme::DangerButton(TrL("Delete")))
         {
             const int removed = IlionCompare::DeleteTests(BenchmarkFolder(), selectedIds, &deleteError);
 
@@ -5612,20 +5647,27 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
         ImGui::SetNextWindowPos(overlayPosition, ImGuiCond_Always);
 
         // Set overlay window properties
-        ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(0, 0, 0, 0));  // Transparent border
+        // Industrial theme: a thin metal edge around a graphite plate. Classic: no border.
+        const bool industrialOverlay = IlionTheme::industrial;
+
+        ImGui::PushStyleColor(ImGuiCol_Border, industrialOverlay
+                                                   ? ImGui::GetColorU32(IlionTheme::Alpha(IlionTheme::Metal, 0.70f))
+                                                   : IM_COL32(0, 0, 0, 0));
         ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(0, 0, 0, 0)); // Transparent frame background
 
         if (!config->OverlaysUseTheme.value_or_default())
         {
-            ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(ImVec4(1.0f, 1.0f, 1.0f, 1.0f)));
-            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text,
+                                  toneMapColor(industrialOverlay ? IlionTheme::Text : ImVec4(1.0f, 1.0f, 1.0f, 1.0f)));
+            ImGui::PushStyleColor(ImGuiCol_WindowBg,
+                                  industrialOverlay ? IlionTheme::GraphiteDeep : ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
         }
 
         ImGui::SetNextWindowBgAlpha(config->FpsOverlayAlpha.value_or_default()); // Transparent background
 
         if (!config->OverlaysUseTheme.value_or_default())
         {
-            ImVec4 green(0.0f, 1.0f, 0.0f, 1.0f);
+            ImVec4 green = industrialOverlay ? IlionTheme::LampGreen : ImVec4(0.0f, 1.0f, 0.0f, 1.0f);
             ImGui::PushStyleColor(ImGuiCol_PlotLines, toneMapColor(green));
         }
 
@@ -6387,7 +6429,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             ImGui::Spacing();
 
             if (bool dontUseNTShared = config->DontUseNTShared.value_or_default();
-                ImGui::Checkbox("Don't Use NTShared", &dontUseNTShared))
+                IlionTheme::Checkbox("Don't Use NTShared", &dontUseNTShared))
                 config->DontUseNTShared = dontUseNTShared;
 
             ImGui::Spacing();
@@ -6404,11 +6446,11 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             ImGui::Spacing();
 
             if (bool inputsUseCopy = config->VulkanUseCopyForInputs.value_or_default();
-                ImGui::Checkbox("Use CopyResource for Inputs", &inputsUseCopy))
+                IlionTheme::Checkbox("Use CopyResource for Inputs", &inputsUseCopy))
                 config->VulkanUseCopyForInputs = inputsUseCopy;
 
             if (bool outputUseCopy = config->VulkanUseCopyForOutput.value_or_default();
-                ImGui::Checkbox("Use CopyResource for Output", &outputUseCopy))
+                IlionTheme::Checkbox("Use CopyResource for Output", &outputUseCopy))
                 config->VulkanUseCopyForOutput = outputUseCopy;
 
             ImGui::Spacing();
@@ -6453,7 +6495,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
             if (!basicView)
             {
-            if (bool dbg = state.xessDebug; ImGui::Checkbox("Dump (Shift+Del)", &dbg))
+            if (bool dbg = state.xessDebug; IlionTheme::Checkbox("Dump (Shift+Del)", &dbg))
                 state.xessDebug = dbg;
 
             ImGui::SameLine(0.0f, 6.0f);
@@ -6616,7 +6658,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             {
                 bool visualEnabled = FSR4VisualVerify::Enabled();
 
-                if (ImGui::Checkbox(TrL("Color marker on upscaler output"), &visualEnabled))
+                if (IlionTheme::Checkbox(TrL("Color marker on upscaler output"), &visualEnabled))
                     FSR4VisualVerify::SetEnabled(visualEnabled);
 
                 ShowTooltip("Writes color bars into the output of the upscale dispatch, before the game's post\n"
@@ -6687,7 +6729,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             // Not saved, results are shown under the performance overlay
             bool comparisonEnabled = FSR4Comparison::Enabled();
 
-            if (ImGui::Checkbox(TrL("FSR 4 Comparison Mode"), &comparisonEnabled))
+            if (IlionTheme::Checkbox(TrL("FSR 4 Comparison Mode"), &comparisonEnabled))
             {
                 FSR4Comparison::SetEnabled(comparisonEnabled);
 
@@ -6829,7 +6871,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             ImGui::Spacing();
 
             bool debugView = config->FsrDebugView.value_or_default();
-            if (ImGui::Checkbox("Upscaler Debug View", &debugView))
+            if (IlionTheme::Checkbox("Upscaler Debug View", &debugView))
             {
                 config->FsrDebugView = debugView;
 
@@ -6861,7 +6903,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             {
                 ImGui::SameLine(0.0f, 20.0f * menuResScale);
                 bool fsr4wm = config->Fsr4EnableWatermark.value_or_default();
-                if (ImGui::Checkbox("Watermark", &fsr4wm))
+                if (IlionTheme::Checkbox("Watermark", &fsr4wm))
                 {
                     LOG_DEBUG("FSR4 Watermark set to {}", fsr4wm);
                     config->Fsr4EnableWatermark = fsr4wm;
@@ -7029,7 +7071,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
         if (usesDlssd)
         {
             if (bool pOverride = config->DLSSDRenderPresetOverride.value_or_default();
-                ImGui::Checkbox("Render Presets Override", &pOverride))
+                IlionTheme::Checkbox("Render Presets Override", &pOverride))
                 config->DLSSDRenderPresetOverride = pOverride;
 
             ShowTooltip("Each render preset has it strengths and weaknesses\n"
@@ -7056,7 +7098,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
         else
         {
             if (bool pOverride = config->RenderPresetOverride.value_or_default();
-                ImGui::Checkbox("Render Presets Override", &pOverride))
+                IlionTheme::Checkbox("Render Presets Override", &pOverride))
                 config->RenderPresetOverride = pOverride;
 
             ShowTooltip("Each render preset has it strengths and weaknesses\n"
@@ -7111,7 +7153,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             ImGui::Spacing();
 
             bool appIdOverride = config->UseGenericAppIdWithDlss.value_or_default();
-            if (ImGui::Checkbox("Use Generic App Id with DLSS", &appIdOverride))
+            if (IlionTheme::Checkbox("Use Generic App Id with DLSS", &appIdOverride))
                 config->UseGenericAppIdWithDlss = appIdOverride;
 
             ShowTooltip("Use generic appid with NGX\n"
@@ -7503,7 +7545,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             ImGui::SameLine(0.0f, 16.0f);
 
             if (bool dynamicMFG = config->FGDLSSGOverrideForceDMFG.value_or_default();
-                ImGui::Checkbox("Force Dynamic MFG", &dynamicMFG))
+                IlionTheme::Checkbox("Force Dynamic MFG", &dynamicMFG))
             {
                 config->FGDLSSGOverrideForceDMFG = dynamicMFG;
                 StreamlineHooks::updateDlssgOptions();
@@ -7537,7 +7579,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
              state.activeFgInput != FGInput::NoFG && state.activeFgInput != FGInput::NvngxFG) &&
             fgOutput)
         {
-            ImGui::Checkbox("Show Detected UI", &state.fgHudlessCompare);
+            IlionTheme::Checkbox("Show Detected UI", &state.fgHudlessCompare);
             ShowTooltip("Needs HUDless texture to compare with final image.\n"
                         "UI elements and ONLY UI elements should have a pink tint!");
 
@@ -7546,7 +7588,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             ImGui::BeginDisabled(!isUsingUIAny);
 
             if (bool drawUIOverFG = config->FGDrawUIOverFG.value_or_default();
-                ImGui::Checkbox("Draw UI over", &drawUIOverFG))
+                IlionTheme::Checkbox("Draw UI over", &drawUIOverFG))
             {
                 config->FGDrawUIOverFG = drawUIOverFG;
             }
@@ -7560,7 +7602,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             ImGui::BeginDisabled(!isUsingUIAny || !config->FGDrawUIOverFG.value_or_default());
 
             if (bool uiPremultipliedAlpha = config->FGUIPremultipliedAlpha.value_or_default();
-                ImGui::Checkbox("UI Premult. alpha", &uiPremultipliedAlpha))
+                IlionTheme::Checkbox("UI Premult. alpha", &uiPremultipliedAlpha))
             {
                 config->FGUIPremultipliedAlpha = uiPremultipliedAlpha;
             }
@@ -7595,7 +7637,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                         bool disableUI = config->FGDisableUI.value_or_default();
                         ImGui::BeginDisabled(!isUsingUIAny && !disableUI);
 
-                        if (ImGui::Checkbox("Disable UI texture", &disableUI))
+                        if (IlionTheme::Checkbox("Disable UI texture", &disableUI))
                         {
                             config->FGDisableUI = disableUI;
                             fgOutput->UpdateTarget();
@@ -7610,7 +7652,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                         bool disableHudless = config->FGDisableHudless.value_or_default();
                         ImGui::BeginDisabled(!isUsingHudlessAny && !disableHudless);
 
-                        if (ImGui::Checkbox("Disable HUDless", &disableHudless))
+                        if (IlionTheme::Checkbox("Disable HUDless", &disableHudless))
                         {
                             config->FGDisableHudless = disableHudless;
                         }
@@ -7620,7 +7662,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                         ImGui::EndDisabled();
 
                         bool depthValidNow = config->FGDepthValidNow.value_or_default();
-                        if (ImGui::Checkbox("Depth as ValidNow", &depthValidNow))
+                        if (IlionTheme::Checkbox("Depth as ValidNow", &depthValidNow))
                             config->FGDepthValidNow = depthValidNow;
 
                         ShowTooltip("Will use more VRAM, but Uniscaler needs this\n"
@@ -7629,14 +7671,14 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                         ImGui::SameLine(0.0f, 16.0f);
 
                         bool velocityValidNow = config->FGVelocityValidNow.value_or_default();
-                        if (ImGui::Checkbox("Velocity as ValidNow", &velocityValidNow))
+                        if (IlionTheme::Checkbox("Velocity as ValidNow", &velocityValidNow))
                             config->FGVelocityValidNow = velocityValidNow;
 
                         ShowTooltip("Will use more VRAM, but Uniscaler needs this\n"
                                     "Maybe some other games might need too");
 
                         bool hudlessValidNow = config->FGHudlessValidNow.value_or_default();
-                        if (ImGui::Checkbox("HUDless as ValidNow", &hudlessValidNow))
+                        if (IlionTheme::Checkbox("HUDless as ValidNow", &hudlessValidNow))
                             config->FGHudlessValidNow = hudlessValidNow;
 
                         ShowTooltip("Will use more VRAM, but some games might need this");
@@ -7644,13 +7686,13 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                         ImGui::SameLine(0.0f, 16.0f);
 
                         bool firstHudless = config->FGOnlyAcceptFirstHudless.value_or_default();
-                        if (ImGui::Checkbox("Accept First HUDless", &firstHudless))
+                        if (IlionTheme::Checkbox("Accept First HUDless", &firstHudless))
                             config->FGOnlyAcceptFirstHudless = firstHudless;
 
                         ShowTooltip("If source tags more than one HUDless, only use the first one");
 
                         if (bool skipReset = config->FGSkipReset.value_or_default();
-                            ImGui::Checkbox("Skip Reset", &skipReset))
+                            IlionTheme::Checkbox("Skip Reset", &skipReset))
                         {
                             config->FGSkipReset = skipReset;
                         }
@@ -7860,7 +7902,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 return;
 
             bool fgAsync = config->FGAsync.value_or_default();
-            if (ImGui::Checkbox("Allow Async", &fgAsync))
+            if (IlionTheme::Checkbox("Allow Async", &fgAsync))
             {
                 config->FGAsync = fgAsync;
 
@@ -7876,7 +7918,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             ImGui::SameLine(0.0f, 16.0f);
 
             bool fgDV = config->FGDebugView.value_or_default();
-            if (ImGui::Checkbox("Debug View##2", &fgDV))
+            if (IlionTheme::Checkbox("Debug View##2", &fgDV))
             {
                 config->FGDebugView = fgDV;
 
@@ -7900,7 +7942,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             if (state.currentFG && state.currentFG->Version().major > 3)
             {
                 if (bool fgwm = config->FSRFGEnableWatermark.value_or_default();
-                    ImGui::Checkbox("Enable Watermark", &fgwm))
+                    IlionTheme::Checkbox("Enable Watermark", &fgwm))
                 {
                     LOG_DEBUG("FSRFGEnableWatermark set FGWatermark: {}", fgwm);
                     config->FSRFGEnableWatermark = fgwm;
@@ -7917,12 +7959,12 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 ScopedIndent indent {};
                 ImGui::Spacing();
 
-                ImGui::Checkbox("FG Only Generated", &state.fgOnlyGenerated);
+                IlionTheme::Checkbox("FG Only Generated", &state.fgOnlyGenerated);
                 ShowTooltip("Display only FSR 3.1 Generated frames");
 
                 ImGui::SameLine(0.0f, 16.0f);
                 auto debugResetLines = config->FGDebugResetLines.value_or_default();
-                if (ImGui::Checkbox("Debug Reset Lines", &debugResetLines))
+                if (IlionTheme::Checkbox("Debug Reset Lines", &debugResetLines))
                 {
                     config->FGDebugResetLines = debugResetLines;
                     LOG_DEBUG("Enabled set FGDebugLines: {}", debugResetLines);
@@ -7930,7 +7972,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 ShowTooltip("Enables drawing of Interpolation skip lines");
 
                 auto debugTearLines = config->FGDebugTearLines.value_or_default();
-                if (ImGui::Checkbox("Debug Tear Lines", &debugTearLines))
+                if (IlionTheme::Checkbox("Debug Tear Lines", &debugTearLines))
                 {
                     config->FGDebugTearLines = debugTearLines;
                     LOG_DEBUG("Enabled set FGDebugLines: {}", debugTearLines);
@@ -7939,7 +7981,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
                 ImGui::SameLine(0.0f, 16.0f);
                 auto debugPacingLines = config->FGDebugPacingLines.value_or_default();
-                if (ImGui::Checkbox("Debug Pacing Lines", &debugPacingLines))
+                if (IlionTheme::Checkbox("Debug Pacing Lines", &debugPacingLines))
                 {
                     config->FGDebugPacingLines = debugPacingLines;
                     LOG_DEBUG("Enabled set FGDebugLines: {}", debugPacingLines);
@@ -7997,7 +8039,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                     if (ImGui::TreeNode("Frame Pacing Tuning"))
                     {
                         auto fptEnabled = config->FGFramePacingTuning.value_or_default();
-                        if (ImGui::Checkbox("Enable Tuning", &fptEnabled))
+                        if (IlionTheme::Checkbox("Enable Tuning", &fptEnabled))
                         {
                             config->FGFramePacingTuning = fptEnabled;
                             state.fsrfgFramePaceTuningChanged = true;
@@ -8022,7 +8064,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                         ImGui::PopItemWidth();
 
                         auto fpHybridSpin = config->FGFPTAllowHybridSpin.value_or_default();
-                        if (ImGui::Checkbox("Enable Hybrid Spin", &fpHybridSpin))
+                        if (IlionTheme::Checkbox("Enable Hybrid Spin", &fpHybridSpin))
                             config->FGFPTAllowHybridSpin = fpHybridSpin;
                         ShowTooltip("Allows pacing spinlock to sleep, should reduce CPU usage\n"
                                     "Might cause slow ramp up of FPS");
@@ -8038,7 +8080,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
                         auto fpWaitForSingleObjectOnFence =
                             config->FGFPTAllowWaitForSingleObjectOnFence.value_or_default();
-                        if (ImGui::Checkbox("Enable WaitForSingleObjectOnFence", &fpWaitForSingleObjectOnFence))
+                        if (IlionTheme::Checkbox("Enable WaitForSingleObjectOnFence", &fpWaitForSingleObjectOnFence))
                         {
                             config->FGFPTAllowWaitForSingleObjectOnFence = fpWaitForSingleObjectOnFence;
                         }
@@ -8115,7 +8157,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
         if (!correctMVs || cantActivate || ignoreChecks)
         {
-            if (ImGui::Checkbox("Ignore Init Checks", &ignoreChecks))
+            if (IlionTheme::Checkbox("Ignore Init Checks", &ignoreChecks))
                 config->FGXeFGIgnoreInitChecks = ignoreChecks;
 
             ShowTooltip("Ignores all prechecks for XeFG\n"
@@ -8137,7 +8179,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         ImGui::SameLine(0.0f, 16.0f);
         ImGui::BeginDisabled(!fgOutput->IsUsingHudlessAny() || XeFGProxy::SetUiCompositionState() == nullptr);
         bool fgCompositeUI = config->FGXeFGUIComposition.value_or_default();
-        if (ImGui::Checkbox("UI Composition", &fgCompositeUI))
+        if (IlionTheme::Checkbox("UI Composition", &fgCompositeUI))
             config->FGXeFGUIComposition = fgCompositeUI;
 
         ShowTooltip("Disable HUD/UI interpolation\n"
@@ -8146,7 +8188,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         ImGui::EndDisabled();
 
         bool fgDV = config->FGXeFGDebugView.value_or_default();
-        if (ImGui::Checkbox("Debug View##2", &fgDV))
+        if (IlionTheme::Checkbox("Debug View##2", &fgDV))
         {
             config->FGXeFGDebugView = fgDV;
 
@@ -8162,7 +8204,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
         ImGui::SameLine(0.0f, 16.0f);
         bool fgBorderless = config->FGXeFGForceBorderless.value_or_default();
-        if (ImGui::Checkbox("Force Borderless", &fgBorderless))
+        if (IlionTheme::Checkbox("Force Borderless", &fgBorderless))
             config->FGXeFGForceBorderless = fgBorderless;
 
         ShowTooltip("Forces Borderless display mode\n\n"
@@ -8173,7 +8215,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
         // Disable this for now
         // ImGui::SameLine(0.0f, 16.0f);
-        // ImGui::Checkbox("Only Generated##2", &state.fgOnlyGenerated);
+        // IlionTheme::Checkbox("Only Generated##2", &state.fgOnlyGenerated);
         // ShowTooltip("Display only XeFG generated frames");
 
         ImGui::Spacing();
@@ -8266,7 +8308,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 ImGui::SameLine(0.0f, 16.0f);
 
                 if (bool dynamicMFG = config->FGDLSSGForceDMFG.value_or_default();
-                    ImGui::Checkbox("Force Dynamic MFG", &dynamicMFG))
+                    IlionTheme::Checkbox("Force Dynamic MFG", &dynamicMFG))
                 {
                     config->FGDLSSGForceDMFG = dynamicMFG;
                     state.fgChanged = true;
@@ -8298,7 +8340,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
         bool useGamesMarkers = config->FGDLSSGUseGamesReflexMarkers.value_or_default();
         ImGui::BeginDisabled(!ReflexHooks::gameIsSendingMarkers());
-        if (ImGui::Checkbox("Use Game's Reflex Markers", &useGamesMarkers))
+        if (IlionTheme::Checkbox("Use Game's Reflex Markers", &useGamesMarkers))
         {
             config->FGDLSSGUseGamesReflexMarkers = useGamesMarkers;
             LOG_DEBUG("Changed set FGDLSSGUseGamesReflexMarkers: {}", useGamesMarkers);
@@ -8327,7 +8369,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         else
         {
             bool reprojectionActive = config->FGReprojectionEnabled.value_or_default();
-            if (ImGui::Checkbox("Active##5", &reprojectionActive))
+            if (IlionTheme::Checkbox("Active##5", &reprojectionActive))
             {
                 config->FGReprojectionEnabled = reprojectionActive;
                 LOG_DEBUG("Reprojection enabled: {}", reprojectionActive);
@@ -8337,7 +8379,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
         ImGui::SameLine();
 
-        ImGui::Checkbox("Show static elements", &state.fgHudlessCompare);
+        IlionTheme::Checkbox("Show static elements", &state.fgHudlessCompare);
         ShowTooltip("For fine tuning the depth cutoff\n"
                     "Shows UI and depth cutoff areas\n"
                     "Adjust depth cutoff so that only stuff like your gun and hands are marked");
@@ -8379,7 +8421,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                     "Use only when you see an outline left by the cutoff process");
 
         if (bool lateLatch = config->ReprojectionLateLatch.value_or_default();
-            ImGui::Checkbox("Late latch mouse", &lateLatch))
+            IlionTheme::Checkbox("Late latch mouse", &lateLatch))
         {
             config->ReprojectionLateLatch = lateLatch;
         }
@@ -8409,7 +8451,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             {
                 bool fgHudfix = config->FGHUDFix.value_or_default();
 
-                if (ImGui::Checkbox("HUDFix", &fgHudfix))
+                if (IlionTheme::Checkbox("HUDFix", &fgHudfix))
                 {
                     config->FGHUDFix = fgHudfix;
                     LOG_DEBUG("Enabled set FGHUDFix: {}", fgHudfix);
@@ -8443,7 +8485,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 ImGui::EndDisabled();
 
                 auto hudExtended = config->FGHUDFixExtended.value_or_default();
-                if (ImGui::Checkbox("Extended", &hudExtended))
+                if (IlionTheme::Checkbox("Extended", &hudExtended))
                 {
                     LOG_DEBUG("Enabled set FGHUDFixExtended: {}", hudExtended);
                     config->FGHUDFixExtended = hudExtended;
@@ -8454,7 +8496,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 ImGui::BeginDisabled(!config->FGHUDFix.value_or_default());
 
                 auto immediate = config->FGImmediateCapture.value_or_default();
-                if (ImGui::Checkbox("Immediate Capture", &immediate))
+                if (IlionTheme::Checkbox("Immediate Capture", &immediate))
                 {
                     LOG_DEBUG("Enabled set FGImmediateCapture: {}", immediate);
                     config->FGImmediateCapture = immediate;
@@ -8468,19 +8510,19 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             }
 
             bool depthScale = config->FGEnableDepthScale.value_or_default();
-            if (ImGui::Checkbox("Scale Depth to fix DLSS RR", &depthScale))
+            if (IlionTheme::Checkbox("Scale Depth to fix DLSS RR", &depthScale))
                 config->FGEnableDepthScale = depthScale;
             ShowTooltip("Fix for DLSS-D wrong depth inputs");
 
             bool resourceFlip = config->FGResourceFlip.value_or_default();
-            if (ImGui::Checkbox("Flip (Unity)", &resourceFlip))
+            if (IlionTheme::Checkbox("Flip (Unity)", &resourceFlip))
                 config->FGResourceFlip = resourceFlip;
             ShowTooltip("Flip Velocity & Depth resources of Unity games");
 
             ImGui::SameLine(0.0f, 16.0f);
 
             bool resourceFlipOffset = config->FGResourceFlipOffset.value_or_default();
-            if (ImGui::Checkbox("Flip Use Offset", &resourceFlipOffset))
+            if (IlionTheme::Checkbox("Flip Use Offset", &resourceFlipOffset))
                 config->FGResourceFlipOffset = resourceFlipOffset;
             ShowTooltip("Use height difference as offset");
 
@@ -8492,7 +8534,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
                 auto disablehudfix = config->FGDisableHUDFix.value_or_default();
                 {
-                    if (ImGui::Checkbox("Disable HUDFix Resource Tracking", &disablehudfix))
+                    if (IlionTheme::Checkbox("Disable HUDFix Resource Tracking", &disablehudfix))
                     {
                         config->FGDisableHUDFix = disablehudfix;
                         LOG_DEBUG("Enabled FGDisableHUDFix: {}", disablehudfix);
@@ -8508,7 +8550,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                     ImGui::Spacing();
 
                     auto rb = config->FGResourceBlocking.value_or_default();
-                    if (ImGui::Checkbox("Resource Blocking", &rb))
+                    if (IlionTheme::Checkbox("Resource Blocking", &rb))
                     {
                         config->FGResourceBlocking = rb;
                         LOG_DEBUG("Enabled set FGResourceBlocking: {}", rb);
@@ -8520,7 +8562,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                     ImGui::SameLine(0.0f, 16.0f);
 
                     auto rrc = config->FGRelaxedResolutionCheck.value_or_default();
-                    if (ImGui::Checkbox("Relaxed Resource Check", &rrc))
+                    if (IlionTheme::Checkbox("Relaxed Resource Check", &rrc))
                     {
                         config->FGRelaxedResolutionCheck = rrc;
                         LOG_DEBUG("Enabled set FGRelaxedResolutionCheck: {}", rrc);
@@ -8531,7 +8573,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
                     ImGui::BeginDisabled(state.fgResetCapturedResources);
                     ImGui::PushItemWidth(95.0f * menuResScale);
-                    if (ImGui::Checkbox("FG Create List", &state.fgCaptureResources))
+                    if (IlionTheme::Checkbox("FG Create List", &state.fgCaptureResources))
                     {
                         if (!state.fgCaptureResources)
                             config->FGHUDLimit = 1;
@@ -8540,7 +8582,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                     }
 
                     ImGui::SameLine(0.0f, 16.0f);
-                    if (ImGui::Checkbox("FG Use List", &state.fgOnlyUseCapturedResources))
+                    if (IlionTheme::Checkbox("FG Use List", &state.fgOnlyUseCapturedResources))
                     {
                         if (state.fgCaptureResources)
                         {
@@ -8573,7 +8615,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                         ImGui::BeginDisabled(dx11HudfixTracking);
 
                         auto ath = config->FGAlwaysTrackHeaps.value_or_default();
-                        if (ImGui::Checkbox("Always Track Heaps", &ath))
+                        if (IlionTheme::Checkbox("Always Track Heaps", &ath))
                         {
                             config->FGAlwaysTrackHeaps = ath;
                             LOG_DEBUG("Enabled set FGAlwaysTrackHeaps: {}", ath);
@@ -8586,7 +8628,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                                           "fix HUDFix related crashes!");
 
                         auto disableRTV = config->FGHudfixDisableRTV.value_or_default();
-                        if (ImGui::Checkbox("Disable RTV Tracking", &disableRTV))
+                        if (IlionTheme::Checkbox("Disable RTV Tracking", &disableRTV))
                             config->FGHudfixDisableRTV = disableRTV;
                         ShowTooltip("Disable tracking of CreateRenderTargetView\n"
                                     "This might help filtering of wrong HUDless resources");
@@ -8594,13 +8636,13 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                         ImGui::SameLine(0.0f, 16.0f);
 
                         auto disableSRV = config->FGHudfixDisableSRV.value_or_default();
-                        if (ImGui::Checkbox("Disable SRV Tracking", &disableSRV))
+                        if (IlionTheme::Checkbox("Disable SRV Tracking", &disableSRV))
                             config->FGHudfixDisableSRV = disableSRV;
                         ShowTooltip("Disable tracking of CreateShaderResourceView\n"
                                     "This might help filtering of wrong HUDless resources");
 
                         auto disableUAV = config->FGHudfixDisableUAV.value_or_default();
-                        if (ImGui::Checkbox("Disable UAV Tracking", &disableUAV))
+                        if (IlionTheme::Checkbox("Disable UAV Tracking", &disableUAV))
                             config->FGHudfixDisableUAV = disableUAV;
                         ShowTooltip("Disable tracking of CreateUnorderedAccessView\n"
                                     "This might help filtering of wrong HUDless resources");
@@ -8608,13 +8650,13 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                         ImGui::SameLine(0.0f, 16.0f);
 
                         auto disableOM = config->FGHudfixDisableOM.value_or_default();
-                        if (ImGui::Checkbox("Disable OM Tracking", &disableOM))
+                        if (IlionTheme::Checkbox("Disable OM Tracking", &disableOM))
                             config->FGHudfixDisableOM = disableOM;
                         ShowTooltip("Disable tracking of OMSetRenderTargets\n"
                                     "This might help filtering of wrong HUDless resources");
 
                         auto disableSCR = config->FGHudfixDisableSCR.value_or_default();
-                        if (ImGui::Checkbox("Disable SCR Tracking", &disableSCR))
+                        if (IlionTheme::Checkbox("Disable SCR Tracking", &disableSCR))
                             config->FGHudfixDisableSCR = disableSCR;
                         ShowTooltip("Disable tracking of SetComputeRootDescriptorTable\n"
                                     "This might help filtering of wrong HUDless resources");
@@ -8622,7 +8664,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                         ImGui::SameLine(0.0f, 16.0f);
 
                         auto disableSGR = config->FGHudfixDisableSGR.value_or_default();
-                        if (ImGui::Checkbox("Disable SGR Tracking", &disableSGR))
+                        if (IlionTheme::Checkbox("Disable SGR Tracking", &disableSGR))
                             config->FGHudfixDisableSGR = disableSGR;
                         ShowTooltip("Disable tracking of SetGraphicsRootDescriptorTable\n"
                                     "This might help filtering of wrong HUDless resources");
@@ -8630,7 +8672,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                         ImGui::Spacing();
 
                         auto disableDI = config->FGHudfixDisableDI.value_or_default();
-                        if (ImGui::Checkbox("Disable DI Tracking", &disableDI))
+                        if (IlionTheme::Checkbox("Disable DI Tracking", &disableDI))
                             config->FGHudfixDisableDI = disableDI;
                         ShowTooltip("Disable tracking of DrawInstanced\n"
                                     "This might help filtering of wrong HUDless resources");
@@ -8638,13 +8680,13 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                         ImGui::SameLine(0.0f, 16.0f);
 
                         auto disableDII = config->FGHudfixDisableDII.value_or_default();
-                        if (ImGui::Checkbox("Disable DII Tracking", &disableDII))
+                        if (IlionTheme::Checkbox("Disable DII Tracking", &disableDII))
                             config->FGHudfixDisableDII = disableDII;
                         ShowTooltip("Disable tracking of DrawIndexedInstanced\n"
                                     "This might help filtering of wrong HUDless resources");
 
                         auto disableDispatch = config->FGHudfixDisableDispatch.value_or_default();
-                        if (ImGui::Checkbox("Disable Dispatch Tracking", &disableDispatch))
+                        if (IlionTheme::Checkbox("Disable Dispatch Tracking", &disableDispatch))
                             config->FGHudfixDisableDispatch = disableDispatch;
                         ShowTooltip("Disable tracking of Dispatch\n"
                                     "This might help filtering of wrong HUDless resources");
@@ -8657,13 +8699,13 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 if (ImGui::TreeNode("Resource Settings"))
                 {
                     bool makeMVCopies = config->FGMakeMVCopy.value_or_default();
-                    if (ImGui::Checkbox("FG Make MV Copies", &makeMVCopies))
+                    if (IlionTheme::Checkbox("FG Make MV Copies", &makeMVCopies))
                         config->FGMakeMVCopy = makeMVCopies;
                     ShowTooltip("Make a copy of motion vectors to use with OptiFG\n"
                                 "For preventing corruptions that might happen");
 
                     bool makeDepthCopies = config->FGMakeDepthCopy.value_or_default();
-                    if (ImGui::Checkbox("FG Make Depth Copies", &makeDepthCopies))
+                    if (IlionTheme::Checkbox("FG Make Depth Copies", &makeDepthCopies))
                         config->FGMakeDepthCopy = makeDepthCopies;
                     ShowTooltip("Make a copy of depth to use with OptiFG\n"
                                 "For preventing corruptions that might happen");
@@ -8682,7 +8724,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 if (ImGui::TreeNode("Syncing Settings"))
                 {
                     bool useMutexForPresent = config->FGUseMutexForSwapchain.value_or_default();
-                    if (ImGui::Checkbox("FG Use Mutex for Present", &useMutexForPresent))
+                    if (IlionTheme::Checkbox("FG Use Mutex for Present", &useMutexForPresent))
                         config->FGUseMutexForSwapchain = useMutexForPresent;
                     ShowTooltip("Use mutex to prevent desync of FG and crashes\n"
                                 "Disabling might improve the perf but decrease stability");
@@ -8791,7 +8833,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                     !primaryGpu.d3d12IsVkd3dProton && !isUnrealEngine)
                 {
                     if (bool makeDepthCopy = config->NvngxFGMakeDepthCopy.value_or_default();
-                        ImGui::Checkbox("Fix broken visuals", &makeDepthCopy))
+                        IlionTheme::Checkbox("Fix broken visuals", &makeDepthCopy))
                     {
                         config->NvngxFGMakeDepthCopy = makeDepthCopy;
                     }
@@ -8855,7 +8897,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
                 ImGui::SameLine(0.0f, 20.0f * menuResScale);
                 if (bool showDebug = config->NvngxFGShowDebug.value_or_default();
-                    ImGui::Checkbox("Show Debug", &showDebug))
+                    IlionTheme::Checkbox("Show Debug", &showDebug))
                 {
                     config->NvngxFGShowDebug = showDebug;
                 }
@@ -8903,11 +8945,11 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
             if (activeNvngxFg == FGNvngxReplacement::Nukems)
             {
-                if (ImGui::Checkbox("Enable Debug View", &state.dlssgDebugView))
+                if (IlionTheme::Checkbox("Enable Debug View", &state.dlssgDebugView))
                 {
                     Nvngx_FG::setDebugView(state.dlssgDebugView);
                 }
-                if (ImGui::Checkbox("Interpolated frames only", &state.dlssgInterpolatedOnly))
+                if (IlionTheme::Checkbox("Interpolated frames only", &state.dlssgInterpolatedOnly))
                 {
                     Nvngx_FG::setInterpolatedOnly(state.dlssgInterpolatedOnly);
                 }
@@ -8948,7 +8990,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 }
 
                 bool fgAsync = config->FGAsync.value_or_default();
-                if (ImGui::Checkbox("Allow Async##2", &fgAsync))
+                if (IlionTheme::Checkbox("Allow Async##2", &fgAsync))
                 {
                     config->FGAsync = fgAsync;
 
@@ -8962,7 +9004,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
                 ImGui::SameLine(0.0f, 20.0f * menuResScale);
                 bool fgDV = config->FGDebugView.value_or_default();
-                if (ImGui::Checkbox("Debug View##3", &fgDV))
+                if (IlionTheme::Checkbox("Debug View##3", &fgDV))
                 {
                     config->FGDebugView = fgDV;
 
@@ -8985,7 +9027,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 {
                     ImGui::SameLine(0.0f, 20.0f * menuResScale);
                     if (bool fgwm = config->FSRFGEnableWatermark.value_or_default();
-                        ImGui::Checkbox("Enable Watermark", &fgwm))
+                        IlionTheme::Checkbox("Enable Watermark", &fgwm))
                     {
                         LOG_DEBUG("FSRFGEnableWatermark set FGWatermark: {}", fgwm);
                         config->FSRFGEnableWatermark = fgwm;
@@ -8997,7 +9039,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             }
 
             if (bool disableHudless = config->NvngxFGDisableHudless.value_or_default();
-                ImGui::Checkbox("Disable HUDless", &disableHudless))
+                IlionTheme::Checkbox("Disable HUDless", &disableHudless))
             {
                 config->NvngxFGDisableHudless = disableHudless;
             }
@@ -9034,7 +9076,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         }
 
         bool skipConfig = config->FSRFGSkipConfigForHudless.value_or_default();
-        if (ImGui::Checkbox("Skip Config for HUDless", &skipConfig))
+        if (IlionTheme::Checkbox("Skip Config for HUDless", &skipConfig))
             config->FSRFGSkipConfigForHudless = skipConfig;
 
         ShowTooltip("Do not use HUDless set at ffxConfig");
@@ -9042,7 +9084,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         ImGui::SameLine(0.0f, 6.0f);
 
         bool skipDispatch = config->FSRFGSkipDispatchForHudless.value_or_default();
-        if (ImGui::Checkbox("Skip Dispatch for HUDless", &skipDispatch))
+        if (IlionTheme::Checkbox("Skip Dispatch for HUDless", &skipDispatch))
             config->FSRFGSkipDispatchForHudless = skipDispatch;
 
         ShowTooltip("Do not use HUDless set at ffxDispatch");
@@ -9099,7 +9141,7 @@ void MenuCommon::RenderFsrCommonSettings(RenderMenuContext& ctx)
             SeparatorWithHelpMarker("FSR Common Settings", "Affects both FSR-FG & Upscalers");
 
             bool useFsrVales = config->FsrUseFsrInputValues.value_or_default();
-            if (ImGui::Checkbox("Use FSR Input Values", &useFsrVales))
+            if (IlionTheme::Checkbox("Use FSR Input Values", &useFsrVales))
                 config->FsrUseFsrInputValues = useFsrVales;
 
             ImGui::Spacing();
@@ -9327,7 +9369,7 @@ void MenuCommon::RenderFakenvapiSettings(RenderMenuContext& ctx)
     {
         ImGui::BeginDisabled(state.activeFgOutput == FGOutput::XeFG || state.activeFgInput == FGInput::ForceXeLL);
         if (bool forceLFX = config->FN_ForceLatencyFlex.value_or_default();
-            ImGui::Checkbox("Force LatencyFlex", &forceLFX))
+            IlionTheme::Checkbox("Force LatencyFlex", &forceLFX))
         {
             config->FN_ForceLatencyFlex = forceLFX;
         }
@@ -9344,7 +9386,7 @@ void MenuCommon::RenderFakenvapiSettings(RenderMenuContext& ctx)
         bool forceXell = config->ForceXeLL.value_or_default();
         static bool activeForceXeLL = forceXell;
 
-        if (ImGui::Checkbox("Force XeLL", &forceXell))
+        if (IlionTheme::Checkbox("Force XeLL", &forceXell))
         {
             config->ForceXeLL = forceXell;
         }
@@ -9509,7 +9551,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
     SectionTitle("Sharpness");
 
     if (bool overrideSharpness = config->OverrideSharpness.value_or_default();
-        ImGui::Checkbox("Override", &overrideSharpness))
+        IlionTheme::Checkbox("Override", &overrideSharpness))
     {
         config->OverrideSharpness = overrideSharpness;
 
@@ -9595,14 +9637,14 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
             ImGui::Spacing();
 
             if (bool overrideMotionSharpness = config->MotionSharpnessEnabled.value_or_default();
-                ImGui::Checkbox("Enable Motion Adaptive Sharpness", &overrideMotionSharpness))
+                IlionTheme::Checkbox("Enable Motion Adaptive Sharpness", &overrideMotionSharpness))
                 config->MotionSharpnessEnabled = overrideMotionSharpness;
             ShowTooltip("Enables sharpness adjustments according to the motion");
 
             if (Config::Instance()->SharpnessShader.value_or_default() != SharpenShader::RCAS)
             {
                 if (bool overrideMSDebug = config->MotionSharpnessDebug.value_or_default();
-                    ImGui::Checkbox("DA + MAS Debug", &overrideMSDebug))
+                    IlionTheme::Checkbox("DA + MAS Debug", &overrideMSDebug))
                     config->MotionSharpnessDebug = overrideMSDebug;
 
                 ShowTooltip("Enable DA + MAS debug views\n"
@@ -9615,7 +9657,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                     ScopedIndent indent {};
                     ImGui::Spacing();
 
-                    if (bool clamp = config->DAClampOutput.value_or(false); ImGui::Checkbox("Clamp Output", &clamp))
+                    if (bool clamp = config->DAClampOutput.value_or(false); IlionTheme::Checkbox("Clamp Output", &clamp))
                     {
                         if (clamp)
                             config->DAClampOutput = true;
@@ -9683,7 +9725,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
             else
             {
                 if (bool contrastEnabled = config->ContrastEnabled.value_or_default();
-                    ImGui::Checkbox("Contrast Enabled", &contrastEnabled))
+                    IlionTheme::Checkbox("Contrast Enabled", &contrastEnabled))
                     config->ContrastEnabled = contrastEnabled;
 
                 ShowTooltip("Controls sharpness at high contrast areas.");
@@ -9712,7 +9754,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                 if (Config::Instance()->SharpnessShader.value_or_default() == SharpenShader::RCAS)
                 {
                     if (bool overrideMSDebug = config->MotionSharpnessDebug.value_or_default();
-                        ImGui::Checkbox("MAS Debug", &overrideMSDebug))
+                        IlionTheme::Checkbox("MAS Debug", &overrideMSDebug))
                         config->MotionSharpnessDebug = overrideMSDebug;
                     ShowTooltip("Areas that are more red will have more sharpness applied\n"
                                 "Green areas will get reduced sharpness");
@@ -9772,7 +9814,7 @@ void MenuCommon::RenderUpscaleRatioSettings(RenderMenuContext& ctx)
         ImGui::TableNextColumn();
 
         if (bool upOverride = config->UpscaleRatioOverrideEnabled.value_or_default();
-            ImGui::Checkbox("Override all", &upOverride))
+            IlionTheme::Checkbox("Override all", &upOverride))
         {
             config->UpscaleRatioOverrideEnabled = upOverride;
 
@@ -9786,7 +9828,7 @@ void MenuCommon::RenderUpscaleRatioSettings(RenderMenuContext& ctx)
         ImGui::TableNextColumn();
 
         if (bool qOverride = config->QualityRatioOverrideEnabled.value_or_default();
-            ImGui::Checkbox("Override per quality preset", &qOverride))
+            IlionTheme::Checkbox("Override per quality preset", &qOverride))
         {
             config->QualityRatioOverrideEnabled = qOverride;
 
@@ -9865,7 +9907,7 @@ void MenuCommon::RenderOutputScalingSettings(RenderMenuContext& ctx)
         ImGui::BeginDisabled((currentBackend == Upscaler::XeSS || currentBackend == Upscaler::DLSS ||
                               currentBackend == Upscaler::DLSS_on12) &&
                              currentFeature->RenderWidth() > currentFeature->DisplayWidth());
-        ImGui::Checkbox("Enable", &_ssEnabled);
+        IlionTheme::Checkbox("Enable", &_ssEnabled);
         ImGui::EndDisabled();
 
         ShowTooltip("Upscales the image internally to a higher output resolution\n"
@@ -9983,7 +10025,7 @@ void MenuCommon::RenderInitFlagsSettings(RenderMenuContext& ctx)
         bool autoExposureDisabled = state.api == API::DX11 && currentBackend == Upscaler::XeSS;
         ImGui::BeginDisabled(autoExposureDisabled);
 
-        if (bool autoExposure = currentFeature->AutoExposure(); ImGui::Checkbox("Auto Exposure", &autoExposure))
+        if (bool autoExposure = currentFeature->AutoExposure(); IlionTheme::Checkbox("Auto Exposure", &autoExposure))
         {
             config->AutoExposure = autoExposure;
             ReInitUpscaler();
@@ -9996,7 +10038,7 @@ void MenuCommon::RenderInitFlagsSettings(RenderMenuContext& ctx)
         ImGui::EndDisabled();
 
         ImGui::TableNextColumn();
-        if (bool depth = currentFeature->DepthInverted(); ImGui::Checkbox("Depth Inverted", &depth))
+        if (bool depth = currentFeature->DepthInverted(); IlionTheme::Checkbox("Depth Inverted", &depth))
         {
             config->DepthInverted = depth;
             ReInitUpscaler();
@@ -10005,7 +10047,7 @@ void MenuCommon::RenderInitFlagsSettings(RenderMenuContext& ctx)
         ShowResetButton(&config->DepthInverted, "R##2");
 
         ImGui::TableNextColumn();
-        if (bool hdr = currentFeature->IsHdr(); ImGui::Checkbox("HDR", &hdr))
+        if (bool hdr = currentFeature->IsHdr(); IlionTheme::Checkbox("HDR", &hdr))
         {
             config->HDR = hdr;
             ReInitUpscaler();
@@ -10014,7 +10056,7 @@ void MenuCommon::RenderInitFlagsSettings(RenderMenuContext& ctx)
         ShowResetButton(&config->HDR, "R##1");
 
         ImGui::TableNextColumn();
-        if (bool jitter = currentFeature->JitteredMV(); ImGui::Checkbox("Jitter Cancellation", &jitter))
+        if (bool jitter = currentFeature->JitteredMV(); IlionTheme::Checkbox("Jitter Cancellation", &jitter))
         {
             config->JitterCancellation = jitter;
             ReInitUpscaler();
@@ -10023,7 +10065,7 @@ void MenuCommon::RenderInitFlagsSettings(RenderMenuContext& ctx)
         ShowResetButton(&config->JitterCancellation, "R##3");
 
         ImGui::TableNextColumn();
-        if (bool mv = !currentFeature->LowResMV(); ImGui::Checkbox("Display Res. MV", &mv))
+        if (bool mv = !currentFeature->LowResMV(); IlionTheme::Checkbox("Display Res. MV", &mv))
         {
             config->DisplayResolution = mv;
 
@@ -10051,7 +10093,7 @@ void MenuCommon::RenderInitFlagsSettings(RenderMenuContext& ctx)
 
         bool disableReactiveMask = config->DisableReactiveMask.value_or(!canUseReactiveMask);
 
-        if (ImGui::Checkbox("Disable Reactive Mask", &disableReactiveMask))
+        if (IlionTheme::Checkbox("Disable Reactive Mask", &disableReactiveMask))
         {
             config->DisableReactiveMask = disableReactiveMask;
 
@@ -10079,7 +10121,7 @@ void MenuCommon::RenderInitFlagsSettings(RenderMenuContext& ctx)
         ImGui::BeginDisabled(config->DisableReactiveMask.value_or(false));
 
         auto useAsTransparency = config->FsrUseMaskForTransparency.value_or_default();
-        if (ImGui::Checkbox("Use Reactive Mask as Transparency Mask", &useAsTransparency))
+        if (IlionTheme::Checkbox("Use Reactive Mask as Transparency Mask", &useAsTransparency))
             config->FsrUseMaskForTransparency = useAsTransparency;
 
         ImGui::EndDisabled();
@@ -10104,7 +10146,7 @@ void MenuCommon::RenderInitFlagsSettings(RenderMenuContext& ctx)
         else
         {
             bool useRM = maskBias > 0.0f;
-            if (ImGui::Checkbox("Use Binary Reactive Mask", &useRM))
+            if (IlionTheme::Checkbox("Use Binary Reactive Mask", &useRM))
             {
                 if (useRM)
                     config->DlssReactiveMaskBias = 0.45f;
@@ -10130,7 +10172,7 @@ void MenuCommon::RenderMagnifierSettings(RenderMenuContext& ctx)
         ImGui::Spacing();
 
         bool magnifierEnabled = config->MagnifierEnabled.value_or_default();
-        if (ImGui::Checkbox("Enable Magnifier", &magnifierEnabled))
+        if (IlionTheme::Checkbox("Enable Magnifier", &magnifierEnabled))
             config->MagnifierEnabled = magnifierEnabled;
 
         ImGui::BeginDisabled(!magnifierEnabled);
@@ -10383,21 +10425,21 @@ void MenuCommon::RenderLoggingSettings(RenderMenuContext& ctx)
     else
         spdlog::default_logger()->set_level(spdlog::level::off);
 
-    if (bool toFile = config->LogToFile.value_or_default(); ImGui::Checkbox("To File", &toFile))
+    if (bool toFile = config->LogToFile.value_or_default(); IlionTheme::Checkbox("To File", &toFile))
     {
         config->LogToFile = toFile;
         PrepareLogger();
     }
 
     ImGui::SameLine(0.0f, 6.0f);
-    if (bool toConsole = config->LogToConsole.value_or_default(); ImGui::Checkbox("To Console", &toConsole))
+    if (bool toConsole = config->LogToConsole.value_or_default(); IlionTheme::Checkbox("To Console", &toConsole))
     {
         config->LogToConsole = toConsole;
         PrepareLogger();
     }
 
     ImGui::SameLine(0.0f, 6.0f);
-    if (auto SingleFile = config->LogSingleFile.value_or_default(); ImGui::Checkbox("Single File", &SingleFile))
+    if (auto SingleFile = config->LogSingleFile.value_or_default(); IlionTheme::Checkbox("Single File", &SingleFile))
     {
         config->LogSingleFile = SingleFile;
         PrepareLogger();
@@ -10432,6 +10474,34 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         ScopedIndent indent {};
         ImGui::Spacing();
 
+        // Industrial: the fixed palette of ILION. Classic: everything below works as it always did.
+        const bool industrialTheme = config->IndustrialTheme.value_or_default();
+
+        ImGui::SetNextItemWidth(180.0f * ctx.menuResScale);
+
+        if (ImGui::BeginCombo(TrL("Theme"), Tr(industrialTheme ? "Industrial" : "Classic")))
+        {
+            if (ImGui::Selectable(TrL("Industrial"), industrialTheme) && !industrialTheme)
+            {
+                config->IndustrialTheme = true;
+                ApplyThemeStyle();
+            }
+
+            if (ImGui::Selectable(TrL("Classic"), !industrialTheme) && industrialTheme)
+            {
+                config->IndustrialTheme = false;
+                ApplyThemeStyle();
+            }
+
+            ImGui::EndCombo();
+        }
+
+        ShowTooltip("Industrial: the instrument panel look of ILION, with its own colours.\n"
+                    "Classic: the original look, with the colour settings below.");
+
+        // The colours below are the ones of the classic theme
+        ImGui::BeginDisabled(industrialTheme);
+
         bool lightTheme = config->LightTheme.value_or_default();
 
         const ImVec4 bgDark = lightTheme ? ImVec4(0.80f, 0.82f, 0.86f, 1.00f) : ImVec4(0.09f, 0.09f, 0.10f, 1.00f);
@@ -10450,7 +10520,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         auto AccentStrong = [&](ImVec4 accent, float alpha = 1.0f)
         { return toneMapColor(ImVec4(accent.x, accent.y, accent.z, alpha)); };
 
-        if (ImGui::Checkbox("Light Theme", &lightTheme))
+        if (IlionTheme::Checkbox("Light Theme", &lightTheme))
         {
             config->LightTheme = lightTheme;
             ApplyThemeStyle();
@@ -10844,6 +10914,8 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
             ApplyThemeStyle();
         }
 
+        ImGui::EndDisabled();
+
         ImGui::Spacing();
 
         auto alpha = config->MenuBGColorA.value_or_default();
@@ -10892,13 +10964,13 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
         ScopedID sectionId { "FPS Overlay" };
 
         bool fpsEnabled = config->ShowFps.value_or_default();
-        if (ImGui::Checkbox("FPS Overlay Enabled", &fpsEnabled))
+        if (IlionTheme::Checkbox("FPS Overlay Enabled", &fpsEnabled))
             config->ShowFps = fpsEnabled;
 
         ImGui::SameLine(0.0f, 6.0f);
 
         bool fpsHorizontal = config->FpsOverlayHorizontal.value_or_default();
-        if (ImGui::Checkbox("Horizontal", &fpsHorizontal))
+        if (IlionTheme::Checkbox("Horizontal", &fpsHorizontal))
             config->FpsOverlayHorizontal = fpsHorizontal;
 
         const char* fpsPosition[] = { "Top Left", "Top Right", "Bottom Left", "Bottom Right" };
@@ -10950,7 +11022,7 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
         }
 
         bool useTheme = config->OverlaysUseTheme.value_or_default();
-        if (ImGui::Checkbox("Use Theme Colors", &useTheme))
+        if (IlionTheme::Checkbox("Use Theme Colors", &useTheme))
             config->OverlaysUseTheme = useTheme;
 
         // Hardware readings, every one can be shown on its own
@@ -11121,7 +11193,7 @@ void MenuCommon::RenderVsyncSettings(RenderMenuContext& ctx)
 
             auto OverrideVsync = config->OverrideVsync.value_or_default();
             {
-                if (ImGui::Checkbox("Override Vsync", &OverrideVsync))
+                if (IlionTheme::Checkbox("Override Vsync", &OverrideVsync))
                 {
                     config->OverrideVsync = OverrideVsync;
                     LOG_DEBUG("Enabled OverrideVsync: {}", OverrideVsync);
@@ -11136,7 +11208,7 @@ void MenuCommon::RenderVsyncSettings(RenderMenuContext& ctx)
             auto forceVsyncOff = config->ForceVsync.has_value() && !config->ForceVsync.value();
             bool vsyncChanged = false;
 
-            if (ImGui::Checkbox("V-Sync On", &forceVsyncOn))
+            if (IlionTheme::Checkbox("V-Sync On", &forceVsyncOn))
             {
                 if (forceVsyncOn)
                 {
@@ -11151,7 +11223,7 @@ void MenuCommon::RenderVsyncSettings(RenderMenuContext& ctx)
             }
             ImGui::SameLine(0.0f, 16.0f);
 
-            if (ImGui::Checkbox("V-Sync Off", &forceVsyncOff))
+            if (IlionTheme::Checkbox("V-Sync Off", &forceVsyncOff))
             {
                 if (forceVsyncOff)
                 {
@@ -11260,7 +11332,7 @@ void MenuCommon::RenderApiAndTextureSettings(RenderMenuContext& ctx)
                                      config->MipmapBiasScaleOverride.value());
                 {
                     bool mbFixed = config->MipmapBiasFixedOverride.value_or_default();
-                    if (ImGui::Checkbox("MB Fixed Override", &mbFixed))
+                    if (IlionTheme::Checkbox("MB Fixed Override", &mbFixed))
                     {
                         config->MipmapBiasScaleOverride.reset();
                         config->MipmapBiasFixedOverride = mbFixed;
@@ -11276,7 +11348,7 @@ void MenuCommon::RenderApiAndTextureSettings(RenderMenuContext& ctx)
                                      config->MipmapBiasFixedOverride.value());
                 {
                     bool mbScale = config->MipmapBiasScaleOverride.value_or_default();
-                    if (ImGui::Checkbox("MB Scale Override", &mbScale))
+                    if (IlionTheme::Checkbox("MB Scale Override", &mbScale))
                     {
                         config->MipmapBiasFixedOverride.reset();
                         config->MipmapBiasScaleOverride = mbScale;
@@ -11289,7 +11361,7 @@ void MenuCommon::RenderApiAndTextureSettings(RenderMenuContext& ctx)
                 ImGui::EndDisabled();
 
                 bool mbAll = config->MipmapBiasOverrideAll.value_or_default();
-                if (ImGui::Checkbox("MB Override All Textures", &mbAll))
+                if (IlionTheme::Checkbox("MB Override All Textures", &mbAll))
                     config->MipmapBiasOverrideAll = mbAll;
 
                 ShowTooltip("Override all textures mipmap values\n"
@@ -11392,7 +11464,7 @@ void MenuCommon::RenderApiAndTextureSettings(RenderMenuContext& ctx)
             ImGui::PopItemWidth();
 
             bool afComp = config->AnisotropyModifyComp.value_or_default();
-            if (ImGui::Checkbox("Modify Compare", &afComp))
+            if (IlionTheme::Checkbox("Modify Compare", &afComp))
                 config->AnisotropyModifyComp = afComp;
 
             ShowTooltip("Update comparison filters");
@@ -11400,13 +11472,13 @@ void MenuCommon::RenderApiAndTextureSettings(RenderMenuContext& ctx)
             ImGui::SameLine(0.0f, 6.0f);
 
             bool afMinMax = config->AnisotropyModifyMinMax.value_or_default();
-            if (ImGui::Checkbox("Modify Min/Max", &afMinMax))
+            if (IlionTheme::Checkbox("Modify Min/Max", &afMinMax))
                 config->AnisotropyModifyMinMax = afMinMax;
 
             ShowTooltip("Update min/max filters");
 
             bool afSkipPoint = config->AnisotropySkipPointFilter.value_or_default();
-            if (ImGui::Checkbox("Skip Point Filters", &afSkipPoint))
+            if (IlionTheme::Checkbox("Skip Point Filters", &afSkipPoint))
                 config->AnisotropySkipPointFilter = afSkipPoint;
 
             ShowTooltip("Skip updating of point filters");
@@ -12013,7 +12085,7 @@ void MenuCommon::RenderCustomTabSettings(RenderMenuContext& ctx)
                 ImGui::TableNextColumn();
 
                 ImGui::PushID(box.id);
-                changed |= ImGui::Checkbox(box.name, &on);
+                changed |= IlionTheme::Checkbox(box.name, &on);
                 ImGui::PopID();
             }
 
@@ -13202,7 +13274,7 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
 
     bool comparisonEnabled = FSR4Comparison::Enabled();
 
-    if (ImGui::Checkbox(TrL("FSR 4 Comparison Mode"), &comparisonEnabled))
+    if (IlionTheme::Checkbox(TrL("FSR 4 Comparison Mode"), &comparisonEnabled))
     {
         FSR4Comparison::SetEnabled(comparisonEnabled);
 
@@ -13214,7 +13286,7 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
 
     bool fpsEnabled = config->ShowFps.value_or_default();
 
-    if (ImGui::Checkbox(TrL("Performance overlay"), &fpsEnabled))
+    if (IlionTheme::Checkbox(TrL("Performance overlay"), &fpsEnabled))
         config->ShowFps = fpsEnabled;
 
     if (ImGui::Button(TrL("Overlay and hardware settings")))

@@ -6705,19 +6705,30 @@ static void RenderModeSelector(decltype(Config::Instance()) config)
 {
     const bool basic = config->MenuBasicMode.value_or_default();
 
+    // Industrial theme: two keys of the same size with room around their word, the word in the middle.
+    // Classic theme: the bare words, as always.
+    const bool keys = IlionTheme::industrial;
+    const ImVec2 keySize = IlionTheme::SelectorKeySize(
+        (std::max)(ImGui::CalcTextSize(Tr("Basic")).x, ImGui::CalcTextSize(Tr("Full")).x), false);
+
     const auto modeButton = [&](const char* label, const char* id, bool selected)
     {
-        const ImVec2 size = ImGui::CalcTextSize(label);
+        const ImVec2 textSize = ImGui::CalcTextSize(label);
+        const ImVec2 size = keys ? keySize : textSize;
         const ImVec2 pos = ImGui::GetCursorScreenPos();
 
         const bool clicked = ImGui::InvisibleButton(id, size);
         const bool highlighted = selected || ImGui::IsItemHovered();
 
-        if (IlionTheme::industrial)
-            IlionTheme::DrawSelectorKey(ImGui::GetWindowDrawList(), pos, size, selected, ImGui::IsItemHovered());
+        if (keys)
+        {
+            IlionTheme::DrawSelectorKey(ImGui::GetWindowDrawList(), ImRect(pos, ImVec2(pos.x + size.x, pos.y + size.y)), selected,
+                                        ImGui::IsItemHovered());
+        }
 
-        ImGui::GetWindowDrawList()->AddText(pos, ImGui::GetColorU32(highlighted ? ImGuiCol_Text : ImGuiCol_TextDisabled),
-                                            label);
+        ImGui::GetWindowDrawList()->AddText(
+            ImVec2(std::floor(pos.x + (size.x - textSize.x) * 0.5f), std::floor(pos.y + (size.y - textSize.y) * 0.5f)),
+            ImGui::GetColorU32(highlighted ? ImGuiCol_Text : ImGuiCol_TextDisabled), label);
 
         return clicked && !selected;
     };
@@ -6726,7 +6737,7 @@ static void RenderModeSelector(decltype(Config::Instance()) config)
         config->MenuBasicMode = true;
 
     ImGui::SameLine();
-    ImGui::TextDisabled("|");
+    IlionTheme::SelectorBar(keys ? keySize.y : 0.0f);
     ImGui::SameLine();
 
     if (modeButton(Tr("Full"), "##ModeFull", !basic))
@@ -6739,14 +6750,21 @@ static void RenderLanguageSelector(decltype(Config::Instance()) config)
     const auto current = Ilion::CurrentLang();
     const auto& style = ImGui::GetStyle();
 
-    const float width = ImGui::CalcTextSize("ES").x + ImGui::CalcTextSize("|").x + ImGui::CalcTextSize("EN").x +
-                        style.ItemSpacing.x * 2.0f;
+    // Industrial theme: two square keys of the same size, the letters in the middle. Classic theme: the bare
+    // letters, as always.
+    const bool keys = IlionTheme::industrial;
+    const ImVec2 keySize =
+        IlionTheme::SelectorKeySize((std::max)(ImGui::CalcTextSize("ES").x, ImGui::CalcTextSize("EN").x), true);
+
+    const float width = (keys ? keySize.x * 2.0f : ImGui::CalcTextSize("ES").x + ImGui::CalcTextSize("EN").x) +
+                        ImGui::CalcTextSize("|").x + style.ItemSpacing.x * 2.0f;
 
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - width);
 
     const auto languageButton = [&](const char* label, Ilion::Lang lang)
     {
-        const ImVec2 size = ImGui::CalcTextSize(label);
+        const ImVec2 textSize = ImGui::CalcTextSize(label);
+        const ImVec2 size = keys ? keySize : textSize;
         const ImVec2 pos = ImGui::GetCursorScreenPos();
 
         ImGui::PushID(label);
@@ -6755,11 +6773,15 @@ static void RenderLanguageSelector(decltype(Config::Instance()) config)
 
         const bool highlighted = current == lang || ImGui::IsItemHovered();
 
-        if (IlionTheme::industrial)
-            IlionTheme::DrawSelectorKey(ImGui::GetWindowDrawList(), pos, size, current == lang, ImGui::IsItemHovered());
+        if (keys)
+        {
+            IlionTheme::DrawSelectorKey(ImGui::GetWindowDrawList(), ImRect(pos, ImVec2(pos.x + size.x, pos.y + size.y)),
+                                        current == lang, ImGui::IsItemHovered());
+        }
 
-        ImGui::GetWindowDrawList()->AddText(pos, ImGui::GetColorU32(highlighted ? ImGuiCol_Text : ImGuiCol_TextDisabled),
-                                            label);
+        ImGui::GetWindowDrawList()->AddText(
+            ImVec2(std::floor(pos.x + (size.x - textSize.x) * 0.5f), std::floor(pos.y + (size.y - textSize.y) * 0.5f)),
+            ImGui::GetColorU32(highlighted ? ImGuiCol_Text : ImGuiCol_TextDisabled), label);
 
         if (clicked && current != lang)
         {
@@ -6770,7 +6792,7 @@ static void RenderLanguageSelector(decltype(Config::Instance()) config)
 
     languageButton("ES", Ilion::Lang::ES);
     ImGui::SameLine();
-    ImGui::TextDisabled("|");
+    IlionTheme::SelectorBar(keys ? keySize.y : 0.0f);
     ImGui::SameLine();
     languageButton("EN", Ilion::Lang::EN);
 }

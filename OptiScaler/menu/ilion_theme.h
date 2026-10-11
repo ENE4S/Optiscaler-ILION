@@ -1160,7 +1160,7 @@ inline void PushChassisStyle()
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, ImFloor(style.WindowPadding.x * 1.25f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(ImFloor(style.WindowPadding.x * 1.5f), ImFloor(style.WindowPadding.y * 1.5f)));
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(style.FramePadding.x, ImFloor(style.FramePadding.y * 2.6f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(style.FramePadding.x, ImFloor(style.FramePadding.y * 3.6f)));
 }
 
 inline void PopChassisStyle() { ImGui::PopStyleVar(3); }
@@ -1202,30 +1202,56 @@ inline void DrawChassis()
                                       ImGui::GetColorU32(GraphiteDeep), ImGui::GetColorU32(GraphiteDeep));
         DrawMetal(draw, ImVec2(min.x + 2.0f, min.y + 2.0f), ImVec2(max.x - 2.0f, barMax.y), 0.22f);
 
-        // Name plate
-        const char* nameEnd = ImGui::FindRenderedTextEnd(window->Name);
-        const ImVec2 nameSize = ImGui::CalcTextSize(window->Name, nameEnd);
-        const float plateLeft = ImFloor(min.x + rim * 3.6f);
-        const float platePad = ImFloor(style.FramePadding.x * 2.0f);
-        const float textY = ImFloor(min.y + (title - nameSize.y) * 0.5f);
-        const ImVec2 plateMin(plateLeft, textY - 2.0f), plateMax(plateLeft + nameSize.x + platePad * 2.0f, textY + nameSize.y + 2.0f);
+        // What is left of the bar between the rim above and the joint below is where its parts go
+        const float bandTop = min.y + rim + 2.0f, bandBottom = barMax.y - 3.0f;
+        const float bandHeight = bandBottom - bandTop;
 
-        DrawWell(draw, plateMin, plateMax);
-        draw->AddText(ImVec2(plateLeft + platePad, textY), ImGui::GetColorU32(Text), window->Name, nameEnd);
+        // Name plate: a raised plate of dark steel with a line of trim, the name engraved on it a little
+        // larger than the text of the menu, as far as the bar has room for
+        const char* nameEnd = ImGui::FindRenderedTextEnd(window->Name);
+        ImFont* font = ImGui::GetFont();
+        const float fontSize = ImFloor(ImMin(ImGui::GetFontSize() * 1.12f, bandHeight - 6.0f));
+        const ImVec2 nameSize = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, window->Name, nameEnd);
+        const float platePad = ImFloor(style.FramePadding.x * 3.0f);
+        const float plateHeight = ImMin(bandHeight, nameSize.y + 8.0f);
+        const float plateLeft = ImFloor(min.x + rim * 3.0f + rim);
+        const float plateTop = ImFloor(bandTop + (bandHeight - plateHeight) * 0.5f);
+        const ImVec2 plateMin(plateLeft, plateTop), plateMax(plateLeft + nameSize.x + platePad * 2.0f, plateTop + plateHeight);
+
+        if (fontSize >= 8.0f && plateMax.x < barMax.x - rim * 4.0f)
+        {
+            draw->AddRectFilled(ImVec2(plateMin.x - 1.0f, plateMin.y - 1.0f), ImVec2(plateMax.x + 1.0f, plateMax.y + 2.0f),
+                                ImGui::GetColorU32(Shadow), 2.0f);
+            draw->AddRectFilledMultiColor(plateMin, plateMax, ImGui::GetColorU32(Shade(Olive, 0.95f)), ImGui::GetColorU32(Shade(Olive, 0.95f)),
+                                          ImGui::GetColorU32(Shade(OliveDim, 0.70f)), ImGui::GetColorU32(Shade(OliveDim, 0.70f)));
+            DrawMetal(draw, plateMin, plateMax, 0.18f);
+            draw->AddRect(plateMin, plateMax, ImGui::GetColorU32(Alpha(TrimGold, 0.75f)));
+            draw->AddLine(ImVec2(plateMin.x + 1.0f, plateMin.y + 1.0f), ImVec2(plateMax.x - 2.0f, plateMin.y + 1.0f),
+                          ImGui::GetColorU32(Alpha(MetalLight, 0.45f)));
+            draw->AddLine(ImVec2(plateMin.x + 1.0f, plateMax.y - 2.0f), ImVec2(plateMax.x - 1.0f, plateMax.y - 2.0f),
+                          ImGui::GetColorU32(Alpha(Shadow, 0.70f)));
+
+            // Engraved: the shade of the cut below and to the right of every letter
+            const ImVec2 textPos(ImFloor(plateMin.x + platePad), ImFloor(plateMin.y + (plateHeight - nameSize.y) * 0.5f));
+
+            draw->AddText(font, fontSize, ImVec2(textPos.x + 1.0f, textPos.y + 1.0f), ImGui::GetColorU32(Alpha(Shadow, 0.90f)), window->Name,
+                          nameEnd);
+            draw->AddText(font, fontSize, textPos, ImGui::GetColorU32(ImVec4(0.96f, 0.95f, 0.86f, 1.0f)), window->Name, nameEnd);
+        }
 
         // Warning stripes: a worn grey stretch after the name, a yellow one towards the right end
-        const float stripe = ImMax(3.0f, ImFloor(title * 0.22f));
-        const float stripesTop = textY, stripesBottom = textY + nameSize.y;
-        const float free = barMax.x - rim * 3.6f - plateMax.x;
+        const float stripe = ImMax(3.0f, ImFloor(title * 0.16f));
+        const float stripesTop = ImFloor(bandTop + bandHeight * 0.22f), stripesBottom = ImFloor(bandBottom - bandHeight * 0.22f);
+        const float free = barMax.x - rim * 4.0f - plateMax.x;
 
-        if (free > title * 6.0f)
+        if (free > title * 5.0f)
         {
-            const float greyLeft = plateMax.x + title * 0.8f;
-            const float yellowRight = barMax.x - rim * 3.6f;
+            const float greyLeft = plateMax.x + title * 0.6f;
+            const float yellowRight = barMax.x - rim * 4.0f;
 
-            DrawStripes(draw, ImVec2(greyLeft, stripesTop), ImVec2(greyLeft + ImMin(free * 0.22f, title * 4.0f), stripesBottom),
+            DrawStripes(draw, ImVec2(greyLeft, stripesTop), ImVec2(greyLeft + ImMin(free * 0.22f, title * 3.0f), stripesBottom),
                         Alpha(Metal, 0.55f), stripe);
-            DrawStripes(draw, ImVec2(yellowRight - ImMin(free * 0.30f, title * 6.0f), stripesTop), ImVec2(yellowRight, stripesBottom),
+            DrawStripes(draw, ImVec2(yellowRight - ImMin(free * 0.30f, title * 4.5f), stripesTop), ImVec2(yellowRight, stripesBottom),
                         Alpha(StripeYellow, 0.85f), stripe);
         }
 
@@ -1391,12 +1417,41 @@ inline void DrawTabPlate(ImDrawList* draw, const ImVec2& min, const ImVec2& max,
                   ImGui::GetColorU32(selected ? Text : hovered ? Text : TextDim), text);
 }
 
-// A small key of a selector drawn around its text (language, mode). The chosen one is lit.
-inline void DrawSelectorKey(ImDrawList* draw, const ImVec2& textPos, const ImVec2& textSize, bool selected, bool hovered)
+// Size of a key of a selector for words of up to textWidth: room around the word on every side. Square keys
+// (the two letters of a language) take the larger of both measures for both.
+inline ImVec2 SelectorKeySize(float textWidth, bool square)
 {
-    const ImVec2 min(textPos.x - 4.0f, textPos.y - 2.0f);
-    const ImVec2 max(textPos.x + textSize.x + 4.0f, textPos.y + textSize.y + 2.0f);
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float height = ImFloor(ImGui::GetTextLineHeight() + style.FramePadding.y * 2.0f + 4.0f);
+    const float width = ImFloor(textWidth + (square ? style.FramePadding.x * 2.0f + 2.0f : style.FramePadding.x * 5.0f));
 
-    DrawKey(draw, ImRect(min, max), selected ? ImVec4(0.12f, 0.52f, 0.08f, 1.0f) : hovered ? Olive : OliveDim, hovered, false);
+    if (square)
+        return ImVec2(ImMax(width, height), ImMax(width, height));
+
+    return ImVec2(width, height);
+}
+
+// A key of a selector (language, mode) over its whole rectangle. The chosen one is lit.
+inline void DrawSelectorKey(ImDrawList* draw, const ImRect& bounds, bool selected, bool hovered)
+{
+    DrawKey(draw, bounds, selected ? ImVec4(0.12f, 0.52f, 0.08f, 1.0f) : hovered ? Olive : OliveDim, hovered, false);
+}
+
+// The bar between the two keys of a selector, in the middle of their height. With height 0 it is the plain
+// text it always was.
+inline void SelectorBar(float height)
+{
+    if (height <= 0.0f)
+    {
+        ImGui::TextDisabled("|");
+        return;
+    }
+
+    const ImVec2 size = ImGui::CalcTextSize("|");
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+
+    ImGui::Dummy(ImVec2(size.x, height));
+    ImGui::GetWindowDrawList()->AddText(ImVec2(pos.x, ImFloor(pos.y + (height - size.y) * 0.5f)),
+                                        ImGui::GetColorU32(ImGuiCol_TextDisabled), "|");
 }
 } // namespace IlionTheme

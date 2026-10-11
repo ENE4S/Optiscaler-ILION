@@ -2351,13 +2351,18 @@ static std::vector<CompareConclusion> BuildVisualSummary(const IlionVisual::Capt
 // category next to performance and stability, no score mixes them.
 static void AddVisualConclusions(std::vector<CompareConclusion>& result, const IlionCompare::Analysis& analysis,
                                  const std::vector<const IlionCompare::Test*>& tests,
-                                 const std::vector<IlionVisual::SavedResult>& saved)
+                                 const std::vector<IlionVisual::SavedResult>& saved, int* nativeBest = nullptr)
 {
     struct Covered
     {
         int candidate;
         double ssim;
     };
+
+    // With nativeBest the native capture is optional: nothing is said when there is none, and the dll that is
+    // closest to it comes back when every dll was measured against it
+    if (nativeBest != nullptr)
+        *nativeBest = -1;
 
     // Per native capture used as reference, the versions measured against it. Later rows are newer.
     std::map<std::string, std::vector<Covered>> byReference;
@@ -2403,6 +2408,9 @@ static void AddVisualConclusions(std::vector<CompareConclusion>& result, const I
         }
     }
 
+    if (referenceId == nullptr && nativeBest != nullptr)
+        return;
+
     if (referenceId == nullptr)
     {
         result.push_back({ Tr("VISUAL QUALITY: not analyzed"),
@@ -2432,6 +2440,9 @@ static void AddVisualConclusions(std::vector<CompareConclusion>& result, const I
                                  covered[0].ssim, covered[1].ssim, name(covered[1].candidate).c_str(),
                                  referenceId->c_str());
         conclusion.level = 0;
+
+        if (nativeBest != nullptr && covered.size() == analysis.candidates.size())
+            *nativeBest = covered[0].candidate;
 
         if (analysis.performance.kind == IlionCompare::Kind::Winner)
         {
@@ -3281,6 +3292,333 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
     ImGui::End();
 }
 
+// --- Captures of the compared dlls against each other ------------------------------------------------------
+// The newest capture of every dll of a comparison, measured pair by pair. No native picture is needed for this,
+// and without one it only tells how much and where the pictures differ, never which one looks better.
+
+static bool CaptureMatchesTest(const IlionVisual::Capture& capture, const IlionCompare::Test& test);
+static void StartVisualMeasureFiles(const std::string& key, const std::filesystem::path& referencePath,
+                                    const std::filesystem::path& testPath, IlionVisual::SavedResult saved,
+                                    const std::filesystem::path& folder);
+
+struct DirectVisual
+{
+    enum class State
+    {
+        Measured,
+        Unreliable, // not the same scene, or the camera moved
+        Failed,     // another size, unreadable
+        Pending,
+    };
+
+    struct Pair
+    {
+        int a = 0, b = 0; // positions in the candidates of the analysis
+        State state = State::Pending;
+        double ssim = 0.0;
+        double differentPercent = 0.0;
+        double edgeRatio = 1.0; // edge strength of b over the one of a
+    };
+
+    std::vector<std::string> capture; // id of the capture used for every dll, empty without one
+    std::vector<Pair> pairs;
+};
+
+// Looks up the captures of every dll and what is saved about each pair, and has the missing pairs measured
+static DirectVisual GatherDirectVisual(const IlionCompare::Analysis& analysis,
+                                       const std::vector<const IlionCompare::Test*>& tests,
+                                       const std::vector<IlionVisual::Capture>& captures,
+                                       const std::vector<IlionVisual::SavedResult>& results)
+{
+    DirectVisual direct;
+    std::vector<const IlionVisual::Capture*> used(analysis.candidates.size(), nullptr);
+
+    for (size_t i = 0; i < analysis.candidates.size(); i++)
+    {
+        const auto& test = *tests[analysis.candidates[i].tests.front()];
+
+        // Sorted by date, the last one that matches is the newest
+        for (const auto& capture : captures)
+        {
+            if (CaptureMatchesTest(capture, test))
+                used[i] = &capture;
+        }
+
+        direct.capture.push_back(used[i] != nullptr ? used[i]->id : std::string());
+    }
+
+    auto& work = GetVisualWork();
+    std::map<std::string, IlionVisual::Metrics> tried;
+
+    {
+        std::scoped_lock lock(work.mutex);
+        tried = work.metrics;
+    }
+
+    bool started = work.busy.load();
+
+    for (int a = 0; a < (int) used.size(); a++)
+    {
+        for (int b = a + 1; b < (int) used.size(); b++)
+        {
+            if (used[a] == nullptr || used[b] == nullptr)
+                continue;
+
+            DirectVisual::Pair pair;
+            pair.a = a;
+            pair.b = b;
+
+            const IlionVisual::SavedResult* saved = nullptr;
+            bool reversed = false;
+
+            for (const auto& row : results)
+            {
+                if (row.referenceId == used[a]->id && row.testId == used[b]->id)
+                {
+                    saved = &row;
+                    reversed = false;
+                }
+                else if (row.referenceId == used[b]->id && row.testId == used[a]->id)
+                {
+                    saved = &row;
+                    reversed = true;
+                }
+            }
+
+            const std::string key = VisualPairKey(used[a]->id, used[b]->id);
+
+            if (saved != nullptr)
+            {
+                const double ratio = 1.0 + saved->edgeChangePercent / 100.0;
+
+                pair.state = saved->unreliable ? DirectVisual::State::Unreliable : DirectVisual::State::Measured;
+                pair.ssim = saved->ssim;
+                pair.differentPercent = saved->differentPercent;
+                pair.edgeRatio = !reversed ? ratio : ratio > 0.0 ? 1.0 / ratio : 1.0;
+            }
+            else if (tried.contains(key))
+            {
+                pair.state = DirectVisual::State::Failed;
+            }
+            else if (!started)
+            {
+                SYSTEMTIME time;
+                GetLocalTime(&time);
+
+                IlionVisual::SavedResult row;
+                row.dateTime = StrFmt("%04d-%02d-%02d %02d:%02d:%02d", time.wYear, time.wMonth, time.wDay, time.wHour,
+                                      time.wMinute, time.wSecond);
+                row.game = used[b]->game;
+                row.referenceId = used[a]->id;
+                row.referenceName = used[a]->Name();
+                row.referenceSha256 = used[a]->dllSha256;
+                row.referenceOrigin = "upscaled";
+                row.testId = used[b]->id;
+                row.testName = used[b]->Name();
+                row.testSha256 = used[b]->dllSha256;
+
+                StartVisualMeasureFiles(key, used[a]->path, used[b]->path, row, CaptureFolder());
+                started = true;
+            }
+
+            direct.pairs.push_back(pair);
+        }
+    }
+
+    return direct;
+}
+
+// What the captures of the dlls show when put against each other
+static std::vector<CompareConclusion> BuildDirectVisualConclusions(const IlionCompare::Analysis& analysis,
+                                                                   const DirectVisual& direct)
+{
+    using State = DirectVisual::State;
+
+    std::vector<CompareConclusion> result;
+
+    const auto name = [&](int index) { return analysis.candidates[index].name; };
+
+    std::string missing;
+    int withCapture = 0;
+
+    for (int i = 0; i < (int) direct.capture.size(); i++)
+    {
+        if (direct.capture[i].empty())
+            missing += (missing.empty() ? "" : ", ") + name(i);
+        else
+            withCapture++;
+    }
+
+    const std::string missingText = missing.empty() ? std::string() : StrFmt(Tr(" Without a saved capture: %s."), missing.c_str());
+
+    if (withCapture < 2)
+    {
+        result.push_back({ Tr("VISUAL QUALITY: captures missing"),
+                           Tr("A capture of at least two of these DLLs, taken in the same spot with the configuration of "
+                              "the tests, is needed to compare their pictures.") +
+                               missingText,
+                           1 });
+        return result;
+    }
+
+    std::vector<const DirectVisual::Pair*> measured;
+    std::string notEquivalent;
+    int pending = 0;
+
+    for (const auto& pair : direct.pairs)
+    {
+        if (pair.state == State::Measured)
+            measured.push_back(&pair);
+        else if (pair.state == State::Pending)
+            pending++;
+        else
+            notEquivalent += (notEquivalent.empty() ? "" : ", ") + name(pair.a) + " / " + name(pair.b);
+    }
+
+    if (pending > 0)
+    {
+        result.push_back({ Tr("VISUAL QUALITY: measuring"),
+                           StrFmt(Tr("%d pairs of captures are being measured."), pending), 1 });
+        return result;
+    }
+
+    const std::string notEquivalentText =
+        notEquivalent.empty() ? std::string()
+                              : StrFmt(Tr(" Not comparable, another scene, camera moved or another size: %s."),
+                                       notEquivalent.c_str());
+
+    if (measured.empty())
+    {
+        result.push_back({ Tr("VISUAL QUALITY: captures not equivalent"),
+                           Tr("The saved captures of these DLLs don't show the same picture, they can't be compared. "
+                              "Capture every DLL in the same spot without moving.") +
+                               notEquivalentText + missingText,
+                           2 });
+        return result;
+    }
+
+    std::sort(measured.begin(), measured.end(),
+              [](const DirectVisual::Pair* x, const DirectVisual::Pair* y) { return x->ssim > y->ssim; });
+
+    const auto describe = [&](const DirectVisual::Pair& pair)
+    {
+        return StrFmt(Tr("%s / %s: SSIM %.4f, %.1f%% of the pixels differ. "), name(pair.a).c_str(), name(pair.b).c_str(),
+                      pair.ssim, pair.differentPercent);
+    };
+
+    std::string text;
+
+    if (measured.size() <= 3)
+    {
+        for (const auto* pair : measured)
+            text += describe(*pair);
+    }
+    else
+    {
+        text += Tr("Most alike: ") + describe(*measured.front());
+        text += Tr("Most different: ") + describe(*measured.back());
+    }
+
+    // Edge strength of every dll against the first one that has a capture, where that pair was measured
+    int anchor = -1;
+
+    for (int i = 0; i < (int) direct.capture.size() && anchor < 0; i++)
+    {
+        if (!direct.capture[i].empty())
+            anchor = i;
+    }
+
+    int strongest = anchor, softest = anchor;
+    double strongestRatio = 1.0, softestRatio = 1.0;
+
+    for (const auto& pair : direct.pairs)
+    {
+        if (pair.state != State::Measured || pair.a != anchor)
+            continue;
+
+        if (pair.edgeRatio > strongestRatio)
+        {
+            strongestRatio = pair.edgeRatio;
+            strongest = pair.b;
+        }
+
+        if (pair.edgeRatio < softestRatio)
+        {
+            softestRatio = pair.edgeRatio;
+            softest = pair.b;
+        }
+    }
+
+    if (strongest != softest && softestRatio > 0.0 && (strongestRatio / softestRatio - 1.0) * 100.0 >= 5.0)
+    {
+        text += StrFmt(Tr("Strongest edges: %s, %.1f%% more than %s. "), name(strongest).c_str(),
+                       (strongestRatio / softestRatio - 1.0) * 100.0, name(softest).c_str());
+    }
+
+    text += Tr("These are differences between the pictures: without a native reference they don't show which DLL "
+               "looks better.");
+
+    result.push_back({ Tr("VISUAL DIFFERENCES between the captures of the DLLs"), text + notEquivalentText + missingText, 1 });
+
+    return result;
+}
+
+// One conclusion over everything there is: the balance of performance and stability, and what the captures add
+static CompareConclusion BuildGlobalConclusion(const IlionCompare::Analysis& analysis, const DirectVisual& direct,
+                                               int nativeBest)
+{
+    const auto name = [&](int index) { return analysis.candidates[index].name; };
+
+    bool differences = false;
+    bool pending = false;
+
+    for (const auto& pair : direct.pairs)
+    {
+        differences |= pair.state == DirectVisual::State::Measured;
+        pending |= pair.state == DirectVisual::State::Pending;
+    }
+
+    const char* visual = pending     ? " The captures of these DLLs are still being measured."
+                         : differences ?" The captures differ between the DLLs but, without a native reference, none is "
+                                       "shown to look better: visual quality doesn't change this result."
+                                     : " There are no comparable captures of these DLLs, visual quality isn't part of "
+                                       "this result.";
+
+    if (analysis.balance.kind == IlionCompare::Kind::Winner)
+    {
+        const int winner = analysis.balance.winner;
+
+        if (nativeBest == winner)
+        {
+            return { StrFmt(Tr("GLOBAL CONCLUSION: %s"), name(winner).c_str()),
+                     Tr("Best balance of performance and stability, and the closest to the native capture."), 0 };
+        }
+
+        if (nativeBest >= 0)
+        {
+            return { Tr("GLOBAL CONCLUSION: depends on the priority"),
+                     StrFmt(Tr("%s has the best balance of performance and stability, %s is the closest to the native "
+                               "capture."),
+                            name(winner).c_str(), name(nativeBest).c_str()),
+                     1 };
+        }
+
+        return { StrFmt(Tr("GLOBAL CONCLUSION: %s"), name(winner).c_str()),
+                 std::string(Tr("Best balance of performance and stability.")) + Tr(visual), 0 };
+    }
+
+    if (nativeBest >= 0)
+    {
+        return { Tr("GLOBAL CONCLUSION: no overall winner"),
+                 StrFmt(Tr("Performance and stability don't single out a DLL. %s is the closest to the native capture."),
+                        name(nativeBest).c_str()),
+                 1 };
+    }
+
+    return { Tr("GLOBAL CONCLUSION: no overall winner"),
+             std::string(Tr("Performance and stability don't single out a DLL.")) + Tr(visual), 1 };
+}
+
 static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
 {
     if (!showBenchmarkCompare)
@@ -3293,16 +3631,26 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
     static std::vector<std::string> selectedIds; // in the order they were picked, one column each
     static std::string referenceId;
     static std::vector<IlionVisual::SavedResult> visualResults;
+    static std::vector<IlionVisual::Capture> visualCaptures;
+    static int visualResultsSeen = -1;
 
     if (benchmarkCompareReload)
     {
         benchmarkCompareReload = false;
         history = IlionCompare::LoadHistory(BenchmarkFolder() / L"benchmarks.csv");
-        visualResults = IlionVisual::LoadResults(CaptureFolder());
+        visualCaptures = IlionVisual::ListCaptures(CaptureFolder());
+        visualResultsSeen = -1;
 
         // Tests that aren't in the file anymore drop out of the selection
         std::erase_if(selectedIds, [&](const std::string& id)
                       { return std::none_of(history.begin(), history.end(), [&](const Test& t) { return t.id == id; }); });
+    }
+
+    // Measurements of captures that were saved since the last look
+    if (const int saved = visualResultsSaved.load(); saved != visualResultsSeen)
+    {
+        visualResultsSeen = saved;
+        visualResults = IlionVisual::LoadResults(CaptureFolder());
     }
 
     ImGui::SetNextWindowSize(ImVec2(std::min(960.0f * scale, io.DisplaySize.x - 20.0f),
@@ -3518,9 +3866,21 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
 
     auto conclusions = BuildCompareConclusions(analysis, tests);
 
-    // Image quality is a category of its own, taken from the visual analyses of the same dlls
+    // Image quality is a category of its own: the captures of the same dlls against each other, against a native
+    // capture when there is one, and one conclusion over everything
     if (analysis.candidates.size() >= 2 && analysis.blocking.empty())
-        AddVisualConclusions(conclusions, analysis, tests, visualResults);
+    {
+        int nativeBest = -1;
+        const auto direct = GatherDirectVisual(analysis, tests, visualCaptures, visualResults);
+
+        for (auto& conclusion : BuildDirectVisualConclusions(analysis, direct))
+            conclusions.push_back(std::move(conclusion));
+
+        AddVisualConclusions(conclusions, analysis, tests, visualResults, &nativeBest);
+
+        if (analysis.performance.kind == IlionCompare::Kind::Winner || analysis.performance.kind == IlionCompare::Kind::Tie)
+            conclusions.push_back(BuildGlobalConclusion(analysis, direct, nativeBest));
+    }
 
     for (const auto& conclusion : conclusions)
     {
@@ -4359,8 +4719,25 @@ static void DrawFinalReportWindow(float scale, ImGuiIO& io)
     }
     else
     {
-        for (auto& conclusion : BuildIntegratedConclusions(analysis, visual, verdict, reference != nullptr))
-            conclusions.push_back(std::move(conclusion));
+        // Without a native capture the captures of the dlls are put against each other
+        if (reference == nullptr && dllCount >= 2 && analysis.blocking.empty())
+        {
+            const auto direct = GatherDirectVisual(analysis, tests, captures, results);
+
+            for (auto& conclusion : BuildDirectVisualConclusions(analysis, direct))
+                conclusions.push_back(std::move(conclusion));
+
+            if (analysis.performance.kind == IlionCompare::Kind::Winner || analysis.performance.kind == IlionCompare::Kind::Tie)
+            {
+                // The balance of two categories was taken off above, here it is the base of the conclusion
+                conclusions.push_back(BuildGlobalConclusion(analysis, direct, -1));
+            }
+        }
+        else
+        {
+            for (auto& conclusion : BuildIntegratedConclusions(analysis, visual, verdict, reference != nullptr))
+                conclusions.push_back(std::move(conclusion));
+        }
     }
 
     for (const auto& conclusion : conclusions)

@@ -616,6 +616,48 @@ inline constexpr Translation kSpanish[] = {
     { " ILION can't check that the captures are from the scene of the tests.",
       " ILION no puede comprobar que las capturas sean de la escena de las pruebas." },
 
+    // Captures of the compared DLLs against each other
+    { " Without a saved capture: %s.", " Sin captura guardada: %s." },
+    { "VISUAL QUALITY: captures missing", "CALIDAD VISUAL: faltan capturas" },
+    { "A capture of at least two of these DLLs, taken in the same spot with the configuration of the tests, is "
+      "needed to compare their pictures.",
+      "Para comparar sus imágenes hace falta una captura de al menos dos de estas DLL, tomada en el mismo punto y "
+      "con la configuración de las pruebas." },
+    { "%d pairs of captures are being measured.", "Se están midiendo %d parejas de capturas." },
+    { " Not comparable, another scene, camera moved or another size: %s.",
+      " No comparables (otra escena, cámara movida u otro tamaño): %s." },
+    { "VISUAL QUALITY: captures not equivalent", "CALIDAD VISUAL: capturas no equivalentes" },
+    { "The saved captures of these DLLs don't show the same picture, they can't be compared. Capture every DLL in "
+      "the same spot without moving.",
+      "Las capturas guardadas de estas DLL no muestran la misma imagen y no se pueden comparar. Captura cada DLL en "
+      "el mismo punto sin moverte." },
+    { "%s / %s: SSIM %.4f, %.1f%% of the pixels differ. ", "%s / %s: SSIM %.4f, difiere el %.1f%% de los píxeles. " },
+    { "Most alike: ", "Más parecidas: " },
+    { "Most different: ", "Más diferentes: " },
+    { "Strongest edges: %s, %.1f%% more than %s. ", "Bordes más marcados: %s, un %.1f%% más que %s. " },
+    { "These are differences between the pictures: without a native reference they don't show which DLL looks "
+      "better.",
+      "Son diferencias entre las imágenes: sin una referencia nativa no demuestran qué DLL se ve mejor." },
+    { "VISUAL DIFFERENCES between the captures of the DLLs", "DIFERENCIAS VISUALES entre las capturas de las DLL" },
+    { " The captures differ between the DLLs but, without a native reference, none is shown to look better: visual "
+      "quality doesn't change this result.",
+      " Las capturas difieren entre las DLL pero, sin referencia nativa, no se demuestra que ninguna se vea mejor: "
+      "la calidad visual no cambia este resultado." },
+    { " There are no comparable captures of these DLLs, visual quality isn't part of this result.",
+      " No hay capturas comparables de estas DLL; la calidad visual no forma parte de este resultado." },
+    { " The captures of these DLLs are still being measured.", " Las capturas de estas DLL aún se están midiendo." },
+    { "GLOBAL CONCLUSION: %s", "CONCLUSIÓN GLOBAL: %s" },
+    { "Best balance of performance and stability, and the closest to the native capture.",
+      "Mejor equilibrio de rendimiento y estabilidad, y la más cercana a la captura nativa." },
+    { "GLOBAL CONCLUSION: depends on the priority", "CONCLUSIÓN GLOBAL: depende de la prioridad" },
+    { "%s has the best balance of performance and stability, %s is the closest to the native capture.",
+      "%s tiene el mejor equilibrio de rendimiento y estabilidad; %s es la más cercana a la captura nativa." },
+    { "Best balance of performance and stability.", "Mejor equilibrio de rendimiento y estabilidad." },
+    { "GLOBAL CONCLUSION: no overall winner", "CONCLUSIÓN GLOBAL: sin ganadora global" },
+    { "Performance and stability don't single out a DLL. %s is the closest to the native capture.",
+      "El rendimiento y la estabilidad no destacan a ninguna DLL. %s es la más cercana a la captura nativa." },
+    { "Performance and stability don't single out a DLL.", "El rendimiento y la estabilidad no destacan a ninguna DLL." },
+
     // Integrated final report
     { "Final report", "Informe final" },
     { "Integrated final report: performance, stability and visual quality of every DLL\n"

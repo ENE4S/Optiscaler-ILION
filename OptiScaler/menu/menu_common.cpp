@@ -12,6 +12,7 @@
 #include <fsr4/FSR4Comparison.h>
 #include <misc/HwTelemetry.h>
 #include <misc/IlionBenchmark.h>
+#include <misc/IlionCompare.h>
 #include "ilion_lang.h"
 #include <proxies/Streamline_Proxy.h>
 
@@ -1759,6 +1760,554 @@ void MenuCommon::UpdateRenderTiming(RenderMenuContext& ctx)
 
     state.frameTimes.pop_front();
     state.frameTimes.push_back(frameTime);
+}
+
+// BENCHMARK COMPARISON -----------------------------
+// Window of its own, opened from the Benchmark tab. Reads the saved tests back from benchmarks.csv.
+static bool showBenchmarkCompare = false;
+static bool benchmarkCompareReload = true;
+
+static std::filesystem::path BenchmarkFolder() { return Util::ExePath().parent_path() / L"ILION" / L"Benchmarks"; }
+
+static const char* CompareIssueText(IlionCompare::Issue issue)
+{
+    switch (issue)
+    {
+    case IlionCompare::Issue::DifferentGame:
+        return "The tests are from different games.";
+    case IlionCompare::Issue::DifferentResolution:
+        return "Render or output resolution differs between the tests.";
+    case IlionCompare::Issue::DifferentUpscaler:
+        return "The tests used different upscaling technologies.";
+    case IlionCompare::Issue::DifferentFrameGeneration:
+        return "Frame generation was not in the same state in all the tests.";
+    case IlionCompare::Issue::DifferentDuration:
+        return "The tests don't last the same (more than a tenth apart).";
+    case IlionCompare::Issue::StoppedEarly:
+        return "At least one test was stopped before its time.";
+    case IlionCompare::Issue::FramesWithoutUpscale:
+        return "At least one test has many frames without upscaling (menus, loading).";
+    case IlionCompare::Issue::FewFrames:
+        return "At least one test has fewer than 1000 frames, its lowest percentile is not available.";
+    default:
+        return "ILION can't check that the same scene was played in every test.";
+    }
+}
+
+// Title, text and color level (0 = winner, 1 = neutral, 2 = warning) of every conclusion
+struct CompareConclusion
+{
+    std::string title;
+    std::string text;
+    int level = 1;
+};
+
+static std::vector<CompareConclusion> BuildCompareConclusions(const IlionCompare::Analysis& analysis,
+                                                              const std::vector<const IlionCompare::Test*>& tests)
+{
+    using Kind = IlionCompare::Kind;
+    using Reason = IlionCompare::Reason;
+
+    std::vector<CompareConclusion> result;
+
+    const auto name = [&](int index) -> std::string
+    {
+        if (index < 0 || index >= (int) analysis.candidates.size())
+            return "-";
+
+        const auto& candidate = analysis.candidates[index];
+
+        if (candidate.tests.size() > 1)
+            return StrFmt(Tr("%s (average of %d tests)"), candidate.name.c_str(), (int) candidate.tests.size());
+
+        return candidate.name;
+    };
+
+    const auto names = [&](const std::vector<int>& indices)
+    {
+        std::string joined;
+
+        for (const int index : indices)
+            joined += (joined.empty() ? "" : ", ") + name(index);
+
+        return joined;
+    };
+
+    // Reasons that end the whole comparison
+    const Reason overall = analysis.performance.reason;
+
+    if (overall == Reason::NotComparable)
+    {
+        result.push_back({ Tr("INCONCLUSIVE RESULT"),
+                           Tr("The tests were made under different conditions, no winner is named. "
+                              "The differences below are shown with that limitation."),
+                           2 });
+        return result;
+    }
+
+    if (overall == Reason::SameDll)
+    {
+        double lowest = 0.0, highest = 0.0;
+
+        for (const auto* test : tests)
+        {
+            if (!test->avgFps.valid)
+                continue;
+
+            lowest = lowest == 0.0 ? test->avgFps.value : std::min(lowest, test->avgFps.value);
+            highest = std::max(highest, test->avgFps.value);
+        }
+
+        result.push_back({ Tr("INCONCLUSIVE RESULT"),
+                           StrFmt(Tr("All the selected tests were made with the same dll. Their average FPS differ "
+                                     "by %.1f%%, which is the variation between runs."),
+                                  lowest > 0.0 ? (highest / lowest - 1.0) * 100.0 : 0.0),
+                           1 });
+        return result;
+    }
+
+    if (overall == Reason::MissingData)
+    {
+        result.push_back({ Tr("INCONCLUSIVE RESULT"), Tr("Some of the tests lack the values needed to compare."), 2 });
+        return result;
+    }
+
+    // Performance
+    const auto& performance = analysis.performance;
+
+    if (performance.kind == Kind::Winner)
+    {
+        const auto& winner = analysis.candidates[performance.winner].average;
+        const auto& runnerUp = analysis.candidates[performance.runnerUp].average;
+
+        std::string text = StrFmt(Tr("%s reached %.1f average FPS, %.1f%% more than %s (%.1f)."),
+                                  name(performance.winner).c_str(), winner.avgFps.value, performance.avgAdvantage,
+                                  name(performance.runnerUp).c_str(), runnerUp.avgFps.value);
+
+        if (performance.lowsWorseThan >= 0)
+        {
+            text += StrFmt(Tr(" Its 1%% low is clearly lower than the one of %s, the higher average comes with "
+                              "worse lows."),
+                           name(performance.lowsWorseThan).c_str());
+        }
+        else if (performance.low1Advantage.valid)
+        {
+            text += StrFmt(Tr(performance.low1Advantage.value >= 0.0 ? " Its 1%% low is %.1f%% higher."
+                                                                     : " Its 1%% low is %.1f%% lower."),
+                           std::abs(performance.low1Advantage.value));
+        }
+
+        result.push_back({ StrFmt(Tr("PERFORMANCE WINNER: %s"), name(performance.winner).c_str()), text,
+                           performance.lowsWorseThan >= 0 ? 1 : 0 });
+    }
+    else
+    {
+        result.push_back({ Tr("PERFORMANCE: no clear winner"),
+                           StrFmt(Tr("%s are within %.1f%% of each other in average FPS, the margin used here."),
+                                  names(performance.tied).c_str(), analysis.marginAvg),
+                           1 });
+    }
+
+    // Stability
+    const auto& stability = analysis.stability;
+
+    if (stability.kind == Kind::Winner)
+    {
+        std::string text = StrFmt(Tr("Frame time variation of %.1f%% against %.1f%% for %s."),
+                                  stability.variationWinner, stability.variationRunnerUp,
+                                  name(stability.runnerUp).c_str());
+
+        if (stability.p99RatioWinner.valid && stability.p99RatioRunnerUp.valid)
+        {
+            text += StrFmt(Tr(" Its P99 is %.2fx the median against %.2fx."), stability.p99RatioWinner.value,
+                           stability.p99RatioRunnerUp.value);
+        }
+
+        if (stability.stutterWinner.valid && stability.stutterRunnerUp.valid)
+        {
+            text += StrFmt(Tr(" Stutters per minute: %.1f against %.1f."), stability.stutterWinner.value,
+                           stability.stutterRunnerUp.value);
+        }
+
+        result.push_back({ StrFmt(Tr("STABILITY WINNER: %s"), name(stability.winner).c_str()), text, 0 });
+    }
+    else if (stability.reason == Reason::Mixed)
+    {
+        result.push_back({ Tr("STABILITY: inconclusive"),
+                           StrFmt(Tr("%s has the steadiest frame times but clearly more stutters than %s."),
+                                  name(stability.winner).c_str(), name(stability.runnerUp).c_str()),
+                           1 });
+    }
+    else
+    {
+        result.push_back({ Tr("STABILITY: no clear winner"),
+                           StrFmt(Tr("Frame time variation differs by less than the margin (%.1f%% against %.1f%%)."),
+                                  stability.variationWinner, stability.variationRunnerUp),
+                           1 });
+    }
+
+    // Balance
+    const auto& balance = analysis.balance;
+
+    if (balance.kind == Kind::Winner)
+    {
+        const char* why = balance.reason == Reason::BothCategories      ? "It leads in performance and in stability."
+                          : balance.reason == Reason::FasterAndAsStable ? "It is the fastest and as stable as the best."
+                                                                        : "It is the most stable and as fast as the best.";
+
+        result.push_back({ StrFmt(Tr("BEST OVERALL BALANCE: %s"), name(balance.winner).c_str()), Tr(why), 0 });
+    }
+    else if (balance.reason == Reason::TradeOff)
+    {
+        std::string text;
+
+        if (balance.faster >= 0 && balance.moreStable >= 0)
+            text = StrFmt(Tr("%s is faster, %s is more stable."), name(balance.faster).c_str(),
+                          name(balance.moreStable).c_str());
+        else if (balance.faster >= 0)
+            text = StrFmt(Tr("%s is faster but is not among the most stable."), name(balance.faster).c_str());
+        else
+            text = StrFmt(Tr("%s is more stable but is not among the fastest."), name(balance.moreStable).c_str());
+
+        result.push_back({ Tr("BALANCE: depends on the priority"), text, 1 });
+    }
+    else if (balance.kind == Kind::Tie)
+    {
+        result.push_back({ Tr("INCONCLUSIVE RESULT"),
+                           Tr("No difference bigger than the margin was measured between these tests."), 1 });
+    }
+    else
+    {
+        result.push_back({ Tr("INCONCLUSIVE RESULT"), Tr("A best balance can't be named from these results."), 1 });
+    }
+
+    return result;
+}
+
+static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
+{
+    if (!showBenchmarkCompare)
+        return;
+
+    using Test = IlionCompare::Test;
+    using Number = IlionCompare::Number;
+
+    static std::vector<Test> history;
+    static std::vector<std::string> selectedIds; // in the order they were picked, one column each
+    static std::string referenceId;
+
+    if (benchmarkCompareReload)
+    {
+        benchmarkCompareReload = false;
+        history = IlionCompare::LoadHistory(BenchmarkFolder() / L"benchmarks.csv");
+
+        // Tests that aren't in the file anymore drop out of the selection
+        std::erase_if(selectedIds, [&](const std::string& id)
+                      { return std::none_of(history.begin(), history.end(), [&](const Test& t) { return t.id == id; }); });
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(std::min(960.0f * scale, io.DisplaySize.x - 20.0f),
+                                    std::min(720.0f * scale, io.DisplaySize.y - 20.0f)),
+                             ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_FirstUseEver,
+                            ImVec2(0.5f, 0.5f));
+
+    if (!ImGui::Begin(TrL("Benchmark results comparison"), &showBenchmarkCompare,
+                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse))
+    {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::TextDisabled("%s", Tr("Performance and stability comparison. Image quality is not evaluated."));
+
+    if (ImGui::Button(TrL("Back to Benchmark")))
+        showBenchmarkCompare = false;
+
+    ImGui::SameLine();
+
+    if (ImGui::Button(TrL("Reload")))
+        benchmarkCompareReload = true;
+
+    ImGui::SameLine();
+
+    if (ImGui::Button(TrL("Clear selection")))
+        selectedIds.clear();
+
+    ImGui::SameLine();
+    ImGui::TextDisabled(Tr("%d saved tests, %d selected"), (int) history.size(), (int) selectedIds.size());
+
+    if (history.empty())
+    {
+        ImGui::Spacing();
+        ImGui::TextWrapped("%s", Tr("No saved tests yet. Run a benchmark and press Save."));
+        ImGui::End();
+        return;
+    }
+
+    const auto isSelected = [&](const std::string& id)
+    { return std::find(selectedIds.begin(), selectedIds.end(), id) != selectedIds.end(); };
+
+    // Saved tests, newest first
+    const float listHeight = ImGui::GetTextLineHeightWithSpacing() * 8.5f;
+
+    if (ImGui::BeginTable("compareHistory", 7,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY |
+                              ImGuiTableFlags_SizingFixedFit,
+                          ImVec2(0.0f, listHeight)))
+    {
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn("##pick");
+        ImGui::TableSetupColumn(Tr("FSR version"));
+        ImGui::TableSetupColumn(Tr("Date and time"));
+        ImGui::TableSetupColumn(Tr("Duration"));
+        ImGui::TableSetupColumn(Tr("Game"));
+        ImGui::TableSetupColumn(Tr("Resolution"));
+        ImGui::TableSetupColumn("Frame Generation", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableHeadersRow();
+
+        for (int i = (int) history.size() - 1; i >= 0; i--)
+        {
+            const auto& test = history[i];
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+
+            bool picked = isSelected(test.id);
+
+            ImGui::PushID(i);
+
+            if (ImGui::Checkbox("##pick", &picked))
+            {
+                if (picked)
+                    selectedIds.push_back(test.id);
+                else
+                    std::erase(selectedIds, test.id);
+            }
+
+            ImGui::PopID();
+
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(test.Name().c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(test.dateTime.c_str());
+            ImGui::TableNextColumn();
+            ImGui::Text("%.0f s", test.durationMs.valid ? test.durationMs.value / 1000.0 : 0.0);
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(test.game.c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(test.resolution.c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(test.frameGeneration.c_str());
+        }
+
+        ImGui::EndTable();
+    }
+
+    // Selected tests in the order they were picked
+    std::vector<const Test*> tests;
+
+    for (const auto& id : selectedIds)
+    {
+        for (const auto& test : history)
+        {
+            if (test.id == id)
+                tests.push_back(&test);
+        }
+    }
+
+    if (tests.size() < 2)
+    {
+        ImGui::Spacing();
+        ImGui::TextWrapped("%s", Tr("Select two or more tests to compare them."));
+        ImGui::End();
+        return;
+    }
+
+    // Reference the differences are measured against
+    if (!isSelected(referenceId))
+        referenceId = tests.front()->id;
+
+    const Test* reference = tests.front();
+
+    for (const auto* test : tests)
+    {
+        if (test->id == referenceId)
+            reference = test;
+    }
+
+    const auto columnName = [&](const Test& test) { return StrFmt("%s  %s", test.Name().c_str(), test.dateTime.c_str()); };
+
+    ImGui::Spacing();
+    ImGui::SetNextItemWidth(360.0f * scale);
+
+    if (ImGui::BeginCombo(TrL("Reference"), columnName(*reference).c_str()))
+    {
+        for (const auto* test : tests)
+        {
+            if (ImGui::Selectable(StrFmt("%s##%s", columnName(*test).c_str(), test->id.c_str()).c_str(),
+                                  test->id == referenceId))
+                referenceId = test->id;
+        }
+
+        ImGui::EndCombo();
+    }
+
+    // Conclusions
+    const auto analysis = IlionCompare::Analyze(tests);
+
+    ImGui::SeparatorText(Tr("Conclusions"));
+
+    for (const auto& conclusion : BuildCompareConclusions(analysis, tests))
+    {
+        const ImVec4 color = conclusion.level == 0   ? ImVec4(0.3f, 1.0f, 0.3f, 1.0f)
+                             : conclusion.level == 2 ? ImVec4(1.0f, 0.8f, 0.0f, 1.0f)
+                                                     : ImGui::GetStyleColorVec4(ImGuiCol_Text);
+
+        ImGui::TextColored(conclusion.level == 1 ? color : toneMapColor(color), "%s", conclusion.title.c_str());
+        ImGui::TextWrapped("%s", conclusion.text.c_str());
+    }
+
+    ImGui::TextDisabled(Tr("Margins used: %.1f%% in average FPS, %.1f%% in 1%% low.%s"), analysis.marginAvg,
+                        analysis.marginLow1,
+                        analysis.marginFromRepeats ? Tr(" Taken from the spread between tests of the same dll.") : "");
+
+    for (const auto issue : analysis.blocking)
+        ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.4f, 0.3f, 1.0f)), "%s", Tr(CompareIssueText(issue)));
+
+    for (const auto issue : analysis.warnings)
+        ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.8f, 0.0f, 1.0f)), "%s", Tr(CompareIssueText(issue)));
+
+    // One column per test
+    ImGui::SeparatorText(Tr("Results"));
+
+    struct MetricRow
+    {
+        const char* label;
+        Number Test::*field;
+        const char* format;
+        bool differences;
+    };
+
+    static const MetricRow performanceRows[] = {
+        { "Average FPS", &Test::avgFps, "%.1f", true },
+        { "Median FPS", &Test::medianFps, "%.1f", true },
+        { "1% low", &Test::low1Fps, "%.1f", true },
+        { "0.1% low", &Test::low01Fps, "%.1f", true },
+        { "Frame time mean", &Test::meanMs, "%.2f ms", true },
+        { "Frame time P95", &Test::p95Ms, "%.2f ms", true },
+        { "Frame time P99", &Test::p99Ms, "%.2f ms", true },
+        { "Variability", &Test::variationPercent, "%.1f %%", true },
+        { "Stutter events", &Test::stutterCount, "%.0f", true },
+        { "Stutters per minute", &Test::stutterPerMinute, "%.1f", true },
+        { "Frames", &Test::frames, "%.0f", false },
+    };
+
+    static const MetricRow hardwareRows[] = {
+        { "GPU usage, average", &Test::gpuUsageAvg, "%.0f %%", false },
+        { "CPU usage, average", &Test::cpuUsageAvg, "%.0f %%", false },
+        { "GPU temperature, average", &Test::gpuTempAvg, "%.0f \xC2\xB0""C", false },
+        { "GPU temperature, maximum", &Test::gpuTempMax, "%.0f \xC2\xB0""C", false },
+        { "GPU hotspot, maximum", &Test::gpuHotspotMax, "%.0f \xC2\xB0""C", false },
+        { "CPU temperature, average", &Test::cpuTempAvg, "%.0f \xC2\xB0""C", false },
+        { "CPU temperature, maximum", &Test::cpuTempMax, "%.0f \xC2\xB0""C", false },
+        { "VRAM used, average", &Test::vramUsedAvg, "%.0f MB", false },
+        { "VRAM used, maximum", &Test::vramUsedMax, "%.0f MB", false },
+    };
+
+    const int columnCount = (int) tests.size() + 1;
+
+    if (ImGui::BeginTable("compareResults", columnCount,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollX |
+                              ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit,
+                          ImVec2(0.0f, 0.0f)))
+    {
+        ImGui::TableSetupScrollFreeze(1, 1);
+        ImGui::TableSetupColumn("##metric");
+
+        for (const auto* test : tests)
+        {
+            ImGui::TableSetupColumn(StrFmt("%s%s##%s", test->Name().c_str(), test == reference ? Tr("  [reference]") : "",
+                                           test->id.c_str())
+                                        .c_str());
+        }
+
+        ImGui::TableHeadersRow();
+
+        const auto textRow = [&](const char* label, const auto& value)
+        {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s", Tr(label));
+
+            for (const auto* test : tests)
+            {
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(value(*test).c_str());
+            }
+        };
+
+        textRow("Date and time", [](const Test& t) { return t.dateTime; });
+        textRow("Duration", [](const Test& t) { return StrFmt("%.1f s", t.durationMs.valid ? t.durationMs.value / 1000.0 : 0.0); });
+        textRow("Game", [](const Test& t) { return t.game; });
+        textRow("Upscaler", [](const Test& t) { return t.upscaler; });
+        textRow("Resolution", [](const Test& t) { return t.resolution; });
+        textRow("Frame Generation", [](const Test& t) { return t.frameGeneration; });
+        textRow("DLL file version", [](const Test& t) { return t.dllFileVersion; });
+        textRow("SHA-256", [](const Test& t) { return t.dllSha256.empty() ? std::string("-") : t.dllSha256.substr(0, 12) + "..."; });
+
+        const auto metricRows = [&](const MetricRow* rows, size_t count)
+        {
+            for (size_t r = 0; r < count; r++)
+            {
+                const auto& row = rows[r];
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(Tr(row.label));
+
+                for (const auto* test : tests)
+                {
+                    ImGui::TableNextColumn();
+
+                    const Number& value = test->*row.field;
+
+                    if (!value.valid)
+                    {
+                        ImGui::TextDisabled("%s", Tr("N/A"));
+                        continue;
+                    }
+
+                    std::string text = StrFmt(row.format, value.value);
+
+                    // Difference against the reference, in % and in the unit of the value
+                    if (row.differences && test != reference)
+                    {
+                        const auto percent = IlionCompare::PercentDifference(value, reference->*row.field);
+                        const auto absolute = IlionCompare::AbsoluteDifference(value, reference->*row.field);
+
+                        if (percent.valid && absolute.valid)
+                            text += StrFmt("   %+.1f %% (%+.2f)", percent.value, absolute.value);
+                    }
+
+                    ImGui::TextUnformatted(text.c_str());
+                }
+            }
+        };
+
+        metricRows(performanceRows, std::size(performanceRows));
+
+        // Hardware is context for the reader, it doesn't make an upscaler better or worse by itself
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextDisabled("%s", Tr("Hardware (informative)"));
+
+        metricRows(hardwareRows, std::size(hardwareRows));
+
+        ImGui::EndTable();
+    }
+
+    ImGui::End();
 }
 
 // Feeds the running benchmark with the frame that was just presented
@@ -9716,7 +10265,12 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
         const auto folder = Util::ExePath().parent_path() / L"ILION" / L"Benchmarks";
 
         if (IlionBenchmark::Save(folder, &saveError))
+        {
             LOG_INFO("[BENCHMARK] saved: {}", IlionBenchmark::GetResult().savedPath);
+
+            // The comparison window reads the saved tests again
+            benchmarkCompareReload = true;
+        }
         else
             LOG_ERROR("[BENCHMARK] save failed: {}", saveError);
     }
@@ -9726,6 +10280,18 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
                 "Existing files are never overwritten.");
 
     ImGui::EndDisabled();
+
+    // Saved tests side by side, in a window of its own
+    ImGui::SameLine(0.0f, 16.0f * menuResScale);
+
+    if (ImGui::Button(TrL("Compare results")))
+    {
+        showBenchmarkCompare = true;
+        benchmarkCompareReload = true;
+    }
+
+    ShowTooltip("Opens the saved tests. Pick two or more to see them side by side,\n"
+                "with their differences and an automatic conclusion.");
 
     // Status
     ImGui::Spacing();
@@ -10123,6 +10689,7 @@ void MenuCommon::RenderMainMenuWindow(RenderMenuContext& ctx)
     // Detached utility windows owned by the main menu.
     RenderMipmapBiasWindow(ctx, flags);
     RenderHudlessResourcesWindow(ctx, flags);
+    DrawBenchmarkCompareWindow(menuResScale, io);
 
     if (config->UseHQFont.value_or_default())
         ImGui::PopFontSize();

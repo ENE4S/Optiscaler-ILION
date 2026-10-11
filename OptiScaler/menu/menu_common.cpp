@@ -302,6 +302,59 @@ inline std::string StrFmt(const char* fmt, ...)
     return out;
 }
 
+// Frame generation that isn't OptiScaler's own: the DLSSG of the game, done by the real nvngx or by what stands in
+// for it (DLSS Enabler, Nukem's...). OptiScaler sees every one of its evaluations and how many frames each asks
+// for; that count is what "Current DLSSG state" shows in the Frame Gen tab and what this reads.
+struct ExternalFgStatus
+{
+    enum class Kind
+    {
+        Off,     // nothing is asking for generated frames
+        Active,  // DLSSG is being evaluated, text says by whom and the multiplier
+        Unknown, // a replacement is loaded but its evaluations can't be seen in this API
+    };
+
+    Kind kind = Kind::Off;
+    std::string text;
+};
+
+static const char* NvngxFgName(FGNvngxReplacement provider)
+{
+    switch (provider)
+    {
+    case FGNvngxReplacement::Arturs:
+        return "Enabler";
+    case FGNvngxReplacement::Nukems:
+        return "Nukems";
+    case FGNvngxReplacement::FFX:
+        return "FFX";
+    case FGNvngxReplacement::Combo:
+        return "Combo";
+    default:
+        return nullptr;
+    }
+}
+
+// generatedFrames: frames generated per rendered one in the last DLSSG evaluation, 0 when there is none
+static ExternalFgStatus GetExternalFgStatus(int generatedFrames, FGNvngxReplacement provider, bool evaluationsVisible)
+{
+    ExternalFgStatus status;
+    const char* name = NvngxFgName(provider);
+
+    if (generatedFrames > 0)
+    {
+        status.kind = ExternalFgStatus::Kind::Active;
+        status.text = StrFmt("%s %dx", name != nullptr ? name : "DLSSG", generatedFrames + 1);
+    }
+    else if (name != nullptr && !evaluationsVisible)
+    {
+        status.kind = ExternalFgStatus::Kind::Unknown;
+        status.text = StrFmt("%s ?", name);
+    }
+
+    return status;
+}
+
 // CARDS -----------------------------
 using Ilion::Tr;
 using Ilion::TrL;
@@ -12301,11 +12354,27 @@ void MenuCommon::RenderStatusInfo(RenderMenuContext& ctx)
             else
                 pair("FG Input", "Off", true);
 
+            // FG Output is OptiScaler's own frame generation. With a replacement of DLSSG (DLSS Enabler, Nukem's...)
+            // there is none of that and the replacement is what produces the frames: it gets its own rows, so that
+            // "Off" here isn't read as no frame generation at all.
             auto fgOutput = state.activeFgOutput;
             if (fgOutput != FGOutput::NoFG)
                 pair("FG Output", EnumToCode(fgOutput));
             else
-                pair("FG Output", "Off", true);
+                pair("FG Output (OptiScaler)", "Off", true);
+
+            if (const char* nvngxFg = NvngxFgName(state.activeFgNvngx); nvngxFg != nullptr)
+                pair("FG Nvngx", nvngxFg);
+
+            if (state.activeFgNvngx != FGNvngxReplacement::None || state.dlssgDetectedInterpolationCount > 0)
+            {
+                if (state.dlssgDetectedInterpolationCount > 0)
+                    pair("DLSSG", StrFmt("ON %dx", state.dlssgDetectedInterpolationCount + 1));
+                else if (state.swapchainApi == DX12)
+                    pair("DLSSG", "Off", true);
+                else
+                    pair("DLSSG", "?", true);
+            }
 
             pair("Ratio override", ratioOverride, ratioOverride == "Off");
             pair("Mipmap bias",
@@ -12839,7 +12908,19 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
             ImGui::TextColored(toneMapColor(ImVec4(0.35f, 0.85f, 0.45f, 1.f)), "%s %ux", fgName.c_str(), multiplier);
         }
         else
-            ImGui::TextDisabled("%s", Tr("Off"));
+        {
+            // Not OptiScaler's own FG: the DLSSG of the game, or what replaces it. The same count the Frame Gen
+            // tab shows as "Current DLSSG state".
+            const auto external = GetExternalFgStatus(state.dlssgDetectedInterpolationCount, state.activeFgNvngx,
+                                                      state.swapchainApi == DX12);
+
+            if (external.kind == ExternalFgStatus::Kind::Active)
+                ImGui::TextColored(toneMapColor(ImVec4(0.35f, 0.85f, 0.45f, 1.f)), "%s", external.text.c_str());
+            else if (external.kind == ExternalFgStatus::Kind::Unknown)
+                ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.8f, 0.f, 1.f)), "%s", external.text.c_str());
+            else
+                ImGui::TextDisabled("%s", Tr("Off"));
+        }
 
         const bool spoofing = config->DxgiSpoofing.value_or_default();
         ImGui::TextDisabled("Spoof");

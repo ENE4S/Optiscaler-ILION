@@ -56,8 +56,7 @@ inline void ApplyStyle(ImGuiStyle& style, float backgroundAlpha)
     style.GrabRounding = 1.0f;
     style.TabRounding = 0.0f;
 
-    // The title is a name plate between the corners of the chassis
-    style.WindowTitleAlign = ImVec2(0.5f, 0.5f);
+    style.WindowTitleAlign = ImVec2(0.0f, 0.5f);
 
     style.WindowBorderSize = 1.0f;
     style.ChildBorderSize = 1.0f;
@@ -1067,6 +1066,67 @@ inline void DrawMetal(ImDrawList* draw, const ImVec2& min, const ImVec2& max, fl
 }
 
 // --- Chassis and plates --------------------------------------------------------------------------------------
+// Compact technical panel: a dark chassis with rounded corners and a thick rim, a fine line of yellow trim running
+// inside it, warning stripes on the top bar, and every module a dark plate framed in the same trim with its
+// corners cut off. All of it is drawing behind what the window holds; nothing here takes a click.
+
+inline constexpr ImVec4 TrimGold { 0.700f, 0.585f, 0.150f, 1.0f };
+inline constexpr ImVec4 TrimGoldDim { 0.420f, 0.350f, 0.100f, 1.0f };
+inline constexpr ImVec4 StripeYellow { 0.800f, 0.670f, 0.110f, 1.0f };
+
+// Outline of a rectangle with its four corners cut off
+inline void ChamferPoints(ImVec2 points[8], const ImVec2& min, const ImVec2& max, float cut)
+{
+    points[0] = ImVec2(min.x + cut, min.y);
+    points[1] = ImVec2(max.x - cut, min.y);
+    points[2] = ImVec2(max.x, min.y + cut);
+    points[3] = ImVec2(max.x, max.y - cut);
+    points[4] = ImVec2(max.x - cut, max.y);
+    points[5] = ImVec2(min.x + cut, max.y);
+    points[6] = ImVec2(min.x, max.y - cut);
+    points[7] = ImVec2(min.x, min.y + cut);
+}
+
+inline void DrawChamferFrame(ImDrawList* draw, const ImVec2& min, const ImVec2& max, float cut, ImU32 color, float thickness = 1.0f)
+{
+    ImVec2 points[8];
+    ChamferPoints(points, min, max, cut);
+    draw->AddPolyline(points, 8, color, ImDrawFlags_Closed, thickness);
+}
+
+// Bracket of trim around one corner of a chamfered frame: the cut and a stretch of both edges, heavier than the
+// line of the frame. cornerX/cornerY: -1 left or top, 1 right or bottom.
+inline void DrawCornerBracket(ImDrawList* draw, const ImVec2& min, const ImVec2& max, float cut, float length, int cornerX,
+                              int cornerY, ImU32 color)
+{
+    const float x = cornerX < 0 ? min.x : max.x, y = cornerY < 0 ? min.y : max.y;
+    const float dx = (float) -cornerX, dy = (float) -cornerY;
+
+    const ImVec2 points[4] = { ImVec2(x + dx * (cut + length), y), ImVec2(x + dx * cut, y), ImVec2(x, y + dy * cut),
+                               ImVec2(x, y + dy * (cut + length)) };
+
+    draw->AddPolyline(points, 4, color, ImDrawFlags_None, 2.0f);
+}
+
+// Slanted warning stripes inside a rectangle
+inline void DrawStripes(ImDrawList* draw, const ImVec2& min, const ImVec2& max, const ImVec4& color, float width)
+{
+    if (max.x - min.x < width * 2.0f)
+        return;
+
+    const float height = max.y - min.y;
+    const ImU32 paint = ImGui::GetColorU32(color);
+
+    draw->PushClipRect(min, max, true);
+
+    for (float x = min.x - height; x < max.x; x += width * 2.0f)
+    {
+        draw->AddQuadFilled(ImVec2(x + height, min.y), ImVec2(x + height + width, min.y), ImVec2(x + width, max.y),
+                            ImVec2(x, max.y), paint);
+    }
+
+    draw->PopClipRect();
+}
 
 // A reinforcement plate in a corner of the chassis, with its screw. cornerX/cornerY say which way the corner of
 // the chassis is from the plate (-1 left or up, 1 right or down).
@@ -1075,29 +1135,39 @@ inline void DrawCornerPlate(ImDrawList* draw, const ImVec2& corner, float size, 
     const float cut = ImFloor(size * 0.38f);
     const float dx = (float) -cornerX, dy = (float) -cornerY;
 
-    // From the corner of the chassis along both edges, with the inner corner cut off
-    const ImVec2 points[5] = { corner,
+    // Along both edges from just inside the round corner of the chassis, with the inner corner cut off
+    const ImVec2 points[6] = { ImVec2(corner.x + dx * cut, corner.y),
                                ImVec2(corner.x + dx * size, corner.y),
                                ImVec2(corner.x + dx * size, corner.y + dy * (size - cut)),
                                ImVec2(corner.x + dx * (size - cut), corner.y + dy * size),
-                               ImVec2(corner.x, corner.y + dy * size) };
+                               ImVec2(corner.x, corner.y + dy * size),
+                               ImVec2(corner.x, corner.y + dy * cut) };
 
-    draw->AddConvexPolyFilled(points, 5, ImGui::GetColorU32(Shade(MetalDark, 1.20f)));
-    draw->AddPolyline(points, 5, ImGui::GetColorU32(Shadow), ImDrawFlags_Closed, 1.0f);
+    draw->AddConvexPolyFilled(points, 6, ImGui::GetColorU32(Shade(MetalDark, 1.05f)));
+    draw->AddPolyline(points, 6, ImGui::GetColorU32(Shadow), ImDrawFlags_Closed, 1.0f);
+    draw->AddLine(points[cornerY < 0 ? 0 : 3], points[cornerY < 0 ? 1 : 4], ImGui::GetColorU32(Alpha(MetalLight, cornerY < 0 ? 0.50f : 0.25f)));
 
-    // Light on the edge that faces up, whichever corner this is
-    const ImVec2 lightFrom = cornerY < 0 ? ImVec2(corner.x + dx * 1.0f, corner.y + 1.0f) : points[3];
-    const ImVec2 lightTo = cornerY < 0 ? ImVec2(corner.x + dx * (size - 1.0f), corner.y + 1.0f) : points[4];
-
-    draw->AddLine(lightFrom, lightTo, ImGui::GetColorU32(Alpha(MetalLight, cornerY < 0 ? 0.55f : 0.30f)));
-
-    DrawScrew(draw, ImVec2(ImFloor(corner.x + dx * size * 0.42f), ImFloor(corner.y + dy * size * 0.42f)),
-              ImMax(2.0f, ImFloor(size * 0.16f)));
+    DrawScrew(draw, ImVec2(ImFloor(corner.x + dx * size * 0.46f), ImFloor(corner.y + dy * size * 0.46f)),
+              ImMax(2.0f, ImFloor(size * 0.15f)));
 }
 
-// The window being drawn as a metal chassis: worn paint over all of it, a thick bevelled rim with a groove on
-// its inner side, a joint under the title, and a reinforcement plate with its screw in every corner. Everything
-// is drawn inside the margin of the window, behind what the window holds; nothing here takes a click.
+// What a window needs around its Begin to be drawn as a chassis: round corners, a wider margin for the rim to
+// live in, and a taller title bar for the top bar of the machine. Popped right after Begin, so nothing inside the
+// window is laid out with them.
+inline void PushChassisStyle()
+{
+    const ImGuiStyle& style = ImGui::GetStyle();
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, ImFloor(style.WindowPadding.x * 1.25f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(ImFloor(style.WindowPadding.x * 1.5f), ImFloor(style.WindowPadding.y * 1.5f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(style.FramePadding.x, ImFloor(style.FramePadding.y * 2.6f)));
+}
+
+inline void PopChassisStyle() { ImGui::PopStyleVar(3); }
+
+// The window being drawn as the chassis of the console. Its title bar becomes the top bar of the machine: the
+// name on a recessed plate at the left, warning stripes after it. Needs the window to have been begun with
+// ChassisRounding as its rounding and without a collapse or a close button, which would end up under the bar.
 inline void DrawChassis()
 {
     if (!industrial)
@@ -1111,7 +1181,8 @@ inline void DrawChassis()
     const ImGuiStyle& style = ImGui::GetStyle();
     const ImVec2 min = window->Pos;
     const ImVec2 max(window->Pos.x + window->Size.x, window->Pos.y + window->Size.y);
-    const float rim = ImMax(4.0f, ImFloor(style.WindowPadding.x * 0.70f));
+    const float rim = ImMax(4.0f, ImFloor(window->WindowPadding.x * 0.66f));
+    const float rounding = window->WindowRounding;
     const float title = window->TitleBarHeight;
 
     ImDrawList* draw = window->DrawList;
@@ -1119,53 +1190,78 @@ inline void DrawChassis()
     draw->PushClipRect(min, max, false);
 
     // Paint of the cabinet
-    DrawMetal(draw, ImVec2(min.x, min.y + title), max, 0.11f);
+    DrawMetal(draw, ImVec2(min.x + rim, min.y + title), ImVec2(max.x - rim, max.y - rim), 0.10f);
 
-    // Title: a name plate between the upper corners
+    // Top bar
     if (title > 0.0f)
     {
-        DrawMetal(draw, min, ImVec2(max.x, min.y + title), 0.18f);
-        draw->AddLine(ImVec2(min.x, min.y + title - 1.0f), ImVec2(max.x, min.y + title - 1.0f), ImGui::GetColorU32(Shadow));
-        draw->AddLine(ImVec2(min.x, min.y + title), ImVec2(max.x, min.y + title), ImGui::GetColorU32(Alpha(MetalLight, 0.35f)));
+        const ImVec2 barMin(min.x + rim, min.y + rim * 0.5f), barMax(max.x - rim, min.y + title);
+
+        draw->AddRectFilledMultiColor(ImVec2(min.x + 2.0f, min.y + 2.0f), ImVec2(max.x - 2.0f, barMax.y),
+                                      ImGui::GetColorU32(Shade(Graphite, 1.35f)), ImGui::GetColorU32(Shade(Graphite, 1.35f)),
+                                      ImGui::GetColorU32(GraphiteDeep), ImGui::GetColorU32(GraphiteDeep));
+        DrawMetal(draw, ImVec2(min.x + 2.0f, min.y + 2.0f), ImVec2(max.x - 2.0f, barMax.y), 0.22f);
+
+        // Name plate
+        const char* nameEnd = ImGui::FindRenderedTextEnd(window->Name);
+        const ImVec2 nameSize = ImGui::CalcTextSize(window->Name, nameEnd);
+        const float plateLeft = ImFloor(min.x + rim * 3.6f);
+        const float platePad = ImFloor(style.FramePadding.x * 2.0f);
+        const float textY = ImFloor(min.y + (title - nameSize.y) * 0.5f);
+        const ImVec2 plateMin(plateLeft, textY - 2.0f), plateMax(plateLeft + nameSize.x + platePad * 2.0f, textY + nameSize.y + 2.0f);
+
+        DrawWell(draw, plateMin, plateMax);
+        draw->AddText(ImVec2(plateLeft + platePad, textY), ImGui::GetColorU32(Text), window->Name, nameEnd);
+
+        // Warning stripes: a worn grey stretch after the name, a yellow one towards the right end
+        const float stripe = ImMax(3.0f, ImFloor(title * 0.22f));
+        const float stripesTop = textY, stripesBottom = textY + nameSize.y;
+        const float free = barMax.x - rim * 3.6f - plateMax.x;
+
+        if (free > title * 6.0f)
+        {
+            const float greyLeft = plateMax.x + title * 0.8f;
+            const float yellowRight = barMax.x - rim * 3.6f;
+
+            DrawStripes(draw, ImVec2(greyLeft, stripesTop), ImVec2(greyLeft + ImMin(free * 0.22f, title * 4.0f), stripesBottom),
+                        Alpha(Metal, 0.55f), stripe);
+            DrawStripes(draw, ImVec2(yellowRight - ImMin(free * 0.30f, title * 6.0f), stripesTop), ImVec2(yellowRight, stripesBottom),
+                        Alpha(StripeYellow, 0.85f), stripe);
+        }
+
+        // Where the top bar meets the cabinet
+        draw->AddLine(ImVec2(barMin.x, barMax.y - 1.0f), ImVec2(barMax.x, barMax.y - 1.0f), ImGui::GetColorU32(Shadow));
+        draw->AddLine(ImVec2(barMin.x, barMax.y), ImVec2(barMax.x, barMax.y), ImGui::GetColorU32(Alpha(TrimGold, 0.55f)));
     }
 
-    // Rim: four faces of a bevel, the upper and left ones catching the light
-    const ImU32 faceTop = ImGui::GetColorU32(Shade(MetalDark, 1.45f));
-    const ImU32 faceLeft = ImGui::GetColorU32(Shade(MetalDark, 1.20f));
-    const ImU32 faceRight = ImGui::GetColorU32(Shade(MetalDark, 0.80f));
-    const ImU32 faceBottom = ImGui::GetColorU32(Shade(MetalDark, 0.62f));
+    // Rim: a thick band of dark steel following the round corners, lit along its upper and left sides
+    const float half = rim * 0.5f;
 
-    // Over the title the rim is only its edge, the name has to stay readable
-    const ImVec2 innerMin(min.x + rim, min.y + (title > 0.0f ? ImMin(rim, 2.0f) : rim)), innerMax(max.x - rim, max.y - rim);
+    draw->AddRect(ImVec2(min.x + half, min.y + half), ImVec2(max.x - half, max.y - half), ImGui::GetColorU32(Shade(MetalDark, 1.18f)),
+                  rounding, ImDrawFlags_None, rim);
 
-    const ImVec2 top[4] = { min, ImVec2(max.x, min.y), ImVec2(innerMax.x, innerMin.y), innerMin };
-    const ImVec2 left[4] = { min, innerMin, ImVec2(innerMin.x, innerMax.y), ImVec2(min.x, max.y) };
-    const ImVec2 right[4] = { ImVec2(max.x, min.y), max, innerMax, ImVec2(innerMax.x, innerMin.y) };
-    const ImVec2 bottom[4] = { ImVec2(min.x, max.y), ImVec2(innerMin.x, innerMax.y), innerMax, max };
+    // Its inner half falls away from the light: the ridge of a bevel
+    draw->AddRect(ImVec2(min.x + rim * 0.75f, min.y + rim * 0.75f), ImVec2(max.x - rim * 0.75f, max.y - rim * 0.75f),
+                  ImGui::GetColorU32(Shade(MetalDark, 0.78f)), ImMax(0.0f, rounding - rim * 0.5f), ImDrawFlags_None, rim * 0.5f);
+    draw->AddRect(min, max, ImGui::GetColorU32(Shadow), rounding, ImDrawFlags_None, 1.5f);
+    draw->AddRect(ImVec2(min.x + 1.0f, min.y + 1.0f), ImVec2(max.x - 1.0f, max.y - 1.0f), ImGui::GetColorU32(Alpha(MetalLight, 0.22f)),
+                  ImMax(0.0f, rounding - 1.0f));
+    draw->AddLine(ImVec2(min.x + rounding, min.y + 1.0f), ImVec2(max.x - rounding, min.y + 1.0f), ImGui::GetColorU32(Alpha(MetalLight, 0.65f)));
+    draw->AddLine(ImVec2(min.x + 1.0f, min.y + rounding), ImVec2(min.x + 1.0f, max.y - rounding), ImGui::GetColorU32(Alpha(MetalLight, 0.40f)));
+    draw->AddLine(ImVec2(min.x + rounding, max.y - 2.0f), ImVec2(max.x - rounding, max.y - 2.0f), ImGui::GetColorU32(Alpha(Shadow, 0.85f)));
 
-    draw->AddConvexPolyFilled(top, 4, faceTop);
-    draw->AddConvexPolyFilled(left, 4, faceLeft);
-    draw->AddConvexPolyFilled(right, 4, faceRight);
-    draw->AddConvexPolyFilled(bottom, 4, faceBottom);
+    // Trim: the fine yellow line inside the rim, with a dark seam on its outer side
+    const float trimRounding = ImMax(0.0f, rounding - rim);
 
-    DrawMetal(draw, min, ImVec2(max.x, innerMin.y), 0.35f);
-    DrawMetal(draw, ImVec2(min.x, innerMax.y), max, 0.35f);
-    DrawMetal(draw, ImVec2(min.x, innerMin.y), ImVec2(innerMin.x, innerMax.y), 0.35f);
-    DrawMetal(draw, ImVec2(innerMax.x, innerMin.y), ImVec2(max.x, innerMax.y), 0.35f);
+    draw->AddRect(ImVec2(min.x + rim - 1.0f, min.y + rim - 1.0f), ImVec2(max.x - rim + 1.0f, max.y - rim + 1.0f),
+                  ImGui::GetColorU32(Shadow), trimRounding + 1.0f);
+    draw->AddRect(ImVec2(min.x + rim, min.y + rim), ImVec2(max.x - rim, max.y - rim), ImGui::GetColorU32(Alpha(TrimGold, 0.70f)),
+                  trimRounding);
 
-    // Outer edge, worn to the metal along the top, and the groove where the rim meets the cabinet
-    draw->AddRect(min, max, ImGui::GetColorU32(Shadow));
-    draw->AddLine(ImVec2(min.x + 1.0f, min.y + 1.0f), ImVec2(max.x - 2.0f, min.y + 1.0f), ImGui::GetColorU32(Alpha(MetalLight, 0.70f)));
-    draw->AddLine(ImVec2(min.x + 1.0f, min.y + 1.0f), ImVec2(min.x + 1.0f, max.y - 2.0f), ImGui::GetColorU32(Alpha(MetalLight, 0.40f)));
-    draw->AddRect(innerMin, innerMax, ImGui::GetColorU32(Shadow));
-    draw->AddLine(ImVec2(innerMin.x + 1.0f, innerMax.y), ImVec2(innerMax.x, innerMax.y), ImGui::GetColorU32(Alpha(MetalLight, 0.28f)));
-    draw->AddLine(ImVec2(innerMax.x, innerMin.y + 1.0f), ImVec2(innerMax.x, innerMax.y), ImGui::GetColorU32(Alpha(MetalLight, 0.20f)));
-
-    // Corners
-    // Corners. The upper plates are as high as the title lets them, the lower ones stay inside the margin so
-    // they never sit under a control.
-    const float upperPlate = title > 0.0f ? ImMin(ImFloor(rim * 3.2f), title - 2.0f) : style.WindowPadding.x;
-    const float lowerPlate = style.WindowPadding.x;
+    // Corner plates. The upper ones are as high as the top bar lets them, the lower ones stay inside the margin
+    // so they never sit under a control.
+    const float upperPlate = title > 0.0f ? ImMin(ImFloor(rim * 3.0f), title - 2.0f) : window->WindowPadding.x;
+    const float lowerPlate = window->WindowPadding.x + 1.0f;
 
     DrawCornerPlate(draw, min, upperPlate, -1, -1);
     DrawCornerPlate(draw, ImVec2(max.x, min.y), upperPlate, 1, -1);
@@ -1175,8 +1271,8 @@ inline void DrawChassis()
     draw->PopClipRect();
 }
 
-// A joint across the chassis at the height where drawing is now: the line where two parts of the cabinet meet.
-// Above the bottom band of the menu.
+// A joint across the chassis at the height where drawing is now: the line where the bottom band of the menu
+// meets the rest of the cabinet.
 inline void DrawChassisJoint()
 {
     if (!industrial)
@@ -1184,64 +1280,78 @@ inline void DrawChassisJoint()
 
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     const ImGuiStyle& style = ImGui::GetStyle();
-    const float rim = ImMax(4.0f, ImFloor(style.WindowPadding.x * 0.70f));
+    const float rim = ImMax(4.0f, ImFloor(window->WindowPadding.x * 0.66f));
     const float y = ImFloor(window->DC.CursorPos.y - style.ItemSpacing.y * 0.5f) - 1.0f;
     const float left = window->Pos.x + rim + 1.0f, right = window->Pos.x + window->Size.x - rim - 1.0f;
 
     window->DrawList->PushClipRect(window->Pos, ImVec2(window->Pos.x + window->Size.x, window->Pos.y + window->Size.y), false);
     window->DrawList->AddLine(ImVec2(left, y), ImVec2(right, y), ImGui::GetColorU32(Shadow));
-    window->DrawList->AddLine(ImVec2(left, y + 1.0f), ImVec2(right, y + 1.0f), ImGui::GetColorU32(Alpha(MetalLight, 0.30f)));
+    window->DrawList->AddLine(ImVec2(left, y + 1.0f), ImVec2(right, y + 1.0f), ImGui::GetColorU32(Alpha(TrimGold, 0.45f)));
     window->DrawList->PopClipRect();
 }
 
-// Body of a card: a steel plate set into the cabinet. A dark seat around it, the plate lighter at the top, worn
-// paint, a bevel of two pixels, and a small screw in every corner when the plate is big enough to need them.
+// How much of the corners of a module plate is cut off
+inline float CardCut() { return ImFloor(ImGui::GetStyle().WindowPadding.x * 0.75f); }
+
+// Body of a card: a module plate set into the chassis. Dark steel with its corners cut off, a seat around it,
+// a frame of yellow trim with a second fainter line inside it, and a heavier bracket of trim at every corner.
 inline void DrawCardBody(ImDrawList* draw, const ImVec2& min, const ImVec2& max)
 {
-    // Seat in the cabinet
-    draw->AddRect(ImVec2(min.x - 1.0f, min.y - 1.0f), ImVec2(max.x + 1.0f, max.y + 1.0f), ImGui::GetColorU32(Alpha(Shadow, 0.90f)));
-    draw->AddLine(ImVec2(min.x - 1.0f, max.y + 2.0f), ImVec2(max.x + 2.0f, max.y + 2.0f), ImGui::GetColorU32(Alpha(MetalLight, 0.16f)));
-    draw->AddLine(ImVec2(max.x + 2.0f, min.y - 1.0f), ImVec2(max.x + 2.0f, max.y + 2.0f), ImGui::GetColorU32(Alpha(MetalLight, 0.10f)));
+    const float cut = CardCut();
+    ImVec2 points[8];
+
+    // Seat in the cabinet: a dark edge all around, light caught by its lower lip
+    DrawChamferFrame(draw, ImVec2(min.x - 1.0f, min.y - 1.0f), ImVec2(max.x + 1.0f, max.y + 1.0f), cut, ImGui::GetColorU32(Shadow), 2.0f);
+    draw->AddLine(ImVec2(min.x + cut, max.y + 2.0f), ImVec2(max.x - cut, max.y + 2.0f), ImGui::GetColorU32(Alpha(MetalLight, 0.14f)));
 
     // Plate
-    const ImU32 upper = ImGui::GetColorU32(Alpha(Shade(Panel, 1.18f), 0.72f));
-    const ImU32 lower = ImGui::GetColorU32(Alpha(Shade(Panel, 0.82f), 0.72f));
+    ChamferPoints(points, min, max, cut);
+    draw->AddConvexPolyFilled(points, 8, ImGui::GetColorU32(Alpha(Shade(Graphite, 0.92f), 0.90f)));
+    draw->AddRectFilledMultiColor(ImVec2(min.x + cut, min.y), ImVec2(max.x - cut, max.y), ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, 0.035f)),
+                                  ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, 0.035f)), ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, 0.12f)),
+                                  ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, 0.12f)));
+    DrawMetal(draw, ImVec2(min.x + cut, min.y + 1.0f), ImVec2(max.x - cut, max.y - 1.0f), 0.12f);
 
-    draw->AddRectFilledMultiColor(min, max, upper, upper, lower, lower);
-    DrawMetal(draw, min, max, 0.12f);
+    // Trim: the frame, a fainter line inside it, and the brackets
+    const ImU32 trim = ImGui::GetColorU32(Alpha(TrimGold, 0.85f));
 
-    // Bevel: light on the upper and left edges, shade on the lower and right ones
-    draw->AddRect(min, max, ImGui::GetColorU32(Metal));
-    draw->AddLine(ImVec2(min.x + 1.0f, min.y + 1.0f), ImVec2(max.x - 2.0f, min.y + 1.0f), ImGui::GetColorU32(Alpha(MetalLight, 0.45f)));
-    draw->AddLine(ImVec2(min.x + 1.0f, min.y + 1.0f), ImVec2(min.x + 1.0f, max.y - 2.0f), ImGui::GetColorU32(Alpha(MetalLight, 0.25f)));
-    draw->AddLine(ImVec2(min.x + 1.0f, max.y - 2.0f), ImVec2(max.x - 1.0f, max.y - 2.0f), ImGui::GetColorU32(Alpha(Shadow, 0.75f)));
-    draw->AddLine(ImVec2(max.x - 2.0f, min.y + 1.0f), ImVec2(max.x - 2.0f, max.y - 1.0f), ImGui::GetColorU32(Alpha(Shadow, 0.60f)));
-    draw->AddLine(ImVec2(min.x + 2.0f, max.y - 3.0f), ImVec2(max.x - 2.0f, max.y - 3.0f), ImGui::GetColorU32(Alpha(Shadow, 0.30f)));
+    DrawChamferFrame(draw, min, max, cut, trim);
+    DrawChamferFrame(draw, ImVec2(min.x + 3.0f, min.y + 3.0f), ImVec2(max.x - 3.0f, max.y - 3.0f), ImMax(1.0f, cut - 1.5f),
+                     ImGui::GetColorU32(Alpha(TrimGoldDim, 0.70f)));
 
-    // Screws, in the margin the content doesn't use
-    const float pad = ImGui::GetStyle().WindowPadding.x;
-    const float radius = ImMax(1.5f, ImFloor(pad * 0.24f));
-    const float inset = ImFloor(pad * 0.55f);
+    const float bracket = ImMin(cut * 2.2f, ImMin(max.x - min.x, max.y - min.y) * 0.25f);
+    const ImU32 heavy = ImGui::GetColorU32(TrimGold);
 
-    if (max.y - min.y > pad * 9.0f && max.x - min.x > pad * 20.0f)
-    {
-        DrawScrew(draw, ImVec2(min.x + inset, max.y - inset), radius);
-        DrawScrew(draw, ImVec2(max.x - inset, max.y - inset), radius);
-        DrawScrew(draw, ImVec2(max.x - inset, min.y + inset), radius);
-    }
+    DrawCornerBracket(draw, min, max, cut, bracket, -1, -1, heavy);
+    DrawCornerBracket(draw, min, max, cut, bracket, 1, -1, heavy);
+    DrawCornerBracket(draw, min, max, cut, bracket, -1, 1, heavy);
+    DrawCornerBracket(draw, min, max, cut, bracket, 1, 1, heavy);
 }
 
-// Name band across the top of a card: a strip of olive paint on the plate, worn, with a groove under it
+// Name band across the top of a card: darker steel under the name, a line of trim below it, and a small mark of
+// stripes at its right end.
 inline void DrawCardBand(ImDrawList* draw, float left, float top, float right, float bottom)
 {
-    draw->AddRectFilledMultiColor(ImVec2(left, top), ImVec2(right, bottom), ImGui::GetColorU32(Shade(Olive, 1.12f)),
-                                  ImGui::GetColorU32(Shade(Olive, 1.12f)), ImGui::GetColorU32(Shade(OliveDim, 0.95f)),
-                                  ImGui::GetColorU32(Shade(OliveDim, 0.95f)));
-    DrawMetal(draw, ImVec2(left, top), ImVec2(right, bottom), 0.20f);
-    draw->AddLine(ImVec2(left, top), ImVec2(right, top), ImGui::GetColorU32(Alpha(MetalLight, 0.50f)));
-    draw->AddLine(ImVec2(left, bottom - 1.0f), ImVec2(right, bottom - 1.0f), ImGui::GetColorU32(Alpha(Shadow, 0.60f)));
-    draw->AddLine(ImVec2(left, bottom), ImVec2(right, bottom), ImGui::GetColorU32(Shadow));
-    draw->AddLine(ImVec2(left, bottom + 1.0f), ImVec2(right, bottom + 1.0f), ImGui::GetColorU32(Alpha(MetalLight, 0.35f)));
+    const float cut = CardCut();
+
+    // Follows the cut corners of the plate it sits on
+    const ImVec2 points[6] = { ImVec2(left + cut, top), ImVec2(right - cut, top), ImVec2(right, top + cut),
+                               ImVec2(right, bottom),   ImVec2(left, bottom),     ImVec2(left, top + cut) };
+
+    draw->AddConvexPolyFilled(points, 6, ImGui::GetColorU32(Alpha(GraphiteDeep, 0.92f)));
+    DrawMetal(draw, ImVec2(left + cut, top + 1.0f), ImVec2(right - cut, bottom), 0.16f);
+
+    const float height = bottom - top;
+    const float mark = ImFloor(height * 1.6f);
+
+    if (right - left > mark * 8.0f)
+    {
+        DrawStripes(draw, ImVec2(right - cut - mark - 4.0f, top + ImFloor(height * 0.30f)),
+                    ImVec2(right - cut - 4.0f, bottom - ImFloor(height * 0.30f)), Alpha(StripeYellow, 0.75f), ImMax(2.0f, ImFloor(height * 0.14f)));
+    }
+
+    draw->AddLine(ImVec2(left + 3.0f, bottom - 1.0f), ImVec2(right - 3.0f, bottom - 1.0f), ImGui::GetColorU32(Shadow));
+    draw->AddLine(ImVec2(left + 3.0f, bottom), ImVec2(right - 3.0f, bottom), ImGui::GetColorU32(Alpha(TrimGold, 0.80f)));
 }
 
 // --- Sidebar -------------------------------------------------------------------------------------------------

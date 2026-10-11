@@ -14143,7 +14143,17 @@ void MenuCommon::RenderMainMenuWindow(RenderMenuContext& ctx)
         windowTitle = "OptiScaler - ILION V1.1";
     }
 
-    if (ImGui::Begin(windowTitle.c_str(), NULL, mainFlags))
+    // A chassis has round corners, a wider margin and a taller top bar. Only this window: the overlay and the
+    // other windows keep theirs.
+    if (IlionTheme::industrial)
+        IlionTheme::PushChassisStyle();
+
+    const bool mainWindowOpen = ImGui::Begin(windowTitle.c_str(), NULL, mainFlags);
+
+    if (IlionTheme::industrial)
+        IlionTheme::PopChassisStyle();
+
+    if (mainWindowOpen)
     {
         // The window as a metal chassis: rim, corner plates and worn paint, behind everything it holds
         IlionTheme::DrawChassis();

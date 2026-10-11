@@ -1554,6 +1554,7 @@ void MenuCommon::ApplyThemeStyle()
     }
 
     style.ChildBorderSize = 1.0f;
+    style.WindowTitleAlign = ImVec2(0.0f, 0.5f);
     style.WindowRounding = 2.0f;
     style.ChildRounding = 1.0f;
     style.FrameRounding = 2.0f;
@@ -13067,6 +13068,9 @@ void MenuCommon::RenderMainMenuBottomBar(RenderMenuContext& ctx)
     auto config = ctx.config;
     auto& io = ctx.io;
 
+    // Where the bottom band joins the rest of the chassis
+    IlionTheme::DrawChassisJoint();
+
     // BOTTOM LINE ---------------
     if (IlionTheme::Button(TrL("Open Wiki")))
     {
@@ -14060,8 +14064,8 @@ void MenuCommon::RenderMainMenuWindow(RenderMenuContext& ctx)
 
     if (ImGui::Begin(windowTitle.c_str(), NULL, mainFlags))
     {
-        // Screws of the cabinet, in the margin around everything else
-        IlionTheme::DrawWindowScrews(ImGui::GetStyle().WindowPadding.x / 8.0f);
+        // The window as a metal chassis: rim, corner plates and worn paint, behind everything it holds
+        IlionTheme::DrawChassis();
 
         // Interface mode on the left, language on the right, small and above everything else
         RenderModeSelector(config);

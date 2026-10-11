@@ -326,12 +326,7 @@ static void DrawCardTitle(const char* label)
         const float top = cursor.y - style.WindowPadding.y * 0.75f + 1.0f;
         const float bottom = cursor.y + ImGui::GetTextLineHeight() + style.ItemSpacing.y * 0.5f;
 
-        window->DrawList->AddRectFilled(ImVec2(left, top), ImVec2(right, bottom), ImGui::GetColorU32(IlionTheme::OliveDim));
-        window->DrawList->AddLine(ImVec2(left, top), ImVec2(right, top),
-                                  ImGui::GetColorU32(IlionTheme::Alpha(IlionTheme::MetalLight, 0.30f)));
-        window->DrawList->AddLine(ImVec2(left, bottom), ImVec2(right, bottom), ImGui::GetColorU32(IlionTheme::Metal));
-        window->DrawList->AddLine(ImVec2(left, bottom + 1.0f), ImVec2(right, bottom + 1.0f),
-                                  ImGui::GetColorU32(IlionTheme::Alpha(IlionTheme::Shadow, 0.80f)));
+        IlionTheme::DrawCardBand(window->DrawList, left, top, right, bottom);
     }
 
     // On the plate the name goes in upper case, only as it is drawn
@@ -365,7 +360,7 @@ static void DrawCardTitle(const char* label)
 static void SectionTitle(const char* label)
 {
     if (!ScopedCard::TryTitle(label))
-        ImGui::SeparatorText(Tr(label));
+        IlionTheme::SectionPlate(Tr(label));
 }
 
 ScopedCard::ScopedCard(const char* title)
@@ -440,11 +435,8 @@ ScopedCard::~ScopedCard()
 
     if (IlionTheme::industrial)
     {
-        // A steel plate on the cabinet: its own tone, a metal edge, a dark seam under and beside it
-        drawList->AddRectFilled(_min, max, ImGui::GetColorU32(IlionTheme::Alpha(IlionTheme::Panel, 0.55f)));
-        drawList->AddRect(ImVec2(_min.x + 1.0f, _min.y + 1.0f), ImVec2(max.x + 1.0f, max.y + 1.0f),
-                          ImGui::GetColorU32(IlionTheme::Alpha(IlionTheme::Shadow, 0.85f)));
-        drawList->AddRect(_min, max, ImGui::GetColorU32(IlionTheme::Metal));
+        // A steel plate standing a little above the cabinet
+        IlionTheme::DrawCardBody(drawList, _min, max);
     }
     else
     {
@@ -2876,7 +2868,7 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
     }
 
     // --- Comparator: two pictures that always show the same part ---------------------------------------------
-    ImGui::SeparatorText(Tr("Comparator"));
+    IlionTheme::SectionPlate(Tr("Comparator"));
 
     if (find(panelIds[0]) == nullptr)
         panelIds[0] = referenceId;
@@ -2909,9 +2901,9 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
             pictures[i] = found->second.get();
     }
 
-    ImGui::RadioButton(TrL("Side by side"), &viewMode, 0);
+    IlionTheme::RadioButton(TrL("Side by side"), &viewMode, 0);
     ImGui::SameLine();
-    ImGui::RadioButton(TrL("Difference"), &viewMode, 1);
+    IlionTheme::RadioButton(TrL("Difference"), &viewMode, 1);
 
     if (ImGui::IsItemHovered())
     {
@@ -3179,7 +3171,7 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
         entries.push_back(entry);
     }
 
-    ImGui::SeparatorText(Tr("Visual summary"));
+    IlionTheme::SectionPlate(Tr("Visual summary"));
 
     if (pending)
     {
@@ -3257,7 +3249,7 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
     if (hdrValues)
         ImGui::TextDisabled("%s", Tr("HDR10 captures are shown and measured over their PQ values reduced to 8 bit."));
 
-    ImGui::SeparatorText(Tr("Measurements against the reference"));
+    IlionTheme::SectionPlate(Tr("Measurements against the reference"));
 
     if (ImGui::BeginTable("visualMetrics", (int) entries.size() + 1,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit))
@@ -3929,7 +3921,7 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
     // Conclusions
     const auto analysis = IlionCompare::Analyze(tests);
 
-    ImGui::SeparatorText(Tr("Conclusions"));
+    IlionTheme::SectionPlate(Tr("Conclusions"));
 
     auto conclusions = BuildCompareConclusions(analysis, tests);
 
@@ -3970,7 +3962,7 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
         ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.8f, 0.0f, 1.0f)), "%s", Tr(CompareIssueText(issue)));
 
     // One column per test
-    ImGui::SeparatorText(Tr("Results"));
+    IlionTheme::SectionPlate(Tr("Results"));
 
     // better: +1 when a higher value is the good one, -1 when a lower one is, 0 when neither. Only for the colour
     // of the difference.
@@ -4773,7 +4765,7 @@ static void DrawFinalReportWindow(float scale, ImGuiIO& io)
     const auto verdict = JudgeReportVisual(visual);
 
     // --- Conclusions -----------------------------------------------------------------------------------------
-    ImGui::SeparatorText(Tr("Conclusions"));
+    IlionTheme::SectionPlate(Tr("Conclusions"));
 
     auto conclusions = BuildCompareConclusions(analysis, tests);
 
@@ -4844,7 +4836,7 @@ static void DrawFinalReportWindow(float scale, ImGuiIO& io)
     }
 
     // --- One column per dll ----------------------------------------------------------------------------------
-    ImGui::SeparatorText(Tr("Results by DLL"));
+    IlionTheme::SectionPlate(Tr("Results by DLL"));
 
     baseline = std::clamp(baseline, 0, dllCount - 1);
 
@@ -5106,6 +5098,67 @@ static void OverlayRowParts(const char* label, const std::vector<OverlayPart>& p
     }
 }
 
+// Horizontal overlay of the industrial theme: every block is a line that starts with its name, and its readings
+// follow as cells, a fine metal rule between one and the next.
+static void OverlayCellRowTitle(const char* title) { ImGui::TextColored(IlionTheme::TextTitle, "%s", title); }
+
+static void OverlayCell(const char* label, const std::vector<OverlayPart>& parts)
+{
+    const float space = ImGui::CalcTextSize(" ").x;
+    const bool labelled = label != nullptr && label[0] != 0;
+
+    // A line never gets wider than the screen: the cell that wouldn't fit starts the next one
+    float cellWidth = labelled ? ImGui::CalcTextSize(label).x + space : 0.0f;
+
+    for (const auto& part : parts)
+        cellWidth += ImGui::CalcTextSize(part.text.c_str()).x;
+
+    const ImGuiWindow* window = ImGui::GetCurrentWindow();
+    const float lineWidth = window->DC.CursorPosPrevLine.x - window->Pos.x + space * 2.5f + cellWidth;
+
+    if (lineWidth > ImGui::GetIO().DisplaySize.x - ImGui::GetStyle().WindowPadding.x * 2.0f)
+    {
+        // Under the first cell of the line above, past where the name of the block is
+        ImGui::Dummy(ImVec2(space * 2.0f, 0.0f));
+    }
+
+    ImGui::SameLine(0.0f, space * 2.5f);
+
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const float x = std::floor(pos.x - space * 1.25f);
+
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(x, pos.y + 1.0f), ImVec2(x, pos.y + ImGui::GetTextLineHeight() - 1.0f),
+                                        ImGui::GetColorU32(IlionTheme::Alpha(IlionTheme::Metal, 0.80f)));
+
+    // A cell without a label is only its value (the name of a component)
+
+    if (labelled)
+        ImGui::TextDisabled("%s", label);
+
+    bool first = true;
+
+    for (const auto& part : parts)
+    {
+        if (part.text.empty())
+            continue;
+
+        if (labelled || !first)
+            ImGui::SameLine(0.0f, first ? space : 0.0f);
+
+        if (part.color != nullptr)
+            ImGui::TextColored(*part.color, "%s", part.text.c_str());
+        else
+            ImGui::TextUnformatted(part.text.c_str());
+
+        first = false;
+    }
+}
+
+static void OverlayCell(const char* label, const std::string& value, const ImVec4* valueColor = nullptr)
+{
+    OverlayCell(label, std::vector<OverlayPart> { { value, valueColor } });
+}
+
 // Name of a block of rows over a metal rule as wide as the column. Blocks after the first one keep their distance.
 static void OverlayBlockTitle(const char* title, float width, bool first)
 {
@@ -5125,8 +5178,10 @@ static void OverlayBlockTitle(const char* title, float width, bool first)
 }
 
 // GPU readings on the left, CPU readings on the right, only the ones that are enabled.
-// With alignedWidth they are stacked as rows of that width instead, the same readings.
-static void DrawHardwareTelemetry(decltype(Config::Instance()) config, float scale, float alignedWidth = 0.0f)
+// With alignedWidth they are stacked as rows of that width instead, with cells they follow each other on one
+// line. The same readings every time.
+static void DrawHardwareTelemetry(decltype(Config::Instance()) config, float scale, float alignedWidth = 0.0f,
+                                  bool cells = false)
 {
     const bool gpuUsage = config->HwGpuUsage.value_or_default();
     const bool gpuTemp = config->HwGpuTemp.value_or_default();
@@ -5150,6 +5205,62 @@ static void DrawHardwareTelemetry(decltype(Config::Instance()) config, float sca
     const ImVec4 componentColor = toneMapColor(ImVec4(57.0f / 255.0f, 1.0f, 20.0f / 255.0f, 1.0f));
     const ImVec4 temperatureColor = toneMapColor(ImVec4(204.0f / 255.0f, 0.0f, 0.0f, 1.0f));
     const ImVec4 hotspotColor = toneMapColor(ImVec4(1.0f, 106.0f / 255.0f, 0.0f, 1.0f));
+
+    if (cells)
+    {
+        const auto cell = [&](const char* label, HwTelemetry::Metric metric, const char* format,
+                              const ImVec4* valueColor = nullptr)
+        {
+            const auto& value = snapshot.values[metric];
+
+            if (stale || !value.valid)
+                OverlayCell(label, HwNotAvailable());
+            else
+                OverlayCell(label, StrFmt(format, value.value), valueColor);
+        };
+
+        OverlayCellRowTitle("HARDWARE");
+
+        if (anyGpu)
+        {
+            OverlayCell("", "GPU", &componentColor);
+
+            if (gpuUsage)
+                cell(Tr("Usage"), HwTelemetry::GpuUsage, "%.0f %%");
+
+            if (gpuTemp)
+                cell(Tr("Temp"), HwTelemetry::GpuTemp, "%.0f \xC2\xB0""C", &temperatureColor);
+
+            if (gpuHotspot)
+                cell("Hotspot", HwTelemetry::GpuHotspot, "%.0f \xC2\xB0""C", &hotspotColor);
+
+            if (vram)
+            {
+                const auto& used = snapshot.values[HwTelemetry::VramUsed];
+                const auto& total = snapshot.values[HwTelemetry::VramTotal];
+
+                if (stale || !used.valid)
+                    OverlayCell("VRAM", HwNotAvailable());
+                else if (total.valid)
+                    OverlayCell("VRAM", StrFmt("%.1f / %.1f GB", used.value / 1024.0f, total.value / 1024.0f));
+                else
+                    OverlayCell("VRAM", StrFmt("%.1f GB", used.value / 1024.0f));
+            }
+        }
+
+        if (anyCpu)
+        {
+            OverlayCell("", "CPU", &componentColor);
+
+            if (cpuUsage)
+                cell(Tr("Usage"), HwTelemetry::CpuUsage, "%.0f %%");
+
+            if (cpuTemp)
+                cell(Tr("Temp"), HwTelemetry::CpuTemp, "%.0f \xC2\xB0""C", &temperatureColor);
+        }
+
+        return;
+    }
 
     if (alignedWidth > 0.0f)
     {
@@ -6010,13 +6121,21 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
             // values are the same ones, taken from the same places.
             const bool industrialVertical = IlionTheme::industrial && !config->FpsOverlayHorizontal.value_or_default() &&
                                             overlayType != FpsOverlay_JustFPS;
+
+            // The same theme with the overlay laid out horizontally: the same blocks as lines of cells
+            const bool industrialHorizontal = IlionTheme::industrial && config->FpsOverlayHorizontal.value_or_default() &&
+                                              overlayType != FpsOverlay_JustFPS;
             float rowWidth = 0.0f;
             bool processingTitled = false;
 
             // Prepare Line 2
             if (config->FpsOverlayType.value_or_default() >= FpsOverlay_Detailed)
             {
-                if (config->FpsOverlayHorizontal.value_or_default())
+                if (industrialHorizontal)
+                {
+                    // Cells, nothing to put between lines of text
+                }
+                else if (config->FpsOverlayHorizontal.value_or_default())
                 {
                     ImGui::SameLine(0.0f, 0.0f);
                     ImGui::Text(" | ");
@@ -6154,6 +6273,82 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                         &gUpscalerTimes, plotWidth, 0, nullptr, 0.0f, 20.0f, plotSize);
                 }
             }
+            else if (industrialHorizontal)
+            {
+                const ImVec4 phosphor = toneMapColor(IlionTheme::LampGreen);
+                const ImVec4 inputOrange = toneMapColor(ImVec4(1.0f, 140.0f / 255.0f, 0.0f, 1.0f));
+                const float graphGap = ImGui::CalcTextSize(" ").x * 2.5f;
+
+                // Graphs as high as a line of text, so they sit in the line of cells
+                plotSize = { fpsScale * 150.0f, ImGui::GetTextLineHeight() };
+
+                std::string fgValue = fgText;
+
+                if (fgValue.size() > 3 && fgValue.rfind(" (", 0) == 0 && fgValue.back() == ')')
+                    fgValue = fgValue.substr(2, fgValue.size() - 3);
+
+                OverlayCellRowTitle(Tr("PERFORMANCE"));
+
+                OverlayCell("FPS", { { StrFmt("%.1f", frameRate), &phosphor },
+                                     { interpolatedFrameCount
+                                           ? StrFmt(" / %.1f", frameRate / (double) (interpolatedFrameCount + 1))
+                                           : std::string(),
+                                       nullptr } });
+
+                if (overlayType == FpsOverlay_Simple)
+                    OverlayCell(Tr("Frame time"), StrFmt("%.2f ms", frameTime));
+                else
+                    OverlayCell(Tr("FPS, average"), StrFmt("%.1f", 1000.0f / averageFrameTime));
+
+                if (overlayType >= FpsOverlay_Detailed)
+                {
+                    OverlayCell(Tr("Frame time"), StrFmt("%.2f ms", state.frameTimes.back()));
+                    OverlayCell(Tr("Frame time, average"), StrFmt("%.2f ms", averageFrameTime));
+                }
+
+                if (overlayType >= FpsOverlay_DetailedGraph)
+                {
+                    ImGui::SameLine(0.0f, graphGap);
+                    ImGui::PlotLines(
+                        "##FrameTimeGraph",
+                        [](void* rb, int idx) -> float { return static_cast<RingBuffer<float, plotWidth>*>(rb)->At(idx); },
+                        &gFrameTimes, plotWidth, 0, nullptr, 0.0f, 66.6f, plotSize);
+                }
+
+                OverlayCell("API", api);
+
+                if (hasFeature)
+                {
+                    OverlayCell(Tr("Upscaler"),
+                                { { ApiUpscalerInputName(state.currentInputApiName), &inputOrange },
+                                  { " -> ", nullptr },
+                                  { StrFmt("%s %u.%u.%u", currentFeature->ShortName().c_str(), currentFeature->Version().major,
+                                           currentFeature->Version().minor, currentFeature->Version().patch),
+                                    &phosphor },
+                                  { currentFeature->IsWithDx12() ? " w/Dx12" : "", nullptr } });
+                }
+
+                if (!fgValue.empty())
+                    OverlayCell("Frame Gen", fgValue);
+
+                if (overlayType >= FpsOverlay_Full)
+                {
+                    OverlayCellRowTitle(Tr("PROCESSING TIMES"));
+                    processingTitled = true;
+
+                    OverlayCell(Tr("Upscaler"), StrFmt("%.2f ms", state.upscaleTimes.back()));
+                    OverlayCell(Tr("Upscaler, average"), StrFmt("%.2f ms", averageUpscalerFT));
+                }
+
+                if (overlayType >= FpsOverlay_FullGraph)
+                {
+                    ImGui::SameLine(0.0f, graphGap);
+                    ImGui::PlotLines(
+                        "##UpscalerFrameTimeGraph",
+                        [](void* rb, int idx) -> float { return static_cast<RingBuffer<float, plotWidth>*>(rb)->At(idx); },
+                        &gUpscalerTimes, plotWidth, 0, nullptr, 0.0f, 20.0f, plotSize);
+                }
+            }
             else
             {
             // Draw the overlay
@@ -6252,6 +6447,13 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
 
                         OverlayRow(Tr("Whole frame"), StrFmt("%.1f ms", rangeInNs / 1000.0), rowWidth);
                     }
+                    else if (industrialHorizontal)
+                    {
+                        if (!processingTitled)
+                            OverlayCellRowTitle(Tr("PROCESSING TIMES"));
+
+                        OverlayCell(Tr("Whole frame"), StrFmt("%.1f ms", rangeInNs / 1000.0));
+                    }
                     else
                     {
                         ImGui::Text("Low latency timings, whole frame: %.1fms", rangeInNs / 1000.0);
@@ -6274,6 +6476,12 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                         if (industrialVertical)
                         {
                             OverlayRow(desc, StrFmt("%.1f ms", duration), rowWidth);
+                            return;
+                        }
+
+                        if (industrialHorizontal)
+                        {
+                            OverlayCell(desc, StrFmt("%.1f ms", duration));
                             return;
                         }
 
@@ -6329,6 +6537,13 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
 
                         OverlayRow(Tr("Whole frame"), StrFmt("%.1f ms", rangeInNs / 1000.0), rowWidth);
                     }
+                    else if (industrialHorizontal)
+                    {
+                        if (!processingTitled)
+                            OverlayCellRowTitle(Tr("PROCESSING TIMES"));
+
+                        OverlayCell(Tr("Whole frame"), StrFmt("%.1f ms", rangeInNs / 1000.0));
+                    }
                     else
                     {
                         ImGui::Text("Reflex timings, whole frame: %.1fms", rangeInNs / 1000.0);
@@ -6354,6 +6569,12 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                             return;
                         }
 
+                        if (industrialHorizontal)
+                        {
+                            OverlayCell(desc, StrFmt("%.1f ms", duration));
+                            return;
+                        }
+
                         ImGui::TextColored(toneMappedColor, "%-12s %4.1fms", desc, duration);
                         auto leftLimit = ImGui::GetItemRectMin().x + offsetForText * fpsScale;
                         auto start = static_cast<float>(leftLimit + (ImGui::GetItemRectMin().x + maxWidth - leftLimit) *
@@ -6376,7 +6597,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
             }
 
             DrawBenchmarkStatus(now);
-            DrawHardwareTelemetry(config, fpsScale, industrialVertical ? rowWidth : 0.0f);
+            DrawHardwareTelemetry(config, fpsScale, industrialVertical ? rowWidth : 0.0f, industrialHorizontal);
             DrawFsr4ComparisonPanel(fpsScale);
         }
 
@@ -9469,7 +9690,7 @@ void MenuCommon::RenderFsrCommonSettings(RenderMenuContext& ctx)
                 else if (!useVFov && !config->FsrHorizontalFov.has_value())
                     config->FsrHorizontalFov = hfov;
 
-                if (ImGui::RadioButton("Use Vert. Fov", useVFov))
+                if (IlionTheme::RadioButton("Use Vert. Fov", useVFov))
                 {
                     config->FsrHorizontalFov.reset();
                     config->FsrVerticalFov = vfov;
@@ -9478,7 +9699,7 @@ void MenuCommon::RenderFsrCommonSettings(RenderMenuContext& ctx)
 
                 ImGui::SameLine(0.0f, 6.0f);
 
-                if (ImGui::RadioButton("Use Horz. Fov", !useVFov))
+                if (IlionTheme::RadioButton("Use Horz. Fov", !useVFov))
                 {
                     config->FsrVerticalFov.reset();
                     config->FsrHorizontalFov = hfov;
@@ -11334,13 +11555,17 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
         if (IlionTheme::Checkbox("Use Theme Colors", &useTheme))
             config->OverlaysUseTheme = useTheme;
 
-        // Hardware readings, every one can be shown on its own
+        // Hardware readings, every one can be shown on its own. A section that folds, like the others of the menu.
         ImGui::Spacing();
-        ImGui::SeparatorText(Tr("Hardware monitoring"));
+
+        auto hardwareHeader = ScopedCollapsingHeader(TrL("Hardware monitoring"));
+
         ShowTooltip("Readings come from HWiNFO or MSI Afterburner while they are running, about once per second.\n"
                     "HWiNFO needs Shared Memory Support enabled in its settings (12 hours per run in the free version).\n"
                     "A reading that no program provides is shown as N/A, nothing is estimated.");
 
+        if (hardwareHeader.IsHeaderOpen())
+        {
         // Keeps the sources below up to date while this section is on screen
         HwTelemetry::KeepAlive();
 
@@ -11399,6 +11624,7 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
         hwSourceRow("VRAM total", HwTelemetry::VramTotal);
         hwSourceRow("CPU usage", HwTelemetry::CpuUsage);
         hwSourceRow("CPU temperature", HwTelemetry::CpuTemp);
+        }
     }
 }
 
@@ -13199,7 +13425,7 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
 
         if (!defaultDll.empty())
         {
-            if (ImGui::RadioButton(TrL("Default"), defaultActive) && !defaultActive)
+            if (IlionTheme::RadioButton(TrL("Default"), defaultActive) && !defaultActive)
                 SelectSrVariant(L"");
         }
 
@@ -13217,7 +13443,7 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
 
             ImGui::BeginDisabled(!variant.valid);
 
-            if (ImGui::RadioButton(label.c_str(), variantActive) && !variantActive)
+            if (IlionTheme::RadioButton(label.c_str(), variantActive) && !variantActive)
                 SelectSrVariant(variant.name);
 
             ImGui::EndDisabled();
@@ -13259,7 +13485,7 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
 
     for (const int seconds : { 30, 60, 120 })
     {
-        if (ImGui::RadioButton(StrFmt("%d s", seconds).c_str(), benchSeconds == seconds))
+        if (IlionTheme::RadioButton(StrFmt("%d s", seconds).c_str(), benchSeconds == seconds))
             benchSeconds = seconds;
 
         ImGui::SameLine();
@@ -13443,7 +13669,7 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
         const auto& result = IlionBenchmark::GetResult();
         const std::string notAvailable = HwNotAvailable();
 
-        ImGui::SeparatorText(Tr("Result"));
+        IlionTheme::SectionPlate(Tr("Result"));
 
         if (ImGui::BeginTable("benchResult", 2, ImGuiTableFlags_SizingStretchSame))
         {
@@ -13510,7 +13736,7 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
     }
 
     // Captures of the game's image for the visual comparison, one per FSR version of the same scene
-    ImGui::SeparatorText(Tr("Visual analysis"));
+    IlionTheme::SectionPlate(Tr("Visual analysis"));
 
     const auto captureState = IlionCapture::GetState();
 
@@ -13609,7 +13835,7 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
     ShowTooltip("Opens the saved captures. Pick two or more to see them side by side,\n"
                 "zoom into the same spot of each and measure them against a reference.");
     // Existing tools, the same state as their own controls
-    ImGui::SeparatorText(Tr("Tools"));
+    IlionTheme::SectionPlate(Tr("Tools"));
 
     bool comparisonEnabled = FSR4Comparison::Enabled();
 

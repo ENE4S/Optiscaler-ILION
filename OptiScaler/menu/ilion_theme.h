@@ -311,7 +311,8 @@ inline void DrawWindowScrews(float scale = 1.0f)
     draw->PopClipRect();
 }
 
-// A key: a cap seated in a dark metal frame, lit from above, that sinks while it is held
+// A key: a cap seated in a dark metal frame, lit from above. Raised, its lower edge shows its thickness; under
+// the pointer the cap brightens; held, it sinks into the frame with the shade of the frame falling on it.
 inline void DrawKey(ImDrawList* draw, const ImRect& bounds, const ImVec4& face, bool hovered, bool down)
 {
     // Frame and the gap the cap moves in
@@ -320,22 +321,35 @@ inline void DrawKey(ImDrawList* draw, const ImRect& bounds, const ImVec4& face, 
     draw->AddRect(ImVec2(bounds.Min.x + 1.0f, bounds.Min.y + 1.0f), ImVec2(bounds.Max.x - 1.0f, bounds.Max.y - 1.0f),
                   ImGui::GetColorU32(MetalDark), 1.0f);
 
-    // Cap, lighter towards the top
     const ImVec2 capMin(bounds.Min.x + 3.0f, bounds.Min.y + 3.0f);
     const ImVec2 capMax(bounds.Max.x - 3.0f, bounds.Max.y - 3.0f);
 
-    const ImU32 upper = ImGui::GetColorU32(Shade(face, down ? 0.80f : 1.22f));
-    const ImU32 lower = ImGui::GetColorU32(Shade(face, down ? 1.00f : 0.78f));
+    const ImVec4 lit = hovered && !down ? Shade(face, 1.12f) : face;
+    const ImU32 light = ImGui::GetColorU32(Alpha(MetalLight, hovered ? 0.75f : 0.55f));
+    const ImU32 shade = ImGui::GetColorU32(Alpha(Shadow, 0.85f));
+
+    if (down)
+    {
+        // Sunk: darker, the shade of the frame along its upper and left edges
+        const ImU32 upper = ImGui::GetColorU32(Shade(lit, 0.70f));
+        const ImU32 lower = ImGui::GetColorU32(Shade(lit, 0.95f));
+
+        draw->AddRectFilledMultiColor(capMin, capMax, upper, upper, lower, lower);
+        draw->AddRectFilled(capMin, ImVec2(capMax.x, capMin.y + 2.0f), shade);
+        draw->AddRectFilled(capMin, ImVec2(capMin.x + 2.0f, capMax.y), shade);
+        draw->AddLine(ImVec2(capMin.x, capMax.y - 1.0f), ImVec2(capMax.x, capMax.y - 1.0f), light);
+        return;
+    }
+
+    // Raised: lighter towards the top, a light edge above and at the left, its thickness below and at the right
+    const ImU32 upper = ImGui::GetColorU32(Shade(lit, 1.25f));
+    const ImU32 lower = ImGui::GetColorU32(Shade(lit, 0.76f));
 
     draw->AddRectFilledMultiColor(capMin, capMax, upper, upper, lower, lower);
-
-    const ImU32 light = ImGui::GetColorU32(Alpha(MetalLight, 0.55f));
-    const ImU32 shade = ImGui::GetColorU32(Alpha(Shadow, 0.80f));
-
-    draw->AddLine(capMin, ImVec2(capMax.x - 1.0f, capMin.y), down ? shade : light);
-    draw->AddLine(capMin, ImVec2(capMin.x, capMax.y - 1.0f), down ? shade : light);
-    draw->AddLine(ImVec2(capMin.x, capMax.y - 1.0f), ImVec2(capMax.x, capMax.y - 1.0f), down ? light : shade);
-    draw->AddLine(ImVec2(capMax.x - 1.0f, capMin.y), ImVec2(capMax.x - 1.0f, capMax.y), down ? light : shade);
+    draw->AddLine(capMin, ImVec2(capMax.x - 1.0f, capMin.y), light);
+    draw->AddLine(capMin, ImVec2(capMin.x, capMax.y - 1.0f), light);
+    draw->AddRectFilled(ImVec2(capMin.x, capMax.y - 2.0f), capMax, shade);
+    draw->AddLine(ImVec2(capMax.x - 1.0f, capMin.y), ImVec2(capMax.x - 1.0f, capMax.y), shade);
 }
 
 // A recess in the panel: dark, with the shade at the top and the light at the bottom
@@ -548,77 +562,156 @@ inline void SameLineIfFits(const char* nextLabel, float spacing = -1.0f)
         ImGui::SameLine(0.0f, spacing);
 }
 
-// Rail and handle of a slider, drawn under the ImGui slider that keeps doing the work with its own frame and
-// grab made invisible. fraction is where the value is between its limits.
-inline void DrawSliderParts(const char* label, float fraction, float grabSize)
+// Rail and cursor of a slider between min and max: a groove with a scale of marks, lit up to where the value is,
+// and a metal cursor with a grip that rides on it. fraction is where the value is between its limits.
+inline void DrawSliderRail(ImDrawList* draw, const ImVec2& min, const ImVec2& max, float fraction, float grabSize, bool hovered,
+                           bool active)
 {
-    ImGuiWindow* window = ImGui::GetCurrentWindow();
-
-    if (window->SkipItems)
-        return;
-
-    const ImGuiContext& g = *GImGui;
-    const ImGuiID id = window->GetID(label);
-    const bool hovered = g.HoveredIdPreviousFrame == id || g.ActiveId == id;
-
-    const ImVec2 min = window->DC.CursorPos;
-    const ImVec2 max(min.x + ImGui::CalcItemWidth(), min.y + ImGui::GetFrameHeight());
-
-    DrawWell(window->DrawList, min, max, hovered);
+    const ImGuiStyle& style = ImGui::GetStyle();
 
     fraction = ImClamp(fraction, 0.0f, 1.0f);
-    grabSize = ImClamp(grabSize, g.Style.GrabMinSize, ImMax(g.Style.GrabMinSize, max.x - min.x - 4.0f));
+    grabSize = ImClamp(grabSize, style.GrabMinSize, ImMax(style.GrabMinSize, max.x - min.x - 4.0f));
 
     const float center = ImFloor(ImLerp(min.x + 2.0f + grabSize * 0.5f, max.x - 2.0f - grabSize * 0.5f, fraction));
     const float middle = ImFloor((min.y + max.y) * 0.5f);
-    const float rail = ImMax(2.0f, ImFloor((max.y - min.y) * 0.14f));
+    const float groove = ImMax(2.0f, ImFloor((max.y - min.y) * 0.13f));
+    const float left = min.x + 2.0f + grabSize * 0.5f;
+    const float right = max.x - 2.0f - grabSize * 0.5f;
 
-    // Rail, lit up to where the handle is
-    window->DrawList->AddRectFilled(ImVec2(min.x + 4.0f, middle - rail), ImVec2(max.x - 4.0f, middle + rail),
-                                    ImGui::GetColorU32(Shadow));
-    window->DrawList->AddRectFilled(ImVec2(min.x + 4.0f, middle - rail), ImVec2(center, middle + rail),
-                                    ImGui::GetColorU32(Alpha(LampGreenDim, 0.85f)));
+    // Scale: a mark every tenth of the travel, longer at the ends and in the middle
+    for (int i = 0; i <= 10; i++)
+    {
+        const float x = ImFloor(ImLerp(left, right, i / 10.0f));
+        const float length = i % 5 == 0 ? groove + 4.0f : groove + 2.0f;
 
-    // Handle, dark enough for the value written over it to stay readable
-    const ImVec2 handleMin(center - grabSize * 0.5f, min.y + 2.0f);
-    const ImVec2 handleMax(center + grabSize * 0.5f, max.y - 2.0f);
+        draw->AddLine(ImVec2(x, middle - length), ImVec2(x, middle - groove - 1.0f), ImGui::GetColorU32(Alpha(Metal, 0.75f)));
+    }
 
-    window->DrawList->AddRectFilled(handleMin, handleMax, ImGui::GetColorU32(g.ActiveId == id ? Metal : MetalDark), 1.0f);
-    window->DrawList->AddLine(handleMin, ImVec2(handleMax.x - 1.0f, handleMin.y), ImGui::GetColorU32(MetalLight));
-    window->DrawList->AddLine(handleMin, ImVec2(handleMin.x, handleMax.y - 1.0f), ImGui::GetColorU32(Alpha(MetalLight, 0.7f)));
-    window->DrawList->AddLine(ImVec2(handleMin.x, handleMax.y - 1.0f), ImVec2(handleMax.x, handleMax.y - 1.0f),
-                              ImGui::GetColorU32(Shadow));
-    window->DrawList->AddLine(ImVec2(handleMax.x - 1.0f, handleMin.y), ImVec2(handleMax.x - 1.0f, handleMax.y),
-                              ImGui::GetColorU32(Shadow));
-    window->DrawList->AddLine(ImVec2(center, handleMin.y + 3.0f), ImVec2(center, handleMax.y - 3.0f),
-                              ImGui::GetColorU32(Alpha(Shadow, 0.8f)));
+    // Groove, with the shade at its upper edge and the light at the lower one
+    draw->AddRectFilled(ImVec2(min.x + 2.0f, middle - groove), ImVec2(max.x - 2.0f, middle + groove), ImGui::GetColorU32(Shadow), 1.0f);
+    draw->AddLine(ImVec2(min.x + 2.0f, middle + groove), ImVec2(max.x - 2.0f, middle + groove),
+                  ImGui::GetColorU32(Alpha(Metal, hovered ? 0.95f : 0.65f)));
+    draw->AddRectFilled(ImVec2(min.x + 3.0f, middle - groove + 1.0f), ImVec2(center, middle + groove - 1.0f),
+                        ImGui::GetColorU32(active ? LampGreen : LampGreenDim));
+
+    // Cursor
+    const ImVec2 cursorMin(center - grabSize * 0.5f, min.y + 1.0f);
+    const ImVec2 cursorMax(center + grabSize * 0.5f, max.y - 1.0f);
+    const ImVec4 body = active ? MetalLight : hovered ? Shade(Metal, 1.15f) : Metal;
+
+    draw->AddRectFilled(ImVec2(cursorMin.x + 1.0f, cursorMin.y + 2.0f), ImVec2(cursorMax.x + 1.0f, cursorMax.y + 1.0f),
+                        ImGui::GetColorU32(Alpha(Shadow, 0.70f)), 1.0f);
+    draw->AddRectFilledMultiColor(cursorMin, cursorMax, ImGui::GetColorU32(Shade(body, 1.25f)), ImGui::GetColorU32(Shade(body, 1.25f)),
+                                  ImGui::GetColorU32(Shade(body, 0.70f)), ImGui::GetColorU32(Shade(body, 0.70f)));
+    draw->AddRect(cursorMin, cursorMax, ImGui::GetColorU32(Shadow), 1.0f);
+    draw->AddLine(ImVec2(cursorMin.x + 1.0f, cursorMin.y + 1.0f), ImVec2(cursorMax.x - 2.0f, cursorMin.y + 1.0f),
+                  ImGui::GetColorU32(Alpha(MetalLight, 0.90f)));
+
+    // Grip, and the line that marks the value
+    draw->AddLine(ImVec2(center, cursorMin.y + 2.0f), ImVec2(center, cursorMax.y - 2.0f), ImGui::GetColorU32(Shadow));
+
+    if (grabSize >= 10.0f)
+    {
+        draw->AddLine(ImVec2(center - 3.0f, cursorMin.y + 4.0f), ImVec2(center - 3.0f, cursorMax.y - 4.0f),
+                      ImGui::GetColorU32(Alpha(Shadow, 0.55f)));
+        draw->AddLine(ImVec2(center + 3.0f, cursorMin.y + 4.0f), ImVec2(center + 3.0f, cursorMax.y - 4.0f),
+                      ImGui::GetColorU32(Alpha(Shadow, 0.55f)));
+    }
 }
 
-struct InvisibleSliderFrame
+// A slider as a physical control: rail and cursor at the left, the value in a small display of its own next to
+// them, then the name. The ImGui slider passed in keeps doing all the work over the rail, with what it would draw
+// made invisible, so dragging, the keyboard, typing a value in and what it returns are its own. The whole control
+// takes the same room on its line as the stock one.
+template <typename SliderCall>
+inline bool PhysicalSlider(const char* label, float fraction, float stepCount, const char* valueText, SliderCall slider)
 {
-    InvisibleSliderFrame()
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    ImGuiContext& g = *GImGui;
+    const ImGuiID id = window->GetID(label);
+
+    // While a value is being typed in, the field of ImGui is what has to be seen
+    if (window->SkipItems || ImGui::TempInputIsActive(id))
+        return slider();
+
+    const ImGuiStyle& style = g.Style;
+    const float width = ImGui::CalcItemWidth();
+    const float height = ImGui::GetFrameHeight();
+    const ImVec2 valueSize = ImGui::CalcTextSize(valueText);
+    const float display = ImFloor(ImClamp(valueSize.x + style.FramePadding.x * 2.0f, height * 2.4f, width * 0.5f));
+    const float rail = width - display - style.ItemInnerSpacing.x;
+
+    // No room for the parts: the stock slider
+    if (rail < height * 2.0f)
+        return slider();
+
+    const bool active = g.ActiveId == id;
+    const bool hovered = active || g.HoveredIdPreviousFrame == id;
+
+    const ImVec2 min = window->DC.CursorPos;
+    const ImVec2 railMax(min.x + rail, min.y + height);
+    const ImVec2 displayMin(railMax.x + style.ItemInnerSpacing.x, min.y);
+    const ImVec2 displayMax(displayMin.x + display, min.y + height);
+
+    const float grab = stepCount > 0.0f ? (rail - 4.0f) / stepCount : style.GrabMinSize;
+
+    DrawSliderRail(window->DrawList, min, railMax, fraction, grab, hovered, active);
+
+    // Display of the value
+    DrawWell(window->DrawList, displayMin, displayMax, hovered);
+    window->DrawList->PushClipRect(displayMin, displayMax, true);
+    window->DrawList->AddText(ImVec2(ImFloor(displayMin.x + (display - valueSize.x) * 0.5f), min.y + style.FramePadding.y),
+                              ImGui::GetColorU32(LampGreen), valueText);
+    window->DrawList->PopClipRect();
+
+    // Name, where the stock slider writes it
+    const char* labelEnd = ImGui::FindRenderedTextEnd(label);
+
+    if (labelEnd != label)
+    {
+        window->DrawList->AddText(ImVec2(displayMax.x + style.ItemInnerSpacing.x, min.y + style.FramePadding.y),
+                                  ImGui::GetColorU32(ImGuiCol_Text), label, labelEnd);
+    }
+
+    bool changed = false;
+
     {
         const ImVec4 none(0.0f, 0.0f, 0.0f, 0.0f);
 
         for (const ImGuiCol color : { ImGuiCol_FrameBg, ImGuiCol_FrameBgHovered, ImGuiCol_FrameBgActive, ImGuiCol_SliderGrab,
-                                      ImGuiCol_SliderGrabActive, ImGuiCol_Border, ImGuiCol_BorderShadow })
+                                      ImGuiCol_SliderGrabActive, ImGuiCol_Border, ImGuiCol_BorderShadow, ImGuiCol_Text })
             ImGui::PushStyleColor(color, none);
+
+        ImGui::SetNextItemWidth(rail);
+        changed = slider();
+
+        ImGui::PopStyleColor(8);
     }
 
-    ~InvisibleSliderFrame() { ImGui::PopStyleColor(7); }
-};
+    // The display takes room on the line the stock slider doesn't know about. The slider stays the last item,
+    // tooltips and whatever asks about it afterwards see it and not the filler.
+    const ImGuiLastItemData item = g.LastItemData;
+
+    ImGui::SameLine(0.0f, 0.0f);
+    ImGui::Dummy(ImVec2(display + style.ItemInnerSpacing.x, height));
+
+    g.LastItemData = item;
+
+    return changed;
+}
 
 inline bool SliderFloat(const char* label, float* value, float min, float max, const char* format = "%.3f",
                         ImGuiSliderFlags flags = 0)
 {
-    // A logarithmic scale puts the handle somewhere else, that one keeps the stock look
+    // A logarithmic scale puts the cursor somewhere else, that one keeps the stock look
     if (!industrial || max <= min || (flags & ImGuiSliderFlags_Logarithmic) != 0)
         return ImGui::SliderFloat(label, value, min, max, format, flags);
 
-    DrawSliderParts(label, (*value - min) / (max - min), ImGui::GetStyle().GrabMinSize);
+    char text[64];
+    ImFormatString(text, IM_ARRAYSIZE(text), format != nullptr ? format : "%.3f", *value);
 
-    InvisibleSliderFrame frame;
-    return ImGui::SliderFloat(label, value, min, max, format, flags);
+    return PhysicalSlider(label, (*value - min) / (max - min), 0.0f, text,
+                          [&]() { return ImGui::SliderFloat(label, value, min, max, format, flags); });
 }
 
 inline bool SliderInt(const char* label, int* value, int min, int max, const char* format = "%d", ImGuiSliderFlags flags = 0)
@@ -626,32 +719,234 @@ inline bool SliderInt(const char* label, int* value, int min, int max, const cha
     if (!industrial || max <= min || (flags & ImGuiSliderFlags_Logarithmic) != 0)
         return ImGui::SliderInt(label, value, min, max, format, flags);
 
-    // Whole numbers get a handle as wide as one step, as ImGui does
-    const float usable = ImGui::CalcItemWidth() - 4.0f;
+    char text[64];
+    ImFormatString(text, IM_ARRAYSIZE(text), format != nullptr ? format : "%d", *value);
 
-    DrawSliderParts(label, (float) (*value - min) / (float) (max - min), usable / (float) (max - min + 1));
-
-    InvisibleSliderFrame frame;
-    return ImGui::SliderInt(label, value, min, max, format, flags);
+    // Whole numbers get a cursor as wide as one step, as ImGui does
+    return PhysicalSlider(label, (float) (*value - min) / (float) (max - min), (float) (max - min + 1), text,
+                          [&]() { return ImGui::SliderInt(label, value, min, max, format, flags); });
 }
 
-// The drop-down of the theme in use: the stock one with its field recessed and its arrow on a green key
+// The drop-down as a selector set into the panel: a recessed window with what is selected in green and a key
+// with the arrow next to it. ImGui's own combo does the work with its field and its button made invisible; what
+// it would write as the selected value is written here instead, the list it opens is its own.
 inline bool BeginCombo(const char* label, const char* preview, ImGuiComboFlags flags = 0)
 {
     if (!industrial)
         return ImGui::BeginCombo(label, preview, flags);
 
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.42f, 0.08f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.14f, 0.60f, 0.10f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, LampGreenDim);
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, Alpha(GraphiteDeep, 0.95f));
-    ImGui::PushStyleColor(ImGuiCol_BorderShadow, Alpha(Shadow, 0.0f));
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
 
-    const bool open = ImGui::BeginCombo(label, preview, flags);
+    // Variants without the field or the button keep the stock parts, in the colours of the theme
+    if (window->SkipItems || flags != 0 || preview == nullptr)
+    {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.42f, 0.08f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.14f, 0.60f, 0.10f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, LampGreenDim);
 
-    ImGui::PopStyleColor(5);
+        const bool open = ImGui::BeginCombo(label, preview, flags);
+
+        ImGui::PopStyleColor(3);
+        return open;
+    }
+
+    const ImGuiContext& g = *GImGui;
+    const ImGuiStyle& style = g.Style;
+    const ImGuiID id = window->GetID(label);
+    const bool hovered = g.HoveredIdPreviousFrame == id;
+
+    const float height = ImGui::GetFrameHeight();
+    const float width = ImGui::CalcItemWidth();
+    const ImVec2 min = window->DC.CursorPos;
+    const ImVec2 fieldMax(min.x + width - height, min.y + height);
+
+    DrawWell(window->DrawList, min, fieldMax, hovered);
+
+    window->DrawList->PushClipRect(ImVec2(min.x + 2.0f, min.y), ImVec2(fieldMax.x - 2.0f, fieldMax.y), true);
+    window->DrawList->AddText(ImVec2(min.x + style.FramePadding.x, min.y + style.FramePadding.y), ImGui::GetColorU32(LampGreen),
+                              preview);
+    window->DrawList->PopClipRect();
+
+    DrawKey(window->DrawList, ImRect(ImVec2(fieldMax.x, min.y), ImVec2(min.x + width, min.y + height)),
+            hovered ? ImVec4(0.14f, 0.55f, 0.10f, 1.0f) : ImVec4(0.10f, 0.40f, 0.08f, 1.0f), hovered, false);
+
+    const ImVec4 none(0.0f, 0.0f, 0.0f, 0.0f);
+
+    for (const ImGuiCol color : { ImGuiCol_FrameBg, ImGuiCol_FrameBgHovered, ImGuiCol_FrameBgActive, ImGuiCol_Button,
+                                  ImGuiCol_ButtonHovered, ImGuiCol_ButtonActive })
+        ImGui::PushStyleColor(color, none);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
+
+    const bool open = ImGui::BeginCombo(label, "", flags);
+
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(6);
 
     return open;
+}
+
+// One of several options of which one is chosen: a lamp without a plate, lit on the chosen one. Same arguments,
+// id and result as ImGui::RadioButton.
+inline bool RadioButton(const char* label, bool chosen)
+{
+    if (!industrial)
+        return ImGui::RadioButton(label, chosen);
+
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+
+    if (window->SkipItems)
+        return false;
+
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const ImGuiID id = window->GetID(label);
+    const ImVec2 labelSize = ImGui::CalcTextSize(label, nullptr, true);
+
+    const float height = ImGui::GetFrameHeight();
+    const ImVec2 pos = window->DC.CursorPos;
+    const ImRect bounds(pos, ImVec2(pos.x + height + (labelSize.x > 0.0f ? style.ItemInnerSpacing.x + labelSize.x : 0.0f),
+                                    pos.y + labelSize.y + style.FramePadding.y * 2.0f));
+
+    ImGui::ItemSize(bounds, style.FramePadding.y);
+
+    if (!ImGui::ItemAdd(bounds, id))
+        return false;
+
+    bool hovered = false, held = false;
+    const bool pressed = ImGui::ButtonBehavior(bounds, id, &hovered, &held);
+
+    if (pressed)
+        ImGui::MarkItemEdited(id);
+
+    ImGui::RenderNavCursor(bounds, id);
+
+    DrawLamp(window->DrawList, ImVec2(ImFloor(pos.x + height * 0.5f), ImFloor(pos.y + height * 0.5f)),
+             ImFloor(height * 0.5f) - 2.0f, chosen, hovered, held, Lamp::Amber);
+
+    if (labelSize.x > 0.0f)
+        ImGui::RenderText(ImVec2(pos.x + height + style.ItemInnerSpacing.x, pos.y + style.FramePadding.y), label);
+
+    return pressed;
+}
+
+inline bool RadioButton(const char* label, int* value, int option)
+{
+    const bool pressed = RadioButton(label, *value == option);
+
+    if (pressed)
+        *value = option;
+
+    return pressed;
+}
+
+// A section that folds: its header is a key across the panel. ImGui's header does the work, with its own
+// background made invisible over the key.
+inline bool CollapsingHeader(const char* label, ImGuiTreeNodeFlags flags = 0)
+{
+    if (!industrial)
+        return ImGui::CollapsingHeader(label, flags);
+
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+
+    if (!window->SkipItems)
+    {
+        const ImGuiContext& g = *GImGui;
+        const ImGuiID id = window->GetID(label);
+        const bool hovered = g.HoveredIdPreviousFrame == id;
+        const float extend = IM_TRUNC(window->WindowPadding.x * 0.5f);
+        const float height = g.FontSize + g.Style.FramePadding.y * 2.0f;
+
+        DrawKey(window->DrawList,
+                ImRect(ImVec2(window->WorkRect.Min.x - extend, window->DC.CursorPos.y),
+                       ImVec2(window->WorkRect.Max.x + extend, window->DC.CursorPos.y + height)),
+                hovered ? Olive : OliveDim, hovered, g.ActiveId == id);
+    }
+
+    const ImVec4 none(0.0f, 0.0f, 0.0f, 0.0f);
+
+    ImGui::PushStyleColor(ImGuiCol_Header, none);
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, none);
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, none);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
+
+    const bool open = ImGui::CollapsingHeader(label, flags);
+
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(3);
+
+    return open;
+}
+
+// Name of a part of a panel: an engraved tag with a metal rule running from it to the edge. Takes the place of
+// ImGui::SeparatorText, tooltips attach to it the same way.
+inline void SectionPlate(const char* text)
+{
+    if (!industrial)
+    {
+        ImGui::SeparatorText(text);
+        return;
+    }
+
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+
+    if (window->SkipItems)
+        return;
+
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const char* textEnd = ImGui::FindRenderedTextEnd(text);
+    const ImVec2 textSize = ImGui::CalcTextSize(text, textEnd);
+
+    ImGui::Dummy(ImVec2(0.0f, ImFloor(style.ItemSpacing.y * 0.5f)));
+
+    const ImVec2 pos = window->DC.CursorPos;
+    const float pad = style.FramePadding.x + 2.0f;
+    const float height = textSize.y + 6.0f;
+    const ImVec2 tagMax(pos.x + textSize.x + pad * 2.0f, pos.y + height);
+    const float right = window->WorkRect.Max.x;
+
+    ImDrawList* draw = window->DrawList;
+
+    // Tag: a small raised plate
+    draw->AddRectFilledMultiColor(pos, tagMax, ImGui::GetColorU32(Shade(Olive, 1.10f)), ImGui::GetColorU32(Shade(Olive, 1.10f)),
+                                  ImGui::GetColorU32(OliveDim), ImGui::GetColorU32(OliveDim));
+    draw->AddRect(pos, tagMax, ImGui::GetColorU32(Shadow));
+    draw->AddLine(ImVec2(pos.x + 1.0f, pos.y + 1.0f), ImVec2(tagMax.x - 2.0f, pos.y + 1.0f),
+                  ImGui::GetColorU32(Alpha(MetalLight, 0.50f)));
+    draw->AddText(ImVec2(pos.x + pad, pos.y + 3.0f), ImGui::GetColorU32(TitleAmber), text, textEnd);
+
+    // Rule: a groove in the panel
+    const float y = ImFloor(pos.y + height * 0.5f);
+
+    if (right > tagMax.x + 4.0f)
+    {
+        draw->AddLine(ImVec2(tagMax.x + 4.0f, y), ImVec2(right, y), ImGui::GetColorU32(Shadow));
+        draw->AddLine(ImVec2(tagMax.x + 4.0f, y + 1.0f), ImVec2(right, y + 1.0f), ImGui::GetColorU32(Alpha(Metal, 0.85f)));
+    }
+
+    ImGui::Dummy(ImVec2(ImMax(1.0f, right - pos.x), height));
+}
+
+// Body of a card: a plate standing a little above the cabinet, with a metal edge, light along its upper and left
+// inner edges and shade along the others
+inline void DrawCardBody(ImDrawList* draw, const ImVec2& min, const ImVec2& max)
+{
+    draw->AddRectFilled(min, max, ImGui::GetColorU32(Alpha(Panel, 0.60f)));
+    draw->AddRect(ImVec2(min.x + 1.0f, min.y + 1.0f), ImVec2(max.x + 1.0f, max.y + 1.0f), ImGui::GetColorU32(Alpha(Shadow, 0.90f)));
+    draw->AddRect(min, max, ImGui::GetColorU32(Metal));
+    draw->AddLine(ImVec2(min.x + 1.0f, min.y + 1.0f), ImVec2(max.x - 2.0f, min.y + 1.0f), ImGui::GetColorU32(Alpha(MetalLight, 0.22f)));
+    draw->AddLine(ImVec2(min.x + 1.0f, min.y + 1.0f), ImVec2(min.x + 1.0f, max.y - 2.0f), ImGui::GetColorU32(Alpha(MetalLight, 0.14f)));
+    draw->AddLine(ImVec2(min.x + 1.0f, max.y - 2.0f), ImVec2(max.x - 1.0f, max.y - 2.0f), ImGui::GetColorU32(Alpha(Shadow, 0.55f)));
+    draw->AddLine(ImVec2(max.x - 2.0f, min.y + 1.0f), ImVec2(max.x - 2.0f, max.y - 1.0f), ImGui::GetColorU32(Alpha(Shadow, 0.45f)));
+}
+
+// Name band across the top of a card
+inline void DrawCardBand(ImDrawList* draw, float left, float top, float right, float bottom)
+{
+    draw->AddRectFilledMultiColor(ImVec2(left, top), ImVec2(right, bottom), ImGui::GetColorU32(Shade(Olive, 1.05f)),
+                                  ImGui::GetColorU32(Shade(Olive, 1.05f)), ImGui::GetColorU32(OliveDim), ImGui::GetColorU32(OliveDim));
+    draw->AddLine(ImVec2(left, top), ImVec2(right, top), ImGui::GetColorU32(Alpha(MetalLight, 0.40f)));
+    draw->AddLine(ImVec2(left, bottom), ImVec2(right, bottom), ImGui::GetColorU32(Metal));
+    draw->AddLine(ImVec2(left, bottom + 1.0f), ImVec2(right, bottom + 1.0f), ImGui::GetColorU32(Alpha(Shadow, 0.85f)));
 }
 
 // --- Sidebar -------------------------------------------------------------------------------------------------

@@ -337,8 +337,14 @@ inline constexpr Translation kSpanish[] = {
       "Abre las pruebas guardadas. Elige dos o más para verlas lado a lado,\n"
       "con sus diferencias y una conclusión automática." },
     { "Benchmark results comparison", "Comparación de resultados de benchmark" },
-    { "Performance and stability comparison. Image quality only comes from the visual analyses that were saved.",
-      "Comparación de rendimiento y estabilidad. La calidad de imagen solo procede de los análisis visuales guardados." },
+    { "Performance and stability comparison. Images only count when captures were made for these tests.",
+      "Comparación de rendimiento y estabilidad. Las imágenes solo cuentan si se hicieron capturas para estas pruebas." },
+    { "Captures of these tests", "Capturas de estas pruebas" },
+    { "A capture made now is linked to the saved test %s.", "Una captura hecha ahora queda vinculada a la prueba guardada %s." },
+    { "A capture made now is not linked to any test. To link it, save a test and capture before clearing its result.",
+      "Una captura hecha ahora no queda vinculada a ninguna prueba. Para vincularla, guarda una prueba y captura antes "
+      "de limpiar su resultado." },
+    { "Off (%s loaded, the game isn't generating frames)", "Apagado (%s cargado, el juego no está generando fotogramas)" },
     { "Back to Benchmark", "Volver a Benchmark" },
     { "Reload", "Recargar" },
     { "Clear selection", "Quitar selección" },

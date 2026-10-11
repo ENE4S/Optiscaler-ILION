@@ -49,6 +49,7 @@ class IlionCapture
         std::string dllFileVersion;
         std::string dllSha256;
         std::string frameGeneration;
+        std::string benchmarkId; // saved test this capture was made for, empty when none
     };
 
     static State GetState() { return (State) _state.load(std::memory_order_acquire); }
@@ -552,6 +553,7 @@ class IlionCapture
         json << "  \"dll_file_version\": \"" << JsonEscape(meta.dllFileVersion) << "\",\n";
         json << "  \"dll_sha256\": \"" << JsonEscape(meta.dllSha256) << "\",\n";
         json << "  \"frame_generation\": \"" << JsonEscape(meta.frameGeneration) << "\",\n";
+        json << "  \"benchmark_id\": \"" << JsonEscape(meta.benchmarkId) << "\",\n";
         json << "  \"source\": \"swapchain back buffer before the ILION menu is drawn\"\n";
         json << "}\n";
 

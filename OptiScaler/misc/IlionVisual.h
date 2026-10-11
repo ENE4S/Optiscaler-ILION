@@ -61,6 +61,7 @@ class IlionVisual
         std::string dllFileVersion;
         std::string dllSha256;
         std::string frameGeneration;
+        std::string benchmarkId; // saved test it was made for, empty when none
 
         std::string Name() const
         {
@@ -193,6 +194,7 @@ class IlionVisual
                 capture.dllFileVersion = JsonText(text, "dll_file_version");
                 capture.dllSha256 = JsonText(text, "dll_sha256");
                 capture.frameGeneration = JsonText(text, "frame_generation");
+                capture.benchmarkId = JsonText(text, "benchmark_id");
                 capture.hdr = text.find("\"hdr10_pq_values\": true") != std::string::npos;
             }
 

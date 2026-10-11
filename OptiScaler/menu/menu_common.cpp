@@ -2137,6 +2137,32 @@ static std::atomic<int> visualResultsSaved { 0 };
 
 static std::filesystem::path CaptureFolder() { return Util::ExePath().parent_path() / L"ILION" / L"Captures"; }
 
+// Measurements of captures that aren't in the folder anymore (deleted from the menu or by hand) are taken out of
+// the saved results, nothing of a capture outlives it
+static void PruneVisualResults(const std::vector<IlionVisual::Capture>& captures)
+{
+    std::vector<std::string> gone;
+
+    for (const auto& row : IlionVisual::LoadResults(CaptureFolder()))
+    {
+        for (const std::string* id : { &row.referenceId, &row.testId })
+        {
+            const bool exists = std::any_of(captures.begin(), captures.end(),
+                                            [&](const IlionVisual::Capture& capture) { return capture.id == *id; });
+
+            if (!exists && std::find(gone.begin(), gone.end(), *id) == gone.end())
+                gone.push_back(*id);
+        }
+    }
+
+    if (!gone.empty())
+    {
+        IlionVisual::ForgetResults(CaptureFolder(), gone);
+        visualResultsSaved++;
+        LOG_INFO("[CAPTURE] results of {} captures that are gone were removed", gone.size());
+    }
+}
+
 // Difference in SSIM two captures need to be told apart
 static constexpr double VisualSsimMargin = 0.002;
 
@@ -2620,6 +2646,7 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
     {
         visualCompareReload = false;
         captures = IlionVisual::ListCaptures(CaptureFolder());
+        PruneVisualResults(captures);
 
         std::erase_if(selectedIds, [&](const std::string& id)
                       { return std::none_of(captures.begin(), captures.end(), [&](const Capture& c) { return c.id == id; }); });
@@ -3395,7 +3422,8 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
 // The newest capture of every dll of a comparison, measured pair by pair. No native picture is needed for this,
 // and without one it only tells how much and where the pictures differ, never which one looks better.
 
-static bool CaptureMatchesTest(const IlionVisual::Capture& capture, const IlionCompare::Test& test);
+static bool CaptureLinkedToCandidate(const IlionVisual::Capture& capture, const IlionCompare::Candidate& candidate,
+                                     const std::vector<const IlionCompare::Test*>& tests);
 static void StartVisualMeasureFiles(const std::string& key, const std::filesystem::path& referencePath,
                                     const std::filesystem::path& testPath, IlionVisual::SavedResult saved,
                                     const std::filesystem::path& folder);
@@ -3439,7 +3467,7 @@ static DirectVisual GatherDirectVisual(const IlionCompare::Analysis& analysis,
         // Sorted by date, the last one that matches is the newest
         for (const auto& capture : captures)
         {
-            if (CaptureMatchesTest(capture, test))
+            if (CaptureLinkedToCandidate(capture, analysis.candidates[i], tests))
                 used[i] = &capture;
         }
 
@@ -3752,6 +3780,7 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
         benchmarkCompareReload = false;
         history = IlionCompare::LoadHistory(BenchmarkFolder() / L"benchmarks.csv");
         visualCaptures = IlionVisual::ListCaptures(CaptureFolder());
+        PruneVisualResults(visualCaptures);
         visualResultsSeen = -1;
 
         // Tests that aren't in the file anymore drop out of the selection
@@ -3779,8 +3808,8 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
         return;
     }
 
-    ImGui::TextDisabled("%s", Tr("Performance and stability comparison. Image quality only comes from the visual "
-                                 "analyses that were saved."));
+    ImGui::TextDisabled("%s", Tr("Performance and stability comparison. Images only count when captures were made for "
+                                 "these tests."));
 
     if (IlionTheme::LampButton(TrL("Back to Benchmark"), IlionTheme::Lamp::Neutral))
         showBenchmarkCompare = false;
@@ -3983,16 +4012,21 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
     // capture when there is one, and one conclusion over everything
     if (analysis.candidates.size() >= 2 && analysis.blocking.empty())
     {
-        int nativeBest = -1;
         const auto direct = GatherDirectVisual(analysis, tests, visualCaptures, visualResults);
 
-        for (auto& conclusion : BuildDirectVisualConclusions(analysis, direct))
-            conclusions.push_back(std::move(conclusion));
+        // Only with captures that were made for these very tests. Without any, this is a comparison of
+        // performance and stability and nothing about images is said.
+        const bool linked = std::any_of(direct.capture.begin(), direct.capture.end(),
+                                        [](const std::string& id) { return !id.empty(); });
 
-        AddVisualConclusions(conclusions, analysis, tests, visualResults, &nativeBest);
+        if (linked)
+        {
+            for (auto& conclusion : BuildDirectVisualConclusions(analysis, direct))
+                conclusions.push_back(std::move(conclusion));
 
-        if (analysis.performance.kind == IlionCompare::Kind::Winner || analysis.performance.kind == IlionCompare::Kind::Tie)
-            conclusions.push_back(BuildGlobalConclusion(analysis, direct, nativeBest));
+            if (analysis.performance.kind == IlionCompare::Kind::Winner || analysis.performance.kind == IlionCompare::Kind::Tie)
+                conclusions.push_back(BuildGlobalConclusion(analysis, direct, -1));
+        }
     }
 
     for (const auto& conclusion : conclusions)
@@ -4414,18 +4448,22 @@ static std::vector<CompareConclusion> BuildIntegratedConclusions(const IlionComp
     return result;
 }
 
-// A capture made with the dll and the resolutions of a test
-static bool CaptureMatchesTest(const IlionVisual::Capture& capture, const IlionCompare::Test& test)
+// A capture belongs to a candidate only when it was made for one of its tests: taken while that saved test was
+// the result on screen, which is when its id gets written into the capture. The same dll in another capture is
+// not enough, captures of other days or other spots are never picked up by themselves.
+static bool CaptureLinkedToCandidate(const IlionVisual::Capture& capture, const IlionCompare::Candidate& candidate,
+                                     const std::vector<const IlionCompare::Test*>& tests)
 {
-    if (!capture.hasMeta || capture.resolution.empty() || capture.resolution != test.resolution ||
-        _stricmp(capture.game.c_str(), test.game.c_str()) != 0)
+    if (capture.benchmarkId.empty())
         return false;
 
-    if (!capture.dllSha256.empty() || !test.dllSha256.empty())
-        return capture.dllSha256 == test.dllSha256;
+    for (const int index : candidate.tests)
+    {
+        if (tests[index]->id == capture.benchmarkId)
+            return true;
+    }
 
-    // Upscalers without a dll of their own in the list are told apart by their name
-    return capture.fsrVersion.empty() && capture.upscaler == test.upscaler;
+    return false;
 }
 
 // Reads the two pictures, measures them and saves the result, for pairs nobody has measured yet
@@ -4510,6 +4548,7 @@ static void DrawFinalReportWindow(float scale, ImGuiIO& io)
         finalReportReload = false;
         history = IlionCompare::LoadHistory(BenchmarkFolder() / L"benchmarks.csv");
         captures = IlionVisual::ListCaptures(CaptureFolder());
+        PruneVisualResults(captures);
         resultsSeen = -1;
 
         std::string previous;
@@ -4681,6 +4720,19 @@ static void DrawFinalReportWindow(float scale, ImGuiIO& io)
         referenceCaptureId = reference->id;
     }
 
+    // Images are part of the report only when a capture was made for one of these tests. Without any, it is a
+    // report of performance and stability: no reference, no measuring, no visual rows.
+    bool linkedAny = false;
+
+    for (const auto& candidate : analysis.candidates)
+    {
+        for (const auto& capture : captures)
+            linkedAny = linkedAny || CaptureLinkedToCandidate(capture, candidate, tests);
+    }
+
+    if (!linkedAny)
+        reference = nullptr;
+
     if (reference != nullptr)
     {
         ImGui::SetNextItemWidth(620.0f * scale);
@@ -4732,7 +4784,7 @@ static void DrawFinalReportWindow(float scale, ImGuiIO& io)
 
         for (const auto& capture : captures)
         {
-            if (!CaptureMatchesTest(capture, first))
+            if (!CaptureLinkedToCandidate(capture, analysis.candidates[i], tests))
                 continue;
 
             entry.captures++;
@@ -4823,11 +4875,15 @@ static void DrawFinalReportWindow(float scale, ImGuiIO& io)
 
     auto conclusions = BuildCompareConclusions(analysis, tests);
 
-    // The balance of two categories gives way to the one over the three
-    if (conclusions.size() == 3)
+    // The balance of two categories gives way to the one over the three, when there is a third
+    if (linkedAny && conclusions.size() == 3)
         conclusions.pop_back();
 
-    if (!toMeasure.empty())
+    if (!linkedAny)
+    {
+        // No captures of these tests: the conclusions of performance and stability are the whole report
+    }
+    else if (!toMeasure.empty())
     {
         conclusions.push_back({ Tr("VISUAL QUALITY: measuring"),
                                 StrFmt(Tr("%d captures are being measured against the native reference."),
@@ -4867,9 +4923,18 @@ static void DrawFinalReportWindow(float scale, ImGuiIO& io)
         ImGui::TextWrapped("%s", conclusion.text.c_str());
     }
 
-    ImGui::TextDisabled(Tr("Margins used: %.1f%% in average FPS, %.1f%% in 1%% low, %.4f in SSIM. No score mixes the "
-                           "categories."),
-                        analysis.marginAvg, analysis.marginLow1, verdict.margin);
+    if (linkedAny)
+    {
+        ImGui::TextDisabled(Tr("Margins used: %.1f%% in average FPS, %.1f%% in 1%% low, %.4f in SSIM. No score mixes the "
+                               "categories."),
+                            analysis.marginAvg, analysis.marginLow1, verdict.margin);
+    }
+    else
+    {
+        ImGui::TextDisabled(Tr("Margins used: %.1f%% in average FPS, %.1f%% in 1%% low.%s"), analysis.marginAvg,
+                            analysis.marginLow1,
+                            analysis.marginFromRepeats ? Tr(" Taken from the spread between tests of the same dll.") : "");
+    }
 
     for (const auto issue : analysis.blocking)
         ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.4f, 0.3f, 1.0f)), "%s", Tr(CompareIssueText(issue)));
@@ -4982,14 +5047,18 @@ static void DrawFinalReportWindow(float scale, ImGuiIO& io)
         row("Variability", "%.1f %%", benchmark(&Test::variationPercent), -1);
         row("Stutters per minute", "%.1f", benchmark(&Test::stutterPerMinute), -1);
 
-        // Closer to native is the good way; edge strength and overshoot are readings, not better or worse
-        section("Visual quality against the native reference");
-        row("SSIM (structure)", "%.4f", picture(&ReportVisual::ssim), 1);
-        row("Mean difference", "%.2f", picture(&ReportVisual::meanDifference), -1);
-        row("Pixels that differ", "%.1f %%", picture(&ReportVisual::differentPercent), -1);
-        row("Edge strength", "%+.1f %%", picture(&ReportVisual::edgeChangePercent), 0);
-        row("Edges of the reference kept", "%.1f %%", picture(&ReportVisual::edgesKeptPercent), 1);
-        row("Overshoot next to edges (exploratory)", "%.2f %%", picture(&ReportVisual::overshootPercent), 0);
+        // Closer to native is the good way; edge strength and overshoot are readings, not better or worse.
+        // Only with captures of these tests.
+        if (linkedAny)
+        {
+            section("Visual quality against the native reference");
+            row("SSIM (structure)", "%.4f", picture(&ReportVisual::ssim), 1);
+            row("Mean difference", "%.2f", picture(&ReportVisual::meanDifference), -1);
+            row("Pixels that differ", "%.1f %%", picture(&ReportVisual::differentPercent), -1);
+            row("Edge strength", "%+.1f %%", picture(&ReportVisual::edgeChangePercent), 0);
+            row("Edges of the reference kept", "%.1f %%", picture(&ReportVisual::edgesKeptPercent), 1);
+            row("Overshoot next to edges (exploratory)", "%.2f %%", picture(&ReportVisual::overshootPercent), 0);
+        }
 
         // Where the numbers of every dll come from
         section("Data used");
@@ -5008,10 +5077,13 @@ static void DrawFinalReportWindow(float scale, ImGuiIO& io)
         };
 
         count("Saved tests", [&](int i) { return StrFmt("%d", (int) analysis.candidates[i].tests.size()); });
-        count("Captures of this configuration", [&](int i) { return StrFmt("%d", visual[i].captures); });
-        count("Captures measured", [&](int i) { return StrFmt("%d", visual[i].measured); });
-        count("Left out: another scene or camera moved", [&](int i) { return StrFmt("%d", visual[i].unreliable); });
-        count("Left out: can't be measured", [&](int i) { return StrFmt("%d", visual[i].failed); });
+        if (linkedAny)
+        {
+            count("Captures of these tests", [&](int i) { return StrFmt("%d", visual[i].captures); });
+            count("Captures measured", [&](int i) { return StrFmt("%d", visual[i].measured); });
+            count("Left out: another scene or camera moved", [&](int i) { return StrFmt("%d", visual[i].unreliable); });
+            count("Left out: can't be measured", [&](int i) { return StrFmt("%d", visual[i].failed); });
+        }
         count("SHA-256", [&](int i)
               {
                   const auto& sha = tests[analysis.candidates[i].tests.front()]->dllSha256;
@@ -13863,6 +13935,24 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
         }
     }
 
+    // A capture is tied to a test only this way: taken while that test, already saved, is still the result on
+    // screen, and with the same dll, upscaler and resolutions running. Any other capture stays on its own.
+    std::string captureTestId;
+
+    if (benchState == IlionBenchmark::State::Finished)
+    {
+        const auto& shown = IlionBenchmark::GetResult();
+        const std::string resolutionNow =
+            upscalerOn ? StrFmt("%ux%u -> %ux%u", currentFeature->RenderWidth(), currentFeature->RenderHeight(),
+                                currentFeature->TargetWidth(), currentFeature->TargetHeight())
+                       : std::string();
+        const std::string dllNow = fsrObservable && active.module != nullptr ? wstring_to_string(activeDllPath) : std::string();
+
+        if (!shown.savedPath.empty() && shown.conditions.dllPath == dllNow && shown.conditions.resolution == resolutionNow &&
+            shown.conditions.upscaler == (upscalerOn ? upscalerText : std::string("None")))
+            captureTestId = std::filesystem::path(shown.savedPath).stem().string();
+    }
+
     ImGui::BeginDisabled(captureBlocked);
 
     if (IlionTheme::LampButton(TrL("Capture image"), IlionTheme::Lamp::Green))
@@ -13896,6 +13986,9 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
                     StrFmt("%u.%u.%u.%u", dllVersion.major, dllVersion.minor, dllVersion.patch, dllVersion.reserved);
             }
         }
+
+        // Belongs to the saved test that is on screen, when there is one made with what is running now
+        meta.benchmarkId = captureTestId;
 
         IlionCapture::Dismiss();
 
@@ -13931,6 +14024,12 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
     {
         ImGui::TextDisabled("%s", Tr("No capture yet"));
     }
+
+    if (!captureTestId.empty())
+        ImGui::TextDisabled(Tr("A capture made now is linked to the saved test %s."), captureTestId.c_str());
+    else
+        ImGui::TextDisabled("%s", Tr("A capture made now is not linked to any test. To link it, save a test and capture "
+                                     "before clearing its result."));
 
     // Saved captures side by side and measured, in a window of its own
     if (IlionTheme::LampButton(TrL("Compare captures"), IlionTheme::Lamp::Neutral))
@@ -14060,11 +14159,25 @@ void MenuCommon::RenderBasicPanel(RenderMenuContext& ctx)
             statusRow(diag.statusLevel == 0, "FSR version", value);
         }
 
+        // The same sources as the sidebar of the full menu: OptiScaler's own frame generation when it is the
+        // one running, otherwise the DLSSG of the game or what stands in for it, by its evaluations. What is
+        // only selected or loaded doesn't count as on.
         const auto fg = state.currentFG;
-        const bool fgOn = fg != nullptr && fg->IsActive() && !fg->IsPaused();
+        const bool ownFgOn = fg != nullptr && fg->IsActive() && !fg->IsPaused();
+        const auto externalFg = GetExternalFgStatus(state.dlssgDetectedInterpolationCount, state.activeFgNvngx,
+                                                    state.swapchainApi == DX12);
+        const bool fgOn = ownFgOn || externalFg.kind == ExternalFgStatus::Kind::Active;
 
-        statusRow(fgOn, "Frame Generation",
-                  fgOn ? StrFmt("%s %ux", fg->Name(), fg->GetInterpolatedFrameCount() + 1) : std::string(Tr("Off")));
+        std::string fgValue = Tr("Off");
+
+        if (ownFgOn)
+            fgValue = StrFmt("%s %ux", fg->Name(), fg->GetInterpolatedFrameCount() + 1);
+        else if (externalFg.kind != ExternalFgStatus::Kind::Off)
+            fgValue = externalFg.text;
+        else if (const char* loaded = NvngxFgName(state.activeFgNvngx); loaded != nullptr)
+            fgValue = StrFmt(Tr("Off (%s loaded, the game isn't generating frames)"), loaded);
+
+        statusRow(fgOn, "Frame Generation", fgValue);
 
         const auto latencyMode = fakenvapi::getCurrentMode();
         const bool latencyOn = latencyMode != LowLatencyMode::None;

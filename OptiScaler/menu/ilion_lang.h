@@ -452,6 +452,28 @@ inline constexpr Translation kSpanish[] = {
     { "Can't read the saved tests", "No se pueden leer las pruebas guardadas" },
     { "Can't update the saved tests", "No se pueden actualizar las pruebas guardadas" },
 
+    // Image captures
+    { "Visual analysis", "Análisis visual" },
+    { "Capture image", "Capturar imagen" },
+    { "Saves the game's image as it is presented, without the ILION menu, as a PNG in ILION\\Captures.\n"
+      "Stand still in the same spot, capture, switch the FSR version and capture again.\n"
+      "With frame generation on, the captured frame may be a generated one.",
+      "Guarda la imagen del juego tal como se presenta, sin el menú de ILION, como PNG en ILION\\Captures.\n"
+      "Quédate quieto en el mismo punto, captura, cambia la versión FSR y vuelve a capturar.\n"
+      "Con frame generation activo, el fotograma capturado puede ser uno generado." },
+    { "Wait until the selected FSR version is the one that's active",
+      "Espera a que la versión FSR seleccionada sea la que está activa" },
+    { "Capturing...", "Capturando..." },
+    { "No capture yet", "Aún no hay ninguna captura" },
+    { "The format of the game's image isn't supported for captures",
+      "El formato de la imagen del juego no está admitido para capturas" },
+    { "Can't create the buffers for the capture", "No se pueden crear los búferes de la captura" },
+    { "The game's image couldn't be reached, captures need DX12 with the overlay menu",
+      "No se pudo acceder a la imagen del juego; las capturas necesitan DX12 con el menú en overlay" },
+    { "The GPU didn't finish the copy in time", "La GPU no terminó la copia a tiempo" },
+    { "Can't read the capture back from the GPU", "No se puede leer la captura desde la GPU" },
+    { "Can't write the PNG file", "No se puede escribir el archivo PNG" },
+
     // Status tab
     { "Unofficial modified build, not an OptiScaler release",
       "Compilación modificada no oficial, no es una versión de OptiScaler" },

@@ -13,6 +13,7 @@
 #include <misc/HwTelemetry.h>
 #include <misc/IlionBenchmark.h>
 #include <misc/IlionCompare.h>
+#include <misc/IlionCapture.h>
 #include "ilion_lang.h"
 #include <proxies/Streamline_Proxy.h>
 
@@ -10461,6 +10462,95 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
             ImGui::TextWrapped("%s %s", Tr("Saved:"), result.savedPath.c_str());
         else if (!saveError.empty())
             ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.2f, 0.2f, 1.f)), "%s", Tr(saveError.c_str()));
+    }
+
+    // Captures of the game's image for the visual comparison, one per FSR version of the same scene
+    ImGui::SeparatorText(Tr("Visual analysis"));
+
+    const auto captureState = IlionCapture::GetState();
+
+    // Not during a test (it costs a frame) and not while the upscaler is being switched
+    // Allowed without an upscaler too, a native image is what a reference is made of
+    bool captureBlocked = busy || IlionCapture::Busy();
+    const char* captureBlockedWhy = nullptr;
+
+    if (fsrObservable)
+    {
+        const auto diag = FfxApiProxy::SrDiagGetSnapshot();
+
+        if (diag.statusLevel != 0)
+        {
+            captureBlocked = true;
+            captureBlockedWhy = "Wait until the selected FSR version is the one that's active";
+        }
+    }
+
+    ImGui::BeginDisabled(captureBlocked);
+
+    if (ImGui::Button(TrL("Capture image")))
+    {
+        IlionCapture::Meta meta;
+        meta.game = state.gameExe;
+        meta.upscaler = upscalerText;
+        meta.frameGeneration = "Off";
+
+        if (upscalerOn)
+        {
+            meta.resolution = StrFmt("%ux%u -> %ux%u", currentFeature->RenderWidth(), currentFeature->RenderHeight(),
+                                     currentFeature->TargetWidth(), currentFeature->TargetHeight());
+        }
+
+        if (const auto fg = state.currentFG; fg != nullptr && fg->IsActive() && !fg->IsPaused())
+            meta.frameGeneration = StrFmt("%s %ux", fg->Name(), fg->GetInterpolatedFrameCount() + 1);
+
+        if (fsrObservable && active.module != nullptr)
+        {
+            meta.fsrVersion = activeFsrName;
+            meta.dllPath = wstring_to_string(activeDllPath);
+            meta.dllSha256 = FSR4Versions::HashForPath(activeDllPath);
+
+            version_t dllVersion;
+
+            if (Util::GetFileVersion(activeDllPath, &dllVersion))
+            {
+                meta.dllFileVersion =
+                    StrFmt("%u.%u.%u.%u", dllVersion.major, dllVersion.minor, dllVersion.patch, dllVersion.reserved);
+            }
+        }
+
+        IlionCapture::Dismiss();
+
+        if (IlionCapture::Request(meta, Util::ExePath().parent_path() / L"ILION" / L"Captures"))
+            LOG_INFO("[CAPTURE] requested, fsr version: {}, dll: {}", meta.fsrVersion, meta.dllPath);
+    }
+
+    ShowTooltip("Saves the game's image as it is presented, without the ILION menu, as a PNG in ILION\\Captures.\n"
+                "Stand still in the same spot, capture, switch the FSR version and capture again.\n"
+                "With frame generation on, the captured frame may be a generated one.");
+
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+
+    if (captureBlockedWhy != nullptr)
+    {
+        ImGui::TextDisabled("%s", Tr(captureBlockedWhy));
+    }
+    else if (captureState == IlionCapture::State::Requested || captureState == IlionCapture::State::WaitingGpu ||
+             captureState == IlionCapture::State::Encoding)
+    {
+        ImGui::TextDisabled("%s", Tr("Capturing..."));
+    }
+    else if (captureState == IlionCapture::State::Done)
+    {
+        ImGui::TextWrapped("%s %s", Tr("Saved:"), IlionCapture::LastFile().c_str());
+    }
+    else if (captureState == IlionCapture::State::Failed)
+    {
+        ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.2f, 0.2f, 1.f)), "%s", Tr(IlionCapture::LastError().c_str()));
+    }
+    else
+    {
+        ImGui::TextDisabled("%s", Tr("No capture yet"));
     }
 
     // Existing tools, the same state as their own controls

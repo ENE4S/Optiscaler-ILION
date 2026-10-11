@@ -13,6 +13,7 @@
 #include "menu_common.h"
 #include <shaders/menu_blur/MenuBlur_Dx11.h>
 #include <shaders/menu_blur/MenuBlur_Dx12.h>
+#include <misc/IlionCapture.h>
 
 // menu
 static int const NUM_BACK_BUFFERS = 8;
@@ -470,6 +471,9 @@ static void RenderImGui_DX12(IDXGISwapChain* pSwapChainPlain)
 
             ImGui_ImplDX12_NewFrame();
 
+            // Finishes a capture whose copy the GPU has completed, never waits
+            IlionCapture::Poll();
+
             UINT backBufferIdx = pSwapChain->GetCurrentBackBufferIndex();
 
             // Blur textures are only created once the menu is opened, menu decides if they are used
@@ -519,6 +523,11 @@ static void RenderImGui_DX12(IDXGISwapChain* pSwapChainPlain)
                     return;
                 }
 
+                // Copy of the game's image for a capture that was asked for, before anything of the menu is
+                // drawn on the back buffer. It is in the PRESENT state here and is left in it.
+                if (IlionCapture::Wanted())
+                    IlionCapture::RecordCopy(device, g_pd3dCommandList, g_mainRenderTargetResource[backBufferIdx]);
+
                 if (blurMenu)
                 {
                     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
@@ -551,6 +560,8 @@ static void RenderImGui_DX12(IDXGISwapChain* pSwapChainPlain)
 
                 ID3D12CommandList* ppCommandLists[] = { g_pd3dCommandList };
                 ((ID3D12CommandQueue*) currentSCCommandQueue)->ExecuteCommandLists(1, ppCommandLists);
+
+                IlionCapture::Submitted((ID3D12CommandQueue*) currentSCCommandQueue);
             }
         }
         else

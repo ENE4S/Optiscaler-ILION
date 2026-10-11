@@ -334,9 +334,17 @@ static void DrawCardTitle(const char* label)
                                   ImGui::GetColorU32(IlionTheme::Alpha(IlionTheme::Shadow, 0.80f)));
     }
 
-    ImGui::PushStyleColor(ImGuiCol_Text, IlionTheme::industrial ? IlionTheme::TextTitle
+    // On the plate the name goes in upper case, only as it is drawn
+    const std::string plate = IlionTheme::industrial ? IlionTheme::Upper(label) : std::string();
+
+    ImGui::PushStyleColor(ImGuiCol_Text, IlionTheme::industrial ? IlionTheme::TitleAmber
                                                                 : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    ImGui::TextUnformatted(label, ImGui::FindRenderedTextEnd(label));
+
+    if (IlionTheme::industrial)
+        ImGui::TextUnformatted(plate.c_str());
+    else
+        ImGui::TextUnformatted(label, ImGui::FindRenderedTextEnd(label));
+
     ImGui::PopStyleColor();
 
     // Spacing below is not an item the tooltips should attach to
@@ -812,7 +820,7 @@ void MenuCommon::RenderUpscalerCombo(const API api, Upscaler currentUpscaler, co
     if (IsOn12(targetBackend))
         selectedName += " (Dx12)";
 
-    if (!ImGui::BeginCombo("##UpscalerCombo", selectedName.c_str(), ImGuiComboFlags_HeightLargest))
+    if (!IlionTheme::BeginCombo("##UpscalerCombo", selectedName.c_str(), ImGuiComboFlags_HeightLargest))
         return;
 
     struct Entry
@@ -986,7 +994,7 @@ template <HasDefaultValue B> void MenuCommon::AddResourceBarrier(std::string nam
         }
     }
 
-    if (ImGui::BeginCombo(name.c_str(), selectedName))
+    if (IlionTheme::BeginCombo(name.c_str(), selectedName))
     {
         if (ImGui::Selectable(states[0], !value->has_value()))
             value->reset();
@@ -1235,7 +1243,7 @@ void MenuCommon::PopulateCombo(const std::string& name, TStorage& currentValue,
         }
     }
 
-    if (ImGui::BeginCombo(name.c_str(), preview.c_str()))
+    if (IlionTheme::BeginCombo(name.c_str(), preview.c_str()))
     {
         for (const auto& opt : options)
         {
@@ -2586,17 +2594,17 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
 
     ImGui::TextDisabled("%s", Tr("Still captures against a reference you pick. What happens in motion is not measured."));
 
-    if (IlionTheme::Button(TrL("Back to Benchmark")))
+    if (IlionTheme::LampButton(TrL("Back to Benchmark"), IlionTheme::Lamp::Neutral))
         showVisualCompare = false;
 
     ImGui::SameLine();
 
-    if (IlionTheme::Button(TrL("Reload")))
+    if (IlionTheme::LampButton(TrL("Reload"), IlionTheme::Lamp::Neutral))
         visualCompareReload = true;
 
     ImGui::SameLine();
 
-    if (IlionTheme::Button(TrL("Clear selection")))
+    if (IlionTheme::LampButton(TrL("Clear selection"), IlionTheme::Lamp::Neutral))
         selectedIds.clear();
 
     ImGui::SameLine();
@@ -2637,7 +2645,7 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
 
         ImGui::SameLine();
 
-        if (IlionTheme::Button(TrL("Cancel")))
+        if (IlionTheme::LampButton(TrL("Cancel"), IlionTheme::Lamp::Neutral))
             ImGui::CloseCurrentPopup();
 
         ImGui::EndPopup();
@@ -2796,7 +2804,7 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
     ImGui::Spacing();
     ImGui::SetNextItemWidth(360.0f * scale);
 
-    if (ImGui::BeginCombo(TrL("Reference"), columnName(*reference).c_str()))
+    if (IlionTheme::BeginCombo(TrL("Reference"), columnName(*reference).c_str()))
     {
         for (const auto* capture : picked)
         {
@@ -2918,7 +2926,7 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
         ImGui::SameLine();
         ImGui::SetNextItemWidth(80.0f * scale);
 
-        if (ImGui::BeginCombo("##gain", StrFmt("x%d", differenceGain).c_str()))
+        if (IlionTheme::BeginCombo("##gain", StrFmt("x%d", differenceGain).c_str()))
         {
             for (const int gain : gains)
             {
@@ -3016,7 +3024,7 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
 
             ImGui::SetNextItemWidth((float) panelWidth);
 
-            if (ImGui::BeginCombo("##capture", label.c_str()))
+            if (IlionTheme::BeginCombo("##capture", label.c_str()))
             {
                 for (const auto* capture : picked)
                 {
@@ -3664,6 +3672,20 @@ static CompareConclusion BuildGlobalConclusion(const IlionCompare::Analysis& ana
              std::string(Tr("Performance and stability don't single out a DLL.")) + Tr(visual), 1 };
 }
 
+// The difference of a value next to it, in the same cell: green when it goes the way that is good for that
+// metric, red when it goes the other way, plain when the metric has no good way or nothing changed.
+static void DrawDifference(const std::string& text, double percent, int better)
+{
+    ImGui::SameLine(0.0f, 0.0f);
+
+    if (better == 0 || std::abs(percent) < 0.05)
+        ImGui::TextUnformatted(text.c_str());
+    else if ((percent > 0.0) == (better > 0))
+        ImGui::TextColored(toneMapColor(ImVec4(0.3f, 1.0f, 0.3f, 1.0f)), "%s", text.c_str());
+    else
+        ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.4f, 0.3f, 1.0f)), "%s", text.c_str());
+}
+
 static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
 {
     if (!showBenchmarkCompare)
@@ -3714,17 +3736,17 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
     ImGui::TextDisabled("%s", Tr("Performance and stability comparison. Image quality only comes from the visual "
                                  "analyses that were saved."));
 
-    if (IlionTheme::Button(TrL("Back to Benchmark")))
+    if (IlionTheme::LampButton(TrL("Back to Benchmark"), IlionTheme::Lamp::Neutral))
         showBenchmarkCompare = false;
 
     ImGui::SameLine();
 
-    if (IlionTheme::Button(TrL("Reload")))
+    if (IlionTheme::LampButton(TrL("Reload"), IlionTheme::Lamp::Neutral))
         benchmarkCompareReload = true;
 
     ImGui::SameLine();
 
-    if (IlionTheme::Button(TrL("Clear selection")))
+    if (IlionTheme::LampButton(TrL("Clear selection"), IlionTheme::Lamp::Neutral))
         selectedIds.clear();
 
     ImGui::SameLine();
@@ -3772,7 +3794,7 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
 
         ImGui::SameLine();
 
-        if (IlionTheme::Button(TrL("Cancel")))
+        if (IlionTheme::LampButton(TrL("Cancel"), IlionTheme::Lamp::Neutral))
             ImGui::CloseCurrentPopup();
 
         ImGui::EndPopup();
@@ -3892,7 +3914,7 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
     ImGui::Spacing();
     ImGui::SetNextItemWidth(360.0f * scale);
 
-    if (ImGui::BeginCombo(TrL("Reference"), columnName(*reference).c_str()))
+    if (IlionTheme::BeginCombo(TrL("Reference"), columnName(*reference).c_str()))
     {
         for (const auto* test : tests)
         {
@@ -3950,25 +3972,28 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
     // One column per test
     ImGui::SeparatorText(Tr("Results"));
 
+    // better: +1 when a higher value is the good one, -1 when a lower one is, 0 when neither. Only for the colour
+    // of the difference.
     struct MetricRow
     {
         const char* label;
         Number Test::*field;
         const char* format;
         bool differences;
+        int better = 0;
     };
 
     static const MetricRow performanceRows[] = {
-        { "Average FPS", &Test::avgFps, "%.1f", true },
-        { "Median FPS", &Test::medianFps, "%.1f", true },
-        { "1% low", &Test::low1Fps, "%.1f", true },
-        { "0.1% low", &Test::low01Fps, "%.1f", true },
-        { "Frame time mean", &Test::meanMs, "%.2f ms", true },
-        { "Frame time P95", &Test::p95Ms, "%.2f ms", true },
-        { "Frame time P99", &Test::p99Ms, "%.2f ms", true },
-        { "Variability", &Test::variationPercent, "%.1f %%", true },
-        { "Stutter events", &Test::stutterCount, "%.0f", true },
-        { "Stutters per minute", &Test::stutterPerMinute, "%.1f", true },
+        { "Average FPS", &Test::avgFps, "%.1f", true, 1 },
+        { "Median FPS", &Test::medianFps, "%.1f", true, 1 },
+        { "1% low", &Test::low1Fps, "%.1f", true, 1 },
+        { "0.1% low", &Test::low01Fps, "%.1f", true, 1 },
+        { "Frame time mean", &Test::meanMs, "%.2f ms", true, -1 },
+        { "Frame time P95", &Test::p95Ms, "%.2f ms", true, -1 },
+        { "Frame time P99", &Test::p99Ms, "%.2f ms", true, -1 },
+        { "Variability", &Test::variationPercent, "%.1f %%", true, -1 },
+        { "Stutter events", &Test::stutterCount, "%.0f", true, -1 },
+        { "Stutters per minute", &Test::stutterPerMinute, "%.1f", true, -1 },
         { "Frames", &Test::frames, "%.0f", false },
     };
 
@@ -4047,7 +4072,7 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
                         continue;
                     }
 
-                    std::string text = StrFmt(row.format, value.value);
+                    ImGui::TextUnformatted(StrFmt(row.format, value.value).c_str());
 
                     // Difference against the reference, in % and in the unit of the value
                     if (row.differences && test != reference)
@@ -4056,10 +4081,11 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
                         const auto absolute = IlionCompare::AbsoluteDifference(value, reference->*row.field);
 
                         if (percent.valid && absolute.valid)
-                            text += StrFmt("   %+.1f %% (%+.2f)", percent.value, absolute.value);
+                        {
+                            DrawDifference(StrFmt("   %+.1f %% (%+.2f)", percent.value, absolute.value), percent.value,
+                                           row.better);
+                        }
                     }
-
-                    ImGui::TextUnformatted(text.c_str());
                 }
             }
         };
@@ -4516,12 +4542,12 @@ static void DrawFinalReportWindow(float scale, ImGuiIO& io)
     ImGui::TextDisabled("%s", Tr("Saved benchmarks and captures of every DLL, joined by the DLL and the configuration "
                                  "of the test."));
 
-    if (IlionTheme::Button(TrL("Back to Benchmark")))
+    if (IlionTheme::LampButton(TrL("Back to Benchmark"), IlionTheme::Lamp::Neutral))
         showFinalReport = false;
 
     ImGui::SameLine();
 
-    if (IlionTheme::Button(TrL("Reload")))
+    if (IlionTheme::LampButton(TrL("Reload"), IlionTheme::Lamp::Neutral))
         finalReportReload = true;
 
     ImGui::SameLine();
@@ -4540,7 +4566,7 @@ static void DrawFinalReportWindow(float scale, ImGuiIO& io)
     ImGui::Spacing();
     ImGui::SetNextItemWidth(620.0f * scale);
 
-    if (ImGui::BeginCombo(TrL("Configuration"), configuration.Label().c_str()))
+    if (IlionTheme::BeginCombo(TrL("Configuration"), configuration.Label().c_str()))
     {
         for (int i = 0; i < (int) configurations.size(); i++)
         {
@@ -4613,7 +4639,7 @@ static void DrawFinalReportWindow(float scale, ImGuiIO& io)
     {
         ImGui::SetNextItemWidth(620.0f * scale);
 
-        if (ImGui::BeginCombo(TrL("Native reference"), StrFmt("%s  %s", reference->dateTime.c_str(), reference->id.c_str()).c_str()))
+        if (IlionTheme::BeginCombo(TrL("Native reference"), StrFmt("%s  %s", reference->dateTime.c_str(), reference->id.c_str()).c_str()))
         {
             for (const auto* capture : references)
             {
@@ -4824,7 +4850,7 @@ static void DrawFinalReportWindow(float scale, ImGuiIO& io)
 
     ImGui::SetNextItemWidth(300.0f * scale);
 
-    if (ImGui::BeginCombo(TrL("Differences against"), analysis.candidates[baseline].name.c_str()))
+    if (IlionTheme::BeginCombo(TrL("Differences against"), analysis.candidates[baseline].name.c_str()))
     {
         for (int i = 0; i < dllCount; i++)
         {
@@ -4859,7 +4885,7 @@ static void DrawFinalReportWindow(float scale, ImGuiIO& io)
         };
 
         // Value of every dll with its difference against the baseline, in % and in the unit of the value
-        const auto row = [&](const char* label, const char* format, const auto& value)
+        const auto row = [&](const char* label, const char* format, const auto& value, int better)
         {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
@@ -4879,7 +4905,7 @@ static void DrawFinalReportWindow(float scale, ImGuiIO& io)
                     continue;
                 }
 
-                std::string text = StrFmt(format, number.value);
+                ImGui::TextUnformatted(StrFmt(format, number.value).c_str());
 
                 if (i != baseline)
                 {
@@ -4887,10 +4913,8 @@ static void DrawFinalReportWindow(float scale, ImGuiIO& io)
                     const auto absolute = IlionCompare::AbsoluteDifference(number, base);
 
                     if (percent.valid && absolute.valid)
-                        text += StrFmt("   %+.1f %% (%+.3g)", percent.value, absolute.value);
+                        DrawDifference(StrFmt("   %+.1f %% (%+.3g)", percent.value, absolute.value), percent.value, better);
                 }
-
-                ImGui::TextUnformatted(text.c_str());
             }
         };
 
@@ -4901,23 +4925,25 @@ static void DrawFinalReportWindow(float scale, ImGuiIO& io)
         { return [&, field](int i) { return Number { visual[i].measured > 0, visual[i].*field }; }; };
 
         section("Performance");
-        row("Average FPS", "%.1f", benchmark(&Test::avgFps));
-        row("1% low", "%.1f", benchmark(&Test::low1Fps));
-        row("0.1% low", "%.1f", benchmark(&Test::low01Fps));
-        row("Frame time mean", "%.2f ms", benchmark(&Test::meanMs));
+        // Last value: +1 when higher is the good way, -1 when lower is, 0 when the metric has none
+        row("Average FPS", "%.1f", benchmark(&Test::avgFps), 1);
+        row("1% low", "%.1f", benchmark(&Test::low1Fps), 1);
+        row("0.1% low", "%.1f", benchmark(&Test::low01Fps), 1);
+        row("Frame time mean", "%.2f ms", benchmark(&Test::meanMs), -1);
 
         section("Stability and frame times");
-        row("Frame time P99", "%.2f ms", benchmark(&Test::p99Ms));
-        row("Variability", "%.1f %%", benchmark(&Test::variationPercent));
-        row("Stutters per minute", "%.1f", benchmark(&Test::stutterPerMinute));
+        row("Frame time P99", "%.2f ms", benchmark(&Test::p99Ms), -1);
+        row("Variability", "%.1f %%", benchmark(&Test::variationPercent), -1);
+        row("Stutters per minute", "%.1f", benchmark(&Test::stutterPerMinute), -1);
 
+        // Closer to native is the good way; edge strength and overshoot are readings, not better or worse
         section("Visual quality against the native reference");
-        row("SSIM (structure)", "%.4f", picture(&ReportVisual::ssim));
-        row("Mean difference", "%.2f", picture(&ReportVisual::meanDifference));
-        row("Pixels that differ", "%.1f %%", picture(&ReportVisual::differentPercent));
-        row("Edge strength", "%+.1f %%", picture(&ReportVisual::edgeChangePercent));
-        row("Edges of the reference kept", "%.1f %%", picture(&ReportVisual::edgesKeptPercent));
-        row("Overshoot next to edges (exploratory)", "%.2f %%", picture(&ReportVisual::overshootPercent));
+        row("SSIM (structure)", "%.4f", picture(&ReportVisual::ssim), 1);
+        row("Mean difference", "%.2f", picture(&ReportVisual::meanDifference), -1);
+        row("Pixels that differ", "%.1f %%", picture(&ReportVisual::differentPercent), -1);
+        row("Edge strength", "%+.1f %%", picture(&ReportVisual::edgeChangePercent), 0);
+        row("Edges of the reference kept", "%.1f %%", picture(&ReportVisual::edgesKeptPercent), 1);
+        row("Overshoot next to edges (exploratory)", "%.2f %%", picture(&ReportVisual::overshootPercent), 0);
 
         // Where the numbers of every dll come from
         section("Data used");
@@ -6412,6 +6438,9 @@ static void RenderModeSelector(decltype(Config::Instance()) config)
         const bool clicked = ImGui::InvisibleButton(id, size);
         const bool highlighted = selected || ImGui::IsItemHovered();
 
+        if (IlionTheme::industrial)
+            IlionTheme::DrawSelectorKey(ImGui::GetWindowDrawList(), pos, size, selected, ImGui::IsItemHovered());
+
         ImGui::GetWindowDrawList()->AddText(pos, ImGui::GetColorU32(highlighted ? ImGuiCol_Text : ImGuiCol_TextDisabled),
                                             label);
 
@@ -6450,6 +6479,9 @@ static void RenderLanguageSelector(decltype(Config::Instance()) config)
         ImGui::PopID();
 
         const bool highlighted = current == lang || ImGui::IsItemHovered();
+
+        if (IlionTheme::industrial)
+            IlionTheme::DrawSelectorKey(ImGui::GetWindowDrawList(), pos, size, current == lang, ImGui::IsItemHovered());
 
         ImGui::GetWindowDrawList()->AddText(pos, ImGui::GetColorU32(highlighted ? ImGuiCol_Text : ImGuiCol_TextDisabled),
                                             label);
@@ -6754,7 +6786,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
             const char* selectedModel = models[configModes];
 
-            if (ImGui::BeginCombo("Network Models", selectedModel))
+            if (IlionTheme::BeginCombo("Network Models", selectedModel))
             {
                 for (int n = 0; n < 6; n++)
                 {
@@ -6821,7 +6853,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             ImGui::Spacing();
             ImGui::PushItemWidth(150.0f * menuResScale);
 
-            if (ImGui::BeginCombo(TrL("FSR Upscaler DLL"), activeSrName.c_str()))
+            if (IlionTheme::BeginCombo(TrL("FSR Upscaler DLL"), activeSrName.c_str()))
             {
                 if (!defaultSrDll.empty() && ImGui::Selectable(TrL("Default"), defaultActive) && !defaultActive)
                     selectSrVariant(L"");
@@ -7035,7 +7067,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
             ImGui::PushItemWidth(150.0f * menuResScale);
 
-            if (ImGui::BeginCombo("FFX Upscaler", currentName.c_str()))
+            if (IlionTheme::BeginCombo("FFX Upscaler", currentName.c_str()))
             {
                 for (auto n : FfxVersionsNewestFirst(*versions))
                 {
@@ -7266,7 +7298,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                 ImGui::PushItemWidth(220.0f * menuResScale);
 
                 float velocity = config->FsrVelocity.value_or_default();
-                if (ImGui::SliderFloat("Velocity Factor", &velocity, 0.00f, 1.0f, "%.2f"))
+                if (IlionTheme::SliderFloat("Velocity Factor", &velocity, 0.00f, 1.0f, "%.2f"))
                     config->FsrVelocity = velocity;
 
                 ShowTooltip("Value of 0.0f can improve temporal stability of bright pixels\n"
@@ -7277,7 +7309,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                 {
                     // Reactive Scale
                     float reactiveScale = config->FsrReactiveScale.value_or_default();
-                    if (ImGui::SliderFloat("Reactive Scale", &reactiveScale, 0.0f, 1.0f, "%.3f"))
+                    if (IlionTheme::SliderFloat("Reactive Scale", &reactiveScale, 0.0f, 1.0f, "%.3f"))
                         config->FsrReactiveScale = reactiveScale;
 
                     ShowTooltip("Meant for development purpose to test if\n"
@@ -7285,7 +7317,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
                     // Shading Scale
                     float shadingScale = config->FsrShadingScale.value_or_default();
-                    if (ImGui::SliderFloat("Shading Scale", &shadingScale, 0.0f, 1.0f, "%.3f"))
+                    if (IlionTheme::SliderFloat("Shading Scale", &shadingScale, 0.0f, 1.0f, "%.3f"))
                         config->FsrShadingScale = shadingScale;
 
                     ShowTooltip("Increasing this scales FSR3.1 computed shading\n"
@@ -7293,7 +7325,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
                     // Accumulation Added Per Frame
                     float accAddPerFrame = config->FsrAccAddPerFrame.value_or_default();
-                    if (ImGui::SliderFloat("Acc. Added Per Frame", &accAddPerFrame, 0.0f, 1.0f, "%.3f"))
+                    if (IlionTheme::SliderFloat("Acc. Added Per Frame", &accAddPerFrame, 0.0f, 1.0f, "%.3f"))
                         config->FsrAccAddPerFrame = accAddPerFrame;
 
                     ShowTooltip("Corresponds to amount of accumulation added per frame\n"
@@ -7305,7 +7337,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
                     // Min Disocclusion Accumulation
                     float minDisOccAcc = config->FsrMinDisOccAcc.value_or_default();
-                    if (ImGui::SliderFloat("Min. Disocclusion Acc.", &minDisOccAcc, -1.0f, 1.0f, "%.3f"))
+                    if (IlionTheme::SliderFloat("Min. Disocclusion Acc.", &minDisOccAcc, -1.0f, 1.0f, "%.3f"))
                         config->FsrMinDisOccAcc = minDisOccAcc;
 
                     ShowTooltip("Increasing this value may reduce white pixel temporal\n"
@@ -7772,7 +7804,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
                 ImGui::PushItemWidth(95.0f * menuResScale);
 
-                if (ImGui::BeginCombo("Override DLSSG Ratio", currentIntCountStr.c_str()))
+                if (IlionTheme::BeginCombo("Override DLSSG Ratio", currentIntCountStr.c_str()))
                 {
                     for (int i = 0; i <= maxInterpolationCount + 1; i++)
                     {
@@ -7830,7 +7862,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
             ImGui::BeginDisabled(state.dlssgLastSetMode != sl::DLSSGMode::eDynamic);
             static float fpsTarget = config->FGDLSSGFramerateTargetDMFG.value_or_default();
-            ImGui::SliderFloat("DMFG FPS Target", &fpsTarget, 0, 200, "%.0f");
+            IlionTheme::SliderFloat("DMFG FPS Target", &fpsTarget, 0, 200, "%.0f");
 
             ShowTooltip("An active limit of 0 means auto-detect the display refresh rate");
 
@@ -8003,7 +8035,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
                         ImGui::PushItemWidth(95.0f * menuResScale);
 
-                        if (ImGui::BeginCombo("FT Input", ftSources[currentSet]))
+                        if (IlionTheme::BeginCombo("FT Input", ftSources[currentSet]))
                         {
                             for (size_t i = 0; i < currentSourceCount; i++)
                             {
@@ -8031,7 +8063,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                 if (showHudCutoff)
                 {
                     float fgHudCutoff = config->FGHudCutoff.value_or_default();
-                    if (ImGui::SliderFloat("Hud Cutoff", &fgHudCutoff, 0.00f, 1.0f, "%.2f"))
+                    if (IlionTheme::SliderFloat("Hud Cutoff", &fgHudCutoff, 0.00f, 1.0f, "%.2f"))
                         config->FGHudCutoff = fgHudCutoff;
 
                     ShowTooltip("Cutoffs transparency from UI to help with interpolation\n"
@@ -8083,7 +8115,7 @@ void MenuCommon::RenderFGModeCombo(RenderMenuContext& ctx, const char* label, in
 
     ImGui::PushItemWidth(115.0f * ctx.menuResScale);
 
-    if (ImGui::BeginCombo(label, preview.c_str()))
+    if (IlionTheme::BeginCombo(label, preview.c_str()))
     {
         const int firstMode = Config::FGCanFollowGame() ? -1 : 0;
 
@@ -8152,7 +8184,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 ImGui::PushItemWidth(115.0f * menuResScale);
 
                 auto currentName = StrFmt("FSR %s", state.ffxFGVersionNames[_ffxFGIndex]);
-                if (ImGui::BeginCombo("FFX FG Version", currentName.c_str()))
+                if (IlionTheme::BeginCombo("FFX FG Version", currentName.c_str()))
                 {
                     for (int n = 0; n < state.ffxFGVersionIds.size(); n++)
                     {
@@ -8333,7 +8365,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                                     "Opti default value: 0.01ms");
 
                         auto fptVarianceFactor = config->FGFPTVarianceFactor.value_or_default();
-                        if (ImGui::SliderFloat("Variance Factor", &fptVarianceFactor, 0.0f, 1.0f, "%.2f"))
+                        if (IlionTheme::SliderFloat("Variance Factor", &fptVarianceFactor, 0.0f, 1.0f, "%.2f"))
                             config->FGFPTVarianceFactor = fptVarianceFactor;
                         ShowTooltip("Variance factor\n"
                                     "FSR default value: 0.1\n"
@@ -8348,7 +8380,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
                         ImGui::PushItemWidth(115.0f * menuResScale);
                         auto fptHybridSpinTime = config->FGFPTHybridSpinTime.value_or_default();
-                        if (ImGui::SliderInt("Hybrid Spin Time", &fptHybridSpinTime, 0, 100))
+                        if (IlionTheme::SliderInt("Hybrid Spin Time", &fptHybridSpinTime, 0, 100))
                             config->FGFPTHybridSpinTime = fptHybridSpinTime;
                         ShowTooltip("How long to spin if FPTHybridSpin is true. Measured in timer "
                                     "resolution units.\n"
@@ -8594,7 +8626,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 ImGui::BeginDisabled(!config->FGDLSSGForceDMFG.value_or_default());
                 static float fpsTarget = config->FGDLSSGFramerateTargetDMFG.value_or_default();
                 float fpsSliderMax = (float) std::max(200, refreshRate);
-                ImGui::SliderFloat("DMFG FPS Target", &fpsTarget, 0, fpsSliderMax, "%.0f");
+                IlionTheme::SliderFloat("DMFG FPS Target", &fpsTarget, 0, fpsSliderMax, "%.0f");
 
                 ShowTooltip("An active limit of 0 means auto-detect the display refresh rate");
 
@@ -8682,7 +8714,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                     "and then some blending on the edges to fool the eye");
 
         float cutoff = config->ReprojectionDepthCutoff.value_or_default();
-        if (ImGui::SliderFloat("Depth cutoff", &cutoff, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_Logarithmic))
+        if (IlionTheme::SliderFloat("Depth cutoff", &cutoff, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_Logarithmic))
             config->ReprojectionDepthCutoff = cutoff;
         ShowTooltip("Selects how many elements close to the camera\n"
                     "should be shown over the reprojected image.\n"
@@ -9242,7 +9274,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                     ImGui::PushItemWidth(135.0f * menuResScale);
 
                     auto currentName = StrFmt("FSR %s", state.ffxFGVersionNames[_ffxFGIndex]);
-                    if (ImGui::BeginCombo("FFX FG", currentName.c_str()))
+                    if (IlionTheme::BeginCombo("FFX FG", currentName.c_str()))
                     {
                         for (int n = 0; n < state.ffxFGVersionIds.size(); n++)
                         {
@@ -9455,14 +9487,14 @@ void MenuCommon::RenderFsrCommonSettings(RenderMenuContext& ctx)
 
                 if (useVFov)
                 {
-                    if (ImGui::SliderFloat("Vert. FOV", &vfov, 0.0f, 180.0f, "%.1f"))
+                    if (IlionTheme::SliderFloat("Vert. FOV", &vfov, 0.0f, 180.0f, "%.1f"))
                         config->FsrVerticalFov = vfov;
 
                     ShowTooltip("Might help achieve better image quality");
                 }
                 else
                 {
-                    if (ImGui::SliderFloat("Horz. FOV", &hfov, 0.0f, 180.0f, "%.1f"))
+                    if (IlionTheme::SliderFloat("Horz. FOV", &hfov, 0.0f, 180.0f, "%.1f"))
                         config->FsrHorizontalFov = hfov;
 
                     ShowTooltip("Might help achieve better image quality");
@@ -9474,12 +9506,12 @@ void MenuCommon::RenderFsrCommonSettings(RenderMenuContext& ctx)
                 cameraNear = config->FsrCameraNear.value_or_default();
                 cameraFar = config->FsrCameraFar.value_or_default();
 
-                if (ImGui::SliderFloat("Camera Near", &cameraNear, 0.1f, 500000.0f, "%.1f"))
+                if (IlionTheme::SliderFloat("Camera Near", &cameraNear, 0.1f, 500000.0f, "%.1f"))
                     config->FsrCameraNear = cameraNear;
                 ShowTooltip("Might help achieve better image quality\n"
                             "And potentially less ghosting");
 
-                if (ImGui::SliderFloat("Camera Far", &cameraFar, 0.1f, 500000.0f, "%.1f"))
+                if (IlionTheme::SliderFloat("Camera Far", &cameraFar, 0.1f, 500000.0f, "%.1f"))
                     config->FsrCameraFar = cameraFar;
                 ShowTooltip("Might help achieve better image quality\n"
                             "And potentially less ghosting");
@@ -9579,7 +9611,7 @@ void MenuCommon::RenderFramerateSettings(RenderMenuContext& ctx)
             _limitFps = config->FramerateLimit.value_or_default();
 
         float fpsSliderMax = (float) std::max(200, refreshRate);
-        ImGui::SliderFloat("FPS Limit", &_limitFps, 0, fpsSliderMax, "%.0f");
+        IlionTheme::SliderFloat("FPS Limit", &_limitFps, 0, fpsSliderMax, "%.0f");
 
         if (IlionTheme::Button("Apply Limit"))
         {
@@ -9854,7 +9886,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
 
     float sharpness = config->Sharpness.value_or_default();
 
-    if (ImGui::SliderFloat("Strength", &sharpness, 0.0f, 1.0f))
+    if (IlionTheme::SliderFloat("Strength", &sharpness, 0.0f, 1.0f))
         config->Sharpness = sharpness;
 
     ImGui::EndDisabled();
@@ -9950,7 +9982,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                     if (currentFeature->DepthLinear())
                     {
                         float depthBias = config->DADepthBias.value_or(0.0015f);
-                        if (ImGui::SliderFloat("Depth Bias", &depthBias, 0.005f, 0.03f, "%.4f"))
+                        if (IlionTheme::SliderFloat("Depth Bias", &depthBias, 0.005f, 0.03f, "%.4f"))
                             config->DADepthBias = depthBias;
 
                         ShowTooltip("Ignores small depth differences before edge detection.\n\n"
@@ -9960,7 +9992,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                                     "detection.");
 
                         float depthScale = config->DADepthScale.value_or(250.0f);
-                        if (ImGui::SliderFloat("Depth Scale", &depthScale, 100.0f, 600.0f, "%.1f"))
+                        if (IlionTheme::SliderFloat("Depth Scale", &depthScale, 100.0f, 600.0f, "%.1f"))
                             config->DADepthScale = depthScale;
 
                         ShowTooltip("Controls how strongly sharpening is reduced across depth edges.\n\n"
@@ -9972,7 +10004,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                     else
                     {
                         float depthBias = config->DADepthBias.value_or(0.001f);
-                        if (ImGui::SliderFloat("Depth Bias", &depthBias, 0.0001f, 0.003f, "%.4f"))
+                        if (IlionTheme::SliderFloat("Depth Bias", &depthBias, 0.0001f, 0.003f, "%.4f"))
                             config->DADepthBias = depthBias;
 
                         ShowTooltip("Ignores small depth differences before edge detection.\n\n"
@@ -9982,7 +10014,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                                     "detection.");
 
                         float depthScale = config->DADepthScale.value_or(35.0f);
-                        if (ImGui::SliderFloat("Depth Scale", &depthScale, 25.0f, 400.0f, "%.1f"))
+                        if (IlionTheme::SliderFloat("Depth Scale", &depthScale, 25.0f, 400.0f, "%.1f"))
                             config->DADepthScale = depthScale;
 
                         ShowTooltip("Controls how strongly sharpening is reduced across depth edges.\n\n"
@@ -10010,7 +10042,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                 ImGui::BeginDisabled(!config->ContrastEnabled.value_or_default());
 
                 float contrast = config->Contrast.value_or_default();
-                if (ImGui::SliderFloat("Contrast", &contrast, -2.0f, 2.0f, "%.2f"))
+                if (IlionTheme::SliderFloat("Contrast", &contrast, -2.0f, 2.0f, "%.2f"))
                     config->Contrast = contrast;
 
                 ShowTooltip("Positive values decrease sharpness at high contrast areas.\n"
@@ -10038,7 +10070,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                 }
 
                 float motionSharpness = config->MotionSharpness.value_or_default();
-                if (ImGui::SliderFloat("MotionSharpness", &motionSharpness, -1.0f, 1.0f, "%.3f"))
+                if (IlionTheme::SliderFloat("MotionSharpness", &motionSharpness, -1.0f, 1.0f, "%.3f"))
                     config->MotionSharpness = motionSharpness;
 
                 ShowTooltip("Maximum amount of sharpness that motion can add or remove.\n\n"
@@ -10047,7 +10079,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                             "The final adjustment scales with motion and is capped at this value.");
 
                 float motionThreshod = config->MotionThreshold.value_or_default();
-                if (ImGui::SliderFloat("MotionThreshod", &motionThreshod, 0.0f, 100.0f, "%.2f"))
+                if (IlionTheme::SliderFloat("MotionThreshod", &motionThreshod, 0.0f, 100.0f, "%.2f"))
                     config->MotionThreshold = motionThreshod;
 
                 ShowTooltip("Minimum motion required before motion-based sharpening adjustment begins.\n\n"
@@ -10055,7 +10087,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                             "Lower values react to subtle motion (more sensitive).");
 
                 float motionScale = config->MotionScaleLimit.value_or_default();
-                if (ImGui::SliderFloat("MotionRange", &motionScale, 0.01f, 100.0f, "%.2f"))
+                if (IlionTheme::SliderFloat("MotionRange", &motionScale, 0.01f, 100.0f, "%.2f"))
                     config->MotionScaleLimit = motionScale;
 
                 ShowTooltip("Defines the motion range over which the effect ramps from zero to full strength.\n\n"
@@ -10124,34 +10156,34 @@ void MenuCommon::RenderUpscaleRatioSettings(RenderMenuContext& ctx)
     if (config->UpscaleRatioOverrideEnabled.value_or_default())
     {
         float urOverride = config->UpscaleRatioOverrideValue.value_or_default();
-        ImGui::SliderFloat("All Ratios", &urOverride, minSliderLimit, maxSliderLimit, "%.3f");
+        IlionTheme::SliderFloat("All Ratios", &urOverride, minSliderLimit, maxSliderLimit, "%.3f");
         config->UpscaleRatioOverrideValue = urOverride;
     }
 
     if (config->QualityRatioOverrideEnabled.value_or_default())
     {
         float qDlaa = config->QualityRatio_DLAA.value_or_default();
-        if (ImGui::SliderFloat("DLAA", &qDlaa, minSliderLimit, maxSliderLimit, "%.3f"))
+        if (IlionTheme::SliderFloat("DLAA", &qDlaa, minSliderLimit, maxSliderLimit, "%.3f"))
             config->QualityRatio_DLAA = qDlaa;
 
         float qUq = config->QualityRatio_UltraQuality.value_or_default();
-        if (ImGui::SliderFloat("Ultra Quality", &qUq, minSliderLimit, maxSliderLimit, "%.3f"))
+        if (IlionTheme::SliderFloat("Ultra Quality", &qUq, minSliderLimit, maxSliderLimit, "%.3f"))
             config->QualityRatio_UltraQuality = qUq;
 
         float qQ = config->QualityRatio_Quality.value_or_default();
-        if (ImGui::SliderFloat("Quality", &qQ, minSliderLimit, maxSliderLimit, "%.3f"))
+        if (IlionTheme::SliderFloat("Quality", &qQ, minSliderLimit, maxSliderLimit, "%.3f"))
             config->QualityRatio_Quality = qQ;
 
         float qB = config->QualityRatio_Balanced.value_or_default();
-        if (ImGui::SliderFloat("Balanced", &qB, minSliderLimit, maxSliderLimit, "%.3f"))
+        if (IlionTheme::SliderFloat("Balanced", &qB, minSliderLimit, maxSliderLimit, "%.3f"))
             config->QualityRatio_Balanced = qB;
 
         float qP = config->QualityRatio_Performance.value_or_default();
-        if (ImGui::SliderFloat("Performance", &qP, minSliderLimit, maxSliderLimit, "%.3f"))
+        if (IlionTheme::SliderFloat("Performance", &qP, minSliderLimit, maxSliderLimit, "%.3f"))
             config->QualityRatio_Performance = qP;
 
         float qUp = config->QualityRatio_UltraPerformance.value_or_default();
-        if (ImGui::SliderFloat("Ultra Performance", &qUp, minSliderLimit, maxSliderLimit, "%.3f"))
+        if (IlionTheme::SliderFloat("Ultra Performance", &qUp, minSliderLimit, maxSliderLimit, "%.3f"))
             config->QualityRatio_UltraPerformance = qUp;
     }
 }
@@ -10265,7 +10297,7 @@ void MenuCommon::RenderOutputScalingSettings(RenderMenuContext& ctx)
         ImGui::EndDisabled();
 
         ImGui::BeginDisabled(!_ssEnabled || currentFeature->RenderWidth() > currentFeature->DisplayWidth());
-        ImGui::SliderFloat("Ratio", &_ssRatio, 0.5f, 3.0f, "%.2f");
+        IlionTheme::SliderFloat("Ratio", &_ssRatio, 0.5f, 3.0f, "%.2f");
         ImGui::EndDisabled();
 
         if (currentFeature != nullptr && !currentFeature->IsFrozen())
@@ -10415,7 +10447,7 @@ void MenuCommon::RenderInitFlagsSettings(RenderMenuContext& ctx)
 
         if (!binaryMask)
         {
-            if (ImGui::SliderFloat("React. Mask Bias", &maskBias, 0.0f, 0.9f, "%.2f"))
+            if (IlionTheme::SliderFloat("React. Mask Bias", &maskBias, 0.0f, 0.9f, "%.2f"))
                 config->DlssReactiveMaskBias = maskBias;
 
             ShowTooltip("Values above 0 activate usage of Reactive mask");
@@ -10455,15 +10487,15 @@ void MenuCommon::RenderMagnifierSettings(RenderMenuContext& ctx)
         ImGui::BeginDisabled(!magnifierEnabled);
 
         float magnifierSize = config->MagnifierSize.value_or_default();
-        if (ImGui::SliderFloat("Size", &magnifierSize, 5.0f, 50.0f, "%.1f%% of screen"))
+        if (IlionTheme::SliderFloat("Size", &magnifierSize, 5.0f, 50.0f, "%.1f%% of screen"))
             config->MagnifierSize = magnifierSize;
 
         int zoomFactor = config->MagnifierZoomFactor.value_or_default();
-        if (ImGui::SliderInt("Zoom Factor", &zoomFactor, 2, 20, "%dx"))
+        if (IlionTheme::SliderInt("Zoom Factor", &zoomFactor, 2, 20, "%dx"))
             config->MagnifierZoomFactor = zoomFactor;
 
         float borderSize = config->MagnifierBorderSize.value_or_default();
-        if (ImGui::SliderFloat("Border Size", &borderSize, 0.0f, 2.0f, "%.2f%% of screen"))
+        if (IlionTheme::SliderFloat("Border Size", &borderSize, 0.0f, 2.0f, "%.2f%% of screen"))
             config->MagnifierBorderSize = borderSize;
 
         ImGui::Separator();
@@ -10473,11 +10505,11 @@ void MenuCommon::RenderMagnifierSettings(RenderMenuContext& ctx)
         if (staticMode)
         {
             float staticX = config->MagnifierStaticPosX.value();
-            if (ImGui::SliderFloat("Static Pos X", &staticX, 0.0f, 100.0f, "%.1f%%"))
+            if (IlionTheme::SliderFloat("Static Pos X", &staticX, 0.0f, 100.0f, "%.1f%%"))
                 config->MagnifierStaticPosX = staticX;
 
             float staticY = config->MagnifierStaticPosY.value();
-            if (ImGui::SliderFloat("Static Pos Y", &staticY, 0.0f, 100.0f, "%.1f%%"))
+            if (IlionTheme::SliderFloat("Static Pos Y", &staticY, 0.0f, 100.0f, "%.1f%%"))
                 config->MagnifierStaticPosY = staticY;
 
             if (IlionTheme::Button("Reset Static Position (Follow Cursor)"))
@@ -10498,11 +10530,11 @@ void MenuCommon::RenderMagnifierSettings(RenderMenuContext& ctx)
             ImGui::TextDisabled("(Currently following cursor)");
 
             float offsetX = config->MagnifierCursorOffsetX.value_or_default();
-            if (ImGui::SliderFloat("Cursor Offset X", &offsetX, -300.0f, 300.0f, "%.0f px"))
+            if (IlionTheme::SliderFloat("Cursor Offset X", &offsetX, -300.0f, 300.0f, "%.0f px"))
                 config->MagnifierCursorOffsetX = offsetX;
 
             float offsetY = config->MagnifierCursorOffsetY.value_or_default();
-            if (ImGui::SliderFloat("Cursor Offset Y", &offsetY, -300.0f, 300.0f, "%.0f px"))
+            if (IlionTheme::SliderFloat("Cursor Offset Y", &offsetY, -300.0f, 300.0f, "%.0f px"))
                 config->MagnifierCursorOffsetY = offsetY;
         }
 
@@ -10725,7 +10757,7 @@ void MenuCommon::RenderLoggingSettings(RenderMenuContext& ctx)
     const char* logLevels[] = { "Trace", "Debug", "Information", "Warning", "Error" };
     const char* selectedLevel = logLevels[config->LogLevel.value_or_default()];
 
-    if (ImGui::BeginCombo("Log Level", selectedLevel))
+    if (IlionTheme::BeginCombo("Log Level", selectedLevel))
     {
         for (int n = 0; n < 5; n++)
         {
@@ -10756,7 +10788,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
 
         ImGui::SetNextItemWidth(180.0f * ctx.menuResScale);
 
-        if (ImGui::BeginCombo(TrL("Theme"), Tr(industrialTheme ? "Industrial" : "Classic")))
+        if (IlionTheme::BeginCombo(TrL("Theme"), Tr(industrialTheme ? "Industrial" : "Classic")))
         {
             if (ImGui::Selectable(TrL("Industrial"), industrialTheme) && !industrialTheme)
             {
@@ -11196,7 +11228,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         ImGui::Spacing();
 
         auto alpha = config->MenuBGColorA.value_or_default();
-        if (ImGui::SliderFloat("Background Alpha", &alpha, 0.0f, 1.0f))
+        if (IlionTheme::SliderFloat("Background Alpha", &alpha, 0.0f, 1.0f))
         {
             config->MenuBGColorA = alpha;
             ApplyThemeStyle();
@@ -11210,7 +11242,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
             ImGui::BeginDisabled(!config->MenuBlur.value_or_default());
 
             auto blurStrength = config->MenuBlurStrength.value_or_default();
-            if (ImGui::SliderFloat("Blur Strength", &blurStrength, 0.0f, 4.0f, "%.2f"))
+            if (IlionTheme::SliderFloat("Blur Strength", &blurStrength, 0.0f, 4.0f, "%.2f"))
                 config->MenuBlurStrength = blurStrength;
 
             ImGui::EndDisabled();
@@ -11253,7 +11285,7 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
         const char* fpsPosition[] = { "Top Left", "Top Right", "Bottom Left", "Bottom Right" };
         const char* selectedPosition = fpsPosition[config->FpsOverlayPosition.value_or_default()];
 
-        if (ImGui::BeginCombo("Overlay Position", selectedPosition))
+        if (IlionTheme::BeginCombo("Overlay Position", selectedPosition))
         {
             for (int n = 0; n < std::size(fpsPosition); n++)
             {
@@ -11268,7 +11300,7 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
                                   "Full",     "Full + Graph", "Reflex timings" };
         const char* selectedType = fpsType[config->FpsOverlayType.value_or_default()];
 
-        if (ImGui::BeginCombo("Overlay Type", selectedType))
+        if (IlionTheme::BeginCombo("Overlay Type", selectedType))
         {
             for (int n = 0; n < std::size(fpsType); n++)
             {
@@ -11280,7 +11312,7 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
         }
 
         float fpsAlpha = config->FpsOverlayAlpha.value_or_default();
-        if (ImGui::SliderFloat("Background Alpha", &fpsAlpha, 0.0f, 1.0f, "%.2f"))
+        if (IlionTheme::SliderFloat("Background Alpha", &fpsAlpha, 0.0f, 1.0f, "%.2f"))
             config->FpsOverlayAlpha = fpsAlpha;
 
         const char* options[] = { "Same as menu", "0.5", "0.6", "0.7", "0.8", "0.9", "1.0", "1.1", "1.2",
@@ -11289,7 +11321,7 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
         float values[] = { 0.0f, 0.5f, 0.6f, 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f,
                            1.3f, 1.4f, 1.5f, 1.6f, 1.7f, 1.8f, 1.9f, 2.0f };
 
-        if (ImGui::SliderInt("Scale", &currentIndex, 0, IM_ARRAYSIZE(options) - 1, options[currentIndex],
+        if (IlionTheme::SliderInt("Scale", &currentIndex, 0, IM_ARRAYSIZE(options) - 1, options[currentIndex],
                              ImGuiSliderFlags_ClampOnInput))
         {
             if (currentIndex == 0)
@@ -11332,7 +11364,7 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
         const char* hwSources[] = { "Auto (HWiNFO, then MSI Afterburner)", "HWiNFO", "MSI Afterburner" };
         const int hwSource = std::clamp(config->HwSource.value_or_default(), 0, 2);
 
-        if (ImGui::BeginCombo(TrL("Source"), Tr(hwSources[hwSource])))
+        if (IlionTheme::BeginCombo(TrL("Source"), Tr(hwSources[hwSource])))
         {
             for (int n = 0; n < (int) std::size(hwSources); n++)
             {
@@ -11520,7 +11552,7 @@ void MenuCommon::RenderVsyncSettings(RenderMenuContext& ctx)
             ImGui::PushItemWidth(50.0f * menuResScale);
 
             auto vsyncBuf = StrFmt("%d", config->VsyncInterval.value_or_default());
-            if (ImGui::BeginCombo("Sync Int.", vsyncBuf.c_str()))
+            if (IlionTheme::BeginCombo("Sync Int.", vsyncBuf.c_str()))
             {
                 if (ImGui::Selectable("0", config->VsyncInterval.value_or_default() == 0))
                 {
@@ -11597,7 +11629,7 @@ void MenuCommon::RenderApiAndTextureSettings(RenderMenuContext& ctx)
             if (config->MipmapBiasOverride.has_value() && _mipBias == 0.0f)
                 _mipBias = config->MipmapBiasOverride.value();
 
-            ImGui::SliderFloat("Mipmap Bias##2", &_mipBias, -15.0f, 15.0f, "%.6f");
+            IlionTheme::SliderFloat("Mipmap Bias##2", &_mipBias, -15.0f, 15.0f, "%.6f");
             ShowTooltip("Can help with blurry textures in broken games\n"
                         "Negative values will make textures sharper\n"
                         "Positive values will make textures more blurry\n\n"
@@ -11715,7 +11747,7 @@ void MenuCommon::RenderApiAndTextureSettings(RenderMenuContext& ctx)
 
             auto selectedAF =
                 config->AnisotropyOverride.has_value() ? std::to_string(config->AnisotropyOverride.value()) : "Auto";
-            if (ImGui::BeginCombo("Force Anisotropic Filtering", selectedAF.c_str()))
+            if (IlionTheme::BeginCombo("Force Anisotropic Filtering", selectedAF.c_str()))
             {
                 if (ImGui::Selectable("Auto", !config->AnisotropyOverride.has_value()))
                     config->AnisotropyOverride.reset();
@@ -11806,7 +11838,7 @@ void MenuCommon::RenderMenuScaleSettings(RenderMenuContext& ctx)
 
     const char* selectedScaleName = uiScales[_selectedScale];
 
-    if (ImGui::BeginCombo("Menu Scale", selectedScaleName))
+    if (IlionTheme::BeginCombo("Menu Scale", selectedScaleName))
     {
         for (int n = 0; n < std::size(uiScales); n++)
         {
@@ -12482,16 +12514,34 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
                 if (lastGroup != nullptr)
                     ImGui::Dummy(ImVec2(0.0f, style.ItemSpacing.y));
 
-                ImGui::TextDisabled("%s", Tr(tabs[i].group));
+                // Groups are names, tabs are keys: only the keys carry a lamp
+                if (IlionTheme::industrial)
+                    IlionTheme::GroupPlate(Tr(tabs[i].group));
+                else
+                    ImGui::TextDisabled("%s", Tr(tabs[i].group));
+
                 lastGroup = tabs[i].group;
             }
 
             const bool selected = selectedMenuTab == i;
 
+            // The key of the industrial theme is drawn over the selectable, which keeps doing the work unseen
+            if (IlionTheme::industrial)
+            {
+                const ImVec4 none(0.0f, 0.0f, 0.0f, 0.0f);
+
+                ImGui::PushStyleColor(ImGuiCol_Header, none);
+                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, none);
+                ImGui::PushStyleColor(ImGuiCol_HeaderActive, none);
+            }
+
             ImGui::PushID(i);
             if (ImGui::Selectable("##Tab", selected, 0, ImVec2(0.0f, tabHeight)))
                 selectedMenuTab = i;
             ImGui::PopID();
+
+            if (IlionTheme::industrial)
+                ImGui::PopStyleColor(3);
 
             // Label is drawn manually to center it vertically and to leave room for the accent bar
             const ImVec2 rectMin = ImGui::GetItemRectMin();
@@ -12500,19 +12550,20 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
 
             if (IlionTheme::industrial)
             {
-                // Pilot of the tab: lit on the one that is open
-                IlionTheme::DrawLamp(drawList,
-                                     ImVec2(std::floor(rectMin.x + 11.0f * menuResScale),
-                                            std::floor((rectMin.y + rectMax.y) * 0.5f)),
-                                     std::floor(6.0f * menuResScale), selected, ImGui::IsItemHovered());
+                // A key with its pilot, lit on the tab that is open
+                IlionTheme::DrawTabPlate(drawList, ImVec2(rectMin.x, rectMin.y + 1.0f), ImVec2(rectMax.x, rectMax.y - 1.0f),
+                                         selected, ImGui::IsItemHovered(), ImGui::IsItemActive(), Tr(tabs[i].label),
+                                         menuResScale);
+                continue;
             }
-            else if (selected)
+
+            if (selected)
             {
                 drawList->AddRectFilled(rectMin, ImVec2(rectMin.x + 3.0f * menuResScale, rectMax.y),
                                         ImGui::GetColorU32(ImGuiCol_CheckMark));
             }
 
-            drawList->AddText(ImVec2(rectMin.x + (IlionTheme::industrial ? 24.0f : 10.0f) * menuResScale,
+            drawList->AddText(ImVec2(rectMin.x + 10.0f * menuResScale,
                                      rectMin.y + (tabHeight - ImGui::GetTextLineHeight()) * 0.5f),
                               ImGui::GetColorU32(ImGuiCol_Text), Tr(tabs[i].label));
         }
@@ -12899,7 +12950,7 @@ void MenuCommon::RenderMipmapBiasWindow(RenderMenuContext& ctx, ImGuiWindowFlags
 
             ImGui::BeginDisabled(config->UpscaleRatioOverrideEnabled.value_or_default());
 
-            if (ImGui::BeginCombo("Upscaler Quality", selectedQ))
+            if (IlionTheme::BeginCombo("Upscaler Quality", selectedQ))
             {
                 for (int n = 0; n < 6; n++)
                 {
@@ -12952,7 +13003,7 @@ void MenuCommon::RenderMipmapBiasWindow(RenderMenuContext& ctx, ImGuiWindowFlags
 
             auto minLimit = config->ExtendedLimits.value_or_default() ? 0.1f : 1.0f;
             auto maxLimit = config->ExtendedLimits.value_or_default() ? 6.0f : 3.0f;
-            if (ImGui::SliderFloat("Upscaler Ratio", &_mipmapUpscalerRatio, minLimit, maxLimit, "%.2f"))
+            if (IlionTheme::SliderFloat("Upscaler Ratio", &_mipmapUpscalerRatio, minLimit, maxLimit, "%.2f"))
             {
                 _renderWidth = static_cast<uint32_t>(_displayWidth / _mipmapUpscalerRatio);
                 _mipBiasCalculated = log2((float) _renderWidth / (float) _displayWidth);
@@ -12961,7 +13012,7 @@ void MenuCommon::RenderMipmapBiasWindow(RenderMenuContext& ctx, ImGuiWindowFlags
             if (ImGui::InputScalar("Render Width", ImGuiDataType_U32, &_renderWidth, NULL, NULL, "%u"))
                 _mipBiasCalculated = log2((float) _renderWidth / (float) _displayWidth);
 
-            ImGui::SliderFloat("Mipmap Bias", &_mipBiasCalculated, -15.0f, 0.0f, "%.6f");
+            IlionTheme::SliderFloat("Mipmap Bias", &_mipBiasCalculated, -15.0f, 0.0f, "%.6f");
 
             // BOTTOM LINE
             ImGui::Spacing();
@@ -13221,7 +13272,7 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
     ImGui::Spacing();
     ImGui::BeginDisabled(busy);
 
-    if (IlionTheme::Button(TrL("Start")))
+    if (IlionTheme::LampButton(TrL("Start"), IlionTheme::Lamp::Green))
     {
         IlionBenchmark::Conditions conditions;
         conditions.game = state.gameExe;
@@ -13267,30 +13318,30 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
                 "The test keeps running with the menu closed, the performance overlay shows its progress.");
 
     ImGui::EndDisabled();
-    ImGui::SameLine();
+    IlionTheme::SameLineIfFits(TrL("Stop"));
     ImGui::BeginDisabled(!running);
 
-    if (IlionTheme::Button(TrL("Stop")))
+    if (IlionTheme::LampButton(TrL("Stop"), IlionTheme::Lamp::Red))
         IlionBenchmark::Stop();
 
     ShowTooltip("Ends the test now and keeps what was recorded");
 
-    ImGui::SameLine();
+    IlionTheme::SameLineIfFits(TrL("Cancel"));
 
-    if (IlionTheme::Button(TrL("Cancel")))
+    if (IlionTheme::LampButton(TrL("Cancel"), IlionTheme::Lamp::Neutral))
         IlionBenchmark::Cancel();
 
     ShowTooltip("Ends the test and discards it");
 
     ImGui::EndDisabled();
-    ImGui::SameLine();
+    IlionTheme::SameLineIfFits(TrL("Save"));
 
     static std::string saveError;
     const bool canSave = benchState == IlionBenchmark::State::Finished && IlionBenchmark::GetResult().savedPath.empty();
 
     ImGui::BeginDisabled(!canSave);
 
-    if (IlionTheme::Button(TrL("Save")))
+    if (IlionTheme::LampButton(TrL("Save"), IlionTheme::Lamp::Amber))
     {
         // Hash of the dll might have finished after the test started
         if (IlionBenchmark::GetResult().conditions.dllSha256.empty() &&
@@ -13322,10 +13373,10 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
     ImGui::EndDisabled();
 
     // Takes the last result off the screen. Saved tests and the upscaler stay as they are.
-    ImGui::SameLine();
+    IlionTheme::SameLineIfFits(TrL("Clear result"));
     ImGui::BeginDisabled(benchState != IlionBenchmark::State::Finished && benchState != IlionBenchmark::State::Aborted);
 
-    if (IlionTheme::Button(TrL("Clear result")))
+    if (IlionTheme::LampButton(TrL("Clear result"), IlionTheme::Lamp::Neutral))
     {
         IlionBenchmark::Dismiss();
         saveError.clear();
@@ -13336,9 +13387,9 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
     ImGui::EndDisabled();
 
     // Saved tests side by side, in a window of its own
-    ImGui::SameLine(0.0f, 16.0f * menuResScale);
+    IlionTheme::SameLineIfFits(TrL("Compare results"), 16.0f * menuResScale);
 
-    if (IlionTheme::Button(TrL("Compare results")))
+    if (IlionTheme::LampButton(TrL("Compare results"), IlionTheme::Lamp::Neutral))
     {
         showBenchmarkCompare = true;
         benchmarkCompareReload = true;
@@ -13348,9 +13399,9 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
                 "with their differences and an automatic conclusion.");
 
     // Benchmarks and captures of every dll in one report
-    ImGui::SameLine();
+    IlionTheme::SameLineIfFits(TrL("Final report"));
 
-    if (IlionTheme::Button(TrL("Final report")))
+    if (IlionTheme::LampButton(TrL("Final report"), IlionTheme::Lamp::Neutral))
     {
         showFinalReport = true;
         finalReportReload = true;
@@ -13481,7 +13532,7 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
 
     ImGui::BeginDisabled(captureBlocked);
 
-    if (IlionTheme::Button(TrL("Capture image")))
+    if (IlionTheme::LampButton(TrL("Capture image"), IlionTheme::Lamp::Green))
     {
         IlionCapture::Meta meta;
         meta.game = state.gameExe;
@@ -13549,7 +13600,7 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
     }
 
     // Saved captures side by side and measured, in a window of its own
-    if (IlionTheme::Button(TrL("Compare captures")))
+    if (IlionTheme::LampButton(TrL("Compare captures"), IlionTheme::Lamp::Neutral))
     {
         showVisualCompare = true;
         visualCompareReload = true;
@@ -13783,6 +13834,9 @@ void MenuCommon::RenderMainMenuWindow(RenderMenuContext& ctx)
 
     if (ImGui::Begin(windowTitle.c_str(), NULL, mainFlags))
     {
+        // Screws of the cabinet, in the margin around everything else
+        IlionTheme::DrawWindowScrews(ImGui::GetStyle().WindowPadding.x / 8.0f);
+
         // Interface mode on the left, language on the right, small and above everything else
         RenderModeSelector(config);
         ImGui::SameLine();

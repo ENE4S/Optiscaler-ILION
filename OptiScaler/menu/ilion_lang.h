@@ -616,6 +616,113 @@ inline constexpr Translation kSpanish[] = {
     { " ILION can't check that the captures are from the scene of the tests.",
       " ILION no puede comprobar que las capturas sean de la escena de las pruebas." },
 
+    // Integrated final report
+    { "Final report", "Informe final" },
+    { "Integrated final report: performance, stability and visual quality of every DLL\n"
+      "that has saved tests, with one conclusion.",
+      "Informe final integrado: rendimiento, estabilidad y calidad visual de cada DLL\n"
+      "que tenga pruebas guardadas, con una conclusión." },
+    { "Integrated final report", "Informe final integrado" },
+    { "Saved benchmarks and captures of every DLL, joined by the DLL and the configuration of the test.",
+      "Benchmarks y capturas guardados de cada DLL, unidos por la DLL y la configuración de la prueba." },
+    { "%d saved tests, %d captures", "%d pruebas guardadas, %d capturas" },
+    { "Configuration", "Configuración" },
+    { "Game, render and output resolution, upscaler and frame generation.\n"
+      "Only tests made under the same configuration are compared.",
+      "Juego, resolución de render y de salida, escalador y frame generation.\n"
+      "Solo se comparan pruebas hechas con la misma configuración." },
+    { "no upscaling", "sin escalado" },
+    { "tests", "pruebas" },
+    { "This configuration has one saved test. Save tests of two or more DLLs made under the same configuration to "
+      "get a report.",
+      "Esta configuración tiene una sola prueba guardada. Guarda pruebas de dos o más DLL hechas con la misma "
+      "configuración para obtener un informe." },
+    { "Native reference", "Referencia nativa" },
+    { "Capture of the game at native resolution without upscaler.\n"
+      "The captures of every DLL are measured against it. Use the one of the same spot.",
+      "Captura del juego a resolución nativa sin escalador.\n"
+      "Las capturas de cada DLL se miden frente a ella. Usa la del mismo punto." },
+    { "VISUAL QUALITY: measuring", "CALIDAD VISUAL: midiendo" },
+    { "%d captures are being measured against the native reference.",
+      "Se están midiendo %d capturas frente a la referencia nativa." },
+    { "VISUAL QUALITY: no native reference", "CALIDAD VISUAL: sin referencia nativa" },
+    { "There is no native capture without upscaler of this game at this output size. Without one, how close each "
+      "DLL is to native can't be measured.",
+      "No hay ninguna captura nativa sin escalador de este juego con este tamaño de salida. Sin ella no se puede "
+      "medir cuánto se acerca cada DLL a la imagen nativa." },
+    { "VISUAL QUALITY: no captures measured", "CALIDAD VISUAL: sin capturas medidas" },
+    { "None of these DLLs has a capture of this configuration with a reliable measurement against the native "
+      "reference.",
+      "Ninguna de estas DLL tiene una captura de esta configuración con una medición fiable frente a la referencia "
+      "nativa." },
+    { "VISUAL QUALITY: incomplete", "CALIDAD VISUAL: incompleta" },
+    { "Without a reliable capture: %s. The values of the others are in the table.",
+      "Sin captura fiable: %s. Los valores de las demás están en la tabla." },
+    { "%s are within %.4f of SSIM of each other, the margin used here.",
+      "%s están a menos de %.4f de SSIM entre sí, el margen usado aquí." },
+    { "INTEGRATED RESULT: not enough data", "RESULTADO INTEGRADO: datos insuficientes" },
+    { "Performance and stability can't be compared between these tests, no overall winner is named.",
+      "El rendimiento y la estabilidad no se pueden comparar entre estas pruebas; no se declara ganadora global." },
+    { "Visual quality isn't measured for every DLL, so no overall winner is named.",
+      "La calidad visual no está medida para todas las DLL, así que no se declara ganadora global." },
+    { " In performance and stability alone, %s has the best balance.",
+      " Solo en rendimiento y estabilidad, %s tiene el mejor equilibrio." },
+    { "INTEGRATED RESULT: no overall winner", "RESULTADO INTEGRADO: sin ganadora global" },
+    { "Performance: %.1f average FPS, %.1f%% more than %s. ",
+      "Rendimiento: %.1f FPS promedio, un %.1f%% más que %s. " },
+    { "Performance: among the fastest, within %.1f%% of average FPS. ",
+      "Rendimiento: entre las más rápidas, a menos de un %.1f%% en FPS promedio. " },
+    { "Stability: frame time variation of %.1f%% against %.1f%% for %s. ",
+      "Estabilidad: variación de frametime del %.1f%% frente al %.1f%% de %s. " },
+    { "Stability: inconclusive between the tests. ", "Estabilidad: no concluyente entre las pruebas. " },
+    { "Stability: among the steadiest, without a clear difference. ",
+      "Estabilidad: entre las más estables, sin diferencia clara. " },
+    { "Visual quality: SSIM of %.4f against native, %.4f for %s.",
+      "Calidad visual: SSIM de %.4f frente a nativa, %.4f para %s." },
+    { "Visual quality: SSIM of %.4f against native, among the closest (margin %.4f).",
+      "Calidad visual: SSIM de %.4f frente a nativa, entre las más cercanas (margen %.4f)." },
+    { "BEST INTEGRATED BALANCE: %s", "MEJOR EQUILIBRIO INTEGRADO: %s" },
+    { "%s are among the best in performance, stability and visual quality. No difference bigger than the margins "
+      "separates them.",
+      "%s están entre las mejores en rendimiento, estabilidad y calidad visual. Ninguna diferencia mayor que los "
+      "márgenes las separa." },
+    { "INTEGRATED RESULT: depends on the priority", "RESULTADO INTEGRADO: depende de la prioridad" },
+    { "Fastest: %s. Steadiest: %s. Closest to native: %s. No DLL is among the best of the three categories.",
+      "Más rápida: %s. Más estable: %s. Más cercana a nativa: %s. Ninguna DLL está entre las mejores de las tres "
+      "categorías." },
+    { "inconclusive", "no concluyente" },
+    { "Margins used: %.1f%% in average FPS, %.1f%% in 1%% low, %.4f in SSIM. No score mixes the categories.",
+      "Márgenes usados: %.1f%% en FPS promedio, %.1f%% en 1%% low, %.4f en SSIM. Ninguna puntuación mezcla las "
+      "categorías." },
+    { "ILION can't check that the captures are from the scene of the tests.",
+      "ILION no puede comprobar que las capturas sean de la escena de las pruebas." },
+    { "Results by DLL", "Resultados por DLL" },
+    { "Differences against", "Diferencias respecto a" },
+    { "Performance", "Rendimiento" },
+    { "Stability and frame times", "Estabilidad y frametimes" },
+    { "Visual quality against the native reference", "Calidad visual frente a la referencia nativa" },
+    { "Data used", "Datos utilizados" },
+    { "Saved tests", "Pruebas guardadas" },
+    { "Captures of this configuration", "Capturas de esta configuración" },
+    { "Captures measured", "Capturas medidas" },
+    { "Left out: another scene or camera moved", "Descartadas: otra escena o cámara movida" },
+    { "Left out: can't be measured", "Descartadas: no se pueden medir" },
+    { "Values of a DLL with several tests or captures are their mean. Visual values come from still captures, what "
+      "happens in motion is not measured.",
+      "Los valores de una DLL con varias pruebas o capturas son su media. Los valores visuales proceden de capturas "
+      "fijas; lo que ocurre en movimiento no se mide." },
+
+    // FSR version selector of the Benchmark tab
+    { "Shows the FSR versions here. Picking one switches to it without leaving Benchmark.\n"
+      "It can't be changed while a test is running.",
+      "Muestra aquí las versiones FSR. Al elegir una se cambia a ella sin salir de Benchmark.\n"
+      "No se puede cambiar mientras hay una prueba en curso." },
+    { "Only with FSR as the upscaler in DX12.", "Solo con FSR como escalador en DX12." },
+    { "Rescan", "Actualizar lista" },
+    { "Switching...", "Cambiando..." },
+    { "The DLL that executes is not the selected one", "La DLL que se ejecuta no es la seleccionada" },
+    { "Active", "Activa" },
+
     // Image captures
     { "Visual analysis", "Análisis visual" },
     { "Capture image", "Capturar imagen" },

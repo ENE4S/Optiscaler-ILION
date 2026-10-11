@@ -182,6 +182,43 @@ static bool capturingKey = false;
 static int selectedMenuTab = 0;
 static const char* requestedMenuTab = nullptr; // Label of a tab to switch to on the next frame
 
+// The FSR upscaler dlls that can be selected. One list and one way of selecting for the Upscaling tab and for
+// Benchmark, both show the same state.
+static std::vector<FfxApiProxy::SrVariant>& SharedSrVariants()
+{
+    static std::vector<FfxApiProxy::SrVariant> variants = FfxApiProxy::SrVariants();
+    return variants;
+}
+
+static std::wstring& SharedDefaultSrDll()
+{
+    static std::wstring path = FfxApiProxy::SrVariantDllPath(L"");
+    return path;
+}
+
+static void RescanSrVariants()
+{
+    SharedSrVariants() = FfxApiProxy::SrVariants();
+    SharedDefaultSrDll() = FfxApiProxy::SrVariantDllPath(L"");
+}
+
+// The hot swap of the proxy, an empty name is the default dll
+static void SelectSrVariant(const std::wstring& name)
+{
+    // Not while a benchmark is running
+    if (FfxApiProxy::SrSwitchLocked())
+        return;
+
+    if (name.empty())
+        Config::Instance()->Fsr4SrVariant.reset();
+    else
+        Config::Instance()->Fsr4SrVariant = name;
+
+    FfxApiProxy::RequestSrVariant(name);
+    State::Instance().newBackend = currentBackend;
+    MARK_ALL_BACKENDS_CHANGED();
+}
+
 template <typename T, size_t N> struct RingBuffer
 {
     std::array<T, N> data {};
@@ -1996,6 +2033,9 @@ static std::vector<CompareConclusion> BuildCompareConclusions(const IlionCompare
 static bool showVisualCompare = false;
 static bool visualCompareReload = true;
 
+// Counts the measurements written to disk, whoever shows saved results reads them again when it moves
+static std::atomic<int> visualResultsSaved { 0 };
+
 static std::filesystem::path CaptureFolder() { return Util::ExePath().parent_path() / L"ILION" / L"Captures"; }
 
 // Difference in SSIM two captures need to be told apart
@@ -2071,6 +2111,7 @@ static void StartVisualMeasure(const std::string& key, std::shared_ptr<const Ili
                         saved.overshootPercent = metrics.overshootPercent;
                         saved.unreliable = metrics.Unreliable();
                         IlionVisual::SaveResult(folder, saved);
+                        visualResultsSaved++;
                     }
 
                     {
@@ -2595,10 +2636,11 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
 
             bool picked = isSelected(capture.id);
 
-            ImGui::PushID(i);
+            // The record's own id: a row number alone is the same id the header of the column gets
+            ImGui::PushID(StrFmt("capture_%s_%d", capture.id.c_str(), i).c_str());
             ImGui::BeginDisabled(!picked && selectedIds.size() >= VisualMaxSelected);
 
-            if (ImGui::Checkbox("##pick", &picked))
+            if (ImGui::Checkbox("##select", &picked))
             {
                 if (picked)
                     selectedIds.push_back(capture.id);
@@ -3390,9 +3432,10 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
 
             bool picked = isSelected(test.id);
 
-            ImGui::PushID(i);
+            // The record's own id: a row number alone is the same id the header of the column gets
+            ImGui::PushID(StrFmt("test_%s_%d", test.id.c_str(), i).c_str());
 
-            if (ImGui::Checkbox("##pick", &picked))
+            if (ImGui::Checkbox("##select", &picked))
             {
                 if (picked)
                     selectedIds.push_back(test.id);
@@ -3631,6 +3674,865 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
     ImGui::End();
 }
 
+// --- Integrated final report -------------------------------------------------------------------------------
+// Saved benchmarks and captures of every dll put together: performance, stability and visual quality side by
+// side, with one conclusion. Nothing is measured here that the other screens don't measure, their results are
+// joined by the dll (SHA-256) and by the configuration of the test.
+
+static bool showFinalReport = false;
+static bool finalReportReload = true;
+
+// Visual measurements of one dll against the native reference of the report
+struct ReportVisual
+{
+    int captures = 0;   // captures of this dll in this configuration
+    int measured = 0;   // with a reliable measurement
+    int unreliable = 0; // scene or camera not the same as in the reference
+    int failed = 0;     // can't be measured
+    int pending = 0;
+
+    // Means over the reliable measurements
+    double ssim = 0.0, meanDifference = 0.0, differentPercent = 0.0;
+    double edgeChangePercent = 0.0, edgesKeptPercent = 0.0, overshootPercent = 0.0;
+    double lowest = 1.0, highest = 0.0;
+};
+
+struct ReportVisualVerdict
+{
+    bool complete = false;    // every dll has a reliable measurement
+    std::vector<int> missing; // dlls without one
+    std::vector<int> top;     // closest to native, more than one when they are within the margin
+    int best = -1;
+    int second = -1;
+    double margin = VisualSsimMargin;
+};
+
+static ReportVisualVerdict JudgeReportVisual(const std::vector<ReportVisual>& visual)
+{
+    ReportVisualVerdict verdict;
+    std::vector<int> order;
+
+    for (int i = 0; i < (int) visual.size(); i++)
+    {
+        if (visual[i].measured == 0)
+        {
+            verdict.missing.push_back(i);
+            continue;
+        }
+
+        order.push_back(i);
+
+        // What captures of one dll differ by is what the picture changes by itself
+        if (visual[i].measured > 1)
+            verdict.margin = (std::max)(verdict.margin, visual[i].highest - visual[i].lowest);
+    }
+
+    verdict.complete = !visual.empty() && verdict.missing.empty();
+
+    if (order.empty())
+        return verdict;
+
+    std::sort(order.begin(), order.end(), [&](int a, int b) { return visual[a].ssim > visual[b].ssim; });
+
+    verdict.best = order[0];
+    verdict.second = order.size() > 1 ? order[1] : -1;
+
+    for (const int index : order)
+    {
+        if (visual[verdict.best].ssim - visual[index].ssim <= verdict.margin)
+            verdict.top.push_back(index);
+    }
+
+    return verdict;
+}
+
+// The visual category and the conclusion over the three categories. A dll is only named when it is among the
+// best of all three with what was measured, nothing is weighted or scored.
+static std::vector<CompareConclusion> BuildIntegratedConclusions(const IlionCompare::Analysis& analysis,
+                                                                 const std::vector<ReportVisual>& visual,
+                                                                 const ReportVisualVerdict& verdict,
+                                                                 bool haveReference)
+{
+    using Kind = IlionCompare::Kind;
+    using Reason = IlionCompare::Reason;
+
+    std::vector<CompareConclusion> result;
+
+    const auto name = [&](int index) { return analysis.candidates[index].name; };
+
+    const auto names = [&](const std::vector<int>& indices)
+    {
+        std::string joined;
+
+        for (const int index : indices)
+            joined += (joined.empty() ? "" : ", ") + name(index);
+
+        return joined;
+    };
+
+    // Visual quality
+    if (!haveReference)
+    {
+        result.push_back({ Tr("VISUAL QUALITY: no native reference"),
+                           Tr("There is no native capture without upscaler of this game at this output size. "
+                              "Without one, how close each DLL is to native can't be measured."),
+                           2 });
+    }
+    else if (verdict.best < 0)
+    {
+        result.push_back({ Tr("VISUAL QUALITY: no captures measured"),
+                           Tr("None of these DLLs has a capture of this configuration with a reliable measurement "
+                              "against the native reference."),
+                           2 });
+    }
+    else if (!verdict.complete)
+    {
+        result.push_back({ Tr("VISUAL QUALITY: incomplete"),
+                           StrFmt(Tr("Without a reliable capture: %s. The values of the others are in the table."),
+                                  names(verdict.missing).c_str()),
+                           2 });
+    }
+    else if (verdict.second < 0)
+    {
+        result.push_back({ Tr("VISUAL: one version measured"),
+                           StrFmt(Tr("%s has an SSIM of %.4f against the native reference. With one version there is "
+                                     "nothing to rank."),
+                                  name(verdict.best).c_str(), visual[verdict.best].ssim),
+                           1 });
+    }
+    else if (verdict.top.size() == 1)
+    {
+        result.push_back({ StrFmt(Tr("VISUALLY CLOSEST TO NATIVE: %s"), name(verdict.best).c_str()),
+                           StrFmt(Tr("SSIM of %.4f against %.4f for %s, the margin used is %.4f."),
+                                  visual[verdict.best].ssim, visual[verdict.second].ssim, name(verdict.second).c_str(),
+                                  verdict.margin),
+                           0 });
+    }
+    else
+    {
+        result.push_back({ Tr("VISUAL QUALITY: no clear difference"),
+                           StrFmt(Tr("%s are within %.4f of SSIM of each other, the margin used here."),
+                                  names(verdict.top).c_str(), verdict.margin),
+                           1 });
+    }
+
+    // The three categories together
+    const auto& performance = analysis.performance;
+    const auto& stability = analysis.stability;
+
+    const bool measured = analysis.candidates.size() >= 2 &&
+                          (performance.kind == Kind::Winner || performance.kind == Kind::Tie) &&
+                          stability.reason != Reason::MissingData && stability.reason != Reason::NotComparable &&
+                          stability.reason != Reason::TooFewTests && stability.reason != Reason::SameDll;
+
+    if (!measured)
+    {
+        result.push_back({ Tr("INTEGRATED RESULT: not enough data"),
+                           Tr("Performance and stability can't be compared between these tests, no overall winner is "
+                              "named."),
+                           2 });
+        return result;
+    }
+
+    if (!haveReference || !verdict.complete)
+    {
+        std::string text = Tr("Visual quality isn't measured for every DLL, so no overall winner is named.");
+
+        if (analysis.balance.kind == Kind::Winner)
+        {
+            text += StrFmt(Tr(" In performance and stability alone, %s has the best balance."),
+                           name(analysis.balance.winner).c_str());
+        }
+
+        result.push_back({ Tr("INTEGRATED RESULT: no overall winner"), text, 2 });
+        return result;
+    }
+
+    // The best of each category, everything inside the margin of the best one counts as best
+    std::vector<int> everyone;
+
+    for (int i = 0; i < (int) analysis.candidates.size(); i++)
+        everyone.push_back(i);
+
+    const std::vector<int> fastest = performance.kind == Kind::Winner ? std::vector<int> { performance.winner }
+                                                                      : performance.tied;
+    const bool stabilityMixed = stability.reason == Reason::Mixed;
+    const std::vector<int> steadiest = stability.kind == Kind::Winner ? std::vector<int> { stability.winner }
+                                       : stability.kind == Kind::Tie  ? stability.tied
+                                                                      : everyone;
+
+    const auto in = [](const std::vector<int>& list, int value)
+    { return std::find(list.begin(), list.end(), value) != list.end(); };
+
+    std::vector<int> all;
+
+    for (const int index : everyone)
+    {
+        if (in(fastest, index) && in(steadiest, index) && in(verdict.top, index))
+            all.push_back(index);
+    }
+
+    if (all.size() == 1)
+    {
+        const int winner = all.front();
+        std::string text;
+
+        if (performance.kind == Kind::Winner)
+        {
+            text += StrFmt(Tr("Performance: %.1f average FPS, %.1f%% more than %s. "),
+                           analysis.candidates[winner].average.avgFps.value, performance.avgAdvantage,
+                           name(performance.runnerUp).c_str());
+        }
+        else
+        {
+            text += StrFmt(Tr("Performance: among the fastest, within %.1f%% of average FPS. "), analysis.marginAvg);
+        }
+
+        if (stability.kind == Kind::Winner)
+        {
+            text += StrFmt(Tr("Stability: frame time variation of %.1f%% against %.1f%% for %s. "),
+                           stability.variationWinner, stability.variationRunnerUp, name(stability.runnerUp).c_str());
+        }
+        else if (stabilityMixed)
+        {
+            text += Tr("Stability: inconclusive between the tests. ");
+        }
+        else
+        {
+            text += Tr("Stability: among the steadiest, without a clear difference. ");
+        }
+
+        if (verdict.top.size() == 1)
+        {
+            text += StrFmt(Tr("Visual quality: SSIM of %.4f against native, %.4f for %s."), visual[winner].ssim,
+                           visual[verdict.second].ssim, name(verdict.second).c_str());
+        }
+        else
+        {
+            text += StrFmt(Tr("Visual quality: SSIM of %.4f against native, among the closest (margin %.4f)."),
+                           visual[winner].ssim, verdict.margin);
+        }
+
+        result.push_back({ StrFmt(Tr("BEST INTEGRATED BALANCE: %s"), name(winner).c_str()), text, 0 });
+    }
+    else if (all.size() > 1)
+    {
+        result.push_back({ Tr("INTEGRATED RESULT: no overall winner"),
+                           StrFmt(Tr("%s are among the best in performance, stability and visual quality. No "
+                                     "difference bigger than the margins separates them."),
+                                  names(all).c_str()),
+                           1 });
+    }
+    else
+    {
+        result.push_back({ Tr("INTEGRATED RESULT: depends on the priority"),
+                           StrFmt(Tr("Fastest: %s. Steadiest: %s. Closest to native: %s. No DLL is among the best of "
+                                     "the three categories."),
+                                  names(fastest).c_str(),
+                                  stabilityMixed ? Tr("inconclusive") : names(steadiest).c_str(),
+                                  names(verdict.top).c_str()),
+                           1 });
+    }
+
+    return result;
+}
+
+// A capture made with the dll and the resolutions of a test
+static bool CaptureMatchesTest(const IlionVisual::Capture& capture, const IlionCompare::Test& test)
+{
+    if (!capture.hasMeta || capture.resolution.empty() || capture.resolution != test.resolution ||
+        _stricmp(capture.game.c_str(), test.game.c_str()) != 0)
+        return false;
+
+    if (!capture.dllSha256.empty() || !test.dllSha256.empty())
+        return capture.dllSha256 == test.dllSha256;
+
+    // Upscalers without a dll of their own in the list are told apart by their name
+    return capture.fsrVersion.empty() && capture.upscaler == test.upscaler;
+}
+
+// Reads the two pictures, measures them and saves the result, for pairs nobody has measured yet
+static void StartVisualMeasureFiles(const std::string& key, const std::filesystem::path& referencePath,
+                                    const std::filesystem::path& testPath, IlionVisual::SavedResult saved,
+                                    const std::filesystem::path& folder)
+{
+    auto& work = GetVisualWork();
+    work.busy = true;
+
+    std::thread([key, referencePath, testPath, saved, folder, &work]() mutable
+                {
+                    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+
+                    IlionVisual::Image reference, test;
+                    IlionVisual::Metrics metrics;
+
+                    if (IlionVisual::LoadPng(referencePath, reference) && IlionVisual::LoadPng(testPath, test))
+                        metrics = IlionVisual::Compare(reference, test);
+
+                    if (metrics.valid)
+                    {
+                        saved.ssim = metrics.ssim;
+                        saved.meanDifference = metrics.meanDifference;
+                        saved.differentPercent = metrics.differentPercent;
+                        saved.edgeChangePercent = metrics.edgeChangePercent;
+                        saved.edgesKeptPercent = metrics.edgesKeptPercent;
+                        saved.overshootPercent = metrics.overshootPercent;
+                        saved.unreliable = metrics.Unreliable();
+                        IlionVisual::SaveResult(folder, saved);
+                        visualResultsSaved++;
+                    }
+
+                    {
+                        std::scoped_lock lock(work.mutex);
+                        work.metrics[key] = metrics;
+                    }
+
+                    work.busy = false;
+                })
+        .detach();
+}
+
+static void DrawFinalReportWindow(float scale, ImGuiIO& io)
+{
+    if (!showFinalReport)
+        return;
+
+    using Test = IlionCompare::Test;
+    using Number = IlionCompare::Number;
+    using Capture = IlionVisual::Capture;
+
+    // Tests made under the same conditions, the only ones that can be put side by side
+    struct Configuration
+    {
+        std::string game, resolution, technology, frameGeneration;
+        bool fgSeen = false;
+        int fgMultiplier = 1;
+        std::vector<int> tests; // positions in the history
+
+        std::string Label() const
+        {
+            return StrFmt("%s  |  %s  |  %s  |  FG %s  |  %d %s", game.c_str(),
+                          resolution.empty() ? Tr("no upscaling") : resolution.c_str(), technology.c_str(),
+                          frameGeneration.c_str(), (int) tests.size(), Tr("tests"));
+        }
+    };
+
+    static std::vector<Test> history;
+    static std::vector<Capture> captures;
+    static std::vector<IlionVisual::SavedResult> results;
+    static std::vector<Configuration> configurations;
+    static int configurationIndex = 0;
+    static std::string referenceCaptureId;
+    static int baseline = 0;
+    static int resultsSeen = -1;
+
+    auto& work = GetVisualWork();
+
+    if (finalReportReload)
+    {
+        finalReportReload = false;
+        history = IlionCompare::LoadHistory(BenchmarkFolder() / L"benchmarks.csv");
+        captures = IlionVisual::ListCaptures(CaptureFolder());
+        resultsSeen = -1;
+
+        std::string previous;
+
+        if (configurationIndex >= 0 && configurationIndex < (int) configurations.size())
+            previous = configurations[configurationIndex].Label();
+
+        configurations.clear();
+
+        for (int i = 0; i < (int) history.size(); i++)
+        {
+            const auto& test = history[i];
+            const auto space = test.upscaler.find(' ');
+            const std::string technology = space == std::string::npos ? test.upscaler : test.upscaler.substr(0, space);
+
+            Configuration* found = nullptr;
+
+            for (auto& configuration : configurations)
+            {
+                if (_stricmp(configuration.game.c_str(), test.game.c_str()) == 0 &&
+                    configuration.resolution == test.resolution && configuration.technology == technology &&
+                    configuration.frameGeneration == test.frameGeneration && configuration.fgSeen == test.fgSeen &&
+                    configuration.fgMultiplier == test.fgMultiplier)
+                    found = &configuration;
+            }
+
+            if (found == nullptr)
+            {
+                configurations.push_back(
+                    { test.game, test.resolution, technology, test.frameGeneration, test.fgSeen, test.fgMultiplier });
+                found = &configurations.back();
+            }
+
+            found->tests.push_back(i);
+        }
+
+        // The one that was open stays open, otherwise the one of the newest test
+        configurationIndex = -1;
+
+        for (int i = 0; i < (int) configurations.size(); i++)
+        {
+            if (!previous.empty() && configurations[i].Label() == previous)
+                configurationIndex = i;
+        }
+
+        if (configurationIndex < 0 && !history.empty())
+        {
+            for (int i = 0; i < (int) configurations.size(); i++)
+            {
+                if (configurations[i].tests.back() == (int) history.size() - 1)
+                    configurationIndex = i;
+            }
+        }
+    }
+
+    // Measurements that were saved since the last look
+    if (const int saved = visualResultsSaved.load(); saved != resultsSeen)
+    {
+        resultsSeen = saved;
+        results = IlionVisual::LoadResults(CaptureFolder());
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(std::min(1100.0f * scale, io.DisplaySize.x - 20.0f),
+                                    std::min(820.0f * scale, io.DisplaySize.y - 20.0f)),
+                             ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_FirstUseEver,
+                            ImVec2(0.5f, 0.5f));
+
+    if (!ImGui::Begin(TrL("Integrated final report"), &showFinalReport,
+                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse))
+    {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::TextDisabled("%s", Tr("Saved benchmarks and captures of every DLL, joined by the DLL and the configuration "
+                                 "of the test."));
+
+    if (ImGui::Button(TrL("Back to Benchmark")))
+        showFinalReport = false;
+
+    ImGui::SameLine();
+
+    if (ImGui::Button(TrL("Reload")))
+        finalReportReload = true;
+
+    ImGui::SameLine();
+    ImGui::TextDisabled(Tr("%d saved tests, %d captures"), (int) history.size(), (int) captures.size());
+
+    if (configurations.empty() || configurationIndex < 0)
+    {
+        ImGui::Spacing();
+        ImGui::TextWrapped("%s", Tr("No saved tests yet. Run a benchmark and press Save."));
+        ImGui::End();
+        return;
+    }
+
+    const auto& configuration = configurations[configurationIndex];
+
+    ImGui::Spacing();
+    ImGui::SetNextItemWidth(620.0f * scale);
+
+    if (ImGui::BeginCombo(TrL("Configuration"), configuration.Label().c_str()))
+    {
+        for (int i = 0; i < (int) configurations.size(); i++)
+        {
+            if (ImGui::Selectable(StrFmt("%s##configuration%d", configurations[i].Label().c_str(), i).c_str(),
+                                  i == configurationIndex))
+                configurationIndex = i;
+        }
+
+        ImGui::EndCombo();
+    }
+
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("%s", Tr("Game, render and output resolution, upscaler and frame generation.\n"
+                                   "Only tests made under the same configuration are compared."));
+    }
+
+    // Every test of the configuration, the ones of one dll are averaged into one candidate
+    std::vector<const Test*> tests;
+
+    for (const int index : configuration.tests)
+        tests.push_back(&history[index]);
+
+    const auto analysis = IlionCompare::Analyze(tests);
+    const int dllCount = (int) analysis.candidates.size();
+
+    if (dllCount == 0)
+    {
+        ImGui::Spacing();
+        ImGui::TextWrapped("%s", Tr("This configuration has one saved test. Save tests of two or more DLLs made under "
+                                    "the same configuration to get a report."));
+
+        for (const auto issue : analysis.blocking)
+            ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.4f, 0.3f, 1.0f)), "%s", Tr(CompareIssueText(issue)));
+
+        ImGui::End();
+        return;
+    }
+
+    // Native captures without upscaler of the same game and output size, what closeness is measured against
+    unsigned renderWidth = 0, renderHeight = 0, outputWidth = 0, outputHeight = 0;
+    sscanf_s(configuration.resolution.c_str(), "%ux%u -> %ux%u", &renderWidth, &renderHeight, &outputWidth,
+             &outputHeight);
+
+    std::vector<const Capture*> references;
+
+    for (const auto& capture : captures)
+    {
+        if (NeutralVisualReference(capture) && _stricmp(capture.game.c_str(), configuration.game.c_str()) == 0 &&
+            capture.width == (int) outputWidth && capture.height == (int) outputHeight)
+            references.push_back(&capture);
+    }
+
+    const Capture* reference = nullptr;
+
+    for (const auto* capture : references)
+    {
+        if (capture->id == referenceCaptureId)
+            reference = capture;
+    }
+
+    // The newest one unless the user picked another
+    if (reference == nullptr && !references.empty())
+    {
+        reference = references.back();
+        referenceCaptureId = reference->id;
+    }
+
+    if (reference != nullptr)
+    {
+        ImGui::SetNextItemWidth(620.0f * scale);
+
+        if (ImGui::BeginCombo(TrL("Native reference"), StrFmt("%s  %s", reference->dateTime.c_str(), reference->id.c_str()).c_str()))
+        {
+            for (const auto* capture : references)
+            {
+                if (ImGui::Selectable(StrFmt("%s  %s##%s", capture->dateTime.c_str(), capture->id.c_str(),
+                                             capture->id.c_str())
+                                          .c_str(),
+                                      capture == reference))
+                    referenceCaptureId = capture->id;
+            }
+
+            ImGui::EndCombo();
+        }
+
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("%s", Tr("Capture of the game at native resolution without upscaler.\n"
+                                       "The captures of every DLL are measured against it. Use the one of the same spot."));
+        }
+    }
+
+    // Captures of every dll and what was measured of them against the reference
+    std::vector<ReportVisual> visual(dllCount);
+    bool generatedFrames = false;
+
+    std::map<std::string, IlionVisual::Metrics> measuredNow;
+
+    {
+        std::scoped_lock lock(work.mutex);
+        measuredNow = work.metrics;
+    }
+
+    struct Pending
+    {
+        const Capture* capture;
+        std::string key;
+    };
+
+    std::vector<Pending> toMeasure;
+
+    for (int i = 0; i < dllCount; i++)
+    {
+        const Test& first = *tests[analysis.candidates[i].tests.front()];
+        auto& entry = visual[i];
+
+        for (const auto& capture : captures)
+        {
+            if (!CaptureMatchesTest(capture, first))
+                continue;
+
+            entry.captures++;
+            generatedFrames |= !capture.frameGeneration.empty() && capture.frameGeneration != "Off";
+
+            if (reference == nullptr)
+                continue;
+
+            const IlionVisual::SavedResult* saved = nullptr;
+
+            for (const auto& row : results)
+            {
+                if (row.referenceId == reference->id && row.testId == capture.id)
+                    saved = &row;
+            }
+
+            if (saved != nullptr)
+            {
+                if (saved->unreliable)
+                {
+                    entry.unreliable++;
+                    continue;
+                }
+
+                entry.measured++;
+                entry.ssim += saved->ssim;
+                entry.meanDifference += saved->meanDifference;
+                entry.differentPercent += saved->differentPercent;
+                entry.edgeChangePercent += saved->edgeChangePercent;
+                entry.edgesKeptPercent += saved->edgesKeptPercent;
+                entry.overshootPercent += saved->overshootPercent;
+                entry.lowest = (std::min)(entry.lowest, saved->ssim);
+                entry.highest = (std::max)(entry.highest, saved->ssim);
+                continue;
+            }
+
+            const std::string key = VisualPairKey(reference->id, capture.id);
+
+            // Tried and it can't be measured (another size, unreadable)
+            if (measuredNow.contains(key))
+            {
+                entry.failed++;
+                continue;
+            }
+
+            entry.pending++;
+            toMeasure.push_back({ &capture, key });
+        }
+
+        if (entry.measured > 0)
+        {
+            entry.ssim /= entry.measured;
+            entry.meanDifference /= entry.measured;
+            entry.differentPercent /= entry.measured;
+            entry.edgeChangePercent /= entry.measured;
+            entry.edgesKeptPercent /= entry.measured;
+            entry.overshootPercent /= entry.measured;
+        }
+    }
+
+    // Captures nobody has measured against this reference yet are measured here, one at a time
+    if (!toMeasure.empty() && !work.busy.load())
+    {
+        const auto& next = toMeasure.front();
+
+        SYSTEMTIME time;
+        GetLocalTime(&time);
+
+        IlionVisual::SavedResult saved;
+        saved.dateTime = StrFmt("%04d-%02d-%02d %02d:%02d:%02d", time.wYear, time.wMonth, time.wDay, time.wHour,
+                                time.wMinute, time.wSecond);
+        saved.game = next.capture->game;
+        saved.referenceId = reference->id;
+        saved.referenceName = reference->Name();
+        saved.referenceSha256 = reference->dllSha256;
+        saved.referenceOrigin = "native";
+        saved.testId = next.capture->id;
+        saved.testName = next.capture->Name();
+        saved.testSha256 = next.capture->dllSha256;
+
+        StartVisualMeasureFiles(next.key, reference->path, next.capture->path, saved, CaptureFolder());
+    }
+
+    const auto verdict = JudgeReportVisual(visual);
+
+    // --- Conclusions -----------------------------------------------------------------------------------------
+    ImGui::SeparatorText(Tr("Conclusions"));
+
+    auto conclusions = BuildCompareConclusions(analysis, tests);
+
+    // The balance of two categories gives way to the one over the three
+    if (conclusions.size() == 3)
+        conclusions.pop_back();
+
+    if (!toMeasure.empty())
+    {
+        conclusions.push_back({ Tr("VISUAL QUALITY: measuring"),
+                                StrFmt(Tr("%d captures are being measured against the native reference."),
+                                       (int) toMeasure.size()),
+                                1 });
+    }
+    else
+    {
+        for (auto& conclusion : BuildIntegratedConclusions(analysis, visual, verdict, reference != nullptr))
+            conclusions.push_back(std::move(conclusion));
+    }
+
+    for (const auto& conclusion : conclusions)
+    {
+        const ImVec4 color = conclusion.level == 0   ? ImVec4(0.3f, 1.0f, 0.3f, 1.0f)
+                             : conclusion.level == 2 ? ImVec4(1.0f, 0.8f, 0.0f, 1.0f)
+                                                     : ImGui::GetStyleColorVec4(ImGuiCol_Text);
+
+        ImGui::TextColored(conclusion.level == 1 ? color : toneMapColor(color), "%s", conclusion.title.c_str());
+        ImGui::TextWrapped("%s", conclusion.text.c_str());
+    }
+
+    ImGui::TextDisabled(Tr("Margins used: %.1f%% in average FPS, %.1f%% in 1%% low, %.4f in SSIM. No score mixes the "
+                           "categories."),
+                        analysis.marginAvg, analysis.marginLow1, verdict.margin);
+
+    for (const auto issue : analysis.blocking)
+        ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.4f, 0.3f, 1.0f)), "%s", Tr(CompareIssueText(issue)));
+
+    for (const auto issue : analysis.warnings)
+        ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.8f, 0.0f, 1.0f)), "%s", Tr(CompareIssueText(issue)));
+
+    if (reference != nullptr)
+    {
+        ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.8f, 0.0f, 1.0f)), "%s",
+                           Tr("ILION can't check that the captures are from the scene of the tests."));
+    }
+
+    if (generatedFrames)
+    {
+        ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.8f, 0.0f, 1.0f)), "%s",
+                           Tr("Frame generation was on in at least one capture, its frame may be a generated one."));
+    }
+
+    // --- One column per dll ----------------------------------------------------------------------------------
+    ImGui::SeparatorText(Tr("Results by DLL"));
+
+    baseline = std::clamp(baseline, 0, dllCount - 1);
+
+    ImGui::SetNextItemWidth(300.0f * scale);
+
+    if (ImGui::BeginCombo(TrL("Differences against"), analysis.candidates[baseline].name.c_str()))
+    {
+        for (int i = 0; i < dllCount; i++)
+        {
+            if (ImGui::Selectable(StrFmt("%s##baseline%d", analysis.candidates[i].name.c_str(), i).c_str(), i == baseline))
+                baseline = i;
+        }
+
+        ImGui::EndCombo();
+    }
+
+    if (ImGui::BeginTable("finalReport", dllCount + 1,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollX |
+                              ImGuiTableFlags_SizingFixedFit))
+    {
+        ImGui::TableSetupScrollFreeze(1, 1);
+        ImGui::TableSetupColumn("##metric");
+
+        for (int i = 0; i < dllCount; i++)
+        {
+            ImGui::TableSetupColumn(StrFmt("%s%s##dll%d", analysis.candidates[i].name.c_str(),
+                                           i == baseline ? Tr("  [reference]") : "", i)
+                                        .c_str());
+        }
+
+        ImGui::TableHeadersRow();
+
+        const auto section = [&](const char* title)
+        {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s", Tr(title));
+        };
+
+        // Value of every dll with its difference against the baseline, in % and in the unit of the value
+        const auto row = [&](const char* label, const char* format, const auto& value)
+        {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(Tr(label));
+
+            const Number base = value(baseline);
+
+            for (int i = 0; i < dllCount; i++)
+            {
+                ImGui::TableNextColumn();
+
+                const Number number = value(i);
+
+                if (!number.valid)
+                {
+                    ImGui::TextDisabled("%s", Tr("N/A"));
+                    continue;
+                }
+
+                std::string text = StrFmt(format, number.value);
+
+                if (i != baseline)
+                {
+                    const auto percent = IlionCompare::PercentDifference(number, base);
+                    const auto absolute = IlionCompare::AbsoluteDifference(number, base);
+
+                    if (percent.valid && absolute.valid)
+                        text += StrFmt("   %+.1f %% (%+.3g)", percent.value, absolute.value);
+                }
+
+                ImGui::TextUnformatted(text.c_str());
+            }
+        };
+
+        const auto benchmark = [&](Number Test::* field)
+        { return [&, field](int i) { return analysis.candidates[i].average.*field; }; };
+
+        const auto picture = [&](double ReportVisual::* field)
+        { return [&, field](int i) { return Number { visual[i].measured > 0, visual[i].*field }; }; };
+
+        section("Performance");
+        row("Average FPS", "%.1f", benchmark(&Test::avgFps));
+        row("1% low", "%.1f", benchmark(&Test::low1Fps));
+        row("0.1% low", "%.1f", benchmark(&Test::low01Fps));
+        row("Frame time mean", "%.2f ms", benchmark(&Test::meanMs));
+
+        section("Stability and frame times");
+        row("Frame time P99", "%.2f ms", benchmark(&Test::p99Ms));
+        row("Variability", "%.1f %%", benchmark(&Test::variationPercent));
+        row("Stutters per minute", "%.1f", benchmark(&Test::stutterPerMinute));
+
+        section("Visual quality against the native reference");
+        row("SSIM (structure)", "%.4f", picture(&ReportVisual::ssim));
+        row("Mean difference", "%.2f", picture(&ReportVisual::meanDifference));
+        row("Pixels that differ", "%.1f %%", picture(&ReportVisual::differentPercent));
+        row("Edge strength", "%+.1f %%", picture(&ReportVisual::edgeChangePercent));
+        row("Edges of the reference kept", "%.1f %%", picture(&ReportVisual::edgesKeptPercent));
+        row("Overshoot next to edges (exploratory)", "%.2f %%", picture(&ReportVisual::overshootPercent));
+
+        // Where the numbers of every dll come from
+        section("Data used");
+
+        const auto count = [&](const char* label, const auto& value)
+        {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(Tr(label));
+
+            for (int i = 0; i < dllCount; i++)
+            {
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(value(i).c_str());
+            }
+        };
+
+        count("Saved tests", [&](int i) { return StrFmt("%d", (int) analysis.candidates[i].tests.size()); });
+        count("Captures of this configuration", [&](int i) { return StrFmt("%d", visual[i].captures); });
+        count("Captures measured", [&](int i) { return StrFmt("%d", visual[i].measured); });
+        count("Left out: another scene or camera moved", [&](int i) { return StrFmt("%d", visual[i].unreliable); });
+        count("Left out: can't be measured", [&](int i) { return StrFmt("%d", visual[i].failed); });
+        count("SHA-256", [&](int i)
+              {
+                  const auto& sha = tests[analysis.candidates[i].tests.front()]->dllSha256;
+                  return sha.empty() ? std::string("-") : sha.substr(0, 12) + "...";
+              });
+
+        ImGui::EndTable();
+    }
+
+    ImGui::TextDisabled("%s", Tr("Values of a DLL with several tests or captures are their mean. Visual values come from "
+                                 "still captures, what happens in motion is not measured."));
+
+    ImGui::End();
+}
+
 // Feeds the running benchmark with the frame that was just presented
 static void UpdateBenchmark(State& state, double frameTime, double now)
 {
@@ -3727,14 +4629,31 @@ static void DrawHardwareTelemetry(decltype(Config::Instance()) config, float sca
     // Readings that stopped arriving aren't shown as current
     const bool stale = snapshot.polledTick == 0 || GetTickCount64() - snapshot.polledTick > 5000;
 
-    const auto row = [&](const char* label, HwTelemetry::Metric metric, const char* format)
+    // Component names in #39FF14, temperatures in #CC0000 and the hotspot in #FF6A00, number and unit
+    const ImVec4 componentColor = toneMapColor(ImVec4(57.0f / 255.0f, 1.0f, 20.0f / 255.0f, 1.0f));
+    const ImVec4 temperatureColor = toneMapColor(ImVec4(204.0f / 255.0f, 0.0f, 0.0f, 1.0f));
+    const ImVec4 hotspotColor = toneMapColor(ImVec4(1.0f, 106.0f / 255.0f, 0.0f, 1.0f));
+
+    const auto row = [&](const char* label, HwTelemetry::Metric metric, const char* format,
+                         const ImVec4* valueColor = nullptr)
     {
         const auto& value = snapshot.values[metric];
 
         if (stale || !value.valid)
+        {
             ImGui::Text("%-8s %s", label, HwNotAvailable());
-        else
+        }
+        else if (valueColor == nullptr)
+        {
             ImGui::Text("%-8s %s", label, StrFmt(format, value.value).c_str());
+        }
+        else
+        {
+            // The same line in two pieces, only the value takes the color
+            ImGui::Text("%-8s ", label);
+            ImGui::SameLine(0.0f, 0.0f);
+            ImGui::TextColored(*valueColor, "%s", StrFmt(format, value.value).c_str());
+        }
     };
 
     ImGui::Spacing();
@@ -3742,16 +4661,16 @@ static void DrawHardwareTelemetry(decltype(Config::Instance()) config, float sca
     if (anyGpu)
     {
         ImGui::BeginGroup();
-        ImGui::TextDisabled("GPU");
+        ImGui::TextColored(componentColor, "GPU");
 
         if (gpuUsage)
             row(Tr("Usage"), HwTelemetry::GpuUsage, "%3.0f %%");
 
         if (gpuTemp)
-            row(Tr("Temp"), HwTelemetry::GpuTemp, "%3.0f \xC2\xB0""C");
+            row(Tr("Temp"), HwTelemetry::GpuTemp, "%3.0f \xC2\xB0""C", &temperatureColor);
 
         if (gpuHotspot)
-            row("Hotspot", HwTelemetry::GpuHotspot, "%3.0f \xC2\xB0""C");
+            row("Hotspot", HwTelemetry::GpuHotspot, "%3.0f \xC2\xB0""C", &hotspotColor);
 
         if (vram)
         {
@@ -3775,13 +4694,13 @@ static void DrawHardwareTelemetry(decltype(Config::Instance()) config, float sca
             ImGui::SameLine(0.0f, 24.0f * scale);
 
         ImGui::BeginGroup();
-        ImGui::TextDisabled("CPU");
+        ImGui::TextColored(componentColor, "CPU");
 
         if (cpuUsage)
             row(Tr("Usage"), HwTelemetry::CpuUsage, "%3.0f %%");
 
         if (cpuTemp)
-            row(Tr("Temp"), HwTelemetry::CpuTemp, "%3.0f \xC2\xB0""C");
+            row(Tr("Temp"), HwTelemetry::CpuTemp, "%3.0f \xC2\xB0""C", &temperatureColor);
 
         ImGui::EndGroup();
     }
@@ -5188,24 +6107,11 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
         // Upscaler dll selection, kept outside of the version checks so it's still reachable when a dll fails
         if (currentBackend == Upscaler::FFX && state.api == DX12)
         {
-            static std::vector<FfxApiProxy::SrVariant> srVariants = FfxApiProxy::SrVariants();
-            static std::wstring defaultSrDll = FfxApiProxy::SrVariantDllPath(L"");
+            // Shared with the selector of the Benchmark tab
+            auto& srVariants = SharedSrVariants();
+            auto& defaultSrDll = SharedDefaultSrDll();
 
-            auto selectSrVariant = [&](const std::wstring& name)
-            {
-                // Not while a benchmark is running
-                if (FfxApiProxy::SrSwitchLocked())
-                    return;
-
-                if (name.empty())
-                    config->Fsr4SrVariant.reset();
-                else
-                    config->Fsr4SrVariant = name;
-
-                FfxApiProxy::RequestSrVariant(name);
-                state.newBackend = currentBackend;
-                MARK_ALL_BACKENDS_CHANGED();
-            };
+            auto selectSrVariant = [&](const std::wstring& name) { SelectSrVariant(name); };
 
             const bool defaultActive = !defaultSrDll.empty() && FfxApiProxy::IsActiveSrDll(defaultSrDll);
             std::string activeSrName = defaultActive ? Tr("Default") : Tr("Custom path");
@@ -5260,10 +6166,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             ImGui::SameLine();
 
             if (ImGui::Button(TrL("Rescan##SrVariants")))
-            {
-                srVariants = FfxApiProxy::SrVariants();
-                defaultSrDll = FfxApiProxy::SrVariantDllPath(L"");
-            }
+                RescanSrVariants();
 
             // Path, hash, diagnostics and comparison stay in the full menu only
             if (!basicView)
@@ -11474,11 +12377,90 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
 
     ImGui::BeginDisabled(busy);
 
-    if (ImGui::Button(TrL("Change FSR version")))
-        requestedMenuTab = "Upscaling";
+    // The versions are picked right here, with the same list and the same hot swap as the Upscaling tab
+    static bool showVersionSelector = false;
+    const bool versionsSelectable = currentBackend == Upscaler::FFX && state.api == DX12;
 
-    ShowTooltip("Opens the Upscaling tab, the FSR version is selected there.\n"
-                "It can't be changed while a test is running.");
+    ImGui::BeginDisabled(!versionsSelectable);
+
+    if (ImGui::Button(TrL("Change FSR version")))
+    {
+        showVersionSelector = !showVersionSelector;
+
+        if (showVersionSelector)
+            RescanSrVariants();
+    }
+
+    ImGui::EndDisabled();
+
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    {
+        ImGui::SetTooltip("%s", Tr(versionsSelectable ? "Shows the FSR versions here. Picking one switches to it without "
+                                                        "leaving Benchmark.\nIt can't be changed while a test is running."
+                                                      : "Only with FSR as the upscaler in DX12."));
+    }
+
+    if (showVersionSelector && versionsSelectable)
+    {
+        const auto& variants = SharedSrVariants();
+        const auto& defaultDll = SharedDefaultSrDll();
+        const bool defaultActive = !defaultDll.empty() && FfxApiProxy::IsActiveSrDll(defaultDll);
+
+        ImGui::Indent();
+        ImGui::PushID("versionSelector");
+
+        if (!defaultDll.empty())
+        {
+            if (ImGui::RadioButton(TrL("Default"), defaultActive) && !defaultActive)
+                SelectSrVariant(L"");
+        }
+
+        for (const auto& variant : variants)
+        {
+            const bool variantActive = !variant.dllPath.empty() && FfxApiProxy::IsActiveSrDll(variant.dllPath);
+
+            auto label = wstring_to_string(variant.name);
+
+            if (!variant.version.empty())
+                label += StrFmt("  (%s)", variant.version.c_str());
+
+            // The folder name is unique, it is the id of the row
+            label += "###" + wstring_to_string(variant.name);
+
+            ImGui::BeginDisabled(!variant.valid);
+
+            if (ImGui::RadioButton(label.c_str(), variantActive) && !variantActive)
+                SelectSrVariant(variant.name);
+
+            ImGui::EndDisabled();
+
+            if (!variant.valid && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip(Tr("Can't be used: %s"), Tr(variant.problem.c_str()));
+        }
+
+        if (ImGui::Button(TrL("Rescan")))
+            RescanSrVariants();
+
+        // What is selected against what is really executing, the test measures the second
+        if (fsrObservable)
+        {
+            const auto diag = FfxApiProxy::SrDiagGetSnapshot();
+
+            ImGui::SameLine();
+
+            if (diag.statusLevel == 1)
+                ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.8f, 0.0f, 1.0f)), "%s", Tr("Switching..."));
+            else if (diag.statusLevel != 0)
+                ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.4f, 0.3f, 1.0f)), "%s",
+                                   Tr("The DLL that executes is not the selected one"));
+            else
+                ImGui::TextColored(toneMapColor(ImVec4(0.3f, 1.0f, 0.3f, 1.0f)), "%s: %s", Tr("Active"),
+                                   activeFsrName.empty() ? "-" : Tr(activeFsrName.c_str()));
+        }
+
+        ImGui::PopID();
+        ImGui::Unindent();
+    }
 
     // Duration
     static int benchSeconds = 60;
@@ -11627,6 +12609,18 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
 
     ShowTooltip("Opens the saved tests. Pick two or more to see them side by side,\n"
                 "with their differences and an automatic conclusion.");
+
+    // Benchmarks and captures of every dll in one report
+    ImGui::SameLine();
+
+    if (ImGui::Button(TrL("Final report")))
+    {
+        showFinalReport = true;
+        finalReportReload = true;
+    }
+
+    ShowTooltip("Integrated final report: performance, stability and visual quality of every DLL\n"
+                "that has saved tests, with one conclusion.");
 
     // Status
     ImGui::Spacing();
@@ -12125,6 +13119,7 @@ void MenuCommon::RenderMainMenuWindow(RenderMenuContext& ctx)
     RenderHudlessResourcesWindow(ctx, flags);
     DrawBenchmarkCompareWindow(menuResScale, io);
     DrawVisualCompareWindow(menuResScale, io);
+    DrawFinalReportWindow(menuResScale, io);
 
     if (config->UseHQFont.value_or_default())
         ImGui::PopFontSize();

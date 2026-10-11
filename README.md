@@ -1,193 +1,270 @@
-<div align="center">
+# OptiScaler - ILION V1.1
 
-  ![Logo](https://github.com/user-attachments/assets/c7dad5da-0b29-4710-8a57-b58e4e407abd)
+**[Español](#español) · [English](#english)**
 
-</div>
-<hr />
-<br />
-<div align="center">
-  <a href="https://github.com/sponsors/cdozdil?frequency=one-time"><img src="images/gh-sponsor-red.png" /></a>
-  <a href="https://buymeacoffee.com/nitec"><img src="images/bmac.png" /></a>
-</div>
-<br />
+ILION is a modified version of [OptiScaler](https://github.com/optiscaler/OptiScaler). It is not an official
+OptiScaler release and is not affiliated with, or endorsed by, the OptiScaler project, AMD, Intel or NVIDIA.
 
-## Table of Contents
+- Original project: <https://github.com/optiscaler/OptiScaler>, at commit `f6f75ddf0118ac45f447e2babbe18dbda3451edd`
+- Licence: [GNU General Public License v3.0](LICENSE), the licence of OptiScaler
+- Original documentation: [README_OptiScaler.md](README_OptiScaler.md)
+- Credits: [CREDITS.md](CREDITS.md) · Third-party components: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) ·
+  Changes: [CHANGELOG.md](CHANGELOG.md)
 
-**1.** [**About**](#about)  
-**2.** [**How it works?**](#how-it-works)  
-**3.** [**Supported APIs and Upscalers**](#which-apis-and-upscalers-are-supported)  
-**4.** [**Installation**](#installation)  
-**5.** [**Known Issues**](#known-issues)  
-**6.** [**Compilation and Credits**](#compilation)  
-**7.** [**Wiki**](https://github.com/optiscaler/OptiScaler/wiki)
+---
 
-<br />
-<div align="center">
-  <a href="https://discord.gg/wEyd9w4hG5"><img src="https://img.shields.io/badge/OptiScaler-blue?style=for-the-badge&logo=discord&logoColor=white&logoSize=auto&color=5865F2" alt="Discord invite"></a>
-  <a href="https://github.com/optiscaler/OptiScaler/releases/latest"><img src="https://img.shields.io/badge/Download-Stable-green?style=for-the-badge&logo=github&logoSize=auto" alt="Stable release"></a>
-  <a href="https://github.com/optiscaler/OptiScaler/releases/tag/nightly"><img src="https://img.shields.io/badge/Download-Nightly-purple?style=for-the-badge&logo=github&logoSize=auto" alt="Nightly release"></a>
-  <a href="https://github.com/optiscaler/OptiScaler/wiki"><img src="https://img.shields.io/badge/Documentation-blue?style=for-the-badge&logo=gitbook&logoColor=white&logoSize=auto" alt="Wiki"></a>
-</div>
-<div align="center">
-  <a href="https://github.com/optiscaler/OptiScaler/releases"><img src="https://img.shields.io/github/downloads/optiscaler/optiscaler/total?style=for-the-badge&logo=gitextensions&logoSize=auto&label=Total" alt="Total DL"></a>
-  <a href="https://github.com/optiscaler/OptiScaler/releases/latest"><img src="https://img.shields.io/github/downloads/optiscaler/optiscaler/latest/total?style=for-the-badge&logo=gitextensions&logoSize=auto&label=Stable&color=green&logoColor=white" alt="Stable DL"></a>
-  <a href="https://github.com/optiscaler/OptiScaler/releases/tag/nightly"><img src="https://img.shields.io/github/downloads/optiscaler/OptiScaler/nightly/total?style=for-the-badge&logo=gitextensions&logoColor=white&logoSize=auto&label=Nightly&color=purple" alt="Nightly DL"></a>
-  <a href="https://github.com/optiscaler/OptiScaler/stargazers"><img src="https://img.shields.io/github/stars/optiscaler/optiscaler?style=for-the-badge&logo=githubsponsors&logoColor=white&label=S.T.A.R.S." alt="Stars"></a>
-</div>
+## Español
 
+### Qué es
 
-## About
+ILION es una modificación personal de OptiScaler centrada en comparar implementaciones de FSR 4 sin reiniciar el
+juego. Todo lo que hace OptiScaler sigue estando; ILION añade herramientas alrededor del escalado.
 
-**OptiScaler** is a tool that lets you replace upscalers in games that ***already support DLSS2+ / FSR2+ / XeSS*** ($`^1`$), as well as manage ***frame generation*** in already mentioned games _(either by replacing existing FG options or enabling it in DX12 games through experimental ***OptiFG***)_. It also offers extensive customization options for all users, including those with Nvidia GPUs using DLSS.
+Se ha desarrollado y probado en un único equipo (AMD Radeon RX 7900 XTX, Ryzen 7 7800X3D, Windows 11) y sobre todo en
+un juego (The Witcher 3, DirectX 12). En otros equipos, juegos o API puede comportarse de otra manera.
 
-> [!CAUTION]
-> * We've been informed about some **FAKE websites** presenting themselves as OptiScaler team, so we would like to strongly highlight that we **DO NOT HAVE an official website!**  
-> * We **DON'T have an official manager app**, so please be careful when downloading or using them! And please don't bother us to provide support for something which isn't even ours!
-> * Only **LEGIT places** are this Github, our Discord server and Nitec's NexusMods page.  
-> * OptiScaler is **FREE**, any kind of monetary requirements are scams!  
+### Qué añade
 
-> [!TIP]
-> _For example, if a game has DLSS only, OptiScaler can be used to replace DLSS with XeSS or FSR 3.1 (also works for FSR2-only games, like The Outer Worlds Spacer's Choice, albeit requires manually providing nvngx_dlss.dll)._
+- **Cambio en caliente de la DLL de FSR.** Selecciona entre varias `amd_fidelityfx_upscaler_dx12.dll` desde el menú,
+  sin reiniciar. Solo afecta a Super Resolution; no toca Frame Generation.
+- **Gestor de versiones.** Cada subcarpeta de `<juego>\ILION\FSR_Versions\` con su propia DLL aparece en la lista con
+  el nombre de la carpeta. Validación del archivo, versión y SHA-256.
+- **Diagnóstico y verificación.** Qué DLL ejecuta realmente el escalado, con un marcador visual opcional.
+- **Benchmark.** Pruebas manuales de 30, 60 o 120 s con FPS promedio, 1 % y 0,1 % low, percentiles de frametime,
+  variabilidad y stutters; guardado en JSON y CSV.
+- **Comparación de pruebas e informe.** Diferencias absolutas y porcentuales, márgenes y conclusiones de rendimiento
+  y estabilidad. No hay puntuaciones globales.
+- **Capturas y análisis visual.** Captura PNG sin el menú (DX12), comparador lado a lado con zoom sincronizado y
+  métricas de imagen fija (SSIM, diferencias de píxeles, bordes). No mide lo que ocurre en movimiento.
+- **Telemetría de hardware** en el overlay, leída de HWiNFO o MSI Afterburner. Lo que ningún programa proporciona se
+  muestra como no disponible; nada se estima.
+- **Interfaz.** Español e inglés, modo Básico y Completo, tema industrial con el tema clásico de OptiScaler
+  disponible, overlay vertical y horizontal.
 
-**Key aspects of OptiScaler:**
-- Enables usage of XeSS, FSR2, FSR3, **FSR4**$`^2`$ (_officially, RDNA4 and RDNA3 dGPUs only_) and DLSS in (temporal) upscaler-enabled games
-- Allows users to fine-tune their upscaling experience with a wide range of tweaks and enhancements (RCAS & MAS, Output Scaling, DLSS Presets, Ratio & DRS Overrides etc.)
-- Since v0.7.0+, added ***experimental DX12*** frame generation support with possible HUDfix solution ([**OptiFG**](#optifg--hudfix-experimental-hud-ghosting-fix))
-- Supports [**Fakenvapi**](#installation) integration - enables Reflex hooking and injecting _Anti-Lag 2_ (RDNA1+ only), _LatencyFlex_ (LFX) or _XeLL_ - _bundled since 0.9_  
-- Since v0.7.7, added support for **Nukem's** FSR3-FG mod [**dlssg-to-fsr3**](#installation), only supports games with ***native DLSS-FG*** - _bundled since 0.9_
-- Since v0.7.8, added **ASI plugin loading** support (_disabled_ by default (`LoadAsiPlugins=` in INI), loads from customisable folder, default `plugins`)
-- New project - [**OptiPatcher**](https://github.com/optiscaler/OptiPatcher) - an ASI Plugin for OptiScaler for enabling DLSS and DLSSG inputs without spoofing in ***supported games***.
-- Since v0.7.8, OptiScaler is now automatically applying certain game patches for a better out-of-the-box experience
-- Since v0.9.0, separated FG Inputs and Outputs, added XeFG and FSR4-FG support, as well as bundled Fakenvapi and Nukem's FSR3-FG mod
-- For a detailed list of all features, check [Features](Features.md)
+### Qué no incluye
 
+Este repositorio contiene solo código fuente. **No incluye ninguna DLL de FSR, DLSS o XeSS**, ni las cabeceras del
+SDK de DLSS de NVIDIA, ni las DLL de AMD, Intel o Microsoft que acompañan a los paquetes de OptiScaler. Cada usuario
+las obtiene de su proveedor, de fuentes que tenga derecho a usar. Más abajo se explica cómo.
 
-> [!IMPORTANT]
-> _**Always check the [Wiki Compatibility list](https://github.com/optiscaler/OptiScaler/wiki) for known game issues and workarounds.**_  
-> Also please check the  [***OptiScaler known issues***](#known-issues) at the end regarding **RTSS** compatibility.  
-> A separate [***FSR4 Compatibility list***](https://github.com/optiscaler/OptiScaler/wiki/FSR4-Compatibility-List) is available for community-sourced tested games.  
-> ***[3]** For **not bundled** items, please check [Installation](#installation).*  
+### Compilar
 
-> [!NOTE]
-> ### Upscaler notes
-> <details>
->  <summary><b>Click for [1], [2] </b></summary>  
->  
-> **[1]** For **Unreal Engine** games, only UE XeSS -> Opti XeSS/FSR4 work  
->  
-> *Regarding **XeSS** inputs, since **Unreal Engine plugin** does not provide depth, replacing in-game XeSS breaks other upscalers (e.g. Redout 2 as a XeSS-only game), but you can still apply RCAS sharpening to XeSS to reduce blurry visuals.* 
->
-> *Regarding **FSR inputs**, FSR 3.1 is the first version with a fully standardised, forward-looking API and should be fully supported. Since FSR2 and FSR3 support custom interfaces, game support will depend on the developers' implementation. With Unreal Engine games, you might need [ini tweaks](https://github.com/optiscaler/OptiScaler/wiki/Unreal-Engine-Tweaks) for FSR inputs.*  
->
-> **[2]** *Regarding **FSR4**, please check [FSR4 Compatibility list](https://github.com/optiscaler/OptiScaler/wiki/FSR4-Compatibility-List) for known supported games and general info.*
-> 
-> </details>
+1. Clona el repositorio **con todos sus submódulos**:
+   `git clone --recurse-submodules https://github.com/ENE4S/Optiscaler-ILION.git`
+2. Consigue las cabeceras del SDK de DLSS de NVIDIA, que **no forman parte de este repositorio**: copia la carpeta
+   `include` de <https://github.com/NVIDIA/DLSS>, en la etiqueta **`v310.1.0`**, a `external\nvidia_dlss_sdk\include`
+   (esa carpeta está ignorada por git). Su uso está sujeto a la licencia de ese SDK. Si las tienes en otro sitio,
+   indícalo con la variable de entorno o la propiedad de MSBuild `NvidiaDlssSdkInclude`.
+3. Abre `OptiScaler.sln` con Visual Studio (carga de trabajo de C++ para escritorio, Windows 10/11 SDK).
+4. Compila la configuración **Release**, plataforma **x64**.
+5. El resultado queda en `x64\Release\a\OptiScaler.dll`.
 
+Hace falta tener `git` en el PATH: un paso previo a la compilación lo usa para anotar el commit. Por eso la carpeta tiene
+que ser un clon de git: con el ZIP de código fuente que ofrece GitHub, la configuración Release no compila.
 
-## Official Discord Server: [OptiScaler](https://discord.gg/wEyd9w4hG5)
+Las compilaciones hechas desde este repositorio no están firmadas.
 
-*This project is based on [PotatoOfDoom](https://github.com/PotatoOfDoom)'s excellent [CyberFSR2](https://github.com/PotatoOfDoom/CyberFSR2).*
+La carpeta `x64\Release\a\` contiene solo `OptiScaler.dll`, `OptiScaler.ini` y los scripts de instalación. A
+diferencia de los paquetes de OptiScaler, no se copian en ella las DLL de AMD, Intel o Microsoft: cada usuario las
+obtiene de su proveedor. Dependencias externas y sus licencias:
 
-## How it works?
-* OptiScaler acts as a middleware, it intercepts upscaler calls from the game (_**Inputs**_) and redirects them to the chosen upscaling backend (_**Output**_), allowing user to replace one technology with another one. **Inputs -> OptiScaler -> Outputs**  
-* _Or put more bluntly, **Input** is the upscaler used in game settings, and **Output** the one selected in Opti Overlay._
-* _Same goes for FG options which are separated into **FG Input** and **FG Output**._
+| Qué | Para qué | De dónde | Licencia |
+|---|---|---|---|
+| Submódulos de `external/` | Compilar | Se descargan al clonar | Las de cada uno, ver [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) |
+| Cabeceras del SDK de DLSS, `v310.1.0` | Compilar | <https://github.com/NVIDIA/DLSS>, carpeta `include` | NVIDIA RTX SDKs License (propietaria) |
+| DLL de FSR (`amd_fidelityfx_*.dll`) | Ejecutar FSR 3.1 / FSR 4 | AMD FidelityFX SDK o el controlador de AMD | Licencia de AMD, solo en forma binaria |
+| DLL de XeSS (`libxess*.dll`, `libxell.dll`) | Ejecutar XeSS | <https://github.com/intel/xess> | Intel Simplified Software License |
+| `D3D12Core.dll` (opcional) | Opción `FsrAgilitySDKUpgrade` | Paquete NuGet `Microsoft.Direct3D.D3D12` | Licencia del Agility SDK de Microsoft |
+| `fxc.exe`, `dxc.exe`, `dxcompiler.dll`, `dxil.dll` (opcional) | Regenerar los sombreadores precompilados | Windows SDK | Licencia del Windows SDK |
 
-> [!NOTE]
-> * Pressing **`Insert`** should open the Optiscaler **Overlay** in-game with all of the options (_`ShortcutKey=` can be changed in the INI file, or under **Keybinds** in the overlay_). 
-> * Pressing **`Page Up`** shows the performance stats overlay in the top left, and can be cycled between different modes with **`Page Down`** (_keybinds customisable in the overlay_).  
-> * If Opti overlay is instantly disappearing after trying Insert a few times, maybe try **`Alt + Insert`** ([reported workaround](https://github.com/optiscaler/OptiScaler/issues/484) for alternate keyboard layouts).
+Para obtener en local la misma carpeta que arma OptiScaler, compila con `/p:BundleVendorBinaries=true`. Esa carpeta
+queda sujeta a las licencias de esos archivos y no está pensada para publicarse desde este repositorio.
 
-![inputs_and_outputs](https://github.com/user-attachments/assets/7ff37fd7-515f-488d-99ff-faa586e206fc)
+#### Instalar las dependencias a mano
 
-## Which APIs and Upscalers are Supported?
-Currently **OptiScaler** can be used with DirectX 11, DirectX 12 and Vulkan, but each API has different sets of supported upscalers.  
-[**OptiFG**](#optifg--hudfix-experimental-hud-ghosting-fix) currently **only supports DX12** and is explained in a separate paragraph.
+**Para compilar: cabeceras de NVIDIA.** Desde la raíz del repositorio, esto descarga solo la carpeta `include` de la
+versión que hace falta (menos de 1 MB) y la deja donde la compilación la busca:
 
-#### For DirectX 12
-- XeSS (Default)
-- FSR 2.1.2, 2.2.1
-- FSR 3.X (and FSR 2.3.X)
-- FSR 4.X (via FSR 3.X/4, _officially RDNA4 and RDNA3 dGPUs only_)
-- DLSS
+```
+git clone --depth 1 --branch v310.1.0 --filter=blob:none --sparse https://github.com/NVIDIA/DLSS.git external\nvidia_dlss_sdk
+git -C external\nvidia_dlss_sdk sparse-checkout set include
+```
 
-#### For DirectX 11
-- FSR 2.2.1 (Default, native DX11)
-- FSR 3.1.2 (unofficial port to native DX11)
-- DLSS (native DX11)
-- XeSS 2.X (native DX11, _Intel ARC only_)
-- XeSS, FSR 2.1.2, 2.2.1, FSR 3.X w/Dx12 (_via D3D11on12_)$`^1`$
-- FSR 4.X (via FSR 3.X/4 w/Dx12 interop, _officially RDNA4 and RDNA3 dGPUs only_)
+También sirve copiar a mano los archivos de `include` a `external\nvidia_dlss_sdk\include`. Tiene que ser la etiqueta
+`v310.1.0`: con `v3.5.10` y `v310.9.1` no compila. Si faltan, la compilación se detiene con un mensaje que lo dice.
+Al descargarlas aceptas la licencia de NVIDIA (`LICENSE.txt` de ese repositorio).
 
-> [!NOTE]
-> <details>
->  <summary><b>Expand for [1]</b></summary>
->
-> _**[1]** These implementations use a background DirectX12 device to be able to use DX12-only upscalers. There's a performance penalty up to 10-ish % for this method, but allows many more upscaler options. Also native DX11 implementation of FSR 2.2.1 is a backport from Unity renderer and has its own problems of which some were fixed by OptiScaler._
-> </details>
+**Para usar ILION en un juego.** `OptiScaler.dll` no trae ninguna DLL de terceros. Si ya tienes OptiScaler instalado
+en el juego, basta con sustituir su DLL por la de ILION: el resto de archivos ya está. En una instalación nueva:
 
-#### For Vulkan
-- FSR 4.X (via FSR 3.X/4 w/Dx12 interop, _officially RDNA4 and RDNA3 dGPUs only_)
-- FSR2 2.1.2 (Default), 2.2.1
-- FSR3 3.1 (and FSR2 2.3.2)
-- DLSS
-- XeSS 2.x
+- FSR 3.1 / FSR 4: `amd_fidelityfx_loader_dx12.dll`, `amd_fidelityfx_upscaler_dx12.dll` y
+  `amd_fidelityfx_framegeneration_dx12.dll` (y `amd_fidelityfx_vk.dll` para Vulkan), del FidelityFX SDK de AMD, en
+  `<juego>\OptiScaler\`, que es donde los colocan los paquetes de OptiScaler. La ruta se puede cambiar en
+  `OptiScaler.ini`, sección `[Libraries]`.
+- XeSS: `libxess.dll` y las demás de <https://github.com/intel/xess> (`bin`), en la misma carpeta.
+- Opcional, `D3D12Core.dll` del paquete NuGet `Microsoft.Direct3D.D3D12` (un `.nupkg` es un zip; está en
+  `build\native\bin\x64`), en `<juego>\OptiScaler\D3D12_OptiScaler\`. Solo se usa con `FsrAgilitySDKUpgrade`.
+- Las versiones de FSR que quieras comparar, cada una en su carpeta de `<juego>\ILION\FSR_Versions\`.
 
-#### OptiFG + HUDfix (experimental HUD ghosting fix) 
-**OptiFG** was added with **v0.7** and is **only supported in DX12**. 
-It's an **experimental** way of adding FG to games without native Frame Generation, or can also be used as a last case scenario if the native FG is not working properly.  
-* Currently supports FSR3-FG (requires HUDfix to avoid HUD ghosting), XeFG and FSR4-FG (ML model deals with the HUD, so may or may not require HUDfix).
+**Para regenerar los sombreadores precompilados** (no hace falta para compilar): copia `fxc.exe`, `dxc.exe`,
+`dxcompiler.dll` y `dxil.dll` del Windows SDK (`bin\<versión>\x64`) a `OptiScaler\shaders\shader_tools`.
 
-For more information on OptiFG and how to use it, please check the Wiki page - [OptiFG](https://github.com/optiscaler/OptiScaler/wiki/OptiFG).
+### Instalar
 
+Igual que OptiScaler: consulta [README_OptiScaler.md](README_OptiScaler.md). ILION sustituye a `OptiScaler.dll` (o al
+nombre que se le haya dado: `dxgi.dll`, `winmm.dll`...). Las versiones de FSR adicionales van en
+`<juego>\ILION\FSR_Versions\<nombre>\amd_fidelityfx_upscaler_dx12.dll`.
 
-## Installation
-> [!CAUTION]
-> _**Warning**: **Do not use this mod with online games.** It may trigger anti-cheat software and cause bans!_
+### Estado y límites
 
-> [!IMPORTANT]
-> **For installation steps, please check the [**Wiki**](https://github.com/optiscaler/OptiScaler/wiki)**  
+- Proyecto personal, sin garantía y sin soporte.
+- El cambio en caliente de DLL y la captura de imagen funcionan solo en DirectX 12.
+- Usar OptiScaler o ILION en juegos en línea con sistemas antitrampas puede tener consecuencias. No lo hagas.
+- Los problemas de ILION no deben comunicarse al proyecto OptiScaler.
 
-## Configuration
-Please check [this](Config.md) document for configuration parameters and explanations. If your GPU is not an Nvidia one, check [GPU spoofing options](Spoofing.md) *(Will be updated)*
+### Estado de las licencias
 
-## Known Issues
+Este repositorio no debe darse por autorizado legalmente para su publicación. Queda una cuestión sin aclarar:
 
-> [!NOTE]
-> **For a list of known issues, please check the [**Wiki**](https://github.com/optiscaler/OptiScaler/wiki)**.
-> 
-> Also worth checking the [Compatibility List](https://github.com/optiscaler/OptiScaler/wiki/Compatibility-List) for possible game issues and their fixes.
+- **SDK de DLSS de NVIDIA y GPL-3.0.** OptiScaler, y por tanto ILION, se compila contra las cabeceras del SDK de
+  DLSS. Esas cabeceras ya no se distribuyen aquí, pero la licencia del SDK (NVIDIA RTX SDKs License) dice que no puede
+  usarse de forma que quede sujeto a una licencia de código abierto. Si compilar un programa GPL-3.0 contra
+  cabeceras que cada usuario obtiene de NVIDIA cabe en esos términos es una cuestión jurídica que este repositorio
+  no resuelve; solo pueden aclararla NVIDIA o un abogado. OptiScaler está en la misma situación.
 
-## Compilation
+Está descrita también en [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), sección 5.
 
-### Requirements
-* Visual Studio 2022
+### Licencia y créditos
 
-### Instructions
-* Clone this repo with **all of its submodules**.
-* Open the OptiScaler.sln with Visual Studio 2022.
-* Build the project
+OptiScaler es obra de sus autores y se distribuye bajo GPL-3.0. ILION, como obra derivada, se distribuye bajo la misma
+licencia. Las modificaciones de ILION son de ENE4S, hechas en octubre de 2026 con la asistencia de Claude (Anthropic),
+y están en los commits posteriores al commit de importación. Ver [CREDITS.md](CREDITS.md).
 
-## Thanks
-* @PotatoOfDoom for CyberFSR2
-* @Artur for DLSS Enabler and helping me implement NVNGX api correctly
-* @LukeFZ & @Nukem for their great mods and sharing their knowledge 
-* @FakeMichau for continous support, testing and feature creep
-* @QM for continous testing efforts and helping me to reach games
-* @TheRazerMD for continous testing and support
-* @Cryio, @krispy, @krisshietala, @Lordubuntu, @scz, @Veeqo for their hard work on (now outdated) [compatibility matrix](https://docs.google.com/spreadsheets/d/1qsvM0uRW-RgAYsOVprDWK2sjCqHnd_1teYAx00_TwUY)
-* And the whole DLSS2FSR community for all their support
+---
 
-## Credit
-This project uses [FreeType](https://gitlab.freedesktop.org/freetype/freetype) licensed under the [FTL](https://gitlab.freedesktop.org/freetype/freetype/-/blob/master/docs/FTL.TXT)
+## English
 
-## Sponsors
-<table>
- <tbody>
-  <tr>
-   <td align="center"><img alt="[SignPath]" src="https://avatars.githubusercontent.com/u/34448643" height="30"/></td>
-   <td>Free code signing on Windows provided by <a href="https://signpath.io/">SignPath.io</a>, certificate by <a href="https://signpath.org/">SignPath Foundation</a></td>
-  </tr>
- </tbody>
-</table>
+### What it is
 
+ILION is a personal modification of OptiScaler built around comparing FSR 4 implementations without restarting the
+game. Everything OptiScaler does is still there; ILION adds tools around upscaling.
+
+It was developed and tested on a single machine (AMD Radeon RX 7900 XTX, Ryzen 7 7800X3D, Windows 11) and mostly in
+one game (The Witcher 3, DirectX 12). It may behave differently on other machines, games or APIs.
+
+### What it adds
+
+- **Hot swap of the FSR DLL.** Pick between several `amd_fidelityfx_upscaler_dx12.dll` files from the menu, without
+  restarting. It only affects Super Resolution; Frame Generation is not touched.
+- **Versions manager.** Every subfolder of `<game>\ILION\FSR_Versions\` that has its own DLL is listed under the name
+  of the folder. File validation, version and SHA-256.
+- **Diagnostics and verification.** Which DLL really executes the upscaling, with an optional visual marker.
+- **Benchmark.** Manual tests of 30, 60 or 120 s with average FPS, 1 % and 0.1 % low, frame time percentiles,
+  variability and stutters; saved as JSON and CSV.
+- **Test comparison and report.** Absolute and percentage differences, margins, and conclusions on performance and
+  stability. There are no overall scores.
+- **Captures and visual analysis.** PNG capture without the menu (DX12), side-by-side viewer with synchronised zoom,
+  and still-image metrics (SSIM, pixel differences, edges). It does not measure what happens in motion.
+- **Hardware telemetry** in the overlay, read from HWiNFO or MSI Afterburner. What no program provides is shown as
+  not available; nothing is estimated.
+- **Interface.** Spanish and English, Basic and Full modes, an industrial theme with the classic OptiScaler theme
+  still available, vertical and horizontal overlay.
+
+### What it does not include
+
+This repository holds source code only. **It does not include any FSR, DLSS or XeSS DLL**, nor the headers of the
+NVIDIA DLSS SDK, nor the AMD, Intel or Microsoft DLLs that come with OptiScaler's packages. Each user gets them from
+their vendor, from sources they are entitled to use. How is explained below.
+
+### Building
+
+1. Clone the repository **with all of its submodules**:
+   `git clone --recurse-submodules https://github.com/ENE4S/Optiscaler-ILION.git`
+2. Get the headers of the NVIDIA DLSS SDK, which are **not part of this repository**: copy the `include` folder of
+   <https://github.com/NVIDIA/DLSS>, at tag **`v310.1.0`**, to `external\nvidia_dlss_sdk\include` (git ignores that
+   folder). Their use is subject to the licence of that SDK. If you keep them elsewhere, say where with the
+   environment variable or MSBuild property `NvidiaDlssSdkInclude`.
+3. Open `OptiScaler.sln` with Visual Studio (Desktop development with C++, Windows 10/11 SDK).
+4. Build the **Release** configuration, **x64** platform.
+5. The result is `x64\Release\a\OptiScaler.dll`.
+
+`git` has to be in the PATH: a pre-build step uses it to record the commit. That is why the folder has to be a git
+clone: with the source ZIP GitHub offers, the Release configuration does not build.
+
+Builds made from this repository are not signed.
+
+The `x64\Release\a\` folder holds only `OptiScaler.dll`, `OptiScaler.ini` and the setup scripts. Unlike OptiScaler's
+packages, the DLLs of AMD, Intel or Microsoft are not copied into it: each user gets them from their vendor.
+External dependencies and their licences:
+
+| What | What for | Where from | Licence |
+|---|---|---|---|
+| Submodules in `external/` | Building | Downloaded when cloning | Each its own, see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) |
+| DLSS SDK headers, `v310.1.0` | Building | <https://github.com/NVIDIA/DLSS>, `include` folder | NVIDIA RTX SDKs License (proprietary) |
+| FSR DLLs (`amd_fidelityfx_*.dll`) | Running FSR 3.1 / FSR 4 | AMD FidelityFX SDK or the AMD driver | AMD licence, binary form only |
+| XeSS DLLs (`libxess*.dll`, `libxell.dll`) | Running XeSS | <https://github.com/intel/xess> | Intel Simplified Software License |
+| `D3D12Core.dll` (optional) | The `FsrAgilitySDKUpgrade` option | NuGet package `Microsoft.Direct3D.D3D12` | Microsoft Agility SDK licence |
+| `fxc.exe`, `dxc.exe`, `dxcompiler.dll`, `dxil.dll` (optional) | Regenerating the pre-compiled shaders | Windows SDK | Windows SDK licence |
+
+To get locally the same folder OptiScaler puts together, build with `/p:BundleVendorBinaries=true`. That folder is
+subject to the licences of those files and is not meant to be published from this repository.
+
+#### Installing the dependencies by hand
+
+**To build: NVIDIA headers.** From the root of the repository, this downloads only the `include` folder of the
+version that is needed (under 1 MB) and leaves it where the build looks for it:
+
+```
+git clone --depth 1 --branch v310.1.0 --filter=blob:none --sparse https://github.com/NVIDIA/DLSS.git external\nvidia_dlss_sdk
+git -C external\nvidia_dlss_sdk sparse-checkout set include
+```
+
+Copying the files of `include` by hand to `external\nvidia_dlss_sdk\include` works too. It has to be tag `v310.1.0`:
+`v3.5.10` and `v310.9.1` do not build. If they are missing, the build stops with a message saying so. By downloading
+them you accept NVIDIA's licence (`LICENSE.txt` in that repository).
+
+**To use ILION in a game.** `OptiScaler.dll` comes with no third-party DLL. If OptiScaler is already installed in the
+game, replacing its DLL with ILION's is enough: the other files are already there. For a new installation:
+
+- FSR 3.1 / FSR 4: `amd_fidelityfx_loader_dx12.dll`, `amd_fidelityfx_upscaler_dx12.dll` and
+  `amd_fidelityfx_framegeneration_dx12.dll` (and `amd_fidelityfx_vk.dll` for Vulkan), from AMD's FidelityFX SDK, in
+  `<game>\OptiScaler\`, which is where OptiScaler's packages put them. The path can be changed in `OptiScaler.ini`,
+  section `[Libraries]`.
+- XeSS: `libxess.dll` and the others from <https://github.com/intel/xess> (`bin`), in the same folder.
+- Optional, `D3D12Core.dll` from the NuGet package `Microsoft.Direct3D.D3D12` (a `.nupkg` is a zip; it is in
+  `build\native\bin\x64`), in `<game>\OptiScaler\D3D12_OptiScaler\`. Only used with `FsrAgilitySDKUpgrade`.
+- The FSR versions you want to compare, each in its own folder of `<game>\ILION\FSR_Versions\`.
+
+**To regenerate the pre-compiled shaders** (not needed to build): copy `fxc.exe`, `dxc.exe`, `dxcompiler.dll`
+and `dxil.dll` from the Windows SDK (`bin\<version>\x64`) to `OptiScaler\shaders\shader_tools`.
+
+### Installing
+
+The same as OptiScaler: see [README_OptiScaler.md](README_OptiScaler.md). ILION takes the place of `OptiScaler.dll`
+(or whatever it was renamed to: `dxgi.dll`, `winmm.dll`...). Additional FSR versions go in
+`<game>\ILION\FSR_Versions\<name>\amd_fidelityfx_upscaler_dx12.dll`.
+
+### Status and limits
+
+- A personal project, with no warranty and no support.
+- The DLL hot swap and the image capture work in DirectX 12 only.
+- Using OptiScaler or ILION in online games with anti-cheat systems can have consequences. Don't.
+- Problems with ILION should not be reported to the OptiScaler project.
+
+### Licence status
+
+This repository should not be taken as legally cleared for publication. One question is not settled:
+
+- **NVIDIA DLSS SDK and GPL-3.0.** OptiScaler, and so ILION, is compiled against the headers of the DLSS SDK. Those
+  headers are no longer distributed here, but the licence of the SDK (NVIDIA RTX SDKs License) says it may not be
+  used in a way that makes it subject to an open source licence. Whether building a GPL-3.0 program against headers
+  each user obtains from NVIDIA is within those terms is a legal question this repository does not settle; only
+  NVIDIA or a lawyer can. OptiScaler is in the same position.
+
+It is also described in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), section 5.
+
+### Licence and credits
+
+OptiScaler is the work of its authors and is distributed under GPL-3.0. ILION, as a derivative work, is distributed
+under the same licence. The ILION modifications are by ENE4S, made in October 2026 with the assistance of Claude
+(Anthropic), and are the commits after the import commit. See [CREDITS.md](CREDITS.md).

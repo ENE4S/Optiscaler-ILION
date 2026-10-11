@@ -37,14 +37,15 @@ of them carry (AMD FidelityFX, Intel XeSS, NVAPI), are downloaded from their own
 | `OptiScaler/include/fsr2`, `fsr2_212`, `fsr3`, `fsr31` | AMD FidelityFX FSR headers | MIT (AMD) |
 | `OptiScaler/include/device_info` | GPUOpen-Tools device_info | MIT (AMD) |
 | `OptiScaler/include/detours` | Microsoft Detours headers | MIT (Microsoft), `LICENSE.md` in the folder |
-| `OptiScaler/include/sl.param`, `external/streamline`, `external/streamline1` | NVIDIA Streamline headers | MIT (NVIDIA) |
+| `OptiScaler/include/sl.param`, `external/streamline`, `external/streamline1` | NVIDIA Streamline headers (2.11.1 in `external/streamline`) | MIT (NVIDIA); notice in the files, and `external/streamline/license.txt`, the licence file of Streamline 2.11.1. The files that licence puts under other terms (`sl_nvperf`) are not here. |
 | `external/AntiLag2-SDK` | AMD Anti-Lag 2 SDK | MIT (AMD) |
-| `external/latencyflex` | LatencyFleX header | Apache-2.0 (Tatsuyuki Ishi) |
+| `external/latencyflex` | LatencyFleX header | Apache-2.0 (Tatsuyuki Ishi), `LICENSE` in the folder |
 | `external/nlohmann` | JSON for Modern C++ | MIT (Niels Lohmann) |
-| `external/freetype` | FreeType headers | FreeType Licence (FTL) or GPLv2, at the choice of the user |
+| `external/freetype` | FreeType 2.13.3 headers | FreeType Licence (FTL) or GPLv2, at the choice of the user; `LICENSE.TXT`, `docs/FTL.TXT` and `docs/GPLv2.TXT` in the folder |
+| `OptiScaler/menu/font` | Hack typeface by Source Foundry, <https://github.com/source-foundry/Hack>, as a font file and as data in two headers | MIT for the work of the Hack project and Bitstream Vera Licence for Bitstream Vera Sans Mono, on which it is based; `LICENSE.md` in the folder |
 | `OptiScaler/include/flag-set-cpp` | flag-set-cpp by Mart Somermaa, <https://github.com/mrts/flag-set-cpp> | MIT, `LICENCE` in the folder |
 | `OptiScaler/include/sha1` | SHA-1 by Steve Reid and others | Public domain, as the file states |
-| `OptiScaler/include/spdlog_sink` | Log sink by OptiScaler, adapted from spdlog | No notice in the file; spdlog is MIT (Gabi Melman) |
+| `OptiScaler/include/spdlog_sink` | Log sink by OptiScaler, adapted from spdlog | MIT (Gabi Melman); the `LICENSE` of spdlog is in the folder |
 | `OptiScaler/include/d3dx/d3dx12.h` | D3D12 helper structures | MIT, notice in the file |
 | `OptiScaler/inputs/NVNGX_Compat.h`, `NVNGX_Compat_Vk.h` | What OptiScaler needs on top of the official NVIDIA headers; written for this repository | GPL-3.0, as the rest |
 
@@ -58,8 +59,8 @@ All 27 were put there by OptiScaler. None is an upscaler DLL.
 | `OptiScaler/library/fsr2_212/*.lib` (6) | AMD FSR 2.1.2 static libraries | Yes | As above. Identified. |
 | `OptiScaler/library/fsr31/*.lib` (10) | AMD FidelityFX SDK 1.1 static libraries | Yes | Built from AMD's MIT-licensed SDK. Identified. |
 | `OptiScaler/library/detours/detours.lib` | Microsoft Detours static library | Yes | MIT; the licence text is in `OptiScaler/include/detours/LICENSE.md`. Identified. |
-| `OptiScaler/library/vulkan/vulkan-1.lib` | Import library of the Vulkan loader | Yes | Vulkan loader is Apache-2.0. Identified. |
-| `external/freetype/freetype.lib` | FreeType static library | Yes | FTL or GPLv2. Identified; the FTL asks for a credit, which is given here and in the README of OptiScaler. |
+| `OptiScaler/library/vulkan/vulkan-1.lib` | Import library of the Vulkan loader | Yes | Apache-2.0; the licence file of the Vulkan loader is next to it, `LICENSE.txt`. Identified. |
+| `external/freetype/freetype.lib` | FreeType static library | Yes | FTL or GPLv2, texts in `external/freetype`. Identified; the FTL asks for a credit, which is given here and in the README of OptiScaler. |
 
 ## 4. Files of OptiScaler left out of this repository
 

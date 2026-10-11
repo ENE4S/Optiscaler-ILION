@@ -1,44 +1,51 @@
 ---
 name: Crash/Bug
-about: This template is for reporting issues when using OptiScaler
+about: This template is for reporting issues when using OptiScaler - ILION
 title: ''
 labels: ''
 assignees: ''
 
 ---
 
-**Since there has been an active increase in new issues without any basic info to help troubleshooting, we're releasing this Issue Report Template that should help troubleshoot without our magic 8 ball. Going forward, issues that do not follow the Template will be ignored.**
+**ILION is a modified version of OptiScaler, not an official OptiScaler release. Please report problems with ILION here and not to the OptiScaler project. If the problem also happens with an unmodified OptiScaler build, it belongs in the [OptiScaler repository](https://github.com/optiscaler/OptiScaler) instead.**
+
+**ILION is a personal project with no support. Issues that do not follow this template may be left unanswered.**
 
 #### Game name and version:
-*Example:* Cyberpunk 2077 (Steam), Avowed (GamePass/UWP)
+*Example:* The Witcher 3 (Steam, DX12)
 
-#### Mods and mod versions used 
-*Example:* OptiScaler_v0.7.7-pre7_20250316 + Fakenvapi 1.2.1 + Nukem 0.122 - OptiScaler version most important
+#### ILION version and other mods used
+*Example:* ILION V1.1, commit shown in the menu + DLSS Enabler 3.x - the ILION commit is the most important
+
+#### Does it also happen with an unmodified OptiScaler build?
+ - [ ] Yes
+ - [ ] No
+ - [ ] Not tested
 
 #### GPU
-*Example:*  RTX 4070Ti, RX 7800XT
+*Example:*  RX 7900 XTX, RTX 4070Ti
 
 #### OS 
 *Example:*  Win 10/11, Linux
 
-#### Used automated or manual install?
- - [ ] Automated
- - [ ] Manual
+#### Which part of ILION is affected?
+ - [ ] FSR DLL hot swap / versions manager
+ - [ ] Benchmark or comparison of tests
+ - [ ] Capture or visual analysis
+ - [ ] Hardware telemetry / overlay
+ - [ ] Interface (language, Basic / Full mode, theme)
+ - [ ] Something inherited from OptiScaler
 
-If on AMD/Intel and Automated, **used DLSS inputs**?
-- [ ] Yes
-- [ ] No
+Please also mention which upscaler inputs are used (which upscaler you selected in the game settings) and which FSR DLL versions are in `ILION\FSR_Versions`.
 
-Also please mention in description which upscaler inputs are used (which upscaler you selected in game settings).
-
-#### Did you check the [Wiki](https://github.com/optiscaler/OptiScaler/wiki) and [Compatibility List](https://github.com/optiscaler/OptiScaler/wiki/Compatibility-List)?
+#### Did you check the README of this repository and the OptiScaler [Wiki](https://github.com/optiscaler/OptiScaler/wiki)?
  - [ ] Yes
  - [ ] No
 
 #### Please describe the issue and steps to reproduce it
-*Example:* I am using DLSS in game settings and the game is crashing when switching to FSR4.
+*Example:* The game crashes when I switch from one FSR 4 DLL to another in the Upscaling tab.
 
 #### I have attached
  - [ ] OptiScaler.log _(set `LogLevel=0` and `LogToFile=true` in OptiScaler.ini, zip it if too big)_
- - [ ] Screenshot of game folder _(where you placed Opti)_
- - [ ] Screenshot of Opti overlay in-game _(opens with shortcut, default Insert)_
+ - [ ] Screenshot of the game folder _(where the DLL was placed)_
+ - [ ] Screenshot of the ILION menu in-game _(opens with the shortcut, default Insert)_

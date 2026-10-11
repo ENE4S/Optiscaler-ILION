@@ -11,8 +11,9 @@ ILION is built on **OptiScaler** and would not exist without it.
 
 The first commit of this repository is the source tree of that commit without eighteen files of NVIDIA and Microsoft
 that are not redistributed here ([THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), section 4); everything else in it
-is unchanged. OptiScaler is the work of its authors, not of the author of ILION. Its history up to that commit (4,561 commits) is not carried here; it is in the
-original repository, which is the authoritative record of who wrote what.
+is unchanged. OptiScaler is the work of its authors, not of the author of ILION. Its history up to that commit
+(4,561 commits) is not carried here; it is in the original repository, which is the authoritative record of who
+wrote what.
 
 Authors of OptiScaler as they appear in that history, with their number of commits:
 
@@ -69,6 +70,7 @@ Files of OptiScaler that were modified:
   `OptiScaler/OptiScaler.vcxproj`, `OptiScaler/inputs/NVNGX_DLSS_Dx11.cpp`, `NVNGX_DLSS_Dx12.cpp`, `FfxApi_Vk.cpp`,
   `FSR2_Vk.cpp`, `XeSS_Vulkan.cpp`, `.gitignore`
 - `.github/workflows` was moved to `.github/workflows-disabled`, unchanged
+- `.github/ISSUE_TEMPLATE/crash-bug.md`, so that it asks about ILION
 - `README.md` and `Changelog.md` were renamed to `README_OptiScaler.md` and `Changelog_OptiScaler.md`, unchanged
 
 Files added by ILION:
@@ -78,8 +80,9 @@ Files added by ILION:
 - `OptiScaler/menu/ilion_lang.h`, `ilion_theme.h`, `ilion_visual_panel.h`
 - `OptiScaler/inputs/NVNGX_Compat.h`, `NVNGX_Compat_Vk.h`
 - `.github/workflows-disabled/README.md`
-- `OptiScaler/include/detours/LICENSE.md` and `OptiScaler/include/flag-set-cpp/LICENCE`, the MIT licence texts of
-  those two components, taken from their repositories
+- Licence texts of components OptiScaler uses, taken unchanged from the projects they belong to and placed next to
+  each component: Detours, flag-set-cpp, FreeType, Hack, LatencyFleX, the Vulkan loader, spdlog and Streamline
+  ([THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) says where each one is)
 - `README.md`, `CREDITS.md`, `THIRD_PARTY_NOTICES.md`, `CHANGELOG.md`
 
 The ILION commits were made against OptiScaler's own copy of the NVIDIA headers, which is not in this repository.

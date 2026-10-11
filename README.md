@@ -55,7 +55,9 @@ las obtiene de su proveedor, de fuentes que tenga derecho a usar. Más abajo se 
    `include` de <https://github.com/NVIDIA/DLSS>, en la etiqueta **`v310.1.0`**, a `external\nvidia_dlss_sdk\include`
    (esa carpeta está ignorada por git). Su uso está sujeto a la licencia de ese SDK. Si las tienes en otro sitio,
    indícalo con la variable de entorno o la propiedad de MSBuild `NvidiaDlssSdkInclude`.
-3. Abre `OptiScaler.sln` con Visual Studio (carga de trabajo de C++ para escritorio, Windows 10/11 SDK).
+3. Abre `OptiScaler.sln` con **Visual Studio 2022** (carga de trabajo "Desarrollo para el escritorio con C++", con
+   las herramientas de compilación **v143** y un SDK de Windows 10/11). Una versión posterior de Visual Studio también
+   sirve si tiene instaladas las herramientas v143.
 4. Compila la configuración **Release**, plataforma **x64**.
 5. El resultado queda en `x64\Release\a\OptiScaler.dll`.
 
@@ -184,7 +186,8 @@ their vendor, from sources they are entitled to use. How is explained below.
    <https://github.com/NVIDIA/DLSS>, at tag **`v310.1.0`**, to `external\nvidia_dlss_sdk\include` (git ignores that
    folder). Their use is subject to the licence of that SDK. If you keep them elsewhere, say where with the
    environment variable or MSBuild property `NvidiaDlssSdkInclude`.
-3. Open `OptiScaler.sln` with Visual Studio (Desktop development with C++, Windows 10/11 SDK).
+3. Open `OptiScaler.sln` with **Visual Studio 2022** ("Desktop development with C++" workload, with the **v143** build
+   tools and a Windows 10/11 SDK). A later Visual Studio works too if it has the v143 build tools installed.
 4. Build the **Release** configuration, **x64** platform.
 5. The result is `x64\Release\a\OptiScaler.dll`.
 

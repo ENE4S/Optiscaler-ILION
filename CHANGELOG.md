@@ -64,6 +64,8 @@ Base: OptiScaler at commit `f6f75ddf0118ac45f447e2babbe18dbda3451edd` (9 October
 - The build no longer copies AMD, Intel or Microsoft DLLs next to `OptiScaler.dll`, unless asked to with
   `/p:BundleVendorBinaries=true`.
 - OptiScaler's GitHub Actions workflows are kept in `.github/workflows-disabled` and do not run.
+- The licence texts of Detours, flag-set-cpp, FreeType, Hack, LatencyFleX, the Vulkan loader, spdlog and Streamline
+  are stored next to those components.
 
 ### Known limits
 

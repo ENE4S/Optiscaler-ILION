@@ -70,6 +70,13 @@ Además de `OptiScaler.dll`, su configuración y los scripts de instalación, el
   ejecuta.
 - El texto de la GPL-3.0, créditos, avisos de terceros y el código fuente de la DLL.
 
+Dos aclaraciones sobre ese contenido:
+
+- `OptiPatcher.asi` está incluido, pero desactivado por defecto. Para activarlo, establece `LoadAsiPlugins=true` en la
+  sección `[Plugins]` de `OptiScaler.ini`.
+- El descargador de NVIDIA Streamline se encuentra en `OptiScaler\Streamlined_fetcher_windows.bat`. Ejecútalo cuando
+  necesites los componentes de Streamline para las funciones compatibles.
+
 No lleva ninguna DLL de DLSS ni de NVIDIA, ni `D3D12Core.dll`. La generación de fotogramas es la de OptiScaler y
 depende del juego, de la GPU y de los complementos instalados; no se garantiza en todos los casos.
 
@@ -232,6 +239,13 @@ Besides `OptiScaler.dll`, its configuration and the setup scripts, the distribut
 - `Streamlined_fetcher_windows.bat`, OptiScaler's downloader for the NVIDIA Streamline files. It holds no NVIDIA
   DLL: it gets them from <https://github.com/NVIDIA-RTX/Streamline> when the user runs it.
 - The text of GPL-3.0, credits, third-party notices and the source code of the DLL.
+
+Two clarifications about that content:
+
+- `OptiPatcher.asi` is included, but disabled by default. To enable it, set `LoadAsiPlugins=true` in the `[Plugins]`
+  section of `OptiScaler.ini`.
+- The NVIDIA Streamline downloader is at `OptiScaler\Streamlined_fetcher_windows.bat`. Run it when you need the
+  Streamline components for the features that support them.
 
 It carries no DLSS or NVIDIA DLL, and no `D3D12Core.dll`. Frame generation is OptiScaler's and depends on the game,
 the GPU and the add-ons installed; it is not guaranteed in every case.

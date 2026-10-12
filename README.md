@@ -50,8 +50,12 @@ Este repositorio contiene solo código fuente. **No incluye ninguna DLL de FSR, 
 SDK de DLSS de NVIDIA, ni las DLL de AMD, Intel o Microsoft que acompañan a los paquetes de OptiScaler. Cada usuario
 las obtiene de su proveedor, de fuentes que tenga derecho a usar. Más abajo se explica cómo.
 
-ILION V1.1 no incluye las DLL de FSR 4.1.1 oficial de AMD, FSR 4.1.1B ni FSR 4 Lite. Cada usuario deberá obtenerlas
-por separado e instalarlas en las carpetas correspondientes, respetando las licencias y condiciones de sus autores.
+**Paquete de distribución.** ILION V1.1 incluye FSR 4.1.1 oficial de AMD mediante las bibliotecas del SDK FidelityFX. Las versiones FSR 4.1.1B y
+FSR 4 Lite no están incluidas. Cada usuario deberá obtenerlas por separado e instalarlas en las carpetas
+correspondientes, respetando las licencias y condiciones de sus respectivos autores.
+
+En este repositorio esas bibliotecas de AMD no se almacenan: salen del submódulo `external/FidelityFX-SDK-v2`
+(`Kits\FidelityFX\signedbin`), con la licencia de AMD que las acompaña.
 
 ### Compilar
 
@@ -187,8 +191,12 @@ This repository holds source code only. **It does not include any FSR, DLSS or X
 NVIDIA DLSS SDK, nor the AMD, Intel or Microsoft DLLs that come with OptiScaler's packages. Each user gets them from
 their vendor, from sources they are entitled to use. How is explained below.
 
-ILION V1.1 does not include the DLLs for AMD's official FSR 4.1.1, FSR 4.1.1B, or FSR 4 Lite. Users must obtain them
-separately and place them in the corresponding folders, respecting their respective licenses and terms.
+**Distribution package.** ILION V1.1 includes AMD's official FSR 4.1.1 through the FidelityFX SDK libraries. FSR 4.1.1B and FSR 4 Lite are not
+included. Users must obtain them separately and install them in the corresponding folders, respecting their
+respective authors' licenses and terms.
+
+In this repository those AMD libraries are not stored: they come from the `external/FidelityFX-SDK-v2` submodule
+(`Kits\FidelityFX\signedbin`), with the AMD licence that accompanies them.
 
 ### Building
 

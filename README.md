@@ -57,6 +57,29 @@ correspondientes, respetando las licencias y condiciones de sus respectivos auto
 En este repositorio esas bibliotecas de AMD no se almacenan: salen del submódulo `external/FidelityFX-SDK-v2`
 (`Kits\FidelityFX\signedbin`), con la licencia de AMD que las acompaña.
 
+Además de `OptiScaler.dll`, su configuración y los scripts de instalación, el paquete de distribución lleva:
+
+- Las bibliotecas firmadas de AMD (FidelityFX) y de Intel (XeSS, XeSS-FG, XeLL), con sus licencias.
+- FSR 4.1.1 oficial de AMD también en `OptiScaler\FSR4\Official\`, para que el gestor de versiones la reconozca.
+  Las carpetas de FSR 4.1.1B y FSR 4 Lite van vacías.
+- `OptiPatcher.asi`, del proyecto OptiScaler (MIT), y `dlss-enabler-headless.dll`, de DLSS Enabler de Artur
+  Graniszewski (MIT), con sus licencias. Los dos archivos proceden de la compilación de OptiScaler empaquetada por
+  "bygalacos" sobre la que se montó ILION; no se han cotejado con una publicación de sus autores.
+- `Streamlined_fetcher_windows.bat`, el descargador de OptiScaler para los archivos de NVIDIA Streamline. No
+  contiene ninguna DLL de NVIDIA: las baja de <https://github.com/NVIDIA-RTX/Streamline> cuando el usuario lo
+  ejecuta.
+- El texto de la GPL-3.0, créditos, avisos de terceros y el código fuente de la DLL.
+
+No lleva ninguna DLL de DLSS ni de NVIDIA, ni `D3D12Core.dll`. La generación de fotogramas es la de OptiScaler y
+depende del juego, de la GPU y de los complementos instalados; no se garantiza en todos los casos.
+
+#### Complementos externos
+
+No se incluyen ni en este repositorio ni en el paquete. Quien los quiera los obtiene de su autor:
+
+- **Nukem9**: <https://github.com/Nukem9/dlssg-to-fsr3>
+- **XeFGUnlock**: complemento opcional, enlace pendiente de verificación.
+
 ### Compilar
 
 1. Clona el repositorio **con todos sus submódulos**:
@@ -197,6 +220,28 @@ respective authors' licenses and terms.
 
 In this repository those AMD libraries are not stored: they come from the `external/FidelityFX-SDK-v2` submodule
 (`Kits\FidelityFX\signedbin`), with the AMD licence that accompanies them.
+
+Besides `OptiScaler.dll`, its configuration and the setup scripts, the distribution package carries:
+
+- The signed libraries of AMD (FidelityFX) and Intel (XeSS, XeSS-FG, XeLL), with their licences.
+- AMD's official FSR 4.1.1 also in `OptiScaler\FSR4\Official\`, so that the versions manager recognises it. The
+  folders of FSR 4.1.1B and FSR 4 Lite are empty.
+- `OptiPatcher.asi`, of the OptiScaler project (MIT), and `dlss-enabler-headless.dll`, of Artur Graniszewski's DLSS
+  Enabler (MIT), with their licences. Both files come from the build of OptiScaler packaged by "bygalacos" that
+  ILION was set up on; they were not checked against a publication of their authors.
+- `Streamlined_fetcher_windows.bat`, OptiScaler's downloader for the NVIDIA Streamline files. It holds no NVIDIA
+  DLL: it gets them from <https://github.com/NVIDIA-RTX/Streamline> when the user runs it.
+- The text of GPL-3.0, credits, third-party notices and the source code of the DLL.
+
+It carries no DLSS or NVIDIA DLL, and no `D3D12Core.dll`. Frame generation is OptiScaler's and depends on the game,
+the GPU and the add-ons installed; it is not guaranteed in every case.
+
+#### External add-ons
+
+They are included neither in this repository nor in the package. Whoever wants them gets them from their author:
+
+- **Nukem9**: <https://github.com/Nukem9/dlssg-to-fsr3>
+- **XeFGUnlock**: optional add-on, link pending verification.
 
 ### Building
 

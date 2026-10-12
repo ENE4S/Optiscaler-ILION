@@ -97,3 +97,21 @@ Libraries, SDKs and tools OptiScaler uses, and ILION through it, are listed in
 
 ILION reads hardware sensors from the shared memory of HWiNFO and MSI Afterburner when those programs are running.
 It contains no code of either; both are the property of their authors.
+
+## Distribution package
+
+The distribution package of ILION V1.1 carries, next to `OptiScaler.dll`, files that are the work of others and are
+credited to them:
+
+- **AMD**: the FidelityFX SDK libraries, among them AMD's official FSR 4.1.1
+  (<https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK>).
+- **Intel**: the XeSS, XeSS-FG and XeLL libraries (<https://github.com/intel/xess>).
+- **The OptiScaler project**: OptiPatcher (<https://github.com/optiscaler/OptiPatcher>, MIT) and the setup and
+  Streamline fetcher scripts.
+- **Artur Graniszewski**: DLSS Enabler, whose `dlss-enabler-headless.dll` OptiScaler uses as a frame generation
+  provider (<https://github.com/artur-graniszewski/DLSS-Enabler>, MIT).
+
+Not included, and to be obtained from their authors by whoever wants them: Nukem9's dlssg-to-fsr3
+(<https://github.com/Nukem9/dlssg-to-fsr3>), XeFGUnlock, FSR 4.1.1B, FSR 4 Lite, and every DLSS or NVIDIA file.
+
+The package's own `THIRD_PARTY_NOTICES.md` lists each file, its licence and what is known of where it comes from.

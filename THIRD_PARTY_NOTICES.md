@@ -119,3 +119,16 @@ user.
 
 HWiNFO and MSI Afterburner are not part of this repository; ILION only reads the sensor data those programs publish
 while they are running.
+
+## 7. The distribution package
+
+This file describes the repository. The distribution package of ILION V1.1 is put together apart from it and adds
+files that are not stored here; its own `THIRD_PARTY_NOTICES.md` lists them one by one with their licences:
+
+- The signed AMD FidelityFX libraries (AMD's official FSR 4.1.1 among them) and the signed Intel XeSS libraries,
+  taken from the submodules of section 1, with their licences.
+- `OptiPatcher.asi` (OptiScaler project, MIT) and `dlss-enabler-headless.dll` (DLSS Enabler, Artur Graniszewski,
+  MIT), with their licences. These two files come from a third-party build of OptiScaler and were not checked
+  against a publication of their authors.
+- No DLSS or NVIDIA DLL; the Streamline files are downloaded from NVIDIA by OptiScaler's fetcher script when the
+  user runs it. No FSR 4.1.1B, FSR 4 Lite, Nukem9's dlssg-to-fsr3, XeFGUnlock or `D3D12Core.dll`.

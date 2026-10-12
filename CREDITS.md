@@ -76,7 +76,8 @@ Files of OptiScaler that were modified:
 Files added by ILION:
 
 - `OptiScaler/fsr4/FSR4Versions.h`, `FSR4VisualVerify.h`, `FSR4Comparison.h`
-- `OptiScaler/misc/HwTelemetry.h`, `IlionBenchmark.h`, `IlionCompare.h`, `IlionCapture.h`, `IlionVisual.h`
+- `OptiScaler/misc/HwTelemetry.h`, `IlionBenchmark.h`, `IlionCompare.h`, `IlionCapture.h`, `IlionVisual.h`,
+  `IlionVisualInterpret.h`
 - `OptiScaler/menu/ilion_lang.h`, `ilion_theme.h`, `ilion_visual_panel.h`
 - `OptiScaler/inputs/NVNGX_Compat.h`, `NVNGX_Compat_Vk.h`
 - `.github/workflows-disabled/README.md`

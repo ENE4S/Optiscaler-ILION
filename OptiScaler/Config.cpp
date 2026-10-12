@@ -1621,6 +1621,31 @@ bool Config::SaveXeFG()
     return ini.SaveFile(absoluteFileName.wstring().c_str()) >= 0;
 }
 
+// Language and Basic | Full of the menu, written to the ini as soon as they are picked so they are still there on the
+// next start. Only these two keys are written, over the file as it is on disk: whatever else was changed in the menu
+// stays unsaved until Save Settings.
+bool Config::SaveMenuPreferences()
+{
+    const std::string language = Instance()->MenuLanguage.value_for_config_or("auto");
+    const std::string basicMode = GetBoolValue(Instance()->MenuBasicMode.value_for_config());
+
+    // The copy in memory too, so a later Save Settings writes the same
+    ini.SetValue("Menu", "Language", language.c_str());
+    ini.SetValue("Menu", "BasicMode", basicMode.c_str());
+
+    CSimpleIniA file;
+
+    // No file yet is fine, it is made with these two keys
+    file.LoadFile(absoluteFileName.c_str());
+    file.SetValue("Menu", "Language", language.c_str());
+    file.SetValue("Menu", "BasicMode", basicMode.c_str());
+
+    LOG_INFO("Saving menu language ({}) and basic mode ({}) to: {}", language, basicMode,
+             wstring_to_string(absoluteFileName.wstring()));
+
+    return file.SaveFile(absoluteFileName.wstring().c_str()) >= 0;
+}
+
 void Config::CheckUpscalerFiles()
 {
     if (!State::Instance().nvngxExists)

@@ -15,6 +15,7 @@
 #include <misc/IlionCompare.h>
 #include <misc/IlionCapture.h>
 #include <misc/IlionVisual.h>
+#include <misc/IlionVisualInterpret.h>
 #include "ilion_lang.h"
 #include <proxies/Streamline_Proxy.h>
 
@@ -2599,6 +2600,232 @@ static void AddVisualConclusions(std::vector<CompareConclusion>& result, const I
     result.push_back(conclusion);
 }
 
+// What the measurements of every capture mean, and what they don't: four short lines and the limits of the
+// comparison. The sorting is done by IlionVisualInterpret; nothing is measured again here and no capture is ever
+// called better than another.
+static void DrawVisualInterpretation(const IlionVisual::Capture& reference, const std::vector<VisualEntry>& entries)
+{
+    using Interpret = IlionVisualInterpret;
+
+    const bool native = NeutralVisualReference(reference);
+    const auto generated = [](const IlionVisual::Capture& capture)
+    { return capture.frameGeneration != "Off" && !capture.frameGeneration.empty(); };
+    const auto label = [](const IlionVisual::Capture& capture)
+    {
+        return StrFmt("%s  %s", VisualCaptureName(capture).c_str(),
+                      capture.dateTime.empty() ? capture.id.c_str() : capture.dateTime.c_str());
+    };
+
+    // How much the picture changes by itself: other captures of the version of the reference
+    double noise = -1.0;
+
+    for (const auto& entry : entries)
+    {
+        if (entry.metrics != nullptr && entry.metrics->valid && !entry.metrics->Unreliable() &&
+            SameVisualVersion(reference, *entry.capture))
+            noise = (std::max)(noise, 1.0 - entry.metrics->ssim);
+    }
+
+    const ImVec4 titleColor = IlionTheme::industrial ? IlionTheme::TextTitle : ImGui::GetStyleColorVec4(ImGuiCol_Text);
+    const ImVec4 cautionColor = toneMapColor(ImVec4(1.0f, 0.8f, 0.0f, 1.0f));
+
+    for (const auto& entry : entries)
+    {
+        if (entry.metrics == nullptr)
+            continue;
+
+        const auto& m = *entry.metrics;
+        const bool sameVersion = SameVisualVersion(reference, *entry.capture);
+
+        Interpret::Conditions conditions;
+        conditions.nativeReference = native;
+        conditions.frameGeneration = generated(reference) || generated(*entry.capture);
+        conditions.differentGame =
+            !entry.capture->game.empty() && !reference.game.empty() && entry.capture->game != reference.game;
+        conditions.hdrReduced = reference.hdr || entry.capture->hdr;
+        conditions.sameVersionNoise = sameVersion ? -1.0 : noise;
+
+        const auto reading = Interpret::Interpret(m, conditions);
+
+        ImGui::TextColored(titleColor, Tr("%s against %s"), label(*entry.capture).c_str(),
+                           VisualCaptureName(reference).c_str());
+
+        if (!reading.measurable)
+        {
+            ImGui::TextDisabled("%s", Tr("It can't be measured against the reference, see above."));
+            continue;
+        }
+
+        // 1. How alike
+        std::string similarity;
+
+        switch (reading.similarity)
+        {
+        case Interpret::Similarity::Identical:
+            similarity = Tr("1. Similarity: the two pictures are identical.");
+            break;
+        case Interpret::Similarity::VeryClose:
+            similarity = StrFmt(Tr("1. Similarity: very close in structure (SSIM %.4f). A high SSIM is similar "
+                                   "structure, not a better picture."),
+                                m.ssim);
+            break;
+        case Interpret::Similarity::Close:
+            similarity = StrFmt(Tr("1. Similarity: close, with differences that can be seen (SSIM %.4f)."), m.ssim);
+            break;
+        case Interpret::Similarity::Different:
+            similarity = StrFmt(Tr("1. Similarity: clearly different in structure (SSIM %.4f)."), m.ssim);
+            break;
+        default:
+            similarity = StrFmt(Tr("1. Similarity: very different (SSIM %.4f). Check that both show the same scene."),
+                                m.ssim);
+            break;
+        }
+
+        ImGui::TextWrapped("%s", similarity.c_str());
+
+        // 2. Where, and what the edges do
+        std::string where;
+
+        if (reading.location == Interpret::Location::Concentrated)
+        {
+            where = StrFmt(Tr("2. Where: concentrated in one area (column %d, row %d, %.1f times the average). The "
+                              "magnifier shows it pixel by pixel."),
+                           m.worstRegionX + 1, m.worstRegionY + 1, reading.concentration);
+        }
+        else if (reading.location == Interpret::Location::Spread)
+        {
+            where = Tr("2. Where: spread over the picture, no area stands out much.");
+        }
+        else
+        {
+            where = Tr("2. Where: no area stands out.");
+        }
+
+        if (reading.edges == Interpret::Edges::SharperWithOvershoot)
+        {
+            where += StrFmt(Tr(" Edges %+.1f%% stronger with overshoot next to them (%.1f%%): it may be "
+                               "over-sharpening or halos, not more fidelity."),
+                            m.edgeChangePercent, m.overshootPercent);
+        }
+        else if (reading.edges == Interpret::Edges::Sharper)
+        {
+            where += StrFmt(Tr(" Edges %+.1f%% stronger: looking sharper is not the same as being more faithful."),
+                            m.edgeChangePercent);
+        }
+        else if (reading.edges == Interpret::Edges::Softer)
+        {
+            where += StrFmt(Tr(" Edges %+.1f%% softer."), m.edgeChangePercent);
+        }
+
+        if (reading.edgesLost)
+            where += StrFmt(Tr(" %.1f%% of the edges of the reference are kept."), m.edgesKeptPercent);
+
+        ImGui::TextWrapped("%s", where.c_str());
+
+        // 3. What else may be behind the differences
+        std::string causes;
+
+        if (reading.cameraMoved || reading.sceneChanged)
+        {
+            causes = Tr("3. Possible causes: the camera or the scene changed between the captures, which explains "
+                        "differences by itself.");
+        }
+        else if (reading.manySmallDifferences)
+        {
+            causes = StrFmt(Tr("3. Possible causes: %.1f%% of the pixels differ but only %.1f%% clearly. Many small "
+                               "differences are typical of light, water, vegetation, particles, TAA or what changes "
+                               "from one frame to the next; they can't be put down to the upscaler."),
+                            m.differentPercent, m.clearlyPercent);
+        }
+        else if (m.identical)
+        {
+            causes = Tr("3. Possible causes: none, nothing differs.");
+        }
+        else
+        {
+            causes = Tr("3. Possible causes: these captures alone don't separate the upscaler from what changes in "
+                        "the scene between two moments.");
+        }
+
+        if (conditions.sameVersionNoise >= 0.0)
+        {
+            causes += StrFmt(Tr(" Two captures of one same version differ here by %.4f of SSIM."),
+                             conditions.sameVersionNoise);
+        }
+
+        if (reading.generatedFrame)
+            causes += Tr(" Frame generation was on: the frame may be a generated one.");
+
+        ImGui::TextWrapped("%s", causes.c_str());
+
+        // 4. What can be said
+        std::string conclusion;
+
+        if (reading.verdict == Interpret::Verdict::Inconclusive)
+        {
+            std::string reasons;
+            const auto reason = [&](bool applies, const char* text)
+            {
+                if (applies)
+                    reasons += (reasons.empty() ? "" : "; ") + std::string(text);
+            };
+
+            reason(reading.cameraMoved, Tr("the camera moved"));
+            reason(reading.sceneChanged, Tr("they don't seem to show the same scene"));
+            reason(reading.generatedFrame, Tr("a frame may be a generated one"));
+            reason(reading.differentGame, Tr("they are from different games"));
+
+            conclusion = StrFmt(Tr("4. Conclusion: inconclusive (%s)."), reasons.c_str());
+        }
+        else if (reading.verdict == Interpret::Verdict::Equivalent)
+        {
+            conclusion = Tr("4. Conclusion: roughly equivalent in these still captures.");
+        }
+        else
+        {
+            conclusion = Tr("4. Conclusion: a difference that can be detected in these still captures.");
+        }
+
+        if (reading.verdict != Interpret::Verdict::Inconclusive && !m.identical)
+        {
+            conclusion += Tr(reading.comparableToNative
+                                 ? " It is measured against a native picture: being closer to it is not by itself "
+                                   "looking better."
+                                 : " Without a native reference this doesn't tell which one is more faithful.");
+        }
+
+        if (reading.verdict == Interpret::Verdict::Inconclusive)
+            ImGui::PushStyleColor(ImGuiCol_Text, cautionColor);
+
+        ImGui::TextWrapped("%s", conclusion.c_str());
+
+        if (reading.verdict == Interpret::Verdict::Inconclusive)
+            ImGui::PopStyleColor();
+
+        // What limits this comparison. A list, not a score.
+        std::string limits;
+        const auto limit = [&](bool applies, const std::string& text)
+        {
+            if (applies)
+                limits += (limits.empty() ? "" : "; ") + text;
+        };
+
+        limit(!native, Tr("no native reference"));
+        limit(m.shifted, StrFmt(Tr("displacement of %d, %d px"), m.shiftX, m.shiftY));
+        limit(conditions.frameGeneration, Tr("frame generation on"));
+        limit(conditions.hdrReduced, Tr("HDR10 values reduced to 8 bit"));
+        limit(!sameVersion && noise < 0.0, Tr("no second capture of one same version to know how much the picture "
+                                               "changes by itself"));
+        limit(true, Tr("still pictures only, motion isn't measured"));
+
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped(Tr("Limits of this comparison: %s."), limits.c_str());
+        ImGui::PopStyleColor();
+
+        ImGui::Spacing();
+    }
+}
+
 static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
 {
     using Capture = IlionVisual::Capture;
@@ -2614,6 +2841,13 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
     static double viewZoom = 0.0; // 0 = the whole picture
     static double viewCenterX = 0.0, viewCenterY = 0.0;
     static bool holding = false;
+
+    // Magnifier: a small area of both pictures, the same one, with every pixel drawn as a square
+    static bool magnifier = false;
+    static int magnifierLevel = 4;
+    static bool magnifierPinned = false;
+    static bool magnifierPlaced = false;
+    static double magnifierX = 0.0, magnifierY = 0.0; // in pixels of the picture
 
     auto& work = GetVisualWork();
 
@@ -3046,6 +3280,47 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
         }
     }
 
+    IlionTheme::Checkbox(TrL("Magnifier"), &magnifier);
+
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("%s", Tr("Shows the same small area of both pictures enlarged, every pixel as a square,\n"
+                                   "nothing smoothed. The captures themselves are not changed."));
+    }
+
+    if (magnifier)
+    {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80.0f * scale);
+
+        if (IlionTheme::BeginCombo("##magnifierLevel", StrFmt("%dx", magnifierLevel).c_str()))
+        {
+            for (const int level : { 2, 4, 8 })
+            {
+                if (ImGui::Selectable(StrFmt("%dx", level).c_str(), level == magnifierLevel))
+                    magnifierLevel = level;
+            }
+
+            ImGui::EndCombo();
+        }
+
+        ImGui::SameLine(0.0f, 16.0f * scale);
+        ImGui::TextDisabled("%s", Tr(magnifierPinned ? "Area pinned. Right click on a picture: release it."
+                                                     : "Move the pointer over a picture. Right click: pin the area."));
+    }
+    else
+    {
+        // Its two textures are let go while it isn't used
+        for (int i = 2; i < 4; i++)
+        {
+            RetireVisualTexture(visualPanels[i].texture);
+            visualPanels[i].shown.clear();
+        }
+
+        magnifierPinned = false;
+        magnifierPlaced = false;
+    }
+
     const IlionVisual::Image* base = pictures[0] != nullptr ? pictures[0] : pictures[1];
 
     if (base == nullptr)
@@ -3074,6 +3349,25 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
 
         ImGui::SameLine(0.0f, 16.0f * scale);
         ImGui::TextDisabled(Tr("Zoom %.0f%%. Wheel: zoom, drag: move."), zoom * 100.0);
+
+        // Magnifier: a square of whole pixels of the picture, an even number of them, each drawn level x level.
+        // Its middle is a whole pixel and it never leaves the picture.
+        const int magnifierCells =
+            (std::max)(8, ((std::min)(panelWidth, (int) (320.0f * scale)) / magnifierLevel) / 2 * 2);
+        const int magnifierSide = magnifierCells * magnifierLevel;
+        const double magnifierHalf = magnifierCells * 0.5;
+
+        const auto insidePicture = [&](double value, int length)
+        {
+            if (length <= magnifierCells)
+                return std::floor(length * 0.5);
+
+            return std::clamp(std::floor(value), magnifierHalf, (double) length - magnifierHalf);
+        };
+
+        const double magnifiedX = insidePicture(magnifierX, base->width);
+        const double magnifiedY = insidePicture(magnifierY, base->height);
+        float panelLeft[2] = { 0.0f, 0.0f };
 
         // Changes of the view apply to both pictures on the next frame
         double nextZoom = viewZoom, nextCenterX = viewCenterX, nextCenterY = viewCenterY;
@@ -3119,6 +3413,8 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
             const ImVec2 size((float) panelWidth, (float) panelHeight);
             const char* message = nullptr;
             bool drawn = false;
+
+            panelLeft[i] = corner.x;
 
             const std::string view =
                 StrFmt("%.2f|%.2f|%.4f|%d|%d", viewCenterX, viewCenterY, zoom, panelWidth, panelHeight);
@@ -3223,6 +3519,44 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
                 }
             }
 
+            // Magnifier: the area follows the pointer over either picture, a right click pins it or lets it go
+            if (magnifier)
+            {
+                if (ImGui::IsItemHovered())
+                {
+                    const bool rightClick = ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+
+                    if (rightClick)
+                        magnifierPinned = !magnifierPinned;
+
+                    if (rightClick || !magnifierPinned)
+                    {
+                        magnifierX = viewCenterX + (io.MousePos.x - (corner.x + size.x * 0.5)) / zoom;
+                        magnifierY = viewCenterY + (io.MousePos.y - (corner.y + size.y * 0.5)) / zoom;
+                        magnifierPlaced = true;
+                    }
+                }
+
+                if (magnifierPlaced)
+                {
+                    // The same area marked on both pictures
+                    const ImVec2 areaMin(
+                        std::floor(corner.x + size.x * 0.5f + (float) ((magnifiedX - magnifierHalf - viewCenterX) * zoom)),
+                        std::floor(corner.y + size.y * 0.5f + (float) ((magnifiedY - magnifierHalf - viewCenterY) * zoom)));
+                    const ImVec2 areaMax(areaMin.x + (std::max)(2.0f, (float) (magnifierCells * zoom)),
+                                         areaMin.y + (std::max)(2.0f, (float) (magnifierCells * zoom)));
+
+                    auto drawList = ImGui::GetWindowDrawList();
+
+                    drawList->PushClipRect(corner, ImVec2(corner.x + size.x, corner.y + size.y), true);
+                    drawList->AddRect(ImVec2(areaMin.x - 1.0f, areaMin.y - 1.0f), ImVec2(areaMax.x + 1.0f, areaMax.y + 1.0f),
+                                      IM_COL32(0, 0, 0, 220), 0.0f, 0, 3.0f);
+                    drawList->AddRect(ImVec2(areaMin.x - 1.0f, areaMin.y - 1.0f), ImVec2(areaMax.x + 1.0f, areaMax.y + 1.0f),
+                                      magnifierPinned ? IM_COL32(255, 204, 0, 255) : IM_COL32(255, 255, 255, 235));
+                    drawList->PopClipRect();
+                }
+            }
+
             ImGui::PopID();
             ImGui::EndGroup();
         }
@@ -3230,6 +3564,145 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
         viewZoom = nextZoom;
         viewCenterX = nextCenterX;
         viewCenterY = nextCenterY;
+
+        // --- Magnifier: what is inside the marked area, under each picture -----------------------------------
+        if (magnifier && magnifierPlaced)
+        {
+            const bool sizesDiffer = pictures[0] != nullptr && pictures[1] != nullptr &&
+                                     (pictures[0]->width != pictures[1]->width || pictures[0]->height != pictures[1]->height);
+
+            const Metrics* pair = nullptr;
+
+            if (const auto it = metrics.find(VisualPairKey(panelIds[0], panelIds[1])); it != metrics.end())
+                pair = &it->second;
+            else if (const auto it2 = metrics.find(VisualPairKey(panelIds[1], panelIds[0])); it2 != metrics.end())
+                pair = &it2->second;
+
+            ImGui::Spacing();
+            ImGui::Text(Tr("Magnifier %dx: %d x %d pixels around %d, %d"), magnifierLevel, magnifierCells, magnifierCells,
+                        (int) magnifiedX, (int) magnifiedY);
+
+            const ImVec4 notAlignedColor = toneMapColor(ImVec4(1.0f, 0.8f, 0.0f, 1.0f));
+
+            // The two areas are the same coordinates. Whether they are the same part of the scene is another thing.
+            if (sizesDiffer)
+            {
+                ImGui::TextColored(notAlignedColor, "%s",
+                                   Tr("The two captures don't have the same size: the magnifier shows the same "
+                                      "coordinates, which may not be the same part of the picture."));
+            }
+            else if (pair != nullptr && pair->valid && pair->sceneMismatch)
+            {
+                ImGui::TextColored(notAlignedColor, "%s",
+                                   Tr("These captures don't seem to show the same scene: the magnifier may show "
+                                      "different parts in each one."));
+            }
+            else if (pair != nullptr && pair->valid && pair->shifted)
+            {
+                ImGui::TextColored(notAlignedColor,
+                                   Tr("These captures are displaced %d, %d pixels from each other: the magnifier may "
+                                      "show different parts in each one."),
+                                   pair->shiftX, pair->shiftY);
+            }
+            else if (pair == nullptr)
+            {
+                ImGui::TextDisabled("%s", Tr("Whether these two captures are aligned hasn't been measured: the "
+                                             "magnifier shows the same coordinates in both."));
+            }
+
+            const ImVec2 rowStart = ImFloor(ImGui::GetCursorScreenPos());
+            const ImVec2 magnifiedSize((float) magnifierSide, (float) magnifierSide);
+            const float textHeight = ImGui::GetTextLineHeightWithSpacing();
+            auto drawList = ImGui::GetWindowDrawList();
+
+            for (int i = 0; i < 2; i++)
+            {
+                auto& panel = visualPanels[2 + i];
+                const bool difference = i == 1 && viewMode == 1;
+                const ImVec2 corner(std::floor(panelLeft[i] + (float) (panelWidth - magnifierSide) * 0.5f), rowStart.y);
+                bool drawn = false;
+
+                const std::string view = StrFmt("%.0f|%.0f|%d|%d", magnifiedX, magnifiedY, magnifierLevel, magnifierSide);
+
+                if (difference)
+                {
+                    if (pictures[0] != nullptr && pictures[1] != nullptr && !sizesDiffer)
+                    {
+                        UpdateVisualPanel(panel, magnifierSide, magnifierSide,
+                                          StrFmt("md|%s|%s|%d|%s", panelIds[0].c_str(), panelIds[1].c_str(), differenceGain,
+                                                 view.c_str()),
+                                          [&](uint8_t* out)
+                                          {
+                                              IlionVisual::RenderDifference(*pictures[0], *pictures[1], magnifiedX,
+                                                                            magnifiedY, magnifierLevel, differenceGain,
+                                                                            magnifierSide, magnifierSide, out);
+                                          });
+                        drawn = true;
+                    }
+                }
+                else if (pictures[i] != nullptr)
+                {
+                    UpdateVisualPanel(panel, magnifierSide, magnifierSide,
+                                      StrFmt("mv|%s|%s", panelIds[i].c_str(), view.c_str()),
+                                      [&](uint8_t* out)
+                                      {
+                                          IlionVisual::RenderView(*pictures[i], magnifiedX, magnifiedY, magnifierLevel,
+                                                                  magnifierSide, magnifierSide, out);
+                                      });
+                    drawn = true;
+                }
+
+                ImGui::SetCursorScreenPos(corner);
+
+                // Drawn one to one: every pixel of the picture is a square of level x level, as it is
+                if (drawn && panel.texture != nullptr && panel.texture->GetTexID() != ImTextureID_Invalid)
+                {
+                    ImGui::Image(panel.texture->GetTexRef(), magnifiedSize, ImVec2(0.0f, 0.0f),
+                                 ImVec2((float) magnifierSide / panel.texture->Width,
+                                        (float) magnifierSide / panel.texture->Height));
+                }
+                else
+                {
+                    ImGui::Dummy(magnifiedSize);
+                    drawList->AddRectFilled(corner, ImVec2(corner.x + magnifiedSize.x, corner.y + magnifiedSize.y),
+                                            IM_COL32(18, 18, 20, 255));
+                }
+
+                drawList->AddRect(ImVec2(corner.x - 1.0f, corner.y - 1.0f),
+                                  ImVec2(corner.x + magnifiedSize.x + 1.0f, corner.y + magnifiedSize.y + 1.0f),
+                                  ImGui::GetColorU32(ImGuiCol_Border));
+
+                // The pixel in the middle, and its values as they are in the capture
+                const ImVec2 middle(corner.x + magnifierSide * 0.5f, corner.y + magnifierSide * 0.5f);
+
+                drawList->AddRect(ImVec2(middle.x - 1.0f, middle.y - 1.0f),
+                                  ImVec2(middle.x + magnifierLevel + 1.0f, middle.y + magnifierLevel + 1.0f),
+                                  IM_COL32(0, 0, 0, 200));
+                drawList->AddRect(middle, ImVec2(middle.x + magnifierLevel, middle.y + magnifierLevel),
+                                  IM_COL32(255, 255, 255, 220));
+
+                ImGui::SetCursorScreenPos(ImVec2(corner.x, corner.y + magnifiedSize.y + 2.0f));
+
+                const int pixelX = (int) magnifiedX, pixelY = (int) magnifiedY;
+
+                if (!difference && pictures[i] != nullptr && pixelX >= 0 && pixelY >= 0 && pixelX < pictures[i]->width &&
+                    pixelY < pictures[i]->height)
+                {
+                    const uint8_t* pixel =
+                        pictures[i]->rgba.data() + ((size_t) pixelY * pictures[i]->width + pixelX) * 4;
+
+                    ImGui::TextDisabled(Tr("Pixel in the middle: R %d  G %d  B %d"), pixel[0], pixel[1], pixel[2]);
+                }
+                else
+                {
+                    ImGui::TextDisabled("%s", difference ? Tr("Difference, amplified") : "-");
+                }
+            }
+
+            // On with what comes under the two of them
+            ImGui::SetCursorScreenPos(ImVec2(rowStart.x, rowStart.y + magnifiedSize.y + 2.0f + textHeight));
+            ImGui::Dummy(ImVec2(0.0f, 0.0f));
+        }
     }
 
     // --- Measurements of every capture against the reference -------------------------------------------------
@@ -3330,6 +3803,13 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
     if (hdrValues)
         ImGui::TextDisabled("%s", Tr("HDR10 captures are shown and measured over their PQ values reduced to 8 bit."));
 
+    IlionTheme::SectionPlate(Tr("Visual interpretation"));
+
+    if (pending)
+        ImGui::TextDisabled("%s", Tr("Measuring..."));
+    else
+        DrawVisualInterpretation(*reference, entries);
+
     IlionTheme::SectionPlate(Tr("Measurements against the reference"));
 
     if (ImGui::BeginTable("visualMetrics", (int) entries.size() + 1,
@@ -3366,10 +3846,13 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
 
         row("SSIM (structure)",
             "Structural similarity of the brightness, in windows of 8x8 pixels.\n"
-            "1 is the same structure as the reference.",
+            "1 is the same structure as the reference.\n"
+            "A high value is similar structure, not a better picture.",
             [](const Metrics& m) { return StrFmt("%.4f", m.ssim); });
 
-        row("PSNR", "Signal to noise ratio of the brightness against the reference, higher is closer.",
+        row("PSNR",
+            "Signal to noise ratio of the brightness against the reference, higher is closer.\n"
+            "It is a difference of signal, not how good the picture looks.",
             [](const Metrics& m) { return m.identical ? std::string(Tr("identical")) : StrFmt("%.1f dB", m.psnr); });
 
         row("Mean difference", "Mean difference of the brightness, in levels out of 255.",
@@ -5533,8 +6016,10 @@ static void UpdateFsr4Comparison(State& state, double frameTime, double now)
                             active.errorCount, active.requestTick, fgActive);
 }
 
-// Three boxes under the performance overlay's own lines, drawn with the window's draw list
-static void DrawFsr4ComparisonPanel(float scale)
+// Three boxes under the performance overlay's own lines, drawn with the window's draw list.
+// With columnWidth they share exactly that width, the one of the rows above them: the same left and right
+// edges, even gaps, and texts made smaller or split in two lines when a box is too narrow for them.
+static void DrawFsr4ComparisonPanel(float scale, float columnWidth = 0.0f)
 {
     if (!FSR4Comparison::Enabled())
         return;
@@ -5549,10 +6034,87 @@ static void DrawFsr4ComparisonPanel(float scale)
     const float gap = 6.0f * scale;
     const float lineGap = 2.0f * scale;
 
+    const bool fitted = columnWidth > 0.0f;
     const float minBoxWidth = textSize * 7.5f;
-    const float availWidth = ImGui::GetContentRegionAvail().x;
-    const float boxWidth = std::max(minBoxWidth, (availWidth - gap * 2.0f) / 3.0f);
-    const float boxHeight = padding * 2.0f + smallSize * 3.0f + bigSize + lineGap * 3.0f;
+    const float availWidth = fitted ? columnWidth : ImGui::GetContentRegionAvail().x;
+    const float boxWidth = fitted ? ImFloor((availWidth - gap * 2.0f) / 3.0f)
+                                  : std::max(minBoxWidth, (availWidth - gap * 2.0f) / 3.0f);
+    const float innerWidth = std::max(1.0f, boxWidth - padding * 2.0f);
+
+    // What every box says, known before drawing so the three of them can use the same sizes
+    struct BoxText
+    {
+        char average[16] = "--";
+        char minMax[48] = "";
+        char minimum[24] = "";
+        char maximum[24] = "";
+        const char* status = "";
+    };
+
+    BoxText texts[FSR4Comparison::BoxCount];
+
+    for (int i = 0; i < FSR4Comparison::BoxCount; i++)
+    {
+        const auto& box = FSR4Comparison::GetBox(i);
+        auto& text = texts[i];
+
+        snprintf(text.minMax, sizeof(text.minMax), "%s", Tr("min --  max --"));
+        snprintf(text.minimum, sizeof(text.minimum), "%s", Tr("min --"));
+        snprintf(text.maximum, sizeof(text.maximum), "%s", Tr("max --"));
+
+        if (box.HasResult())
+        {
+            snprintf(text.average, sizeof(text.average), "%.1f", box.AvgFps());
+            snprintf(text.minMax, sizeof(text.minMax), Tr("min %.0f  max %.0f"), box.MinFps(), box.MaxFps());
+            snprintf(text.minimum, sizeof(text.minimum), Tr("min %.0f"), box.MinFps());
+            snprintf(text.maximum, sizeof(text.maximum), Tr("max %.0f"), box.MaxFps());
+        }
+
+        text.status = Tr(FSR4Comparison::StatusName(box.status));
+    }
+
+    // Size at which a text fits inside a box. Only used in a column of fixed width.
+    const auto fit = [&](const char* text, float size)
+    {
+        if (!fitted)
+            return size;
+
+        const float width = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text).x;
+        return width > innerWidth ? size * innerWidth / width : size;
+    };
+
+    float labelSize = smallSize, averageSize = bigSize, minMaxSize = smallSize, statusSize = smallSize;
+    bool twoLines = false;
+
+    if (fitted)
+    {
+        for (int i = 0; i < FSR4Comparison::BoxCount; i++)
+        {
+            labelSize = std::min(labelSize, fit(FSR4Comparison::GetBox(i).label, smallSize));
+            averageSize = std::min(averageSize, fit(texts[i].average, bigSize));
+            statusSize = std::min(statusSize, fit(texts[i].status, smallSize));
+
+            // Minimum and maximum go on a line each before they get too small to read
+            if (fit(texts[i].minMax, smallSize) < smallSize * 0.85f)
+                twoLines = true;
+        }
+
+        for (int i = 0; i < FSR4Comparison::BoxCount; i++)
+        {
+            if (twoLines)
+            {
+                minMaxSize = std::min(minMaxSize, fit(texts[i].minimum, smallSize));
+                minMaxSize = std::min(minMaxSize, fit(texts[i].maximum, smallSize));
+            }
+            else
+            {
+                minMaxSize = std::min(minMaxSize, fit(texts[i].minMax, smallSize));
+            }
+        }
+    }
+
+    const int smallLines = twoLines ? 4 : 3;
+    const float boxHeight = padding * 2.0f + smallSize * (float) smallLines + bigSize + lineGap * (float) smallLines;
 
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     auto drawList = ImGui::GetWindowDrawList();
@@ -5577,22 +6139,16 @@ static void DrawFsr4ComparisonPanel(float scale)
         const bool current = i == FSR4Comparison::CurrentBox() && (box.status == FSR4Comparison::Status::Recording ||
                                                                    box.status == FSR4Comparison::Status::Stabilizing);
 
-        const float left = origin.x + (boxWidth + gap) * (float) i;
+        // In a column the first box starts at its left edge and the last one ends at its right edge
+        const float left = fitted ? ImFloor(origin.x + (availWidth - boxWidth) * 0.5f * (float) i)
+                                  : origin.x + (boxWidth + gap) * (float) i;
         const ImVec2 boxMin(left, origin.y);
         const ImVec2 boxMax(left + boxWidth, origin.y + boxHeight);
 
         drawList->AddRect(boxMin, boxMax, current ? recordingColor : borderColor, 3.0f * scale, 0,
                           current ? 2.0f * scale : 1.0f);
 
-        char average[16] = "--";
-        char minMax[48] = "";
-        snprintf(minMax, sizeof(minMax), "%s", Tr("min --  max --"));
-
-        if (box.HasResult())
-        {
-            snprintf(average, sizeof(average), "%.1f", box.AvgFps());
-            snprintf(minMax, sizeof(minMax), Tr("min %.0f  max %.0f"), box.MinFps(), box.MaxFps());
-        }
+        const auto& text = texts[i];
 
         ImU32 statusColor = dimColor;
 
@@ -5603,27 +6159,54 @@ static void DrawFsr4ComparisonPanel(float scale)
 
         float y = origin.y + padding;
 
-        centered(box.label, smallSize, left, y, dimColor);
-        y += smallSize + lineGap;
+        // A text made smaller stays in the middle of the height its line has
+        const auto line = [&](const char* value, float size, float lineHeight, ImU32 color)
+        {
+            centered(value, size, left, y + (lineHeight - size) * 0.5f, color);
+            y += lineHeight + lineGap;
+        };
 
-        centered(average, bigSize, left, y, textColor);
-        y += bigSize + lineGap;
+        line(box.label, labelSize, smallSize, dimColor);
+        line(text.average, averageSize, bigSize, textColor);
 
-        centered(minMax, smallSize, left, y, dimColor);
-        y += smallSize + lineGap;
+        if (twoLines)
+        {
+            line(text.minimum, minMaxSize, smallSize, dimColor);
+            line(text.maximum, minMaxSize, smallSize, dimColor);
+        }
+        else
+        {
+            line(text.minMax, minMaxSize, smallSize, dimColor);
+        }
 
-        centered(Tr(FSR4Comparison::StatusName(box.status)), smallSize, left, y, statusColor);
+        line(text.status, statusSize, smallSize, statusColor);
 
         fgSeen = fgSeen || box.fgSeen;
     }
 
-    ImGui::Dummy(ImVec2(boxWidth * 3.0f + gap * 2.0f, boxHeight));
+    ImGui::Dummy(ImVec2(fitted ? availWidth : boxWidth * 3.0f + gap * 2.0f, boxHeight));
+
+    // The notes under the boxes stay inside the column too
+    const auto note = [&](const char* text)
+    {
+        if (!fitted)
+        {
+            ImGui::TextDisabled("%s", text);
+            return;
+        }
+
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + availWidth);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("%s", text);
+        ImGui::PopStyleColor();
+        ImGui::PopTextWrapPos();
+    };
 
     if (FSR4Comparison::OtherDllActive())
-        ImGui::TextDisabled("%s", Tr("Active dll isn't Official, Community or Lite, not measured"));
+        note(Tr("Active dll isn't Official, Community or Lite, not measured"));
 
     if (fgSeen)
-        ImGui::TextDisabled("%s", Tr("Includes frames presented by frame generation"));
+        note(Tr("Includes frames presented by frame generation"));
 }
 
 void MenuCommon::UpdateMenuInputMode(RenderMenuContext& ctx)
@@ -6724,7 +7307,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
 
             DrawBenchmarkStatus(now);
             DrawHardwareTelemetry(config, fpsScale, industrialVertical ? rowWidth : 0.0f, industrialHorizontal);
-            DrawFsr4ComparisonPanel(fpsScale);
+            DrawFsr4ComparisonPanel(fpsScale, industrialVertical ? rowWidth : 0.0f);
         }
 
         // Restore the style
@@ -6772,7 +7355,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
     }
 }
 
-// Basic | Full, only changes what is drawn. Saved with the rest of the settings
+// Basic | Full, only changes what is drawn. Written to the ini right away, on its own
 static void RenderModeSelector(decltype(Config::Instance()) config)
 {
     const bool basic = config->MenuBasicMode.value_or_default();
@@ -6806,17 +7389,23 @@ static void RenderModeSelector(decltype(Config::Instance()) config)
     };
 
     if (modeButton(Tr("Basic"), "##ModeBasic", basic))
+    {
         config->MenuBasicMode = true;
+        config->SaveMenuPreferences();
+    }
 
     ImGui::SameLine();
     IlionTheme::SelectorBar(keys ? keySize.y : 0.0f);
     ImGui::SameLine();
 
     if (modeButton(Tr("Full"), "##ModeFull", !basic))
+    {
         config->MenuBasicMode = false;
+        config->SaveMenuPreferences();
+    }
 }
 
-// ES | EN, applies right away and is saved with the rest of the settings
+// ES | EN, applies right away and is written to the ini right away, on its own
 static void RenderLanguageSelector(decltype(Config::Instance()) config)
 {
     const auto current = Ilion::CurrentLang();
@@ -6859,6 +7448,7 @@ static void RenderLanguageSelector(decltype(Config::Instance()) config)
         {
             config->MenuLanguage = std::string(Ilion::LangCode(lang));
             Ilion::SetLang(lang);
+            config->SaveMenuPreferences();
         }
     };
 

@@ -36,6 +36,13 @@ Base: OptiScaler at commit `f6f75ddf0118ac45f447e2babbe18dbda3451edd` (9 October
   kept, overshoot next to edges (exploratory), displacement and scene checks.
 - A capture is linked to a benchmark only when taken while that saved test is on screen. Only linked captures enter
   a benchmark comparison; without them nothing about images is shown.
+- Magnifier in the visual comparator: the same small area of both captures at 2x, 4x or 8x, every pixel as a
+  square with nothing smoothed. It follows the pointer or stays pinned, and says so when the two captures are not
+  aligned. The PNG files are not changed and nothing is measured again while it moves.
+- Visual interpretation: four short lines per capture (similarity, where the differences are, what else may cause
+  them, and a cautious conclusion: detectable difference, roughly equivalent, or inconclusive) and the limits of
+  the comparison. No capture is called better than another, and without a native reference no fidelity is
+  claimed. The benchmark and its comparison are not touched by this.
 
 ### Telemetry
 
@@ -52,6 +59,11 @@ Base: OptiScaler at commit `f6f75ddf0118ac45f447e2babbe18dbda3451edd` (9 October
 - Frame generation state in the sidebar, in Help / Status and in the Basic panel also reflects the DLSSG of the game
   when it is served by a replacement such as DLSS Enabler.
 - Hardware monitoring settings fold like the other sections.
+- First start in Spanish and Full mode with the industrial theme. The language and the Basic / Full mode are
+  written to `OptiScaler.ini` as soon as they are changed, on their own; a saved choice is never overwritten.
+- The three cards of the FSR 4 comparison in the vertical overlay keep to the width of the column of readings.
+- Industrial theme: the secondary lines that were a dim gold (the second line inside a plate, the joints of the
+  chassis) are titanium grey. The yellow trim is as it was.
 
 ### Build and repository
 

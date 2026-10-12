@@ -709,6 +709,7 @@ class Config
     bool LoadFromPath(const wchar_t* InPath);
     bool SaveIni();
     bool SaveXeFG();
+    bool SaveMenuPreferences();
 
     void CheckUpscalerFiles();
 

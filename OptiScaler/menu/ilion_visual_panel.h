@@ -18,7 +18,8 @@ struct VisualPanel
     std::string shown; // what its pixels were drawn from
 };
 
-inline VisualPanel visualPanels[2];
+// 0 and 1 are the two pictures of the comparator, 2 and 3 what its magnifier shows of each of them
+inline VisualPanel visualPanels[4];
 inline std::vector<ImTextureData*> visualRetiredTextures;
 
 inline void RetireVisualTexture(ImTextureData*& texture)

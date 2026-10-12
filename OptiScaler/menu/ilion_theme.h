@@ -1069,9 +1069,11 @@ inline void DrawMetal(ImDrawList* draw, const ImVec2& min, const ImVec2& max, fl
 // Compact technical panel: a dark chassis with rounded corners and a thick rim, a fine line of yellow trim running
 // inside it, warning stripes on the top bar, and every module a dark plate framed in the same trim with its
 // corners cut off. All of it is drawing behind what the window holds; nothing here takes a click.
+// Yellow is for what stands out; the secondary lines (the second line inside a plate, the joints of the chassis)
+// are bare titanium, a neutral grey that reads on the dark steel without competing with the trim.
 
 inline constexpr ImVec4 TrimGold { 0.700f, 0.585f, 0.150f, 1.0f };
-inline constexpr ImVec4 TrimGoldDim { 0.420f, 0.350f, 0.100f, 1.0f };
+inline constexpr ImVec4 TrimTitanium { 0.560f, 0.575f, 0.590f, 1.0f };
 inline constexpr ImVec4 StripeYellow { 0.800f, 0.670f, 0.110f, 1.0f };
 
 // Outline of a rectangle with its four corners cut off
@@ -1257,7 +1259,7 @@ inline void DrawChassis()
 
         // Where the top bar meets the cabinet
         draw->AddLine(ImVec2(barMin.x, barMax.y - 1.0f), ImVec2(barMax.x, barMax.y - 1.0f), ImGui::GetColorU32(Shadow));
-        draw->AddLine(ImVec2(barMin.x, barMax.y), ImVec2(barMax.x, barMax.y), ImGui::GetColorU32(Alpha(TrimGold, 0.55f)));
+        draw->AddLine(ImVec2(barMin.x, barMax.y), ImVec2(barMax.x, barMax.y), ImGui::GetColorU32(Alpha(TrimTitanium, 0.55f)));
     }
 
     // Rim: a thick band of dark steel following the round corners, lit along its upper and left sides
@@ -1312,7 +1314,7 @@ inline void DrawChassisJoint()
 
     window->DrawList->PushClipRect(window->Pos, ImVec2(window->Pos.x + window->Size.x, window->Pos.y + window->Size.y), false);
     window->DrawList->AddLine(ImVec2(left, y), ImVec2(right, y), ImGui::GetColorU32(Shadow));
-    window->DrawList->AddLine(ImVec2(left, y + 1.0f), ImVec2(right, y + 1.0f), ImGui::GetColorU32(Alpha(TrimGold, 0.45f)));
+    window->DrawList->AddLine(ImVec2(left, y + 1.0f), ImVec2(right, y + 1.0f), ImGui::GetColorU32(Alpha(TrimTitanium, 0.45f)));
     window->DrawList->PopClipRect();
 }
 
@@ -1320,7 +1322,8 @@ inline void DrawChassisJoint()
 inline float CardCut() { return ImFloor(ImGui::GetStyle().WindowPadding.x * 0.75f); }
 
 // Body of a card: a module plate set into the chassis. Dark steel with its corners cut off, a seat around it,
-// a frame of yellow trim with a second fainter line inside it, and a heavier bracket of trim at every corner.
+// a frame of yellow trim with a second fainter line of titanium inside it, and a heavier bracket of trim at every
+// corner.
 inline void DrawCardBody(ImDrawList* draw, const ImVec2& min, const ImVec2& max)
 {
     const float cut = CardCut();
@@ -1343,7 +1346,7 @@ inline void DrawCardBody(ImDrawList* draw, const ImVec2& min, const ImVec2& max)
 
     DrawChamferFrame(draw, min, max, cut, trim);
     DrawChamferFrame(draw, ImVec2(min.x + 3.0f, min.y + 3.0f), ImVec2(max.x - 3.0f, max.y - 3.0f), ImMax(1.0f, cut - 1.5f),
-                     ImGui::GetColorU32(Alpha(TrimGoldDim, 0.70f)));
+                     ImGui::GetColorU32(Alpha(TrimTitanium, 0.60f)));
 
     const float bracket = ImMin(cut * 2.2f, ImMin(max.x - min.x, max.y - min.y) * 0.25f);
     const ImU32 heavy = ImGui::GetColorU32(TrimGold);

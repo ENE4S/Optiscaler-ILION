@@ -34,12 +34,15 @@ un juego (The Witcher 3, DirectX 12). En otros equipos, juegos o API puede compo
   variabilidad y stutters; guardado en JSON y CSV.
 - **Comparación de pruebas e informe.** Diferencias absolutas y porcentuales, márgenes y conclusiones de rendimiento
   y estabilidad. No hay puntuaciones globales.
-- **Capturas y análisis visual.** Captura PNG sin el menú (DX12), comparador lado a lado con zoom sincronizado y
-  métricas de imagen fija (SSIM, diferencias de píxeles, bordes). No mide lo que ocurre en movimiento.
+- **Capturas y análisis visual.** Captura PNG sin el menú (DX12), comparador lado a lado con zoom sincronizado,
+  lupa de píxeles sin suavizado sobre la misma zona de ambas capturas, y métricas de imagen fija (SSIM, diferencias
+  de píxeles, bordes) con una interpretación breve y prudente: explica qué significan los valores y sus límites, y
+  no declara ganador cuando las capturas no lo permiten. No mide lo que ocurre en movimiento.
 - **Telemetría de hardware** en el overlay, leída de HWiNFO o MSI Afterburner. Lo que ningún programa proporciona se
   muestra como no disponible; nada se estima.
 - **Interfaz.** Español e inglés, modo Básico y Completo, tema industrial con el tema clásico de OptiScaler
-  disponible, overlay vertical y horizontal.
+  disponible, overlay vertical y horizontal. Arranca en español y en modo Completo; el idioma y el modo elegidos se
+  guardan al cambiarlos.
 
 ### Qué no incluye
 
@@ -166,11 +169,14 @@ one game (The Witcher 3, DirectX 12). It may behave differently on other machine
 - **Test comparison and report.** Absolute and percentage differences, margins, and conclusions on performance and
   stability. There are no overall scores.
 - **Captures and visual analysis.** PNG capture without the menu (DX12), side-by-side viewer with synchronised zoom,
-  and still-image metrics (SSIM, pixel differences, edges). It does not measure what happens in motion.
+  an unsmoothed pixel magnifier over the same area of both captures, and still-image metrics (SSIM, pixel
+  differences, edges) with a short, cautious interpretation: it says what the values mean and their limits, and
+  names no winner when the captures don't allow it. It does not measure what happens in motion.
 - **Hardware telemetry** in the overlay, read from HWiNFO or MSI Afterburner. What no program provides is shown as
   not available; nothing is estimated.
 - **Interface.** Spanish and English, Basic and Full modes, an industrial theme with the classic OptiScaler theme
-  still available, vertical and horizontal overlay.
+  still available, vertical and horizontal overlay. It starts in Spanish and in Full mode; the language and the
+  mode that are picked are saved when they are changed.
 
 ### What it does not include
 

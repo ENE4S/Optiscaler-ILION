@@ -238,6 +238,10 @@ inline constexpr Translation kSpanish[] = {
     { "SAVED", "GUARDADO" },
     { "min --  max --", "mín --  máx --" },
     { "min %.0f  max %.0f", "mín %.0f  máx %.0f" },
+    { "min --", "mín --" },
+    { "max --", "máx --" },
+    { "min %.0f", "mín %.0f" },
+    { "max %.0f", "máx %.0f" },
     { "Active dll isn't Official, Community or Lite, not measured",
       "La dll activa no es Official, Community ni Lite; no se mide" },
     { "Includes frames presented by frame generation", "Incluye fotogramas presentados por frame generation" },
@@ -504,6 +508,108 @@ inline constexpr Translation kSpanish[] = {
     { "Zoom %.0f%%. Wheel: zoom, drag: move.", "Zoom %.0f%%. Rueda: zoom, arrastrar: mover." },
     { "Difference with %s", "Diferencia con %s" },
     { "Visual summary", "Resumen visual" },
+
+    // Magnifier of the comparator
+    { "Magnifier", "Lupa" },
+    { "Shows the same small area of both pictures enlarged, every pixel as a square,\n"
+      "nothing smoothed. The captures themselves are not changed.",
+      "Muestra ampliada la misma zona pequeña de las dos imágenes, cada píxel como un cuadrado,\n"
+      "sin suavizar nada. Las capturas no se modifican." },
+    { "Area pinned. Right click on a picture: release it.",
+      "Zona fijada. Clic derecho sobre una imagen: soltarla." },
+    { "Move the pointer over a picture. Right click: pin the area.",
+      "Mueve el puntero sobre una imagen. Clic derecho: fijar la zona." },
+    { "Magnifier %dx: %d x %d pixels around %d, %d", "Lupa %dx: %d x %d píxeles alrededor de %d, %d" },
+    { "The two captures don't have the same size: the magnifier shows the same "
+      "coordinates, which may not be the same part of the picture.",
+      "Las dos capturas no tienen el mismo tamaño: la lupa muestra las mismas coordenadas, que pueden no ser la "
+      "misma parte de la imagen." },
+    { "These captures don't seem to show the same scene: the magnifier may show "
+      "different parts in each one.",
+      "Estas capturas no parecen mostrar la misma escena: la lupa puede mostrar partes distintas en cada una." },
+    { "These captures are displaced %d, %d pixels from each other: the magnifier may "
+      "show different parts in each one.",
+      "Estas capturas están desplazadas %d, %d píxeles entre sí: la lupa puede mostrar partes distintas en cada "
+      "una." },
+    { "Whether these two captures are aligned hasn't been measured: the "
+      "magnifier shows the same coordinates in both.",
+      "No se ha medido si estas dos capturas están alineadas: la lupa muestra las mismas coordenadas en ambas." },
+    { "Pixel in the middle: R %d  G %d  B %d", "Píxel central: R %d  G %d  B %d" },
+    { "Difference, amplified", "Diferencia, amplificada" },
+
+    // What the measurements mean
+    { "Visual interpretation", "Interpretación visual" },
+    { "%s against %s", "%s frente a %s" },
+    { "It can't be measured against the reference, see above.",
+      "No se puede medir frente a la referencia, ver arriba." },
+    { "1. Similarity: the two pictures are identical.", "1. Similitud: las dos imágenes son idénticas." },
+    { "1. Similarity: very close in structure (SSIM %.4f). A high SSIM is similar "
+      "structure, not a better picture.",
+      "1. Similitud: muy parecidas en estructura (SSIM %.4f). Un SSIM alto indica estructura parecida, no una "
+      "imagen mejor." },
+    { "1. Similarity: close, with differences that can be seen (SSIM %.4f).",
+      "1. Similitud: parecidas, con diferencias apreciables (SSIM %.4f)." },
+    { "1. Similarity: clearly different in structure (SSIM %.4f).",
+      "1. Similitud: claramente distintas en estructura (SSIM %.4f)." },
+    { "1. Similarity: very different (SSIM %.4f). Check that both show the same scene.",
+      "1. Similitud: muy distintas (SSIM %.4f). Comprueba que ambas muestran la misma escena." },
+    { "2. Where: concentrated in one area (column %d, row %d, %.1f times the average). The "
+      "magnifier shows it pixel by pixel.",
+      "2. Dónde: concentradas en una zona (columna %d, fila %d, %.1f veces la media). La lupa permite verla píxel a "
+      "píxel." },
+    { "2. Where: spread over the picture, no area stands out much.",
+      "2. Dónde: repartidas por la imagen, sin que una zona destaque mucho." },
+    { "2. Where: no area stands out.", "2. Dónde: ninguna zona destaca." },
+    { " Edges %+.1f%% stronger with overshoot next to them (%.1f%%): it may be "
+      "over-sharpening or halos, not more fidelity.",
+      " Bordes un %+.1f%% más marcados y con sobreimpulso junto a ellos (%.1f%%): puede ser sobreenfoque o halos, "
+      "no más fidelidad." },
+    { " Edges %+.1f%% stronger: looking sharper is not the same as being more faithful.",
+      " Bordes un %+.1f%% más marcados: verse más nítida no es lo mismo que ser más fiel." },
+    { " Edges %+.1f%% softer.", " Bordes un %+.1f%% más suaves." },
+    { " %.1f%% of the edges of the reference are kept.", " Se conserva el %.1f%% de los bordes de la referencia." },
+    { "3. Possible causes: the camera or the scene changed between the captures, which explains "
+      "differences by itself.",
+      "3. Causas posibles: la cámara o la escena cambiaron entre las capturas, lo que por sí solo explica "
+      "diferencias." },
+    { "3. Possible causes: %.1f%% of the pixels differ but only %.1f%% clearly. Many small "
+      "differences are typical of light, water, vegetation, particles, TAA or what changes "
+      "from one frame to the next; they can't be put down to the upscaler.",
+      "3. Causas posibles: difiere el %.1f%% de los píxeles, pero solo el %.1f%% con claridad. Muchas diferencias "
+      "pequeñas son propias de la iluminación, el agua, la vegetación, las partículas, el TAA o lo que cambia de un "
+      "fotograma al siguiente; no pueden atribuirse al escalador." },
+    { "3. Possible causes: none, nothing differs.", "3. Causas posibles: ninguna, no hay diferencias." },
+    { "3. Possible causes: these captures alone don't separate the upscaler from what changes in "
+      "the scene between two moments.",
+      "3. Causas posibles: estas capturas por sí solas no separan el escalador de lo que cambia en la escena entre "
+      "dos momentos." },
+    { " Two captures of one same version differ here by %.4f of SSIM.",
+      " Dos capturas de una misma versión difieren aquí en %.4f de SSIM." },
+    { " Frame generation was on: the frame may be a generated one.",
+      " La generación de fotogramas estaba activa: el fotograma puede ser uno generado." },
+    { "the camera moved", "la cámara se movió" },
+    { "they don't seem to show the same scene", "no parecen mostrar la misma escena" },
+    { "a frame may be a generated one", "un fotograma puede ser generado" },
+    { "they are from different games", "son de juegos distintos" },
+    { "4. Conclusion: inconclusive (%s).", "4. Conclusión: no concluyente (%s)." },
+    { "4. Conclusion: roughly equivalent in these still captures.",
+      "4. Conclusión: equivalencia aproximada en estas capturas fijas." },
+    { "4. Conclusion: a difference that can be detected in these still captures.",
+      "4. Conclusión: diferencia detectable en estas capturas fijas." },
+    { " It is measured against a native picture: being closer to it is not by itself "
+      "looking better.",
+      " Se mide frente a una imagen nativa: parecerse más a ella no es por sí solo verse mejor." },
+    { " Without a native reference this doesn't tell which one is more faithful.",
+      " Sin una referencia nativa esto no dice cuál es más fiel." },
+    { "no native reference", "sin referencia nativa" },
+    { "displacement of %d, %d px", "desplazamiento de %d, %d px" },
+    { "frame generation on", "generación de fotogramas activa" },
+    { "HDR10 values reduced to 8 bit", "valores HDR10 reducidos a 8 bits" },
+    { "no second capture of one same version to know how much the picture "
+      "changes by itself",
+      "falta una segunda captura de una misma versión para saber cuánto cambia la imagen por sí sola" },
+    { "still pictures only, motion isn't measured", "solo imágenes fijas, el movimiento no se mide" },
+    { "Limits of this comparison: %s.", "Límites de esta comparación: %s." },
     { "Measuring...", "Midiendo..." },
     { "VISUAL RESULT INCONCLUSIVE", "RESULTADO VISUAL NO CONCLUYENTE" },
     { "None of the selected captures can be measured against the reference.",
@@ -558,11 +664,15 @@ inline constexpr Translation kSpanish[] = {
     { "Measurements against the reference", "Mediciones frente a la referencia" },
     { "SSIM (structure)", "SSIM (estructura)" },
     { "Structural similarity of the brightness, in windows of 8x8 pixels.\n"
-      "1 is the same structure as the reference.",
+      "1 is the same structure as the reference.\n"
+      "A high value is similar structure, not a better picture.",
       "Similitud estructural del brillo, en ventanas de 8x8 píxeles.\n"
-      "1 es la misma estructura que la referencia." },
-    { "Signal to noise ratio of the brightness against the reference, higher is closer.",
-      "Relación señal/ruido del brillo frente a la referencia; más alto es más parecido." },
+      "1 es la misma estructura que la referencia.\n"
+      "Un valor alto indica estructura parecida, no una imagen mejor." },
+    { "Signal to noise ratio of the brightness against the reference, higher is closer.\n"
+      "It is a difference of signal, not how good the picture looks.",
+      "Relación señal/ruido del brillo frente a la referencia; más alto es más parecido.\n"
+      "Expresa diferencia de señal, no lo bien que se ve la imagen." },
     { "identical", "idéntica" },
     { "Mean difference", "Diferencia media" },
     { "Mean difference of the brightness, in levels out of 255.", "Diferencia media del brillo, en niveles sobre 255." },

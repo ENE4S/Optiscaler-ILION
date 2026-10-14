@@ -7848,7 +7848,13 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                         "Every subfolder of ILION\\FSR_Versions (next to the game exe) that has its own\n"
                         "amd_fidelityfx_upscaler_dx12.dll is listed here, the folder name is the version name.\n"
                         "Add a folder and press Rescan, no restart needed.\n\n"
+                        "Other upscalers with the same FFX interface (HelixSR, for example) can be used too.\n"
+                        "FSR 4 options are not applied to dlls whose providers are not AMD's.\n\n"
                         "Dlls stay loaded once used. Only affects upscaling, not frame generation.");
+
+            // What the dll in use says it is, asked through ffxQuery: tells FSR 4 apart from other FFX upscalers
+            if (const auto provider = FfxApiProxy::ActiveSrProvider(); !provider.empty())
+                ImGui::TextDisabled(Tr("Reported by the dll: %s"), provider.c_str());
 
             ImGui::SameLine();
 

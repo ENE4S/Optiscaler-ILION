@@ -62,6 +62,13 @@ struct FfxModule
     feature_version version { 0, 0, 0 };
     std::wstring filePath;
 
+    // First upscaler provider the dll reports through ffxQuery, e.g. "4.1.1" for AMD's FSR or a third-party name
+    std::string providerName;
+    // providerName was asked with the game's device (AMD's dlls leave FSR 4 out without one)
+    bool providerFromDevice = false;
+    // Reports providers whose ids aren't AMD's, e.g. a third-party upscaler such as HelixSR
+    bool thirdParty = false;
+
     bool skipCreateCalls = false;
     bool skipConfigureCalls = false;
     bool skipQueryCalls = false;
@@ -482,6 +489,27 @@ class FfxApiProxy
 
     static std::vector<SrVariant> SrVariants() { return FSR4Versions::Scan(); }
 
+    // Provider the upscaler dll in use reports, empty when none is loaded or it didn't answer
+    static std::string ActiveSrProvider()
+    {
+        std::scoped_lock lock(_srMutex);
+
+        // Asked once per dll, when the game has a device; without one AMD's dlls would only name FSR 3.1
+        auto device = State::Instance().currentD3D12Device;
+        if (!upscaling_dx12.providerFromDevice && device != nullptr && upscaling_dx12.Query != nullptr)
+        {
+            std::string name;
+            bool allAmd = true;
+
+            if (QueryProviders(upscaling_dx12, device, &name, &allAmd))
+                upscaling_dx12.providerName = name;
+
+            upscaling_dx12.providerFromDevice = true;
+        }
+
+        return upscaling_dx12.providerFromDevice ? upscaling_dx12.providerName : std::string();
+    }
+
     // Empty name is the dll in OptiDllPath, returns empty when the dll doesn't exist
     static std::wstring SrVariantDllPath(const std::wstring& name)
     {
@@ -868,7 +896,7 @@ class FfxApiProxy
         }
 
         // Model selection hooks are per source, move them to the module that's going to be used
-        FSR4ModelSelection::Hook(target.dll, FSR4Source::SDK, true);
+        HookFsr4ModelSelection(target, true);
 
         {
             std::scoped_lock lock(_srMutex);
@@ -1211,8 +1239,6 @@ class FfxApiProxy
 
         if (upscaling_dx12.dll != nullptr)
         {
-            FSR4ModelSelection::Hook(upscaling_dx12.dll, FSR4Source::SDK);
-
             wchar_t modulePath[MAX_PATH];
             DWORD len = GetModuleFileNameW(upscaling_dx12.dll, modulePath, MAX_PATH);
             upscaling_dx12.filePath = std::wstring(modulePath);
@@ -1232,6 +1258,8 @@ class FfxApiProxy
                 (PfnFfxDispatch) KernelBaseProxy::GetProcAddress_()(upscaling_dx12.dll, "ffxDispatch");
             upscaling_dx12.Query = (PfnFfxQuery) KernelBaseProxy::GetProcAddress_()(upscaling_dx12.dll, "ffxQuery");
         }
+
+        HookFsr4ModelSelection(upscaling_dx12, false);
 
         if (upscaling_dx12_hooked.dll != nullptr && upscaling_dx12_hooked.Configure == nullptr)
         {
@@ -1782,51 +1810,102 @@ class FfxApiProxy
         return main_dx12.version;
     }
 
+    // Every provider id AMD's FFX dlls report starts with this value (FSR 4, FSR 3.1 and FSR 2 alike)
+    static constexpr uint64_t AmdProviderIdPrefix = 0xF5A5CA1E00000000ull;
+
+    // Asks an upscaler dll which providers it has: the first one's name, and whether all of them are AMD's
+    static bool QueryProviders(FfxModule& module, void* device, std::string* firstName, bool* allAmd)
+    {
+        if (module.Query == nullptr)
+            return false;
+
+        ffxQueryDescGetVersions versionQuery {};
+        versionQuery.header.type = FFX_API_QUERY_DESC_TYPE_GET_VERSIONS;
+        versionQuery.createDescType = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
+        versionQuery.device = device;
+        uint64_t versionCount = 0;
+        versionQuery.outputCount = &versionCount;
+
+        auto queryResult = module.Query(nullptr, &versionQuery.header);
+
+        if (versionCount == 0 || queryResult != FFX_API_RETURN_OK)
+        {
+            LOG_WARN("Upscaler version query of {} failed: {}", wstring_to_string(module.filePath), (UINT) queryResult);
+            return false;
+        }
+
+        std::vector<uint64_t> versionIds(versionCount);
+        std::vector<const char*> versionNames(versionCount);
+        versionQuery.versionIds = versionIds.data();
+        versionQuery.versionNames = versionNames.data();
+
+        queryResult = module.Query(nullptr, &versionQuery.header);
+
+        if (queryResult != FFX_API_RETURN_OK || versionNames[0] == nullptr)
+        {
+            LOG_WARN("Upscaler version query 2 of {} failed: {}", wstring_to_string(module.filePath), (UINT) queryResult);
+            return false;
+        }
+
+        *firstName = versionNames[0];
+        *allAmd = true;
+
+        for (uint64_t i = 0; i < versionCount; i++)
+        {
+            LOG_INFO("Upscaler dll {} provider {}: '{}' id {:X}{}", wstring_to_string(module.filePath), i,
+                     versionNames[i] != nullptr ? versionNames[i] : "", versionIds[i], device != nullptr ? " (device)" : "");
+
+            if ((versionIds[i] & 0xFFFFFFFF00000000ull) != AmdProviderIdPrefix)
+                *allAmd = false;
+        }
+
+        return true;
+    }
+
+    // Version kept in the module, from the query without a device as OptiScaler always did, and whether the dll
+    // is a third-party upscaler
+    static void QuerySrProvider(FfxModule& module)
+    {
+        std::string name;
+        bool allAmd = true;
+
+        if (!QueryProviders(module, nullptr, &name, &allAmd))
+            return;
+
+        module.version.parse_version(name.c_str());
+        module.thirdParty = !allAmd;
+
+        if (module.providerName.empty())
+            module.providerName = name;
+    }
+
+    // FSR 4's model selection hooks are found by a byte pattern inside the dll. AMD's dlls (and dlls that don't
+    // answer the query) get them as before; a dll whose providers aren't AMD's is used as it is.
+    static void HookFsr4ModelSelection(FfxModule& module, bool rehook)
+    {
+        if (module.dll == nullptr)
+            return;
+
+        if (module.version.major == 0)
+            QuerySrProvider(module);
+
+        if (module.thirdParty)
+        {
+            LOG_INFO("FSR 4 model selection not hooked in {}: its providers aren't AMD's ('{}')",
+                     wstring_to_string(module.filePath), module.providerName);
+            return;
+        }
+
+        FSR4ModelSelection::Hook(module.dll, FSR4Source::SDK, rehook);
+    }
+
     static feature_version VersionDx12_SR()
     {
         if (upscaling_dx12.Query == nullptr)
             return VersionDx12();
 
         if (upscaling_dx12.version.major == 0)
-        {
-            ffxQueryDescGetVersions versionQuery {};
-            versionQuery.header.type = FFX_API_QUERY_DESC_TYPE_GET_VERSIONS;
-            versionQuery.createDescType = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
-            uint64_t versionCount = 0;
-            versionQuery.outputCount = &versionCount;
-
-            auto queryResult = upscaling_dx12.Query(nullptr, &versionQuery.header);
-
-            // get number of versions for allocation
-            if (versionCount > 0 && queryResult == FFX_API_RETURN_OK)
-            {
-
-                std::vector<uint64_t> versionIds;
-                std::vector<const char*> versionNames;
-                versionIds.resize(versionCount);
-                versionNames.resize(versionCount);
-                versionQuery.versionIds = versionIds.data();
-                versionQuery.versionNames = versionNames.data();
-
-                // fill version ids and names arrays.
-                queryResult = upscaling_dx12.Query(nullptr, &versionQuery.header);
-
-                if (queryResult == FFX_API_RETURN_OK)
-                {
-                    upscaling_dx12.version.parse_version(versionNames[0]);
-                    LOG_INFO("FfxApi Dx12 SR version: {}.{}.{}", upscaling_dx12.version.major,
-                             upscaling_dx12.version.minor, upscaling_dx12.version.patch);
-                }
-                else
-                {
-                    LOG_WARN("main_dx12.Query 2 result: {}", (UINT) queryResult);
-                }
-            }
-            else
-            {
-                LOG_WARN("main_dx12.Query result: {}", (UINT) queryResult);
-            }
-        }
+            QuerySrProvider(upscaling_dx12);
 
         return upscaling_dx12.version;
     }

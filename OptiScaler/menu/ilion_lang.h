@@ -125,12 +125,17 @@ inline constexpr Translation kSpanish[] = {
       "Every subfolder of ILION\\FSR_Versions (next to the game exe) that has its own\n"
       "amd_fidelityfx_upscaler_dx12.dll is listed here, the folder name is the version name.\n"
       "Add a folder and press Rescan, no restart needed.\n\n"
+      "Other upscalers with the same FFX interface (HelixSR, for example) can be used too.\n"
+      "FSR 4 options are not applied to dlls whose providers are not AMD's.\n\n"
       "Dlls stay loaded once used. Only affects upscaling, not frame generation.",
       "Cambia amd_fidelityfx_upscaler_dx12.dll sin reiniciar el juego.\n"
       "Aquí aparece cada subcarpeta de ILION\\FSR_Versions (junto al exe del juego) que tenga su propia\n"
       "amd_fidelityfx_upscaler_dx12.dll; el nombre de la carpeta es el nombre de la versión.\n"
       "Añade una carpeta y pulsa Actualizar lista, no hace falta reiniciar.\n\n"
+      "También se pueden usar otros escaladores con la misma interfaz FFX (HelixSR, por ejemplo).\n"
+      "Las opciones de FSR 4 no se aplican a las dll cuyos proveedores no son de AMD.\n\n"
       "Las dll siguen cargadas una vez usadas. Solo afecta al escalado, no a frame generation." },
+    { "Reported by the dll: %s", "La dll se identifica como: %s" },
 
     // Notifications of the versions switch
     { "Can't find the dll of the selected FSR variant", "No se encuentra la dll de la versión FSR seleccionada" },

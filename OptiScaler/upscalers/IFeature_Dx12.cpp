@@ -37,6 +37,7 @@ bool IFeature_Dx12::Init(ID3D12Device* InDevice, ID3D12GraphicsCommandList* InCo
         RCAS = std::make_unique<RCAS_Dx12>("RCAS", InDevice);
         Bias = std::make_unique<Bias_Dx12>("Bias", InDevice); // TODO: not needed on DLSS/DLSSD
         Magnifier = std::make_unique<Magnifier_Dx12>("Magnifier", InDevice);
+        ImageAdjust = std::make_unique<ImageAdjust_Dx12>("Graphics", InDevice);
 
         UpscalerTime = std::make_unique<GpuTime_Dx12>(InDevice);
     }
@@ -196,6 +197,40 @@ bool IFeature_Dx12::Evaluate(ID3D12GraphicsCommandList* InCommandList, NVSDK_NGX
               } });
     }
 
+    // ILION graphics enhancements: after the sharpening, before the magnifier; not added when neutral or off
+    if (ImageAdjust && ImageAdjust->IsInit() && ImageAdjust_Common::ShouldRun())
+    {
+        pipeline.push_back(
+            { // Setup
+              [&](ID3D12Resource* nextOutput) -> ID3D12Resource*
+              {
+                  if (ImageAdjust->CreateBufferResource(Device, nextOutput, D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
+                  {
+                      ImageAdjust->SetBufferState(InCommandList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                      return ImageAdjust->Buffer();
+                  }
+
+                  return nullptr;
+              },
+
+              // Dispatch
+              [&](ID3D12Resource* input, ID3D12Resource* output) -> bool
+              {
+                  if (!ImageAdjust->CanRender())
+                      return true;
+
+                  ImageAdjust->SetBufferState(InCommandList, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+
+                  // A failed pass switches the module off, the picture goes on unchanged next frame
+                  if (!ImageAdjust->Dispatch(InCommandList, input, output, IsHdr()))
+                  {
+                      Config::Instance()->GfxEnabled.set_volatile_value(false);
+                      return false;
+                  }
+                  return true;
+              } });
+    }
+
     if (Magnifier->ShouldRun())
     {
         pipeline.push_back(
@@ -310,6 +345,12 @@ void IFeature_Dx12::ReadDetailedGpuTimes(void* commandQueueVoid, std::vector<Det
 
     if (lastOutputScalingTime)
         detailedGpuTimes.emplace_back(DetailedGpuTime { OutputScaler->Name(), lastOutputScalingTime.value(), true });
+
+    if (ImageAdjust)
+    {
+        if (auto time = ImageAdjust->ReadGpuTime(commandQueue); time)
+            detailedGpuTimes.emplace_back(DetailedGpuTime { ImageAdjust->Name(), time.value(), false });
+    }
 
     auto magnifierTime = Magnifier->ReadGpuTime(commandQueue);
 

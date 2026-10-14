@@ -347,6 +347,21 @@ class Config
     CustomOptional<float, NoDefault> MagnifierStaticPosX; // % of screen Width, static pos enabled if both are defined
     CustomOptional<float, NoDefault> MagnifierStaticPosY; // % of screen Height
 
+    // ILION graphics enhancements: one colour pass after the upscaler, off by default; neutral values skip it
+    CustomOptional<bool> GfxEnabled { false };
+    CustomOptional<bool> GfxTemperatureEnabled { true };
+    CustomOptional<float> GfxTemperature { 0.0f }; // -1 cool .. 1 warm
+    CustomOptional<bool> GfxBrightnessEnabled { true };
+    CustomOptional<float> GfxBrightness { 0.0f }; // -1..1, one stop each way
+    CustomOptional<bool> GfxContrastEnabled { true };
+    CustomOptional<float> GfxContrast { 0.0f }; // -1..1
+    CustomOptional<bool> GfxSaturationEnabled { true };
+    CustomOptional<float> GfxSaturation { 0.0f }; // -1..1
+    CustomOptional<bool> GfxVibranceEnabled { true };
+    CustomOptional<float> GfxVibrance { 0.0f }; // -1..1
+    CustomOptional<bool> GfxLocalContrastEnabled { false }; // experimental
+    CustomOptional<float> GfxLocalContrast { 0.3f };         // 0..1
+
     // Menu
     CustomOptional<float, NoDefault> MenuScale;
     CustomOptional<float, NoDefault> MenuHeight; // Unscaled, no value means default height

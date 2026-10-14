@@ -9,6 +9,7 @@
 #include <shaders/rcas/RCAS_Dx12.h>
 #include <shaders/bias/Bias_Dx12.h>
 #include <shaders/magnifier/Magnifier_Dx12.h>
+#include <shaders/image_adjust/ImageAdjust_Dx12.h>
 #include <gpu_time/GpuTime_Dx12.h>
 
 class IFeature_Dx12 : public virtual IFeature
@@ -34,6 +35,7 @@ class IFeature_Dx12 : public virtual IFeature
     std::unique_ptr<RCAS_Dx12> RCAS = nullptr;
     std::unique_ptr<Bias_Dx12> Bias = nullptr;
     std::unique_ptr<Magnifier_Dx12> Magnifier = nullptr;
+    std::unique_ptr<ImageAdjust_Dx12> ImageAdjust = nullptr; // ILION graphics enhancements
 
     std::unique_ptr<GpuTime_Dx12> UpscalerTime = nullptr;
 

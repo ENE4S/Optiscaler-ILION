@@ -384,6 +384,12 @@ copy NUL "$(SolutionDir)x64\Release\a\!! EXTRACT ALL FILES TO GAME FOLDER !!" /Y
     <ClInclude Include="shaders\menu_blur\precompile\MenuBlur_Shader_Vk.h" />
     <ClInclude Include="shaders\menu_blur\precompile\MenuBlur_Shader.h" />
     <ClInclude Include="shaders\magnifier\Magnifier_Vk.h" />
+    <ClInclude Include="shaders\image_adjust\ImageAdjust_Common.h" />
+    <ClInclude Include="shaders\image_adjust\ImageAdjust_Dx11.h" />
+    <ClInclude Include="shaders\image_adjust\ImageAdjust_Dx12.h" />
+    <ClInclude Include="shaders\image_adjust\ImageAdjust_Vk.h" />
+    <ClInclude Include="shaders\image_adjust\precompile\ImageAdjust_Shader.h" />
+    <ClInclude Include="shaders\image_adjust\precompile\ImageAdjust_Shader_Vk.h" />
     <ClInclude Include="shaders\magnifier\precompile\Magnifier_Shader_Vk.h" />
     <ClInclude Include="shaders\rcas\precompile\da_das_sharpen_Shader.h" />
     <ClInclude Include="shaders\rcas\precompile\da_das_sharpen_Shader_Dx11.h" />
@@ -708,6 +714,10 @@ copy NUL "$(SolutionDir)x64\Release\a\!! EXTRACT ALL FILES TO GAME FOLDER !!" /Y
     <ClCompile Include="shaders\menu_blur\MenuBlur_Dx12.cpp" />
     <ClCompile Include="shaders\menu_blur\MenuBlur_Vk.cpp" />
     <ClCompile Include="shaders\magnifier\Magnifier_Vk.cpp" />
+    <ClCompile Include="shaders\image_adjust\ImageAdjust_Common.cpp" />
+    <ClCompile Include="shaders\image_adjust\ImageAdjust_Dx11.cpp" />
+    <ClCompile Include="shaders\image_adjust\ImageAdjust_Dx12.cpp" />
+    <ClCompile Include="shaders\image_adjust\ImageAdjust_Vk.cpp" />
     <ClCompile Include="shaders\output_scaling\OS_Vk.cpp" />
     <ClCompile Include="shaders\rcas\RCAS_Common.cpp" />
     <ClCompile Include="shaders\rcas\RCAS_Vk.cpp" />

@@ -32,6 +32,7 @@ bool IFeature_Dx11::Init(ID3D11Device* InDevice, ID3D11DeviceContext* InContext,
         RCAS = std::make_unique<RCAS_Dx11>("RCAS", InDevice);
         Bias = std::make_unique<Bias_Dx11>("Bias", InDevice); // TODO: not needed on DLSS/DLSSD
         Magnifier = std::make_unique<Magnifier_Dx11>("Magnifier", InDevice);
+        ImageAdjust = std::make_unique<ImageAdjust_Dx11>("Graphics", InDevice);
 
         UpscalerTime = std::make_unique<GpuTime_Dx11>(InDevice);
     }
@@ -223,6 +224,34 @@ bool IFeature_Dx11::Evaluate(ID3D11DeviceContext* InDeviceContext, NVSDK_NGX_Par
                              } });
     }
 
+    // ILION graphics enhancements: after the sharpening, before the magnifier; not added when neutral or off
+    if (ImageAdjust && ImageAdjust->IsInit() && ImageAdjust_Common::ShouldRun())
+    {
+        pipeline.push_back({ // Setup
+                             [&](ID3D11Resource* nextOutput) -> ID3D11Resource*
+                             {
+                                 if (ImageAdjust->CreateBufferResource(Device, nextOutput))
+                                     return ImageAdjust->Buffer();
+
+                                 return nullptr;
+                             },
+
+                             // Dispatch
+                             [&](ID3D11Resource* input, ID3D11Resource* output) -> bool
+                             {
+                                 if (!ImageAdjust->CanRender())
+                                     return true;
+
+                                 if (!ImageAdjust->Dispatch(Device, InDeviceContext, (ID3D11Texture2D*) input,
+                                                            (ID3D11Texture2D*) output, IsHdr()))
+                                 {
+                                     Config::Instance()->GfxEnabled.set_volatile_value(false);
+                                     return false;
+                                 }
+                                 return true;
+                             } });
+    }
+
     if (Magnifier->ShouldRun())
     {
         pipeline.push_back({ // Setup
@@ -365,6 +394,12 @@ void IFeature_Dx11::ReadDetailedGpuTimes(void* deviceContextVoid, std::vector<De
 
     if (lastOutputScalingTime)
         detailedGpuTimes.emplace_back(DetailedGpuTime { OutputScaler->Name(), lastOutputScalingTime.value(), true });
+
+    if (ImageAdjust)
+    {
+        if (auto time = ImageAdjust->ReadGpuTime(deviceContext); time)
+            detailedGpuTimes.emplace_back(DetailedGpuTime { ImageAdjust->Name(), time.value(), false });
+    }
 
     auto magnifierTime = Magnifier->ReadGpuTime(deviceContext);
 

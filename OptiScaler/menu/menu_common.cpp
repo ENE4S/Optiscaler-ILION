@@ -32,6 +32,7 @@
 #include "ilion_visual_panel.h"
 #include "ilion_theme.h"
 #include "ilion_d4r_panel.h"
+#include <shaders/image_adjust/ImageAdjust_Common.h>
 #include <imgui/ImGuiNotify.hpp>
 #include <imgui/imgui_impl_win32.h>
 #include <imgui/imgui_impl_uwp.h>
@@ -12164,6 +12165,116 @@ void MenuCommon::RenderInitFlagsSettings(RenderMenuContext& ctx)
     }
 }
 
+// ILION graphics enhancements ------------------------------------------------------------------------------------
+// One control: its own on/off, the slider and its own reset. Changes are live, the pass reads the config every frame.
+static void GfxControl(const char* label, const char* tip, CustomOptional<bool>& enabled, CustomOptional<float>& value,
+                       float min, float max)
+{
+    ImGui::PushID(label);
+
+    bool on = enabled.value_or_default();
+    if (IlionTheme::Checkbox("##on", &on))
+        enabled = on;
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("%s", Tr("Switches this adjustment on or off, its value is kept"));
+
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!on);
+
+    float v = value.value_or_default();
+    if (IlionTheme::SliderFloat(TrL(label), &v, min, max, "%+.2f"))
+        value = v;
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("%s", Tr(tip));
+
+    ImGui::SameLine();
+    if (IlionTheme::Button(TrL("Reset")))
+        value.reset();
+
+    ImGui::EndDisabled();
+    ImGui::PopID();
+}
+
+void MenuCommon::RenderGraphicsColorSettings(RenderMenuContext& ctx)
+{
+    auto config = ctx.config;
+
+    SectionTitle("Colour and image");
+
+    bool enabled = config->GfxEnabled.value_or_default();
+    if (IlionTheme::Checkbox(TrL("Enable graphics enhancements"), &enabled))
+        config->GfxEnabled = enabled;
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("%s", Tr("One colour pass after the upscaler and the sharpening, before the game's HUD.\n"
+                                   "Off, or with every value neutral, the pass is not run: the picture is untouched."));
+
+    // What the pass is doing now
+    const bool upscaling = ctx.currentFeature != nullptr && !ctx.currentFeature->IsFrozen();
+
+    if (!upscaling)
+        ImGui::TextColored(IlionTheme::TextDim, "%s", Tr("Applied only while OptiScaler upscales the game"));
+    else if (enabled && ImageAdjust::bypass)
+        ImGui::TextColored(IlionTheme::LampAmber, "%s", Tr("Showing the original picture"));
+    else if (ImageAdjust_Common::ShouldRun())
+        ImGui::TextColored(IlionTheme::LampGreen, "%s", Tr("Colour pass running"));
+    else
+        ImGui::TextColored(IlionTheme::TextDim, "%s", Tr("Colour pass not running: off or every value neutral"));
+
+    if (upscaling && ctx.currentFeature->IsHdr())
+        ImGui::TextColored(IlionTheme::TextDim, "%s", Tr("HDR picture: brightness and contrast work on linear light"));
+
+    ImGui::Spacing();
+    ImGui::BeginDisabled(!enabled);
+
+    GfxControl("Temperature", "Below 0 cooler (blue), above 0 warmer (orange). Brightness is kept.",
+               config->GfxTemperatureEnabled, config->GfxTemperature, -1.0f, 1.0f);
+    GfxControl("Brightness", "Exposure, up to one stop darker or brighter.", config->GfxBrightnessEnabled,
+               config->GfxBrightness, -1.0f, 1.0f);
+    GfxControl("Contrast", "Curve around mid grey. In SDR black and white stay where they are.",
+               config->GfxContrastEnabled, config->GfxContrast, -1.0f, 1.0f);
+    GfxControl("Saturation", "Strength of every colour alike. -1 is black and white.", config->GfxSaturationEnabled,
+               config->GfxSaturation, -1.0f, 1.0f);
+    GfxControl("Vibrance", "Raises dull colours more than the ones already strong, so skin and skies don't burn.",
+               config->GfxVibranceEnabled, config->GfxVibrance, -1.0f, 1.0f);
+
+    // Comparison, not saved
+    SectionTitle("Comparison");
+
+    IlionTheme::Checkbox(TrL("Split screen (left half original)"), &ImageAdjust::compareSplit);
+    IlionTheme::Checkbox(TrL("Show the original picture"), &ImageAdjust::bypass);
+
+    if (IlionTheme::Button(TrL("Reset all")))
+    {
+        for (auto* value : { &config->GfxTemperature, &config->GfxBrightness, &config->GfxContrast,
+                             &config->GfxSaturation, &config->GfxVibrance, &config->GfxLocalContrast })
+            value->reset();
+
+        for (auto* on : { &config->GfxTemperatureEnabled, &config->GfxBrightnessEnabled, &config->GfxContrastEnabled,
+                          &config->GfxSaturationEnabled, &config->GfxVibranceEnabled,
+                          &config->GfxLocalContrastEnabled })
+            on->reset();
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("%s", Tr("Every value back to neutral; saved with Save Settings, for this game"));
+
+    ImGui::EndDisabled();
+}
+
+void MenuCommon::RenderGraphicsAdvancedSettings(RenderMenuContext& ctx)
+{
+    auto config = ctx.config;
+
+    SectionTitle("Advanced adjustments");
+
+    ImGui::BeginDisabled(!config->GfxEnabled.value_or_default());
+    GfxControl("Local contrast (experimental)",
+               "Raises detail against its surroundings. Strong values can draw halos round edges.",
+               config->GfxLocalContrastEnabled, config->GfxLocalContrast, 0.0f, 1.0f);
+    ImGui::EndDisabled();
+
+    ImGui::TextColored(IlionTheme::TextDim, "%s", Tr("Uses the switch of Colour and image; off by default"));
+}
+
 void MenuCommon::RenderMagnifierSettings(RenderMenuContext& ctx)
 {
     auto& state = ctx.state;
@@ -13933,15 +14044,18 @@ const MenuCommon::MenuBox* MenuCommon::GetMenuBoxes(size_t& count)
     static const MenuBox boxes[] = {
         { "upscaler", "Upscaling", "Upscalers",
           [](RenderMenuContext& c) { if (IsUpscalerActive(c.currentFeature)) RenderCard(c, RenderActiveUpscalerSettings); } },
-        { "sharpness", "Upscaling", "Sharpness",
-          [](RenderMenuContext& c) { if (IsUpscalerActive(c.currentFeature)) RenderCard(c, RenderActiveImageSettings); } },
         { "upscale_ratio", "Upscaling", "Upscale Ratio Override",
           [](RenderMenuContext& c) { if (IsUpscalerActive(c.currentFeature)) RenderCard(c, RenderUpscaleRatioSettings); } },
         { "output_scaling", "Upscaling", "Output Scaling",
           [](RenderMenuContext& c) { if (IsUpscalerActive(c.currentFeature)) RenderCard(c, RenderOutputScalingSettings); } },
         { "shader_times", "Upscaling", "Per shader GPU times",
           [](RenderMenuContext& c) { if (IsUpscalerActive(c.currentFeature)) RenderCard(c, RenderShaderTimes); } },
-        { "magnifier", "Upscaling", "Magnifier",
+
+        { "gfx_color", "Graphics", "Colour and image", [](RenderMenuContext& c) { RenderCard(c, RenderGraphicsColorSettings); } },
+        { "sharpness", "Graphics", "Sharpness",
+          [](RenderMenuContext& c) { if (IsUpscalerActive(c.currentFeature)) RenderCard(c, RenderActiveImageSettings); } },
+        { "gfx_advanced", "Graphics", "Advanced adjustments", [](RenderMenuContext& c) { RenderCard(c, RenderGraphicsAdvancedSettings); } },
+        { "magnifier", "Graphics", "Magnifier",
           [](RenderMenuContext& c) { if (IsUpscalerActive(c.currentFeature)) RenderCard(c, RenderMagnifierSettings); } },
 
         { "fg_selection", "Frame Gen", "Frame Generation", [](RenderMenuContext& c) { RenderCard(c, RenderFrameGenerationSelection); } },
@@ -14175,7 +14289,8 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
     // clang-format off
     static const Tab tabs[] = {
         { "MAIN", "Custom", "Boxes picked in Menu > Custom Tab.", RenderCustomTab },
-        { "MAIN", "Upscaling", "Backend, sharpness and output scaling.", RenderUpscalerStateMessage },
+        { "MAIN", "Upscaling", "Backend and output scaling.", RenderUpscalerStateMessage },
+        { "MAIN", "Graphics", "Colour, sharpness and detail of the upscaled picture." },
         { "MAIN", "Frame Gen", "Frame generation source, output and pacing." },
         { "MAIN", "Latency & FPS", "Frame limiter, low latency and V-Sync." },
         { "MAIN", "Overlay", "Real-time metrics over the game: FPS, frame times and hardware sensors." },

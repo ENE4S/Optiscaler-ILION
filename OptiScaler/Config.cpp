@@ -566,6 +566,29 @@ bool Config::Reload(std::filesystem::path iniPath)
                 MagnifierStaticPosY.set_from_config(std::clamp(setting.value(), 0.0f, 100.0f));
         }
 
+        // ILION graphics enhancements
+        {
+            GfxEnabled.set_from_config(readBool("Graphics", "Enabled"));
+            GfxTemperatureEnabled.set_from_config(readBool("Graphics", "TemperatureEnabled"));
+            if (auto setting = readFloat("Graphics", "Temperature"); setting.has_value())
+                GfxTemperature.set_from_config(std::clamp(setting.value(), -1.0f, 1.0f));
+            GfxBrightnessEnabled.set_from_config(readBool("Graphics", "BrightnessEnabled"));
+            if (auto setting = readFloat("Graphics", "Brightness"); setting.has_value())
+                GfxBrightness.set_from_config(std::clamp(setting.value(), -1.0f, 1.0f));
+            GfxContrastEnabled.set_from_config(readBool("Graphics", "ContrastEnabled"));
+            if (auto setting = readFloat("Graphics", "Contrast"); setting.has_value())
+                GfxContrast.set_from_config(std::clamp(setting.value(), -1.0f, 1.0f));
+            GfxSaturationEnabled.set_from_config(readBool("Graphics", "SaturationEnabled"));
+            if (auto setting = readFloat("Graphics", "Saturation"); setting.has_value())
+                GfxSaturation.set_from_config(std::clamp(setting.value(), -1.0f, 1.0f));
+            GfxVibranceEnabled.set_from_config(readBool("Graphics", "VibranceEnabled"));
+            if (auto setting = readFloat("Graphics", "Vibrance"); setting.has_value())
+                GfxVibrance.set_from_config(std::clamp(setting.value(), -1.0f, 1.0f));
+            GfxLocalContrastEnabled.set_from_config(readBool("Graphics", "LocalContrastEnabled"));
+            if (auto setting = readFloat("Graphics", "LocalContrast"); setting.has_value())
+                GfxLocalContrast.set_from_config(std::clamp(setting.value(), 0.0f, 1.0f));
+        }
+
         // Output Scaling
         {
             OutputScalingEnabled.set_from_config(readBool("OutputScaling", "Enabled"));
@@ -1278,6 +1301,29 @@ bool Config::SaveIni()
                      GetFloatValue(Instance()->MagnifierStaticPosX.value_for_config()).c_str());
         ini.SetValue("Magnifier", "StaticPosY",
                      GetFloatValue(Instance()->MagnifierStaticPosY.value_for_config()).c_str());
+    }
+
+    // ILION graphics enhancements
+    {
+        ini.SetValue("Graphics", "Enabled", GetBoolValue(Instance()->GfxEnabled.value_for_config()).c_str());
+        ini.SetValue("Graphics", "TemperatureEnabled",
+                     GetBoolValue(Instance()->GfxTemperatureEnabled.value_for_config()).c_str());
+        ini.SetValue("Graphics", "Temperature", GetFloatValue(Instance()->GfxTemperature.value_for_config()).c_str());
+        ini.SetValue("Graphics", "BrightnessEnabled",
+                     GetBoolValue(Instance()->GfxBrightnessEnabled.value_for_config()).c_str());
+        ini.SetValue("Graphics", "Brightness", GetFloatValue(Instance()->GfxBrightness.value_for_config()).c_str());
+        ini.SetValue("Graphics", "ContrastEnabled",
+                     GetBoolValue(Instance()->GfxContrastEnabled.value_for_config()).c_str());
+        ini.SetValue("Graphics", "Contrast", GetFloatValue(Instance()->GfxContrast.value_for_config()).c_str());
+        ini.SetValue("Graphics", "SaturationEnabled",
+                     GetBoolValue(Instance()->GfxSaturationEnabled.value_for_config()).c_str());
+        ini.SetValue("Graphics", "Saturation", GetFloatValue(Instance()->GfxSaturation.value_for_config()).c_str());
+        ini.SetValue("Graphics", "VibranceEnabled",
+                     GetBoolValue(Instance()->GfxVibranceEnabled.value_for_config()).c_str());
+        ini.SetValue("Graphics", "Vibrance", GetFloatValue(Instance()->GfxVibrance.value_for_config()).c_str());
+        ini.SetValue("Graphics", "LocalContrastEnabled",
+                     GetBoolValue(Instance()->GfxLocalContrastEnabled.value_for_config()).c_str());
+        ini.SetValue("Graphics", "LocalContrast", GetFloatValue(Instance()->GfxLocalContrast.value_for_config()).c_str());
     }
 
     // Menu

@@ -21,6 +21,7 @@ bool IFeature_Vk::Init(VkInstance InInstance, VkPhysicalDevice InPD, VkDevice In
         OutputScaler = std::make_unique<OS_Vk>("Output Scaling", InDevice, InPD, (TargetWidth() < DisplayWidth()));
         RCAS = std::make_unique<RCAS_Vk>("RCAS", InDevice, InPD);
         Magnifier = std::make_unique<Magnifier_Vk>("Magnifier", InDevice, InPD);
+        ImageAdjust = std::make_unique<ImageAdjust_Vk>("Graphics", InDevice, InPD);
         UpscalerTime = std::make_unique<GpuTime_Vk>(InDevice, InPD);
     }
 
@@ -207,6 +208,45 @@ bool IFeature_Vk::Evaluate(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Parameter* InP
               } });
     }
 
+    // ILION graphics enhancements: after the sharpening, before the magnifier; not added when neutral or off
+    if (ImageAdjust && ImageAdjust->IsInit() && ImageAdjust_Common::ShouldRun())
+    {
+        pipeline.push_back(
+            { // Setup
+              [&](const VkImageInfo& nextOutput) -> VkImageInfo
+              {
+                  if (ImageAdjust->CreateImageResource(Device, PhysicalDevice, nextOutput.Width, nextOutput.Height,
+                                                       nextOutput.Format, intermediateUsage))
+                  {
+                      ImageAdjust->SetImageLayout(InCmdBuffer, ImageAdjust->GetImage(), VK_IMAGE_LAYOUT_UNDEFINED,
+                                                  VK_IMAGE_LAYOUT_GENERAL, nextOutput.SubresourceRange);
+
+                      VkImageInfo info = nextOutput;
+                      info.Image = ImageAdjust->GetImage();
+                      info.ImageView = ImageAdjust->GetImageView();
+                      return info;
+                  }
+                  return VkImageInfo {};
+              },
+
+              // Dispatch
+              [&](const VkImageInfo& input, const VkImageInfo& output) -> bool
+              {
+                  if (!ImageAdjust->CanRender())
+                      return true;
+
+                  ImageAdjust->SetImageLayout(InCmdBuffer, input.Image, VK_IMAGE_LAYOUT_GENERAL,
+                                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, input.SubresourceRange);
+
+                  if (!ImageAdjust->Dispatch(InCmdBuffer, input, output, IsHdr()))
+                  {
+                      Config::Instance()->GfxEnabled.set_volatile_value(false);
+                      return false;
+                  }
+                  return true;
+              } });
+    }
+
     if (Magnifier->ShouldRun())
     {
         pipeline.push_back(
@@ -331,6 +371,12 @@ void IFeature_Vk::ReadDetailedGpuTimes(void* unused, std::vector<DetailedGpuTime
 
     if (lastOutputScalingTime)
         detailedGpuTimes.emplace_back(DetailedGpuTime { OutputScaler->Name(), lastOutputScalingTime.value(), true });
+
+    if (ImageAdjust)
+    {
+        if (auto time = ImageAdjust->ReadGpuTime(); time)
+            detailedGpuTimes.emplace_back(DetailedGpuTime { ImageAdjust->Name(), time.value(), false });
+    }
 
     if (!Magnifier)
         return;

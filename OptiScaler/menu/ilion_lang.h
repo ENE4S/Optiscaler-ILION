@@ -46,6 +46,10 @@ struct Translation
 inline constexpr Translation kSpanish[] = {
     // Universal upscaler selector (v1.2-dev.5)
     { "Upscaler##IlionUpscaler", "Escalador" },
+    { "Upscaler##IlionFamily", "Escalador" },
+    { " official (AMD)", " oficial de AMD" },
+    { "Built into OptiScaler, switches while the game runs.", "Incluido en OptiScaler, cambia sin reiniciar el juego." },
+    { "Active, evaluating frames", "Activo, evaluando fotogramas" },
     { "Rescan##IlionUpscaler", "Actualizar lista" },
     { "FSR (default dll)", "FSR (dll por defecto)" },
     { "AMD's FSR dll next to OptiScaler, or the game's own.", "La dll de FSR de AMD junto a OptiScaler, o la propia del juego." },
@@ -112,8 +116,6 @@ inline constexpr Translation kSpanish[] = {
     { "Upscaler comparison: waiting for an upscale...", "Comparación de escaladores: esperando un escalado..." },
     { "More upscalers than boxes in this session, the last one isn't measured",
       "Hay más escaladores que recuadros en esta sesión; el último no se mide" },
-    { "DLSS isn't measured live here: compare it with saved Benchmark tests",
-      "DLSS no se mide aquí en directo: compáralo con pruebas guardadas de Benchmark" },
     { "Measures every upscaler dll while it's the one executing the upscaling and shows\n"
       "the results under the performance overlay, one box per upscaler, named as ILION's list\n"
       "knows it. Switch the upscaler to measure the next one. Live only for FFX upscalers\n"

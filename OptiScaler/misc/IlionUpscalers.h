@@ -104,14 +104,14 @@ inline bool HasHelixNetwork(const std::wstring& path)
     return file.read(marker, sizeof marker) && memcmp(marker, "HXSRNET1", 8) == 0;
 }
 
-// HelixSR's code, with or without its network: its dll carries its own settings names (HELIXSR_PROFILE, ...)
-inline bool LooksLikeHelix(const std::wstring& path)
+// The file holds this text somewhere (read in chunks, nothing is loaded)
+inline bool FileContains(const std::wstring& path, const char* needle)
 {
     std::ifstream file(std::filesystem::path(path), std::ios::binary);
     if (!file)
         return false;
 
-    static constexpr char needle[] = "HELIXSR_";
+    const size_t keep = strlen(needle);
     std::string carry;
     char buffer[1 << 16];
 
@@ -122,11 +122,14 @@ inline bool LooksLikeHelix(const std::wstring& path)
         if (chunk.find(needle) != std::string::npos)
             return true;
 
-        carry = chunk.substr(chunk.size() > 8 ? chunk.size() - 8 : 0);
+        carry = chunk.substr(chunk.size() > keep ? chunk.size() - keep : 0);
     }
 
     return false;
 }
+
+// HelixSR's code, with or without its network: its dll carries its own settings names (HELIXSR_PROFILE, ...)
+inline bool LooksLikeHelix(const std::wstring& path) { return FileContains(path, "HELIXSR_"); }
 
 inline std::string FileVersionOf(const std::wstring& path)
 {
@@ -181,6 +184,13 @@ inline Entry FfxEntry(const std::wstring& key, const std::filesystem::path& dll,
     {
         entry.family = Family::Fsr4;
         NameFsr4(entry, folderName);
+
+        // Short names from the file itself: the lossy Lite build names its provider "4.1.1-r3-lossy-cyboman", AMD's
+        // official dll carries its version in its version resource
+        if (entry.display == "FSR 4 Lite" && FileContains(entry.path, "-lossy-"))
+            entry.display = "FSR 4 Lite (L)";
+        else if (entry.display == "FSR 4 official (AMD)" && entry.fileVersion.size() > 2)
+            entry.display = "FSR " + entry.fileVersion.substr(0, entry.fileVersion.rfind('.')) + " official (AMD)";
     }
 
     return entry;

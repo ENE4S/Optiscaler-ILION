@@ -199,10 +199,52 @@ static std::wstring& SharedDefaultSrDll()
     return path;
 }
 
+// Key of the upscaler of the list that is the same file as the default dll, empty when none is
+static std::wstring& SharedDefaultTwin()
+{
+    static std::wstring key;
+    return key;
+}
+
+// Same bytes in both files, read in chunks
+static bool SameFileContent(const std::wstring& a, const std::wstring& b)
+{
+    std::error_code ec;
+
+    if (a.empty() || b.empty() || std::filesystem::file_size(a, ec) != std::filesystem::file_size(b, ec) || ec)
+        return false;
+
+    std::ifstream fa(std::filesystem::path(a), std::ios::binary), fb(std::filesystem::path(b), std::ios::binary);
+    std::vector<char> ba(1 << 16), bb(1 << 16);
+
+    while (fa && fb)
+    {
+        fa.read(ba.data(), ba.size());
+        fb.read(bb.data(), bb.size());
+
+        if (fa.gcount() != fb.gcount() || memcmp(ba.data(), bb.data(), (size_t) fa.gcount()) != 0)
+            return false;
+    }
+
+    return true;
+}
+
 static void RescanSrVariants()
 {
     SharedSrVariants() = FfxApiProxy::SrVariants();
     SharedDefaultSrDll() = FfxApiProxy::SrVariantDllPath(L"");
+
+    // The default dll is listed once: under its twin's name when it is the same file as one of the list
+    SharedDefaultTwin().clear();
+
+    for (const auto& entry : SharedSrVariants())
+    {
+        if (entry.kind == IlionUpscalers::Kind::Ffx && SameFileContent(entry.path, SharedDefaultSrDll()))
+        {
+            SharedDefaultTwin() = entry.key;
+            break;
+        }
+    }
 }
 
 template <typename T, size_t N> struct RingBuffer
@@ -313,7 +355,13 @@ static const char* FamilyName(IlionUpscalers::Family family)
 // Name of an upscaler of the list as shown: translated name, plus the folder name of a build nobody named
 static std::string EntryName(const IlionUpscalers::Entry& entry)
 {
-    std::string name = Tr(entry.display.c_str());
+    // "FSR 4.1.1 official (AMD)" carries its version, only the words after it are translated
+    static constexpr const char* official = " official (AMD)";
+    const auto at = entry.display.find(official);
+
+    std::string name = at != std::string::npos && at + strlen(official) == entry.display.size()
+                           ? entry.display.substr(0, at) + Tr(official)
+                           : std::string(Tr(entry.display.c_str()));
 
     if (!entry.detail.empty())
         name += " " + entry.detail;
@@ -334,20 +382,14 @@ static std::string UpscalerLabel(IFeature* feature)
 
     if (type == Upscaler::FFX && State::Instance().api == DX12)
     {
-        const auto provider = FfxApiProxy::ActiveSrProvider();
-        const auto entry = IlionUpscalers::FindByPath(FfxApiProxy::Dx12Module_SR_Path());
+        // Short names everywhere; the full provider string stays in the log and the diagnostics
+        auto entry = IlionUpscalers::FindByPath(FfxApiProxy::Dx12Module_SR_Path());
+
+        if (!entry.has_value() && IlionUpscalers::SamePath(FfxApiProxy::Dx12Module_SR_Path(), SharedDefaultSrDll()))
+            entry = IlionUpscalers::FindByKey(SharedDefaultTwin());
 
         // The default dll, or the game's own: AMD's FSR
-        if (!entry.has_value())
-            return "FSR " + (provider.empty() ? version : provider);
-
-        auto name = EntryName(*entry);
-
-        if (!provider.empty() && IlionUpscalers::Lower(string_to_wstring(provider)).find(
-                                     IlionUpscalers::Lower(string_to_wstring(entry->display))) == std::wstring::npos)
-            name += " " + provider;
-
-        return name;
+        return entry.has_value() ? EntryName(*entry) : "FSR " + version;
     }
 
     if (type == Upscaler::DLSS && State::Instance().dlssExternalBackend)
@@ -478,6 +520,33 @@ static void UpscalerTip(const char* tip)
         ImGui::SetTooltip("%s", Tr(tip));
 }
 
+// Picks an upscaler OptiScaler has built in (FSR 2.2.1, FSR 2.1.2, XeSS): its own backend switch, as the backend
+// list does it. d4r stops being loaded at the next start, as with any choice that isn't DLSS 4.
+static void SelectBackend(Upscaler upscaler)
+{
+    auto config = Config::Instance();
+
+    if (FfxApiProxy::SrSwitchLocked())
+        return;
+
+    if (config->DLSSAllowExternalBackend.value_or_default())
+        config->DLSSAllowExternalBackend = false;
+
+    config->Dx12Upscaler = upscaler;
+    State::Instance().newBackend = upscaler;
+    MARK_ALL_BACKENDS_CHANGED();
+    config->SaveUpscalerChoice();
+}
+
+static UpscalerStatus BackendStatus(Upscaler upscaler, IFeature* feature)
+{
+    UpscalerStatus status;
+    status.selected = Config::Instance()->Dx12Upscaler.value_or_default() == upscaler;
+    status.loaded = feature != nullptr && feature->GetUpscalerType() == upscaler;
+    status.active = status.loaded && feature->FrameCount() > 0;
+    return status;
+}
+
 // The selector: every upscaler found, what is selected, loaded and active, and why one can't be used
 static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
 {
@@ -485,92 +554,202 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
 
     auto& entries = SharedSrVariants();
     const auto& defaultDll = SharedDefaultSrDll();
+    const bool showDefault = !defaultDll.empty() && SharedDefaultTwin().empty();
     const bool locked = FfxApiProxy::SrSwitchLocked();
 
-    // What the closed selector shows: the active one, else the loaded one, else the selected one
-    std::string preview = "-";
-    int rank = 0;
+    // Families in their order; the FFX ones and DLSS 4 only when something of them was found
+    enum FamilyId { FamFsr4, FamFsr2, FamXess, FamDlss4, FamHelix, FamFfx, FamCount };
+    static const char* familyNames[FamCount] = { "FSR 4", "FSR 2", "XeSS", "DLSS 4", "HelixSR", "FFX" };
 
-    const auto consider = [&](const std::string& name, const UpscalerStatus& status)
+    const auto familyOf = [](const IlionUpscalers::Entry& entry)
+    {
+        switch (entry.family)
+        {
+        case IlionUpscalers::Family::HelixSR:
+            return FamHelix;
+        case IlionUpscalers::Family::OtherFfx:
+            return FamFfx;
+        case IlionUpscalers::Family::Dlss4:
+            return FamDlss4;
+        default:
+            return FamFsr4;
+        }
+    };
+
+    bool present[FamCount] = { showDefault, true, true, false, false, false };
+
+    for (const auto& entry : entries)
+        present[familyOf(entry)] = true;
+
+    // Family of what runs (or is chosen): the variant list opens on it
+    int current = -1, rank = 0;
+    const auto consider = [&](int family, const UpscalerStatus& status)
     {
         const int value = status.active ? 3 : status.loaded ? 2 : status.selected ? 1 : 0;
-
         if (value > rank)
         {
             rank = value;
-            preview = name;
+            current = family;
         }
     };
 
     if (!defaultDll.empty())
-        consider(Tr("FSR (default dll)"), StatusOf(nullptr, feature));
+        consider(FamFsr4, StatusOf(nullptr, feature));
 
     for (const auto& entry : entries)
-        consider(EntryName(entry), StatusOf(&entry, feature));
+        consider(familyOf(entry), StatusOf(&entry, feature));
+
+    consider(FamFsr2, BackendStatus(Upscaler::FSR22, feature));
+    consider(FamFsr2, BackendStatus(Upscaler::FSR21, feature));
+    consider(FamXess, BackendStatus(Upscaler::XeSS, feature));
+
+    static int shown[2] = { -1, -1 };
+    int& family = shown[strcmp(id, "benchmark") == 0 ? 1 : 0];
+
+    if (family < 0 || family >= FamCount || !present[family])
+        family = current >= 0 ? current : FamFsr4;
 
     ImGui::BeginDisabled(locked);
-    ImGui::PushItemWidth(220.0f * scale);
+    ImGui::PushItemWidth(110.0f * scale);
 
-    if (IlionTheme::BeginCombo(TrL("Upscaler##IlionUpscaler"), preview.c_str()))
+    if (IlionTheme::BeginCombo(TrL("Upscaler##IlionFamily"), familyNames[family]))
     {
-        const auto row = [&](const IlionUpscalers::Entry* entry, const std::string& name)
+        for (int i = 0; i < FamCount; i++)
         {
-            const auto status = StatusOf(entry, feature);
-            const char* word = StatusWord(status);
-            const bool usable = entry == nullptr || entry->valid;
+            if (present[i] && ImGui::Selectable(familyNames[i], family == i))
+                family = i;
+        }
 
-            auto label = name;
+        ImGui::EndCombo();
+    }
+
+    ImGui::PopItemWidth();
+    ImGui::SameLine();
+
+    // Variants of the family shown, with their state; what runs is the preview
+    struct Variant
+    {
+        const IlionUpscalers::Entry* entry = nullptr; // FFX or d4r upscaler of the list
+        Upscaler backend = Upscaler::Reset;            // or a backend OptiScaler has built in
+        bool isDefault = false;
+        std::string name;
+        UpscalerStatus status;
+        bool usable = true;
+    };
+
+    std::vector<Variant> variants;
+
+    if (family == FamFsr4 && showDefault)
+        variants.push_back({ nullptr, Upscaler::Reset, true, Tr("FSR (default dll)"), StatusOf(nullptr, feature) });
+
+    for (const auto& entry : entries)
+    {
+        if (familyOf(entry) != family)
+            continue;
+
+        auto status = StatusOf(&entry, feature);
+
+        // The default dll is this file: its state is this entry's
+        if (entry.key == SharedDefaultTwin())
+        {
+            const auto twin = StatusOf(nullptr, feature);
+            status.loaded = status.loaded || twin.loaded;
+            status.active = status.active || twin.active;
+            status.selected = status.selected || twin.selected;
+        }
+
+        variants.push_back({ &entry, Upscaler::Reset, false, EntryName(entry), status, entry.valid });
+    }
+
+    if (family == FamFsr2)
+    {
+        variants.push_back({ nullptr, Upscaler::FSR22, false, "FSR 2.2.1", BackendStatus(Upscaler::FSR22, feature) });
+        variants.push_back({ nullptr, Upscaler::FSR21, false, "FSR 2.1.2", BackendStatus(Upscaler::FSR21, feature) });
+    }
+    else if (family == FamXess)
+    {
+        variants.push_back({ nullptr, Upscaler::XeSS, false, "XeSS", BackendStatus(Upscaler::XeSS, feature) });
+    }
+
+    std::string preview = "-";
+    int previewRank = 0;
+
+    for (const auto& variant : variants)
+    {
+        const int value = variant.status.active ? 3 : variant.status.loaded ? 2 : variant.status.selected ? 1 : 0;
+        if (value > previewRank)
+        {
+            previewRank = value;
+            preview = variant.name;
+        }
+    }
+
+    ImGui::PushItemWidth(190.0f * scale);
+
+    if (IlionTheme::BeginCombo(TrL("##IlionVariant"), preview.c_str()))
+    {
+        for (const auto& variant : variants)
+        {
+            const char* word = StatusWord(variant.status);
+            auto label = variant.name;
 
             if (*word != 0)
                 label += StrFmt("  [%s]", Tr(word));
 
-            label += "###" + (entry != nullptr ? wstring_to_string(entry->key) : std::string("default"));
+            label += "###" + (variant.entry != nullptr ? wstring_to_string(variant.entry->key)
+                                                       : variant.isDefault ? std::string("default") : variant.name);
 
-            ImGui::BeginDisabled(!usable);
+            ImGui::BeginDisabled(!variant.usable);
 
-            if (ImGui::Selectable(label.c_str(), status.selected || status.active) && !(status.selected && status.loaded))
-                SelectUpscaler(entry);
+            if (ImGui::Selectable(label.c_str(), variant.status.selected || variant.status.active) &&
+                !(variant.status.selected && variant.status.loaded))
+            {
+                if (variant.backend != Upscaler::Reset)
+                    SelectBackend(variant.backend);
+                else
+                    SelectUpscaler(variant.isDefault ? nullptr : variant.entry);
+            }
 
             ImGui::EndDisabled();
 
             if (!ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                return;
+                continue;
 
-            if (!usable)
+            if (!variant.usable)
             {
-                ImGui::SetTooltip(Tr("Can't be used: %s"), Tr(entry->problem.c_str()));
-                return;
+                ImGui::SetTooltip(Tr("Can't be used: %s"), Tr(variant.entry->problem.c_str()));
+                continue;
             }
 
-            if (entry == nullptr)
+            if (variant.backend != Upscaler::Reset)
+            {
+                ImGui::SetTooltip("%s", Tr("Built into OptiScaler, switches while the game runs."));
+                continue;
+            }
+
+            if (variant.entry == nullptr)
             {
                 ImGui::SetTooltip("%s", Tr("AMD's FSR dll next to OptiScaler, or the game's own."));
-                return;
+                continue;
             }
 
-            std::string tip = StrFmt("%s: %s\n%s", Tr("Technology"), FamilyName(entry->family),
-                                     wstring_to_string(entry->path).c_str());
+            const auto& entry = *variant.entry;
+            std::string tip = StrFmt("%s: %s\n%s", Tr("Technology"), FamilyName(entry.family), wstring_to_string(entry.path).c_str());
 
-            if (!entry->fileVersion.empty())
-                tip += StrFmt("\n%s: %s", Tr("File version"), entry->fileVersion.c_str());
+            if (!entry.fileVersion.empty())
+                tip += StrFmt("\n%s: %s", Tr("File version"), entry.fileVersion.c_str());
 
-            if (entry->kind == IlionUpscalers::Kind::Ffx)
+            if (entry.kind == IlionUpscalers::Kind::Ffx)
                 tip += std::string("\n") + Tr("Switches while the game runs.");
-            else if (!status.loaded)
+            else if (!variant.status.loaded)
                 tip += std::string("\n") + Tr("Needs a restart of the game: d4r is loaded when the game starts.");
 
-            if (entry->forwardsToAmd)
+            if (entry.forwardsToAmd)
                 tip += std::string("\n") + Tr("AMD's FSR is next to it: HelixSR lists it after itself. ILION always "
                                               "starts HelixSR's own provider.");
 
             ImGui::SetTooltip("%s", tip.c_str());
-        };
-
-        if (!defaultDll.empty())
-            row(nullptr, Tr("FSR (default dll)"));
-
-        for (const auto& entry : entries)
-            row(&entry, EntryName(entry));
+        }
 
         ImGui::EndCombo();
     }
@@ -6360,8 +6539,24 @@ static void UpdateFsr4Comparison(State& state, double frameTime, double now)
     const auto fg = state.currentFG;
     const bool fgActive = fg != nullptr && fg->IsActive() && !fg->IsPaused();
 
-    FSR4Comparison::OnFrame(frameTime, now, active.module, active.name, active.slot, active.dispatchCount,
-                            active.errorCount, active.requestTick, fgActive);
+    const auto feature = state.currentFeature;
+
+    // An FFX upscaler: the dll that executed the dispatch, as the proxy's diagnostics follow it
+    if (feature == nullptr || feature->GetUpscalerType() == Upscaler::FFX)
+    {
+        FSR4Comparison::OnFrame(frameTime, now, active.module, active.name, active.slot, active.dispatchCount,
+                                active.errorCount, active.requestTick, fgActive);
+        return;
+    }
+
+    // Any other DX12 upscaler (DLSS through d4r, XeSS, FSR 2): its own count of evaluated frames. Each backend gets
+    // its own box, told apart by an address that stands for it.
+    static char backendMarks[64] = {};
+    const int type = std::clamp((int) feature->GetUpscalerType(), 0, 63);
+    const auto label = UpscalerLabel(feature);
+
+    FSR4Comparison::OnFrame(frameTime, now, reinterpret_cast<HMODULE>(&backendMarks[type]), label.c_str(), 1000 + type,
+                            (uint64_t) feature->FrameCount(), 0, active.requestTick, fgActive);
 }
 
 // A box per measured upscaler under the performance overlay's own lines, drawn with the window's draw list.
@@ -6562,11 +6757,6 @@ static void DrawFsr4ComparisonPanel(float scale, float columnWidth = 0.0f)
 
     if (FSR4Comparison::OtherDllActive())
         note(Tr("More upscalers than boxes in this session, the last one isn't measured"));
-
-    // DLSS through d4r has no dispatch counter to follow: compared through saved Benchmark tests
-    if (State::Instance().dlssExternalBackend && State::Instance().currentFeature != nullptr &&
-        State::Instance().currentFeature->GetUpscalerType() == Upscaler::DLSS)
-        note(Tr("DLSS isn't measured live here: compare it with saved Benchmark tests"));
 
     if (fgSeen)
         note(Tr("Includes frames presented by frame generation"));
@@ -14586,10 +14776,13 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
         }
         else
         {
-            technology = currentFeature->ShortName();
+            const auto type = currentFeature->GetUpscalerType();
+            technology = type == Upscaler::FSR21 || type == Upscaler::FSR22 ? "FSR 2" : currentFeature->ShortName();
             implementation = upscalerText;
-            confirmed = true;
-            statusText = "Active";
+
+            // Its own count of evaluated frames
+            confirmed = currentFeature->FrameCount() > 0;
+            statusText = confirmed ? "Active, evaluating frames" : "Waiting for the first upscale";
         }
     }
 

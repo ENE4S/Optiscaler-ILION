@@ -1095,6 +1095,24 @@ static void SectionTitle(const char* label)
         IlionTheme::SectionPlate(Tr(label));
 }
 
+// ILION: coloured text that wraps at the edge of the card instead of being cut by it
+static void WrappedText(const ImVec4& colour, const char* text)
+{
+    ImGui::PushStyleColor(ImGuiCol_Text, colour);
+    ImGui::TextWrapped("%s", text);
+    ImGui::PopStyleColor();
+}
+
+// ILION: the next switch on the same line only when it fits whole there (any language, font or theme)
+static void SameLineIfFits(const char* nextLabel, float spacing)
+{
+    const float need = ImGui::GetFrameHeight() * 2.0f + ImGui::GetStyle().ItemInnerSpacing.x +
+                       ImGui::CalcTextSize(nextLabel, nullptr, true).x;
+
+    if (ImGui::GetItemRectMax().x + spacing + need <= ImGui::GetCurrentWindow()->WorkRect.Max.x)
+        ImGui::SameLine(0.0f, spacing);
+}
+
 ScopedCard::ScopedCard(const char* title)
 {
     // Cards don't nest, an inner one only gives a title to the outer one
@@ -11262,7 +11280,7 @@ void MenuCommon::RenderFramerateSettings(RenderMenuContext& ctx)
             else if (fakenvapiMode == LowLatencyMode::None)
             {
                 if (fakenvapi::isUsingAsMainNvapi())
-                    currentMethod = "None";
+                    currentMethod = Tr("None");
                 else
                     currentMethod = "Reflex";
             }
@@ -11270,15 +11288,15 @@ void MenuCommon::RenderFramerateSettings(RenderMenuContext& ctx)
             if (state.rtssReflexInjection && fakenvapiMode == LowLatencyMode::AntiLag2 &&
                 config->FGOutput.value_or_default() == FGOutput::FSRFG)
                 ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)),
-                                   "Using RTSS Reflex injection with FSR Anti-Lag 2.0 and FSR FG "
-                                   "might cause issues");
+                                   "%s", Tr("Using RTSS Reflex injection with FSR Anti-Lag 2.0 and FSR FG "
+                                   "might cause issues"));
         }
         else
         {
             if (XellHooks::canLimit())
-                currentMethod = "Game's XeLL";
+                currentMethod = Tr("Game's XeLL");
             else
-                currentMethod = "Fallback";
+                currentMethod = Tr("Fallback");
         }
 
         if (state.rtssReflexInjection)
@@ -11288,9 +11306,9 @@ void MenuCommon::RenderFramerateSettings(RenderMenuContext& ctx)
                                        !fakenvapi::isLowLatencyActive() && state.reflexLimitsFps;
 
         if (fakenvapiInactive)
-            currentMethod.append(" (inactive)");
+            currentMethod.append(Tr(" (inactive)"));
 
-        ImGui::Text("Current method: %s", currentMethod.c_str());
+        ImGui::Text(Tr("Current method: %s"), currentMethod.c_str());
 
         if (fakenvapiMode == LowLatencyMode::AntiLag2)
             ShowTooltip("FSR Anti-Lag 2.0 is the new name for AntiLag 2\nDon't ask me why");
@@ -11298,7 +11316,7 @@ void MenuCommon::RenderFramerateSettings(RenderMenuContext& ctx)
         if (state.reflexShowWarning)
         {
             ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)),
-                               "Using Reflex's limit with FSR FG has performance overhead");
+                               "%s", Tr("Using Reflex's limit with FSR FG has performance overhead"));
 
             ImGui::Spacing();
         }
@@ -11308,29 +11326,29 @@ void MenuCommon::RenderFramerateSettings(RenderMenuContext& ctx)
             _limitFps = config->FramerateLimit.value_or_default();
 
         float fpsSliderMax = (float) std::max(200, refreshRate);
-        IlionTheme::SliderFloat("FPS Limit", &_limitFps, 0, fpsSliderMax, "%.0f");
+        IlionTheme::SliderFloat(TrL("FPS Limit"), &_limitFps, 0, fpsSliderMax, "%.0f");
 
-        if (IlionTheme::Button("Apply Limit"))
+        if (IlionTheme::Button(TrL("Apply Limit")))
         {
             config->FramerateLimit = _limitFps;
         }
 
         ImGui::SameLine(0.0f, 16.0f);
 
-        if (IlionTheme::Button("Reset Limit"))
+        if (IlionTheme::Button(TrL("Reset Limit")))
         {
             _limitFps = 0.0f;
             config->FramerateLimit = _limitFps;
         }
 
         ImGui::Spacing();
-        if (auto ch = ScopedCollapsingHeader("VRR Frame Cap Calculator"); ch.IsHeaderOpen())
+        if (auto ch = ScopedCollapsingHeader(TrL("VRR Frame Cap Calculator")); ch.IsHeaderOpen())
         {
             ScopedIndent indent {};
             ImGui::Spacing();
 
             ImGui::PushItemWidth(105.0f * menuResScale);
-            ImGui::InputInt("Refresh Rate", &refreshRate, 1, 1, ImGuiInputTextFlags_None);
+            ImGui::InputInt(TrL("Refresh Rate"), &refreshRate, 1, 1, ImGuiInputTextFlags_None);
             ImGui::PopItemWidth();
 
             float refreshRateF = static_cast<float>(refreshRate);
@@ -11342,11 +11360,11 @@ void MenuCommon::RenderFramerateSettings(RenderMenuContext& ctx)
             if (fpsLimitTech == LowLatencyMode::AntiLag2 || fpsLimitTech == LowLatencyMode::AntiLagVk)
                 frameCap = std::round(frameCap);
 
-            ImGui::Text("Calculated Cap: %.1f", frameCap);
+            ImGui::Text(Tr("Calculated Cap: %.1f"), frameCap);
 
             ImGui::SameLine(0.0f, 16.0f);
 
-            if (IlionTheme::Button("Set as FPS Limit"))
+            if (IlionTheme::Button(TrL("Set as FPS Limit")))
             {
                 _limitFps = frameCap;
                 config->FramerateLimit = _limitFps;
@@ -11387,7 +11405,7 @@ void MenuCommon::RenderFakenvapiSettings(RenderMenuContext& ctx)
     if (showForceXell)
     {
         if (showLatencyFlex)
-            ImGui::SameLine(0.0f, 16.0f);
+            SameLineIfFits(TrL("Force XeLL"), 16.0f);
 
         bool forceXell = config->ForceXeLL.value_or_default();
         static bool activeForceXeLL = forceXell;
@@ -11739,7 +11757,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                 ImGui::BeginDisabled(!config->ContrastEnabled.value_or_default());
 
                 float contrast = config->Contrast.value_or_default();
-                if (IlionTheme::SliderFloat(TrL("Contrast"), &contrast, -2.0f, 2.0f, "%.2f"))
+                if (IlionTheme::SliderFloat(TrL("Contrast##RCAS"), &contrast, -2.0f, 2.0f, "%.2f"))
                     config->Contrast = contrast;
 
                 ShowTooltip("Positive values decrease sharpness at high contrast areas.\n"
@@ -12189,6 +12207,14 @@ static void GfxTable(const char* id, const GfxRow* rows, int count)
     const float resetWidth = ImGui::CalcTextSize(Tr("Reset")).x + ImGui::GetStyle().FramePadding.x * 2.0f;
     const float valueWidth = ImGui::CalcTextSize("+0.00").x;
 
+    // The slider keeps at least five frame heights: a long name (Spanish, big font) wraps instead
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float fixed = ImGui::GetFrameHeight() * 1.8f + resetWidth + (valueColumn ? valueWidth : 0.0f) +
+                        style.CellPadding.x * 2.0f * (valueColumn ? 5.0f : 4.0f);
+    const float sliderMin = ImGui::GetFrameHeight() * 5.0f;
+    nameWidth = std::max(ImGui::GetFrameHeight() * 3.0f,
+                         std::min(nameWidth, ImGui::GetContentRegionAvail().x - fixed - sliderMin));
+
     if (!ImGui::BeginTable(id, valueColumn ? 5 : 4, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings))
         return;
 
@@ -12216,7 +12242,7 @@ static void GfxTable(const char* id, const GfxRow* rows, int count)
 
         ImGui::TableNextColumn();
         ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(Tr(row.label));
+        ImGui::TextWrapped("%s", Tr(row.label));
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             ImGui::SetTooltip("%s", Tr(row.tip));
 
@@ -12262,16 +12288,16 @@ void MenuCommon::RenderGraphicsColorSettings(RenderMenuContext& ctx)
     const bool upscaling = ctx.currentFeature != nullptr && !ctx.currentFeature->IsFrozen();
 
     if (!upscaling)
-        ImGui::TextColored(IlionTheme::TextDim, "%s", Tr("Applied only while OptiScaler upscales the game"));
+        WrappedText(IlionTheme::TextDim, Tr("Applied only while OptiScaler upscales the game"));
     else if (enabled && ImageAdjust::bypass)
-        ImGui::TextColored(IlionTheme::LampAmber, "%s", Tr("Showing the original picture"));
+        WrappedText(IlionTheme::LampAmber, Tr("Showing the original picture"));
     else if (ImageAdjust_Common::ShouldRun())
-        ImGui::TextColored(IlionTheme::LampGreen, "%s", Tr("Colour pass running"));
+        WrappedText(IlionTheme::LampGreen, Tr("Colour pass running"));
     else
-        ImGui::TextColored(IlionTheme::TextDim, "%s", Tr("Colour pass not running: off or every value neutral"));
+        WrappedText(IlionTheme::TextDim, Tr("Colour pass not running: off or every value neutral"));
 
     if (upscaling && ctx.currentFeature->IsHdr())
-        ImGui::TextColored(IlionTheme::TextDim, "%s", Tr("HDR picture: brightness and contrast work on linear light"));
+        WrappedText(IlionTheme::TextDim, Tr("HDR picture: brightness and contrast work on linear light"));
 
     ImGui::Spacing();
     ImGui::BeginDisabled(!enabled);
@@ -12312,9 +12338,11 @@ void MenuCommon::RenderGraphicsCompareSettings(RenderMenuContext& ctx)
     SectionTitle("Comparison");
 
     ImGui::BeginDisabled(!ctx.config->GfxEnabled.value_or_default());
-    IlionTheme::Checkbox(TrL("Split screen (left half original)"), &ImageAdjust::compareSplit);
-    ImGui::SameLine(0.0f, 16.0f * ctx.menuResScale);
-    IlionTheme::Checkbox(TrL("Show the original picture"), &ImageAdjust::bypass);
+    IlionTheme::Checkbox(TrL("Split screen"), &ImageAdjust::compareSplit);
+    ShowTooltip("Left half of the picture without the adjustments, right half with them");
+    SameLineIfFits(TrL("Show original"), 16.0f * ctx.menuResScale);
+    IlionTheme::Checkbox(TrL("Show original"), &ImageAdjust::bypass);
+    ShowTooltip("The whole picture without the adjustments, while it stays checked");
     ImGui::EndDisabled();
 }
 
@@ -12337,14 +12365,15 @@ void MenuCommon::RenderGraphicsAdvancedSettings(RenderMenuContext& ctx)
     if (config->GfxEnabled.value_or_default() && config->GfxLocalContrastEnabled.value_or_default() &&
         config->RcasEnabled.value_or_default() &&
         config->SharpnessShader.value_or_default() == SharpenShader::LocalContrastDepthAware)
-        ImGui::TextColored(IlionTheme::LampAmber, "%s", Tr("With Depth Aware (DAS) sharpening halos can add up"));
+        WrappedText(IlionTheme::LampAmber, Tr("With Depth Aware (DAS) sharpening halos can add up"));
     else
-        ImGui::TextColored(IlionTheme::TextDim, "%s", Tr("Uses the switch of Colour and image; off by default"));
+        WrappedText(IlionTheme::TextDim, Tr("Uses the switch of Colour and image; off by default"));
 }
 
 // ILION Intelligent Activation -----------------------------------------------------------------------------------
-// A layer over fakenvapi's own choice (Anti-Lag 2, then XeLL, then LatencyFleX; Vulkan: AntiLag Vk, then
-// LatencyFleX). It only sets the existing options when the user picks a mode and reports what fakenvapi says.
+// A layer over fakenvapi's own choice, not a selector: Automatic and Off put volatile values on the existing
+// options (never saved, the user's own values stay in the ini and come back in Manual); the choice of technology
+// is fakenvapi's. The mode itself is saved and applied again at start (Config.cpp).
 namespace IlionLatency
 {
 enum Mode : int
@@ -12377,22 +12406,25 @@ inline bool MultiFrameGen(const State& state)
 inline void Apply(Mode mode)
 {
     auto config = Config::Instance();
-    const Mode before = Current();
+    const bool mfg = MultiFrameGen(State::Instance());
     config->IlionLatencyMode = (int) mode;
 
     if (mode == Auto)
     {
-        config->FN_ForceLatencyFlex = false;
-        if (!MultiFrameGen(State::Instance()))
-            config->FN_ForceReflex = ForceReflex::InGame;
+        config->FN_ForceLatencyFlex.set_volatile_value(false);
+        if (!mfg)
+            config->FN_ForceReflex.set_volatile_value(ForceReflex::InGame);
     }
     else if (mode == Off)
     {
-        config->FN_ForceReflex = ForceReflex::ForceDisable;
+        config->FN_ForceReflex.set_volatile_value(ForceReflex::ForceDisable);
     }
-    else if (before == Off)
+    else
     {
-        config->FN_ForceReflex = ForceReflex::InGame;
+        // Manual: the user's saved values back. With more generated frames OptiScaler's own Force Disable stays.
+        config->FN_ForceLatencyFlex = config->FN_ForceLatencyFlex.value_for_config();
+        if (!mfg)
+            config->FN_ForceReflex = config->FN_ForceReflex.value_for_config();
     }
 }
 
@@ -12415,7 +12447,10 @@ inline const char* TechName(LowLatencyMode mode)
     }
 }
 
-inline const char* SwapchainApiName(API api) { return api == DX11 ? "DX11" : api == DX12 ? "DX12" : api == Vulkan ? "Vulkan" : "?"; }
+inline const char* SwapchainApiName(API api)
+{
+    return api == DX11 ? "DX11" : api == DX12 ? "DX12" : api == Vulkan ? "Vulkan" : "?";
+}
 } // namespace IlionLatency
 
 void MenuCommon::RenderIntelligentLatency(RenderMenuContext& ctx)
@@ -12448,13 +12483,16 @@ void MenuCommon::RenderIntelligentLatency(RenderMenuContext& ctx)
         ShowTooltip(tips[i]);
     }
 
-    // What fakenvapi reports
+    // What fakenvapi and the game report
     const auto vendor = IdentifyGpu::getPrimaryGpu().vendorId;
     const bool fakenvapiInUse = fakenvapi::isUsingAsMainNvapi();
     const LowLatencyMode tech = fakenvapiInUse ? fakenvapi::getCurrentMode() : LowLatencyMode::None;
     const bool enabled = fakenvapiInUse && fakenvapi::isLowLatencyActive();
     const bool mfg = MultiFrameGen(state);
     const char* api = SwapchainApiName(state.swapchainApi);
+    const std::optional<bool> gameRequest = ReflexHooks::gameLowLatencyRequest();
+    const bool xellForced = config->ForceXeLL.value_or_default() || state.activeFgOutput == FGOutput::XeFG;
+    const bool reflexForcedOff = config->FN_ForceReflex.value_or_default() == ForceReflex::ForceDisable;
 
     // Reflex markers from the game moving on: the frames really go through the low latency path
     static uint64_t lastFrameId = 0;
@@ -12470,21 +12508,19 @@ void MenuCommon::RenderIntelligentLatency(RenderMenuContext& ctx)
     const char* name = TechName(tech);
     std::string reason;
     const char* status = nullptr;
+    const char* note = nullptr; // what keeps the mode from applying fully, or what to do
     bool running = false;
     ImVec4 statusColour = IlionTheme::TextDim;
 
-    if (mode == Off)
-    {
-        status = Tr("Off at your request");
-        reason = Tr("Reflex requests of the game are ignored");
-    }
-    else if (!fakenvapiInUse)
+    if (!fakenvapiInUse)
     {
         if (vendor == VendorId::Nvidia)
         {
             name = "NVIDIA Reflex";
-            status = Tr("Available");
-            reason = Tr("Native Reflex, handled by the game; OptiScaler doesn't select it");
+            status = Tr("Handled by the game");
+            reason = Tr("Native Reflex: OptiScaler doesn't select it");
+            if (mode == Off)
+                note = Tr("Native Reflex is controlled by the game: Off can't turn it off");
         }
         else
         {
@@ -12494,63 +12530,112 @@ void MenuCommon::RenderIntelligentLatency(RenderMenuContext& ctx)
     }
     else if (tech == LowLatencyMode::None)
     {
-        status = Tr("Available");
+        status = mode == Off ? Tr("Off") : Tr("Available");
         reason = mfg ? Tr("Off while more than one frame is generated") : Tr("Waiting for the game's Reflex request");
     }
     else
     {
-        // A technology answers: it was initialised by fakenvapi
-        running = markersMoving && enabled;
-        status = running ? Tr("Running") : enabled ? Tr("Enabled, no frame markers yet") : Tr("Initialised");
-        statusColour = running ? IlionTheme::LampGreen : IlionTheme::LampAmber;
+        // A technology answers: fakenvapi initialised it. Forced XeLL ignores Force Reflex (ll_xell.cpp).
+        const bool active = enabled || (tech == LowLatencyMode::XeLL && xellForced);
+        running = active && markersMoving;
+
+        if (running)
+            status = Tr("Running");
+        else if (active)
+            status = Tr("Enabled, no frame markers yet");
+        else if (mode == Off || reflexForcedOff)
+            status = Tr("Off");
+        else
+            status = Tr("Initialised");
+
+        statusColour = running ? IlionTheme::LampGreen : active ? IlionTheme::LampAmber : IlionTheme::TextDim;
+
+        if (mode == Off && active)
+            note = Tr("Forced XeLL (XeFG or Force XeLL) keeps working: Off can't turn it off");
+        else if (!active && mode != Off && !reflexForcedOff && gameRequest.has_value() && !*gameRequest)
+            note = Tr("Turn Reflex on in the game's options, or Force Enable in Manual");
+        else if (!active && mode != Off && reflexForcedOff && mfg)
+            note = Tr("OptiScaler turns Reflex off while more than one frame is generated");
 
         if (tech == LowLatencyMode::AntiLag2)
             reason = StrFmt(Tr("Chosen for AMD GPU, %s and Reflex input"), api);
         else if (tech == LowLatencyMode::AntiLagVk)
             reason = Tr("Chosen for AMD GPU, Vulkan and Reflex input");
         else if (tech == LowLatencyMode::XeLL)
-            reason = config->ForceXeLL.value_or_default() ? Tr("Forced with Force XeLL")
-                                                          : StrFmt(Tr("Chosen for %s: Anti-Lag 2 not available"), api);
+            reason = xellForced ? Tr("Forced by XeFG or Force XeLL")
+                                : StrFmt(Tr("Chosen for %s: Anti-Lag 2 not available"), api);
         else if (tech == LowLatencyMode::LatencyFlex)
             reason = config->FN_ForceLatencyFlex.value_or_default() ? Tr("Forced with Force LatencyFlex")
                      : mfg ? Tr("Anti-Lag 2 and XeLL are not used with multi frame generation")
                            : Tr("General fallback: Anti-Lag 2 and XeLL not available");
     }
 
-    if (ImGui::BeginTable("##ilionLatency", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings))
+    // What the game asked for, from its own SetSleepMode calls
+    const char* request = !gameRequest.has_value() ? Tr("No request from the game")
+                          : *gameRequest           ? Tr("Turned on by the game")
+                                                   : Tr("Turned off by the game");
+
+    if (ImGui::BeginTable("##ilionLatency", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings))
     {
+        float keyWidth = 0.0f;
+        for (const char* key : { "Technology", "State", "Game", "Reason" })
+            keyWidth = std::max(keyWidth, ImGui::CalcTextSize(Tr(key)).x);
+
+        ImGui::TableSetupColumn("key", ImGuiTableColumnFlags_WidthFixed, keyWidth);
+        ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch);
+
         auto row = [](const char* key, const ImVec4& colour, const char* value)
         {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             ImGui::TextColored(IlionTheme::TextDim, "%s", Tr(key));
             ImGui::TableNextColumn();
-            ImGui::TextColored(colour, "%s", value);
+            WrappedText(colour, value);
         };
 
         row("Technology", IlionTheme::Text, name != nullptr ? name : Tr("None"));
         row("State", statusColour, status);
+        if (fakenvapiInUse || gameRequest.has_value())
+            row("Game", IlionTheme::TextDim, request);
         row("Reason", IlionTheme::TextDim, reason.c_str());
         ImGui::EndTable();
     }
 
+    if (note != nullptr)
+        WrappedText(IlionTheme::LampAmber, note);
+
+    // Changes that only apply at the next start
+    if (config->ForceXeLL.value_or_default() && mode == Auto)
+        WrappedText(IlionTheme::LampAmber, Tr("Force XeLL stays on in Automatic; changing it requires restarting the game"));
+
     if (running)
-        ImGui::TextColored(IlionTheme::TextDim, "%s", Tr("Latency not measured here"));
+        WrappedText(IlionTheme::TextDim, Tr("Latency not measured here"));
 
     if (auto ch = ScopedCollapsingHeader(TrL("Diagnostics")); ch.IsHeaderOpen())
     {
         ScopedIndent indent {};
         const char* yes = Tr("yes");
         const char* no = Tr("no");
-        const char* gpu = vendor == VendorId::AMD ? "AMD" : vendor == VendorId::Nvidia ? "NVIDIA"
-                          : vendor == VendorId::Intel                                   ? "Intel"
-                                                                                        : "?";
+        const char* gpu = vendor == VendorId::AMD      ? "AMD"
+                          : vendor == VendorId::Nvidia ? "NVIDIA"
+                          : vendor == VendorId::Intel  ? "Intel"
+                                                       : "?";
         ImGui::Text("GPU: %s   API: %s", gpu, api);
         ImGui::Text(Tr("OptiScaler nvapi (fakenvapi): %s"), fakenvapiInUse ? yes : no);
         ImGui::Text(Tr("Low latency enabled: %s"), enabled ? yes : no);
         ImGui::Text(Tr("Reflex frame id: %llu (%s)"), (unsigned long long) state.reflexFrameId,
                     markersMoving ? Tr("moving") : Tr("still"));
         ImGui::Text(Tr("More than one generated frame: %s"), mfg ? yes : no);
+
+        // fakenvapi's own order (nvapi/fakenvapi/low_latency_d3d.cpp, low_latency_vk.cpp), not ILION's
+        ImGui::Spacing();
+        WrappedText(IlionTheme::Text, Tr("fakenvapi's order, picked when the game uses Reflex:"));
+        WrappedText(IlionTheme::TextDim, Tr("DX11/DX12: forced XeLL (XeFG, Force XeLL), Anti-Lag 2, XeLL, LatencyFleX"));
+        WrappedText(IlionTheme::TextDim, Tr("Vulkan: AntiLag Vk, LatencyFleX"));
+        WrappedText(IlionTheme::TextDim,
+                    Tr("More than one generated frame or dynamic DLSS-G: no Anti-Lag 2 or XeLL, Reflex off"));
+        WrappedText(IlionTheme::TextDim, Tr("Force LatencyFlex skips Anti-Lag 2 and XeLL"));
+        WrappedText(IlionTheme::TextDim, Tr("NVIDIA GPU: native Reflex, fakenvapi not used"));
     }
 }
 
@@ -13762,7 +13847,7 @@ void MenuCommon::RenderApiAndTextureSettings(RenderMenuContext& ctx)
                 }
                 ImGui::EndDisabled();
 
-                ImGui::SameLine(0.0f, 6.0f);
+                SameLineIfFits(TrL("MB Scale Override"), 6.0f);
 
                 ImGui::BeginDisabled(config->MipmapBiasFixedOverride.has_value() &&
                                      config->MipmapBiasFixedOverride.value());
@@ -13818,8 +13903,6 @@ void MenuCommon::RenderApiAndTextureSettings(RenderMenuContext& ctx)
 
             if (currentFeature != nullptr && !currentFeature->IsFrozen())
             {
-                ImGui::SameLine(0.0f, 6.0f);
-
                 if (IlionTheme::Button(TrL("Calculate Mipmap Bias")))
                     _showMipmapCalcWindow = true;
             }
@@ -13828,26 +13911,26 @@ void MenuCommon::RenderApiAndTextureSettings(RenderMenuContext& ctx)
             {
                 if (config->MipmapBiasFixedOverride.value_or_default())
                 {
-                    ImGui::Text(Tr("Current : %.3f / %.3f, Target: %.3f"), state.lastMipBias, state.lastMipBiasMax,
+                    ImGui::TextWrapped(Tr("Current : %.3f / %.3f, Target: %.3f"), state.lastMipBias, state.lastMipBiasMax,
                                 config->MipmapBiasOverride.value());
                 }
                 else if (config->MipmapBiasScaleOverride.value_or_default())
                 {
-                    ImGui::Text(Tr("Current : %.3f / %.3f, Target: Base * %.3f"), state.lastMipBias, state.lastMipBiasMax,
+                    ImGui::TextWrapped(Tr("Current : %.3f / %.3f, Target: Base * %.3f"), state.lastMipBias, state.lastMipBiasMax,
                                 config->MipmapBiasOverride.value());
                 }
                 else
                 {
-                    ImGui::Text(Tr("Current : %.3f / %.3f, Target: Base + %.3f"), state.lastMipBias, state.lastMipBiasMax,
+                    ImGui::TextWrapped(Tr("Current : %.3f / %.3f, Target: Base + %.3f"), state.lastMipBias, state.lastMipBiasMax,
                                 config->MipmapBiasOverride.value());
                 }
             }
             else
             {
-                ImGui::Text(Tr("Current : %.3f / %.3f"), state.lastMipBias, state.lastMipBiasMax);
+                ImGui::TextWrapped(Tr("Current : %.3f / %.3f"), state.lastMipBias, state.lastMipBiasMax);
             }
 
-            ImGui::Text(Tr("Will be applied after RESOLUTION/PRESET change !!!"));
+            ImGui::TextWrapped(Tr("Will be applied after RESOLUTION/PRESET change !!!"));
         }
 
         if (ScopedCard::Shows("anisotropy"))
@@ -13889,7 +13972,7 @@ void MenuCommon::RenderApiAndTextureSettings(RenderMenuContext& ctx)
 
             ShowTooltip("Update comparison filters");
 
-            ImGui::SameLine(0.0f, 6.0f);
+            SameLineIfFits(TrL("Modify Min/Max"), 6.0f);
 
             bool afMinMax = config->AnisotropyModifyMinMax.value_or_default();
             if (IlionTheme::Checkbox(TrL("Modify Min/Max"), &afMinMax))
@@ -13903,7 +13986,7 @@ void MenuCommon::RenderApiAndTextureSettings(RenderMenuContext& ctx)
 
             ShowTooltip("Skip updating of point filters");
 
-            ImGui::Text(Tr("Will might be applied after RESOLUTION/PRESET change !!!"));
+            ImGui::TextWrapped(Tr("Will might be applied after RESOLUTION/PRESET change !!!"));
         }
     }
 }

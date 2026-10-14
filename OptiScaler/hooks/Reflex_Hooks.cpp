@@ -28,6 +28,7 @@ NvAPI_Status ReflexHooks::hkNvAPI_D3D_SetSleepMode(IUnknown* pDev, NV_SET_SLEEP_
     // Store for later so we can adjust the fps whenever we want
     memcpy(&_lastSleepParams, pSetSleepModeParams, sizeof(NV_SET_SLEEP_MODE_PARAMS));
     _lastSleepDev = pDev;
+    _gameSleepModeSeen = true;
 
     if (State::Instance().gameQuirks & GameQuirk::HitmanReflexHacks)
         _lastSetSleepThread = std::this_thread::get_id();
@@ -402,6 +403,7 @@ NvAPI_Status ReflexHooks::hkNvAPI_Vulkan_SetSleepMode(HANDLE vkDevice,
     // Store for later so we can adjust the fps whenever we want
     memcpy(&_lastVkSleepParams, pSetSleepModeParams, sizeof(NV_VULKAN_SET_SLEEP_MODE_PARAMS));
     _lastVkSleepDev = vkDevice;
+    _gameVkSleepModeSeen = true;
 
     if (_minimumIntervalUs != 0)
         pSetSleepModeParams->minimumIntervalUs = _minimumIntervalUs;
@@ -731,6 +733,17 @@ void ReflexHooks::setFPSLimit(float fps)
         temp.minimumIntervalUs = _minimumIntervalUs;
         o_NvAPI_Vulkan_SetSleepMode(_lastVkSleepDev, &temp);
     }
+}
+
+std::optional<bool> ReflexHooks::gameLowLatencyRequest()
+{
+    if (_gameSleepModeSeen)
+        return _lastSleepParams.bLowLatencyMode != 0;
+
+    if (_gameVkSleepModeSeen)
+        return _lastVkSleepParams.bLowLatencyMode != 0;
+
+    return std::nullopt;
 }
 
 bool ReflexHooks::gameIsSendingMarkers()

@@ -761,6 +761,18 @@ bool Config::Reload(std::filesystem::path iniPath)
             if (auto v = readInt("fakenvapi", "IlionLatencyMode"); v.has_value() && *v >= 0 && *v <= 2)
                 IlionLatencyMode.set_from_config(v);
 
+            // ILION Intelligent Activation: Automatic and Off only put volatile values over the saved options,
+            // so the user's own values stay in the ini for Manual
+            if (IlionLatencyMode.has_value() && IlionLatencyMode.value() == 0)
+            {
+                FN_ForceLatencyFlex.set_volatile_value(false);
+                FN_ForceReflex.set_volatile_value(ForceReflex::InGame);
+            }
+            else if (IlionLatencyMode.has_value() && IlionLatencyMode.value() == 2)
+            {
+                FN_ForceReflex.set_volatile_value(ForceReflex::ForceDisable);
+            }
+
             // DMFG is a mess with our reflex implementations, disable by default
             if (FGDLSSGOverrideForceDMFG.value_or_default() && !FN_ForceReflex.has_value())
                 FN_ForceReflex.set_volatile_value(ForceReflex::ForceDisable);

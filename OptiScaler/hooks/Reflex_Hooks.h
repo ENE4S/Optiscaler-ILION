@@ -21,6 +21,9 @@ enum TimingType : uint32_t
 class ReflexHooks
 {
     inline static bool _inited = false;
+    // ILION, observation only: the game has called SetSleepMode at least once (D3D / Vulkan)
+    inline static bool _gameSleepModeSeen = false;
+    inline static bool _gameVkSleepModeSeen = false;
     inline static uint32_t _minimumIntervalUs = 0;
     inline static NV_SET_SLEEP_MODE_PARAMS _lastSleepParams {};
     inline static IUnknown* _lastSleepDev = nullptr;
@@ -80,6 +83,9 @@ class ReflexHooks
     static void* getHookedReflex(unsigned int InterfaceId);
     static bool updateTimingData();
     static bool gameIsSendingMarkers();
+
+    // ILION, read only: the low latency mode the game last asked for, nullopt while it hasn't asked
+    static std::optional<bool> gameLowLatencyRequest();
 
     // For updating information about Reflex hooks
     static void update(bool optiFg_FgState, bool isVulkan);

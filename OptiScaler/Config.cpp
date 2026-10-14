@@ -758,6 +758,9 @@ bool Config::Reload(std::filesystem::path iniPath)
             else
                 FN_ForceReflex.reset();
 
+            if (auto v = readInt("fakenvapi", "IlionLatencyMode"); v.has_value() && *v >= 0 && *v <= 2)
+                IlionLatencyMode.set_from_config(v);
+
             // DMFG is a mess with our reflex implementations, disable by default
             if (FGDLSSGOverrideForceDMFG.value_or_default() && !FN_ForceReflex.has_value())
                 FN_ForceReflex.set_volatile_value(ForceReflex::ForceDisable);
@@ -1605,6 +1608,8 @@ bool Config::SaveIni()
         ini.SetValue("fakenvapi", "LatencyFlexMode",
                      GetIntValue(Instance()->FN_LatencyFlexMode.value_for_config()).c_str());
         ini.SetValue("fakenvapi", "ForceReflex", GetIntValue(Instance()->FN_ForceReflex.value_for_config()).c_str());
+        ini.SetValue("fakenvapi", "IlionLatencyMode",
+                     GetIntValue(Instance()->IlionLatencyMode.value_for_config()).c_str());
     }
 
     // inputs

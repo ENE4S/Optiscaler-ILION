@@ -247,6 +247,8 @@ class MenuCommon
     static void RenderMagnifierSettings(RenderMenuContext& ctx);
     static void RenderGraphicsColorSettings(RenderMenuContext& ctx);
     static void RenderGraphicsAdvancedSettings(RenderMenuContext& ctx);
+    static void RenderGraphicsCompareSettings(RenderMenuContext& ctx);
+    static void RenderIntelligentLatency(RenderMenuContext& ctx);
     static void RenderQuirksSettings(RenderMenuContext& ctx);
     static void RenderAdvancedSettings(RenderMenuContext& ctx);
     static void RenderLoggingSettings(RenderMenuContext& ctx);

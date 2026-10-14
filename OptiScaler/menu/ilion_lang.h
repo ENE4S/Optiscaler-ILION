@@ -46,6 +46,232 @@ struct Translation
 inline constexpr Translation kSpanish[] = {
     // Universal upscaler selector (v1.2-dev.5)
     { "Upscaler##IlionUpscaler", "Escalador" },
+    { "Conservative", "Conservador" },
+    { "The safest, but might not reduce latency well", "El más seguro, aunque puede reducir poco la latencia" },
+    { "Aggressive", "Agresivo" },
+    { "Improves latency, but in some cases will lower FPS more than expected",
+      "Mejora la latencia, pero a veces baja los FPS más de lo esperado" },
+    { "Reflex ID", "Id. Reflex" },
+    { "Best when can be used, some games are not compatible (e.g. Cyberpunk)\n"
+      "and will fallback to Aggressive",
+      "El mejor cuando se puede usar; algunos juegos no son compatibles (p. ej. Cyberpunk)\n"
+      "y pasan a Agresivo" },
+    { "Follow in-game", "Según el juego" },
+    { "Force Disable", "Forzar desactivado" },
+    { "Force Enable", "Forzar activado" },
+    // dev.10: Graphics tab
+    { "Colour, sharpness, textures and detail of the picture.", "Color, nitidez, texturas y detalle de la imagen." },
+    { "Mipmap Bias", "Mipmap LOD Bias" },
+    { "Reset", "Restablecer" },
+    { "Override", "Sobrescribir" },
+    { "Strength", "Intensidad" },
+    { "Method", "Método" },
+    { "(Current: %.3f)", "(Actual: %.3f)" },
+    { "(Current: disabled)", "(Actual: desactivada)" },
+    { "Upscaler's default", "Predeterminado del escalador" },
+    { "Depth Aware (RCAS)", "Por profundidad (RCAS)" },
+    { "Depth Aware (DAS)", "Por profundidad (DAS)" },
+    { "Enable Motion Adaptive Sharpness", "Activar nitidez adaptativa al movimiento" },
+    { "DA + MAS Debug", "Depuración DA + MAS" },
+    { "MAS Debug", "Depuración MAS" },
+    { "Advanced DA Parameters", "Parámetros DA avanzados" },
+    { "Clamp Output", "Limitar salida" },
+    { "Depth Bias", "Sesgo de profundidad" },
+    { "Depth Scale", "Escala de profundidad" },
+    { "Reset Depth Values", "Restablecer valores de profundidad" },
+    { "Contrast Enabled", "Contraste activado" },
+    { "Motion Adaptive Sharpness##2", "Nitidez adaptativa al movimiento (MAS)" },
+    { "MotionSharpness", "Nitidez en movimiento" },
+    { "MotionThreshod", "Umbral de movimiento" },
+    { "MotionRange", "Rango de movimiento" },
+    { "Ignores the value sent by the game\n"
+      "and uses the value set below",
+      "Ignora el valor que envía el juego\n"
+      "y usa el valor de abajo" },
+    { "Select the sharpening filter to apply.\n\n"
+      "Upscaler's default: Uses the sharpening provided by the upscaler.\n"
+      "RCAS: AMD's RCAS, modified for Contrast and MAS.\n"
+      "Depth Aware: Smarter sharpening with fewer artifacts (heavier).\n\n"
+      "By default uses a sharpening value provided by the game.\n"
+      "Select 'Override' under 'Sharpness' and adjust the slider to change it.",
+      "Elige el filtro de nitidez.\n\n"
+      "Predeterminado del escalador: la nitidez que trae el escalador.\n"
+      "RCAS: el RCAS de AMD, modificado para Contraste y MAS.\n"
+      "Por profundidad: nitidez más inteligente con menos artefactos (más pesada).\n\n"
+      "Por defecto usa el valor de nitidez que envía el juego.\n"
+      "Marca «Sobrescribir» en «Nitidez» y mueve el deslizador para cambiarlo." },
+    { "Enables sharpness adjustments according to the motion", "Ajusta la nitidez según el movimiento" },
+    { "Enable DA + MAS debug views\n"
+      "Blue tint for DA detected edges\n\n"
+      "More red areas will have more sharpness applied\n"
+      "Green areas will get reduced sharpness",
+      "Vistas de depuración DA + MAS\n"
+      "Tono azul en los bordes que detecta DA\n\n"
+      "Las zonas más rojas reciben más nitidez\n"
+      "Las zonas verdes reciben menos" },
+    { "Clamps the final image to the [0, 1] range.\n\n"
+      "Prevents overshoot artifacts such as bright halos or negative colors.\n"
+      "Recommended for LDR pipelines; optional for HDR depending on tone-mapping.\n\n"
+      "When not set OptiScaler controls it via upscalers HDR flag",
+      "Limita la imagen final al rango [0, 1].\n\n"
+      "Evita excesos como halos brillantes o colores negativos.\n"
+      "Recomendado en SDR; opcional en HDR según el tonemapping.\n\n"
+      "Sin marcar, OptiScaler lo decide con la marca HDR del escalador" },
+    { "Ignores small depth differences before edge detection.\n\n"
+      "Higher values reduce flickering and noise from minor depth changes, but may "
+      "soften real geometry edges.\n"
+      "Lower values preserve fine detail but can cause unstable or noisy edge "
+      "detection.",
+      "Ignora pequeñas diferencias de profundidad antes de detectar bordes.\n\n"
+      "Valores altos reducen parpadeo y ruido, pero pueden suavizar bordes reales.\n"
+      "Valores bajos conservan el detalle fino, pero la detección puede ser inestable." },
+    { "Controls how strongly sharpening is reduced across depth edges.\n\n"
+      "Higher values more aggressively prevent sharpening across object boundaries "
+      "(reduces halos).\n"
+      "Lower values allow more sharpening to pass across edges (sharper but "
+      "riskier).",
+      "Cuánto se reduce la nitidez en los bordes de profundidad.\n\n"
+      "Valores altos evitan más la nitidez entre objetos (menos halos).\n"
+      "Valores bajos dejan pasar más nitidez por los bordes (más nítido, más riesgo)." },
+    { "Controls sharpness at high contrast areas.", "Controla la nitidez en zonas de alto contraste." },
+    { "Positive values decrease sharpness at high contrast areas.\n"
+      "Negative values increase sharpness at high contrast areas.",
+      "Valores positivos reducen la nitidez en zonas de alto contraste.\n"
+      "Valores negativos la aumentan." },
+    { "Areas that are more red will have more sharpness applied\n"
+      "Green areas will get reduced sharpness",
+      "Las zonas más rojas reciben más nitidez\n"
+      "Las zonas verdes reciben menos" },
+    { "Maximum amount of sharpness that motion can add or remove.\n\n"
+      "Negative values reduce sharpening in motion (recommended).\n"
+      "Positive values increase sharpening in motion.\n\n"
+      "The final adjustment scales with motion and is capped at this value.",
+      "Nitidez máxima que el movimiento puede añadir o quitar.\n\n"
+      "Valores negativos reducen la nitidez en movimiento (recomendado).\n"
+      "Valores positivos la aumentan.\n\n"
+      "El ajuste crece con el movimiento y no pasa de este valor." },
+    { "Minimum motion required before motion-based sharpening adjustment begins.\n\n"
+      "Higher values ignore small movements (more stable).\n"
+      "Lower values react to subtle motion (more sensitive).",
+      "Movimiento mínimo para que empiece el ajuste.\n\n"
+      "Valores altos ignoran movimientos pequeños (más estable).\n"
+      "Valores bajos reaccionan a movimientos sutiles (más sensible)." },
+    { "Defines the motion range over which the effect ramps from zero to full strength.\n\n"
+      "Values above the threshold are mapped into this range.\n"
+      "Larger values make the response smoother and more gradual.\n"
+      "Smaller values make the effect react more quickly and aggressively.",
+      "Rango de movimiento en el que el efecto pasa de cero a su máximo.\n\n"
+      "Lo que supera el umbral se reparte en este rango.\n"
+      "Valores grandes: respuesta más suave y gradual.\n"
+      "Valores pequeños: respuesta más rápida y brusca." },
+    { "Mipmap Bias##2", "Mipmap LOD Bias" },
+    { "MB Fixed Override", "Valor fijo" },
+    { "MB Scale Override", "Escala" },
+    { "MB Override All Textures", "Aplicar a todas las texturas" },
+    { "Set", "Aplicar" },
+    { "Calculate Mipmap Bias", "Calcular Mipmap LOD Bias" },
+    { "Current : %.3f / %.3f", "Actual: %.3f / %.3f" },
+    { "Current : %.3f / %.3f, Target: %.3f", "Actual: %.3f / %.3f, objetivo: %.3f" },
+    { "Current : %.3f / %.3f, Target: Base * %.3f", "Actual: %.3f / %.3f, objetivo: base * %.3f" },
+    { "Current : %.3f / %.3f, Target: Base + %.3f", "Actual: %.3f / %.3f, objetivo: base + %.3f" },
+    { "Will be applied after RESOLUTION/PRESET change !!!", "Se aplica tras cambiar la RESOLUCIÓN o el PRESET" },
+    { "Will might be applied after RESOLUTION/PRESET change !!!", "Puede requerir cambiar la RESOLUCIÓN o el PRESET" },
+    { "Can help with blurry textures in broken games\n"
+      "Negative values will make textures sharper\n"
+      "Positive values will make textures more blurry\n\n"
+      "Has a small performance impact",
+      "Ayuda con texturas borrosas en juegos defectuosos\n"
+      "Valores negativos: texturas más nítidas\n"
+      "Valores positivos: texturas más borrosas\n\n"
+      "Tiene un pequeño coste de rendimiento" },
+    { "Apply same override value to all textures", "Aplica el mismo valor a todas las texturas" },
+    { "Apply override value as scale multiplier\n"
+      "When using scale mode, please use positive\n"
+      "override values to increase sharpness!",
+      "Aplica el valor como multiplicador\n"
+      "En modo escala usa valores positivos\n"
+      "para aumentar la nitidez" },
+    { "Override all textures mipmap values\n"
+      "Normally OptiScaler only overrides\n"
+      "below zero mipmap values!",
+      "Sustituye el mipmap de todas las texturas\n"
+      "Normalmente OptiScaler solo cambia\n"
+      "los valores por debajo de cero" },
+    { "Force Anisotropic Filtering", "Forzar filtrado anisotrópico" },
+    { "Modify Compare", "Modificar comparación" },
+    { "Modify Min/Max", "Modificar mín./máx." },
+    { "Skip Point Filters", "Omitir filtros puntuales" },
+    { "Update comparison filters", "Actualiza los filtros de comparación" },
+    { "Update min/max filters", "Actualiza los filtros mín./máx." },
+    { "Skip updating of point filters", "No cambia los filtros puntuales" },
+    { "Enable Magnifier", "Activar lupa" },
+    { "%.1f%% of screen", "%.1f%% de la pantalla" },
+    { "%.2f%% of screen", "%.2f%% de la pantalla" },
+    { "Zoom Factor", "Aumento" },
+    { "Border Size", "Grosor del borde" },
+    { "Positioning", "Posición" },
+    { "Static Pos X", "Posición fija X" },
+    { "Static Pos Y", "Posición fija Y" },
+    { "Reset Static Position (Follow Cursor)", "Quitar posición fija (seguir el puntero)" },
+    { "Set Static Position", "Fijar posición" },
+    { "(Currently following cursor)", "(Ahora sigue al puntero)" },
+    { "Cursor Offset X", "Desplazamiento X" },
+    { "Cursor Offset Y", "Desplazamiento Y" },
+    { "With Depth Aware (DAS) sharpening halos can add up", "Con la nitidez por profundidad (DAS) los halos pueden sumarse" },
+    // dev.10: fakenvapi card
+    { "Force LatencyFlex", "Forzar LatencyFleX" },
+    { "Force XeLL", "Forzar XeLL" },
+    { "LatencyFlex mode", "Modo LatencyFleX" },
+    { "Force Reflex", "Forzar Reflex" },
+    { "By default, FSR Anti-Lag 2.0/XeLL is used when available.\n"
+      "This setting lets you force LatencyFlex instead",
+      "Por defecto se usa Anti-Lag 2 o XeLL si están disponibles.\n"
+      "Esta opción fuerza LatencyFleX en su lugar" },
+    { "Allows XeLL to work without FG on non-Intel cards.\n\nDisables FG "
+      "options\n\nRequires a restart",
+      "Permite XeLL sin FG en GPU que no son Intel.\n\nDesactiva las opciones "
+      "de FG\n\nRequiere reiniciar" },
+    { "Save INI and restart to apply the changes", "Guarda los ajustes y reinicia para aplicar los cambios" },
+    // dev.10: Intelligent Activation
+    { "Intelligent Activation", "Activación inteligente" },
+    { "Automatic##IlionLat", "Automático" },
+    { "Manual##IlionLat", "Manual" },
+    { "Off##IlionLat", "Desactivado" },
+    { "ILION lets OptiScaler pick the compatible technology", "ILION deja que OptiScaler elija la tecnología compatible" },
+    { "The original options below stay in your hands", "Las opciones originales de abajo quedan en tus manos" },
+    { "Asks OptiScaler to turn latency reduction off", "Pide a OptiScaler que desactive la reducción de latencia" },
+    { "State", "Estado" },
+    { "Reason", "Motivo" },
+    { "Off at your request", "Desactivada por ti" },
+    { "Reflex requests of the game are ignored", "Se ignoran las peticiones Reflex del juego" },
+    { "Available", "Disponible" },
+    { "Not compatible", "No compatible" },
+    { "Enabled, no frame markers yet", "Activada, aún sin marcadores de fotograma" },
+    { "Running", "En ejecución" },
+    { "Native Reflex, handled by the game; OptiScaler doesn't select it",
+      "Reflex nativo, lo gestiona el juego; OptiScaler no lo elige" },
+    { "OptiScaler's nvapi is not in use: no Reflex input from the game",
+      "La nvapi de OptiScaler no está en uso: no hay entrada Reflex del juego" },
+    { "Off while more than one frame is generated", "Desactivada mientras se genera más de un fotograma" },
+    { "Waiting for the game's Reflex request", "Esperando la petición Reflex del juego" },
+    { "Chosen for AMD GPU, %s and Reflex input", "Elegido por GPU AMD, %s y entrada Reflex" },
+    { "Chosen for AMD GPU, Vulkan and Reflex input", "Elegido por GPU AMD, Vulkan y entrada Reflex" },
+    { "Forced with Force XeLL", "Forzado con «Forzar XeLL»" },
+    { "Chosen for %s: Anti-Lag 2 not available", "Elegido en %s: Anti-Lag 2 no disponible" },
+    { "Forced with Force LatencyFlex", "Forzado con «Forzar LatencyFleX»" },
+    { "Anti-Lag 2 and XeLL are not used with multi frame generation",
+      "Anti-Lag 2 y XeLL no se usan con generación multifotograma" },
+    { "General fallback: Anti-Lag 2 and XeLL not available", "Alternativa general: Anti-Lag 2 y XeLL no disponibles" },
+    { "Latency not measured here", "La latencia no se mide aquí" },
+    { "Diagnostics", "Diagnóstico" },
+    { "yes", "sí" },
+    { "no", "no" },
+    { "moving", "avanza" },
+    { "still", "parado" },
+    { "OptiScaler nvapi (fakenvapi): %s", "nvapi de OptiScaler (fakenvapi): %s" },
+    { "Low latency enabled: %s", "Baja latencia activada: %s" },
+    { "Reflex frame id: %llu (%s)", "Id. de fotograma Reflex: %llu (%s)" },
+    { "More than one generated frame: %s", "Más de un fotograma generado: %s" },
     { "Graphics", "Mejoras gráficas" },
     { "Backend and output scaling.", "Motor y escalado de salida." },
     { "Colour, sharpness and detail of the upscaled picture.", "Color, nitidez y detalle de la imagen escalada." },

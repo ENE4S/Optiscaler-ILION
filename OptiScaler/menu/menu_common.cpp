@@ -11375,7 +11375,7 @@ void MenuCommon::RenderFakenvapiSettings(RenderMenuContext& ctx)
     {
         ImGui::BeginDisabled(state.activeFgOutput == FGOutput::XeFG || state.activeFgInput == FGInput::ForceXeLL);
         if (bool forceLFX = config->FN_ForceLatencyFlex.value_or_default();
-            IlionTheme::Checkbox("Force LatencyFlex", &forceLFX))
+            IlionTheme::Checkbox(TrL("Force LatencyFlex"), &forceLFX))
         {
             config->FN_ForceLatencyFlex = forceLFX;
         }
@@ -11392,7 +11392,7 @@ void MenuCommon::RenderFakenvapiSettings(RenderMenuContext& ctx)
         bool forceXell = config->ForceXeLL.value_or_default();
         static bool activeForceXeLL = forceXell;
 
-        if (IlionTheme::Checkbox("Force XeLL", &forceXell))
+        if (IlionTheme::Checkbox(TrL("Force XeLL"), &forceXell))
         {
             config->ForceXeLL = forceXell;
         }
@@ -11402,7 +11402,7 @@ void MenuCommon::RenderFakenvapiSettings(RenderMenuContext& ctx)
         if (activeForceXeLL != forceXell)
         {
             ImGui::Spacing();
-            ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.f, 0.0f, 1.f)), "Save INI and restart to apply the changes");
+            ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.f, 0.0f, 1.f)), "%s", Tr("Save INI and restart to apply the changes"));
             ImGui::Spacing();
         }
     }
@@ -11410,12 +11410,12 @@ void MenuCommon::RenderFakenvapiSettings(RenderMenuContext& ctx)
     if (showLatencyFlex)
     {
         // clang-format off
-        static const std::vector<MenuOption<LFXMode>> lfx_modes = {
-            { LFXMode::Conservative, "Conservative",
-                "The safest, but might not reduce latency well" },
-            { LFXMode::Aggressive, "Aggressive",
-                "Improves latency, but in some cases will lower FPS more than expected" },
-            { LFXMode::ReflexIDs, "Reflex ID",
+        const std::vector<MenuOption<LFXMode>> lfx_modes = {
+            { LFXMode::Conservative, Tr("Conservative"),
+                Tr("The safest, but might not reduce latency well") },
+            { LFXMode::Aggressive, Tr("Aggressive"),
+                Tr("Improves latency, but in some cases will lower FPS more than expected") },
+            { LFXMode::ReflexIDs, Tr("Reflex ID"),
                 "Best when can be used, some games are not compatible (e.g. Cyberpunk)\n"
                 "and will fallback to Aggressive" }
         };
@@ -11423,14 +11423,14 @@ void MenuCommon::RenderFakenvapiSettings(RenderMenuContext& ctx)
         bool usingLFX = fakenvapi::getCurrentMode() == LowLatencyMode::LatencyFlex;
 
         ImGui::BeginDisabled(!usingLFX);
-        PopulateCombo("LatencyFlex mode", config->FN_LatencyFlexMode, lfx_modes);
+        PopulateCombo(TrL("LatencyFlex mode"), config->FN_LatencyFlexMode, lfx_modes);
         ImGui::EndDisabled();
 
-        static std::vector<MenuOption<ForceReflex>> reflex_modes = { { ForceReflex::InGame, "Follow in-game" },
-                                                                { ForceReflex::ForceDisable, "Force Disable" },
-                                                                { ForceReflex::ForceEnable, "Force Enable" } };
+        const std::vector<MenuOption<ForceReflex>> reflex_modes = { { ForceReflex::InGame, Tr("Follow in-game") },
+                                                                { ForceReflex::ForceDisable, Tr("Force Disable") },
+                                                                { ForceReflex::ForceEnable, Tr("Force Enable") } };
 
-        PopulateCombo("Force Reflex", config->FN_ForceReflex, reflex_modes);
+        PopulateCombo(TrL("Force Reflex"), config->FN_ForceReflex, reflex_modes);
         // clang-format on
     }
 }
@@ -11557,7 +11557,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
     SectionTitle("Sharpness");
 
     if (bool overrideSharpness = config->OverrideSharpness.value_or_default();
-        IlionTheme::Checkbox("Override", &overrideSharpness))
+        IlionTheme::Checkbox(TrL("Override"), &overrideSharpness))
     {
         config->OverrideSharpness = overrideSharpness;
 
@@ -11575,15 +11575,15 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
 
     float featuresCurrentSharpness = currentFeature->Sharpness();
     if (featuresCurrentSharpness > 0.0f)
-        ImGui::TextDisabled("(Current: %.3f)", featuresCurrentSharpness);
+        ImGui::TextDisabled(Tr("(Current: %.3f)"), featuresCurrentSharpness);
     else
-        ImGui::TextDisabled("(Current: disabled)");
+        ImGui::TextDisabled(Tr("(Current: disabled)"));
 
     ImGui::BeginDisabled(!config->OverrideSharpness.value_or_default());
 
     float sharpness = config->Sharpness.value_or_default();
 
-    if (IlionTheme::SliderFloat("Strength", &sharpness, 0.0f, 1.0f))
+    if (IlionTheme::SliderFloat(TrL("Strength"), &sharpness, 0.0f, 1.0f))
         config->Sharpness = sharpness;
 
     ImGui::EndDisabled();
@@ -11610,9 +11610,9 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                 selectedMode = 3;
         }
 
-        const char* sharpenModes[] = { "Upscaler's default", "RCAS", "Depth Aware (RCAS)", "Depth Aware (DAS)" };
+        const char* sharpenModes[] = { Tr("Upscaler's default"), "RCAS", Tr("Depth Aware (RCAS)"), Tr("Depth Aware (DAS)") };
 
-        if (ImGui::Combo("Method", &selectedMode, sharpenModes, IM_ARRAYSIZE(sharpenModes)))
+        if (ImGui::Combo(TrL("Method"), &selectedMode, sharpenModes, IM_ARRAYSIZE(sharpenModes)))
         {
             if (selectedMode == 0)
             {
@@ -11643,14 +11643,14 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
             ImGui::Spacing();
 
             if (bool overrideMotionSharpness = config->MotionSharpnessEnabled.value_or_default();
-                IlionTheme::Checkbox("Enable Motion Adaptive Sharpness", &overrideMotionSharpness))
+                IlionTheme::Checkbox(TrL("Enable Motion Adaptive Sharpness"), &overrideMotionSharpness))
                 config->MotionSharpnessEnabled = overrideMotionSharpness;
             ShowTooltip("Enables sharpness adjustments according to the motion");
 
             if (Config::Instance()->SharpnessShader.value_or_default() != SharpenShader::RCAS)
             {
                 if (bool overrideMSDebug = config->MotionSharpnessDebug.value_or_default();
-                    IlionTheme::Checkbox("DA + MAS Debug", &overrideMSDebug))
+                    IlionTheme::Checkbox(TrL("DA + MAS Debug"), &overrideMSDebug))
                     config->MotionSharpnessDebug = overrideMSDebug;
 
                 ShowTooltip("Enable DA + MAS debug views\n"
@@ -11658,12 +11658,12 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                             "More red areas will have more sharpness applied\n"
                             "Green areas will get reduced sharpness");
 
-                if (auto ch = ScopedCollapsingHeader("Advanced DA Parameters"); ch.IsHeaderOpen())
+                if (auto ch = ScopedCollapsingHeader(TrL("Advanced DA Parameters")); ch.IsHeaderOpen())
                 {
                     ScopedIndent indent {};
                     ImGui::Spacing();
 
-                    if (bool clamp = config->DAClampOutput.value_or(false); IlionTheme::Checkbox("Clamp Output", &clamp))
+                    if (bool clamp = config->DAClampOutput.value_or(false); IlionTheme::Checkbox(TrL("Clamp Output"), &clamp))
                     {
                         if (clamp)
                             config->DAClampOutput = true;
@@ -11679,7 +11679,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                     if (currentFeature->DepthLinear())
                     {
                         float depthBias = config->DADepthBias.value_or(0.0015f);
-                        if (IlionTheme::SliderFloat("Depth Bias", &depthBias, 0.005f, 0.03f, "%.4f"))
+                        if (IlionTheme::SliderFloat(TrL("Depth Bias"), &depthBias, 0.005f, 0.03f, "%.4f"))
                             config->DADepthBias = depthBias;
 
                         ShowTooltip("Ignores small depth differences before edge detection.\n\n"
@@ -11689,7 +11689,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                                     "detection.");
 
                         float depthScale = config->DADepthScale.value_or(250.0f);
-                        if (IlionTheme::SliderFloat("Depth Scale", &depthScale, 100.0f, 600.0f, "%.1f"))
+                        if (IlionTheme::SliderFloat(TrL("Depth Scale"), &depthScale, 100.0f, 600.0f, "%.1f"))
                             config->DADepthScale = depthScale;
 
                         ShowTooltip("Controls how strongly sharpening is reduced across depth edges.\n\n"
@@ -11701,7 +11701,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                     else
                     {
                         float depthBias = config->DADepthBias.value_or(0.001f);
-                        if (IlionTheme::SliderFloat("Depth Bias", &depthBias, 0.0001f, 0.003f, "%.4f"))
+                        if (IlionTheme::SliderFloat(TrL("Depth Bias"), &depthBias, 0.0001f, 0.003f, "%.4f"))
                             config->DADepthBias = depthBias;
 
                         ShowTooltip("Ignores small depth differences before edge detection.\n\n"
@@ -11711,7 +11711,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                                     "detection.");
 
                         float depthScale = config->DADepthScale.value_or(35.0f);
-                        if (IlionTheme::SliderFloat("Depth Scale", &depthScale, 25.0f, 400.0f, "%.1f"))
+                        if (IlionTheme::SliderFloat(TrL("Depth Scale"), &depthScale, 25.0f, 400.0f, "%.1f"))
                             config->DADepthScale = depthScale;
 
                         ShowTooltip("Controls how strongly sharpening is reduced across depth edges.\n\n"
@@ -11721,7 +11721,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                                     "riskier).");
                     }
 
-                    if (IlionTheme::Button("Reset Depth Values"))
+                    if (IlionTheme::Button(TrL("Reset Depth Values")))
                     {
                         config->DADepthBias.reset();
                         config->DADepthScale.reset();
@@ -11731,7 +11731,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
             else
             {
                 if (bool contrastEnabled = config->ContrastEnabled.value_or_default();
-                    IlionTheme::Checkbox("Contrast Enabled", &contrastEnabled))
+                    IlionTheme::Checkbox(TrL("Contrast Enabled"), &contrastEnabled))
                     config->ContrastEnabled = contrastEnabled;
 
                 ShowTooltip("Controls sharpness at high contrast areas.");
@@ -11739,7 +11739,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                 ImGui::BeginDisabled(!config->ContrastEnabled.value_or_default());
 
                 float contrast = config->Contrast.value_or_default();
-                if (IlionTheme::SliderFloat("Contrast", &contrast, -2.0f, 2.0f, "%.2f"))
+                if (IlionTheme::SliderFloat(TrL("Contrast"), &contrast, -2.0f, 2.0f, "%.2f"))
                     config->Contrast = contrast;
 
                 ShowTooltip("Positive values decrease sharpness at high contrast areas.\n"
@@ -11750,7 +11750,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
 
             ImGui::Spacing();
 
-            if (auto ch = ScopedCollapsingHeader("Motion Adaptive Sharpness##2"); ch.IsHeaderOpen())
+            if (auto ch = ScopedCollapsingHeader(TrL("Motion Adaptive Sharpness##2")); ch.IsHeaderOpen())
             {
                 ScopedIndent indent {};
                 ImGui::Spacing();
@@ -11760,14 +11760,14 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                 if (Config::Instance()->SharpnessShader.value_or_default() == SharpenShader::RCAS)
                 {
                     if (bool overrideMSDebug = config->MotionSharpnessDebug.value_or_default();
-                        IlionTheme::Checkbox("MAS Debug", &overrideMSDebug))
+                        IlionTheme::Checkbox(TrL("MAS Debug"), &overrideMSDebug))
                         config->MotionSharpnessDebug = overrideMSDebug;
                     ShowTooltip("Areas that are more red will have more sharpness applied\n"
                                 "Green areas will get reduced sharpness");
                 }
 
                 float motionSharpness = config->MotionSharpness.value_or_default();
-                if (IlionTheme::SliderFloat("MotionSharpness", &motionSharpness, -1.0f, 1.0f, "%.3f"))
+                if (IlionTheme::SliderFloat(TrL("MotionSharpness"), &motionSharpness, -1.0f, 1.0f, "%.3f"))
                     config->MotionSharpness = motionSharpness;
 
                 ShowTooltip("Maximum amount of sharpness that motion can add or remove.\n\n"
@@ -11776,7 +11776,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                             "The final adjustment scales with motion and is capped at this value.");
 
                 float motionThreshod = config->MotionThreshold.value_or_default();
-                if (IlionTheme::SliderFloat("MotionThreshod", &motionThreshod, 0.0f, 100.0f, "%.2f"))
+                if (IlionTheme::SliderFloat(TrL("MotionThreshod"), &motionThreshod, 0.0f, 100.0f, "%.2f"))
                     config->MotionThreshold = motionThreshod;
 
                 ShowTooltip("Minimum motion required before motion-based sharpening adjustment begins.\n\n"
@@ -11784,7 +11784,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                             "Lower values react to subtle motion (more sensitive).");
 
                 float motionScale = config->MotionScaleLimit.value_or_default();
-                if (IlionTheme::SliderFloat("MotionRange", &motionScale, 0.01f, 100.0f, "%.2f"))
+                if (IlionTheme::SliderFloat(TrL("MotionRange"), &motionScale, 0.01f, 100.0f, "%.2f"))
                     config->MotionScaleLimit = motionScale;
 
                 ShowTooltip("Defines the motion range over which the effect ramps from zero to full strength.\n\n"
@@ -12166,33 +12166,84 @@ void MenuCommon::RenderInitFlagsSettings(RenderMenuContext& ctx)
 }
 
 // ILION graphics enhancements ------------------------------------------------------------------------------------
-// One control: its own on/off, the slider and its own reset. Changes are live, the pass reads the config every frame.
-static void GfxControl(const char* label, const char* tip, CustomOptional<bool>& enabled, CustomOptional<float>& value,
-                       float min, float max)
+// One row per control in a table: switch | name | slider | value | reset. The ILION themes show the value in the
+// slider's own window, so their table has no value column. Changes are live, the pass reads the config every frame.
+struct GfxRow
 {
-    ImGui::PushID(label);
+    const char* label;
+    const char* tip;
+    CustomOptional<bool>* enabled;
+    CustomOptional<float>* value;
+    float min;
+    float max;
+};
 
-    bool on = enabled.value_or_default();
-    if (IlionTheme::Checkbox("##on", &on))
-        enabled = on;
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("%s", Tr("Switches this adjustment on or off, its value is kept"));
+static void GfxTable(const char* id, const GfxRow* rows, int count)
+{
+    const bool valueColumn = !IlionTheme::industrial;
 
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!on);
+    float nameWidth = 0.0f;
+    for (int i = 0; i < count; i++)
+        nameWidth = std::max(nameWidth, ImGui::CalcTextSize(Tr(rows[i].label)).x);
 
-    float v = value.value_or_default();
-    if (IlionTheme::SliderFloat(TrL(label), &v, min, max, "%+.2f"))
-        value = v;
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("%s", Tr(tip));
+    const float resetWidth = ImGui::CalcTextSize(Tr("Reset")).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+    const float valueWidth = ImGui::CalcTextSize("+0.00").x;
 
-    ImGui::SameLine();
-    if (IlionTheme::Button(TrL("Reset")))
-        value.reset();
+    if (!ImGui::BeginTable(id, valueColumn ? 5 : 4, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings))
+        return;
 
-    ImGui::EndDisabled();
-    ImGui::PopID();
+    ImGui::TableSetupColumn("on", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFrameHeight() * 1.8f);
+    ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthFixed, nameWidth);
+    ImGui::TableSetupColumn("slider", ImGuiTableColumnFlags_WidthStretch);
+    if (valueColumn)
+        ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthFixed, valueWidth);
+    ImGui::TableSetupColumn("reset", ImGuiTableColumnFlags_WidthFixed, resetWidth);
+
+    for (int i = 0; i < count; i++)
+    {
+        const GfxRow& row = rows[i];
+        ImGui::PushID(row.label);
+        ImGui::TableNextRow();
+
+        ImGui::TableNextColumn();
+        bool on = row.enabled->value_or_default();
+        if (IlionTheme::Checkbox("##on", &on))
+            *row.enabled = on;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", Tr("Switches this adjustment on or off, its value is kept"));
+
+        ImGui::BeginDisabled(!on);
+
+        ImGui::TableNextColumn();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(Tr(row.label));
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", Tr(row.tip));
+
+        ImGui::TableNextColumn();
+        float v = row.value->value_or_default();
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (IlionTheme::SliderFloat("##slider", &v, row.min, row.max, valueColumn ? "" : "%+.2f"))
+            *row.value = v;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", Tr(row.tip));
+
+        if (valueColumn)
+        {
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            ImGui::Text("%+.2f", v);
+        }
+
+        ImGui::TableNextColumn();
+        if (IlionTheme::Button(TrL("Reset"), ImVec2(-FLT_MIN, 0.0f)))
+            row.value->reset();
+
+        ImGui::EndDisabled();
+        ImGui::PopID();
+    }
+
+    ImGui::EndTable();
 }
 
 void MenuCommon::RenderGraphicsColorSettings(RenderMenuContext& ctx)
@@ -12204,9 +12255,8 @@ void MenuCommon::RenderGraphicsColorSettings(RenderMenuContext& ctx)
     bool enabled = config->GfxEnabled.value_or_default();
     if (IlionTheme::Checkbox(TrL("Enable graphics enhancements"), &enabled))
         config->GfxEnabled = enabled;
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("%s", Tr("One colour pass after the upscaler and the sharpening, before the game's HUD.\n"
-                                   "Off, or with every value neutral, the pass is not run: the picture is untouched."));
+    ShowTooltip("One colour pass after the upscaler and the sharpening, before the game's HUD.\n"
+                "Off, or with every value neutral, the pass is not run: the picture is untouched.");
 
     // What the pass is doing now
     const bool upscaling = ctx.currentFeature != nullptr && !ctx.currentFeature->IsFrozen();
@@ -12226,23 +12276,21 @@ void MenuCommon::RenderGraphicsColorSettings(RenderMenuContext& ctx)
     ImGui::Spacing();
     ImGui::BeginDisabled(!enabled);
 
-    GfxControl("Temperature", "Below 0 cooler (blue), above 0 warmer (orange). Brightness is kept.",
-               config->GfxTemperatureEnabled, config->GfxTemperature, -1.0f, 1.0f);
-    GfxControl("Brightness", "Exposure, up to one stop darker or brighter.", config->GfxBrightnessEnabled,
-               config->GfxBrightness, -1.0f, 1.0f);
-    GfxControl("Contrast", "Curve around mid grey. In SDR black and white stay where they are.",
-               config->GfxContrastEnabled, config->GfxContrast, -1.0f, 1.0f);
-    GfxControl("Saturation", "Strength of every colour alike. -1 is black and white.", config->GfxSaturationEnabled,
-               config->GfxSaturation, -1.0f, 1.0f);
-    GfxControl("Vibrance", "Raises dull colours more than the ones already strong, so skin and skies don't burn.",
-               config->GfxVibranceEnabled, config->GfxVibrance, -1.0f, 1.0f);
+    const GfxRow rows[] = {
+        { "Temperature", "Below 0 cooler (blue), above 0 warmer (orange). Brightness is kept.",
+          &config->GfxTemperatureEnabled, &config->GfxTemperature, -1.0f, 1.0f },
+        { "Brightness", "Exposure, up to one stop darker or brighter.", &config->GfxBrightnessEnabled,
+          &config->GfxBrightness, -1.0f, 1.0f },
+        { "Contrast", "Curve around mid grey. In SDR black and white stay where they are.",
+          &config->GfxContrastEnabled, &config->GfxContrast, -1.0f, 1.0f },
+        { "Saturation", "Strength of every colour alike. -1 is black and white.", &config->GfxSaturationEnabled,
+          &config->GfxSaturation, -1.0f, 1.0f },
+        { "Vibrance", "Raises dull colours more than the ones already strong, so skin and skies don't burn.",
+          &config->GfxVibranceEnabled, &config->GfxVibrance, -1.0f, 1.0f },
+    };
+    GfxTable("##gfxColour", rows, (int) std::size(rows));
 
-    // Comparison, not saved
-    SectionTitle("Comparison");
-
-    IlionTheme::Checkbox(TrL("Split screen (left half original)"), &ImageAdjust::compareSplit);
-    IlionTheme::Checkbox(TrL("Show the original picture"), &ImageAdjust::bypass);
-
+    ImGui::Spacing();
     if (IlionTheme::Button(TrL("Reset all")))
     {
         for (auto* value : { &config->GfxTemperature, &config->GfxBrightness, &config->GfxContrast,
@@ -12254,9 +12302,19 @@ void MenuCommon::RenderGraphicsColorSettings(RenderMenuContext& ctx)
                           &config->GfxLocalContrastEnabled })
             on->reset();
     }
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("%s", Tr("Every value back to neutral; saved with Save Settings, for this game"));
+    ShowTooltip("Every value back to neutral; saved with Save Settings, for this game");
 
+    ImGui::EndDisabled();
+}
+
+void MenuCommon::RenderGraphicsCompareSettings(RenderMenuContext& ctx)
+{
+    SectionTitle("Comparison");
+
+    ImGui::BeginDisabled(!ctx.config->GfxEnabled.value_or_default());
+    IlionTheme::Checkbox(TrL("Split screen (left half original)"), &ImageAdjust::compareSplit);
+    ImGui::SameLine(0.0f, 16.0f * ctx.menuResScale);
+    IlionTheme::Checkbox(TrL("Show the original picture"), &ImageAdjust::bypass);
     ImGui::EndDisabled();
 }
 
@@ -12267,12 +12325,233 @@ void MenuCommon::RenderGraphicsAdvancedSettings(RenderMenuContext& ctx)
     SectionTitle("Advanced adjustments");
 
     ImGui::BeginDisabled(!config->GfxEnabled.value_or_default());
-    GfxControl("Local contrast (experimental)",
-               "Raises detail against its surroundings. Strong values can draw halos round edges.",
-               config->GfxLocalContrastEnabled, config->GfxLocalContrast, 0.0f, 1.0f);
+    const GfxRow rows[] = {
+        { "Local contrast (experimental)",
+          "Raises detail against its surroundings. Strong values can draw halos round edges.",
+          &config->GfxLocalContrastEnabled, &config->GfxLocalContrast, 0.0f, 1.0f },
+    };
+    GfxTable("##gfxAdvanced", rows, (int) std::size(rows));
     ImGui::EndDisabled();
 
-    ImGui::TextColored(IlionTheme::TextDim, "%s", Tr("Uses the switch of Colour and image; off by default"));
+    // Depth Aware (DAS) is a local contrast sharpening too, small radius: both together can stack halos
+    if (config->GfxEnabled.value_or_default() && config->GfxLocalContrastEnabled.value_or_default() &&
+        config->RcasEnabled.value_or_default() &&
+        config->SharpnessShader.value_or_default() == SharpenShader::LocalContrastDepthAware)
+        ImGui::TextColored(IlionTheme::LampAmber, "%s", Tr("With Depth Aware (DAS) sharpening halos can add up"));
+    else
+        ImGui::TextColored(IlionTheme::TextDim, "%s", Tr("Uses the switch of Colour and image; off by default"));
+}
+
+// ILION Intelligent Activation -----------------------------------------------------------------------------------
+// A layer over fakenvapi's own choice (Anti-Lag 2, then XeLL, then LatencyFleX; Vulkan: AntiLag Vk, then
+// LatencyFleX). It only sets the existing options when the user picks a mode and reports what fakenvapi says.
+namespace IlionLatency
+{
+enum Mode : int
+{
+    Auto = 0,
+    Manual = 1,
+    Off = 2
+};
+
+// Without a saved choice: Manual when the original options were changed, Auto otherwise
+inline Mode Current()
+{
+    auto config = Config::Instance();
+
+    if (config->IlionLatencyMode.has_value())
+        return (Mode) std::clamp(config->IlionLatencyMode.value(), 0, 2);
+
+    const bool changed = config->FN_ForceLatencyFlex.value_for_config().has_value() ||
+                         config->FN_ForceReflex.value_for_config().has_value() ||
+                         config->ForceXeLL.value_for_config().has_value();
+    return changed ? Manual : Auto;
+}
+
+// More than one generated frame: OptiScaler itself turns fakenvapi's Reflex off then (Reflex_Hooks)
+inline bool MultiFrameGen(const State& state)
+{
+    return state.dlssgDetectedInterpolationCount > 1 || state.dlssgLastSetMode == sl::DLSSGMode::eDynamic;
+}
+
+inline void Apply(Mode mode)
+{
+    auto config = Config::Instance();
+    const Mode before = Current();
+    config->IlionLatencyMode = (int) mode;
+
+    if (mode == Auto)
+    {
+        config->FN_ForceLatencyFlex = false;
+        if (!MultiFrameGen(State::Instance()))
+            config->FN_ForceReflex = ForceReflex::InGame;
+    }
+    else if (mode == Off)
+    {
+        config->FN_ForceReflex = ForceReflex::ForceDisable;
+    }
+    else if (before == Off)
+    {
+        config->FN_ForceReflex = ForceReflex::InGame;
+    }
+}
+
+inline const char* TechName(LowLatencyMode mode)
+{
+    switch (mode)
+    {
+    case LowLatencyMode::AntiLag2:
+        return "AMD Anti-Lag 2";
+    case LowLatencyMode::XeLL:
+        return "Intel XeLL";
+    case LowLatencyMode::LatencyFlex:
+        return "LatencyFleX";
+    case LowLatencyMode::AntiLagVk:
+        return "AMD Anti-Lag (Vulkan)";
+    case LowLatencyMode::Reflex:
+        return "NVIDIA Reflex";
+    default:
+        return nullptr;
+    }
+}
+
+inline const char* SwapchainApiName(API api) { return api == DX11 ? "DX11" : api == DX12 ? "DX12" : api == Vulkan ? "Vulkan" : "?"; }
+} // namespace IlionLatency
+
+void MenuCommon::RenderIntelligentLatency(RenderMenuContext& ctx)
+{
+    using namespace IlionLatency;
+    auto& state = ctx.state;
+    auto config = ctx.config;
+
+    SectionTitle("Intelligent Activation");
+
+    // Mode: three keys on one line
+    const Mode mode = Current();
+    const char* labels[] = { "Automatic##IlionLat", "Manual##IlionLat", "Off##IlionLat" };
+    const char* tips[] = { "ILION lets OptiScaler pick the compatible technology",
+                           "The original options below stay in your hands",
+                           "Asks OptiScaler to turn latency reduction off" };
+
+    for (int i = 0; i < 3; i++)
+    {
+        if (i > 0)
+            ImGui::SameLine();
+
+        const bool selected = mode == i;
+        if (selected)
+            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        if (IlionTheme::Button(TrL(labels[i])) && !selected)
+            Apply((Mode) i);
+        if (selected)
+            ImGui::PopStyleColor();
+        ShowTooltip(tips[i]);
+    }
+
+    // What fakenvapi reports
+    const auto vendor = IdentifyGpu::getPrimaryGpu().vendorId;
+    const bool fakenvapiInUse = fakenvapi::isUsingAsMainNvapi();
+    const LowLatencyMode tech = fakenvapiInUse ? fakenvapi::getCurrentMode() : LowLatencyMode::None;
+    const bool enabled = fakenvapiInUse && fakenvapi::isLowLatencyActive();
+    const bool mfg = MultiFrameGen(state);
+    const char* api = SwapchainApiName(state.swapchainApi);
+
+    // Reflex markers from the game moving on: the frames really go through the low latency path
+    static uint64_t lastFrameId = 0;
+    static auto lastMove = std::chrono::steady_clock::time_point {};
+    const auto now = std::chrono::steady_clock::now();
+    if (state.reflexFrameId != lastFrameId)
+    {
+        lastFrameId = state.reflexFrameId;
+        lastMove = now;
+    }
+    const bool markersMoving = lastFrameId != 0 && now - lastMove < std::chrono::seconds(1);
+
+    const char* name = TechName(tech);
+    std::string reason;
+    const char* status = nullptr;
+    bool running = false;
+    ImVec4 statusColour = IlionTheme::TextDim;
+
+    if (mode == Off)
+    {
+        status = Tr("Off at your request");
+        reason = Tr("Reflex requests of the game are ignored");
+    }
+    else if (!fakenvapiInUse)
+    {
+        if (vendor == VendorId::Nvidia)
+        {
+            name = "NVIDIA Reflex";
+            status = Tr("Available");
+            reason = Tr("Native Reflex, handled by the game; OptiScaler doesn't select it");
+        }
+        else
+        {
+            status = Tr("Not compatible");
+            reason = Tr("OptiScaler's nvapi is not in use: no Reflex input from the game");
+        }
+    }
+    else if (tech == LowLatencyMode::None)
+    {
+        status = Tr("Available");
+        reason = mfg ? Tr("Off while more than one frame is generated") : Tr("Waiting for the game's Reflex request");
+    }
+    else
+    {
+        // A technology answers: it was initialised by fakenvapi
+        running = markersMoving && enabled;
+        status = running ? Tr("Running") : enabled ? Tr("Enabled, no frame markers yet") : Tr("Initialised");
+        statusColour = running ? IlionTheme::LampGreen : IlionTheme::LampAmber;
+
+        if (tech == LowLatencyMode::AntiLag2)
+            reason = StrFmt(Tr("Chosen for AMD GPU, %s and Reflex input"), api);
+        else if (tech == LowLatencyMode::AntiLagVk)
+            reason = Tr("Chosen for AMD GPU, Vulkan and Reflex input");
+        else if (tech == LowLatencyMode::XeLL)
+            reason = config->ForceXeLL.value_or_default() ? Tr("Forced with Force XeLL")
+                                                          : StrFmt(Tr("Chosen for %s: Anti-Lag 2 not available"), api);
+        else if (tech == LowLatencyMode::LatencyFlex)
+            reason = config->FN_ForceLatencyFlex.value_or_default() ? Tr("Forced with Force LatencyFlex")
+                     : mfg ? Tr("Anti-Lag 2 and XeLL are not used with multi frame generation")
+                           : Tr("General fallback: Anti-Lag 2 and XeLL not available");
+    }
+
+    if (ImGui::BeginTable("##ilionLatency", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings))
+    {
+        auto row = [](const char* key, const ImVec4& colour, const char* value)
+        {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextColored(IlionTheme::TextDim, "%s", Tr(key));
+            ImGui::TableNextColumn();
+            ImGui::TextColored(colour, "%s", value);
+        };
+
+        row("Technology", IlionTheme::Text, name != nullptr ? name : Tr("None"));
+        row("State", statusColour, status);
+        row("Reason", IlionTheme::TextDim, reason.c_str());
+        ImGui::EndTable();
+    }
+
+    if (running)
+        ImGui::TextColored(IlionTheme::TextDim, "%s", Tr("Latency not measured here"));
+
+    if (auto ch = ScopedCollapsingHeader(TrL("Diagnostics")); ch.IsHeaderOpen())
+    {
+        ScopedIndent indent {};
+        const char* yes = Tr("yes");
+        const char* no = Tr("no");
+        const char* gpu = vendor == VendorId::AMD ? "AMD" : vendor == VendorId::Nvidia ? "NVIDIA"
+                          : vendor == VendorId::Intel                                   ? "Intel"
+                                                                                        : "?";
+        ImGui::Text("GPU: %s   API: %s", gpu, api);
+        ImGui::Text(Tr("OptiScaler nvapi (fakenvapi): %s"), fakenvapiInUse ? yes : no);
+        ImGui::Text(Tr("Low latency enabled: %s"), enabled ? yes : no);
+        ImGui::Text(Tr("Reflex frame id: %llu (%s)"), (unsigned long long) state.reflexFrameId,
+                    markersMoving ? Tr("moving") : Tr("still"));
+        ImGui::Text(Tr("More than one generated frame: %s"), mfg ? yes : no);
+    }
 }
 
 void MenuCommon::RenderMagnifierSettings(RenderMenuContext& ctx)
@@ -12282,44 +12561,44 @@ void MenuCommon::RenderMagnifierSettings(RenderMenuContext& ctx)
 
     // Magnifier -----------------------------
     ImGui::Spacing();
-    if (auto ch = ScopedCollapsingHeader("Magnifier"); ch.IsHeaderOpen())
+    if (auto ch = ScopedCollapsingHeader(TrL("Magnifier")); ch.IsHeaderOpen())
     {
         ScopedIndent indent {};
         ImGui::Spacing();
 
         bool magnifierEnabled = config->MagnifierEnabled.value_or_default();
-        if (IlionTheme::Checkbox("Enable Magnifier", &magnifierEnabled))
+        if (IlionTheme::Checkbox(TrL("Enable Magnifier"), &magnifierEnabled))
             config->MagnifierEnabled = magnifierEnabled;
 
         ImGui::BeginDisabled(!magnifierEnabled);
 
         float magnifierSize = config->MagnifierSize.value_or_default();
-        if (IlionTheme::SliderFloat("Size", &magnifierSize, 5.0f, 50.0f, "%.1f%% of screen"))
+        if (IlionTheme::SliderFloat(TrL("Size"), &magnifierSize, 5.0f, 50.0f, Tr("%.1f%% of screen")))
             config->MagnifierSize = magnifierSize;
 
         int zoomFactor = config->MagnifierZoomFactor.value_or_default();
-        if (IlionTheme::SliderInt("Zoom Factor", &zoomFactor, 2, 20, "%dx"))
+        if (IlionTheme::SliderInt(TrL("Zoom Factor"), &zoomFactor, 2, 20, "%dx"))
             config->MagnifierZoomFactor = zoomFactor;
 
         float borderSize = config->MagnifierBorderSize.value_or_default();
-        if (IlionTheme::SliderFloat("Border Size", &borderSize, 0.0f, 2.0f, "%.2f%% of screen"))
+        if (IlionTheme::SliderFloat(TrL("Border Size"), &borderSize, 0.0f, 2.0f, Tr("%.2f%% of screen")))
             config->MagnifierBorderSize = borderSize;
 
         ImGui::Separator();
-        ImGui::Text("Positioning");
+        ImGui::Text(Tr("Positioning"));
 
         bool staticMode = config->MagnifierStaticPosX.has_value() && config->MagnifierStaticPosY.has_value();
         if (staticMode)
         {
             float staticX = config->MagnifierStaticPosX.value();
-            if (IlionTheme::SliderFloat("Static Pos X", &staticX, 0.0f, 100.0f, "%.1f%%"))
+            if (IlionTheme::SliderFloat(TrL("Static Pos X"), &staticX, 0.0f, 100.0f, "%.1f%%"))
                 config->MagnifierStaticPosX = staticX;
 
             float staticY = config->MagnifierStaticPosY.value();
-            if (IlionTheme::SliderFloat("Static Pos Y", &staticY, 0.0f, 100.0f, "%.1f%%"))
+            if (IlionTheme::SliderFloat(TrL("Static Pos Y"), &staticY, 0.0f, 100.0f, "%.1f%%"))
                 config->MagnifierStaticPosY = staticY;
 
-            if (IlionTheme::Button("Reset Static Position (Follow Cursor)"))
+            if (IlionTheme::Button(TrL("Reset Static Position (Follow Cursor)")))
             {
                 config->MagnifierStaticPosX.reset();
                 config->MagnifierStaticPosY.reset();
@@ -12328,20 +12607,20 @@ void MenuCommon::RenderMagnifierSettings(RenderMenuContext& ctx)
         else
         {
             // Button to initialize static position mode
-            if (IlionTheme::Button("Set Static Position"))
+            if (IlionTheme::Button(TrL("Set Static Position")))
             {
                 config->MagnifierStaticPosX = 50.0f;
                 config->MagnifierStaticPosY = 50.0f;
             }
             ImGui::SameLine();
-            ImGui::TextDisabled("(Currently following cursor)");
+            ImGui::TextDisabled(Tr("(Currently following cursor)"));
 
             float offsetX = config->MagnifierCursorOffsetX.value_or_default();
-            if (IlionTheme::SliderFloat("Cursor Offset X", &offsetX, -300.0f, 300.0f, "%.0f px"))
+            if (IlionTheme::SliderFloat(TrL("Cursor Offset X"), &offsetX, -300.0f, 300.0f, "%.0f px"))
                 config->MagnifierCursorOffsetX = offsetX;
 
             float offsetY = config->MagnifierCursorOffsetY.value_or_default();
-            if (IlionTheme::SliderFloat("Cursor Offset Y", &offsetY, -300.0f, 300.0f, "%.0f px"))
+            if (IlionTheme::SliderFloat(TrL("Cursor Offset Y"), &offsetY, -300.0f, 300.0f, "%.0f px"))
                 config->MagnifierCursorOffsetY = offsetY;
         }
 
@@ -13461,7 +13740,7 @@ void MenuCommon::RenderApiAndTextureSettings(RenderMenuContext& ctx)
             if (config->MipmapBiasOverride.has_value() && _mipBias == 0.0f)
                 _mipBias = config->MipmapBiasOverride.value();
 
-            IlionTheme::SliderFloat("Mipmap Bias##2", &_mipBias, -15.0f, 15.0f, "%.6f");
+            IlionTheme::SliderFloat(TrL("Mipmap Bias##2"), &_mipBias, -15.0f, 15.0f, "%.6f");
             ShowTooltip("Can help with blurry textures in broken games\n"
                         "Negative values will make textures sharper\n"
                         "Positive values will make textures more blurry\n\n"
@@ -13473,7 +13752,7 @@ void MenuCommon::RenderApiAndTextureSettings(RenderMenuContext& ctx)
                                      config->MipmapBiasScaleOverride.value());
                 {
                     bool mbFixed = config->MipmapBiasFixedOverride.value_or_default();
-                    if (IlionTheme::Checkbox("MB Fixed Override", &mbFixed))
+                    if (IlionTheme::Checkbox(TrL("MB Fixed Override"), &mbFixed))
                     {
                         config->MipmapBiasScaleOverride.reset();
                         config->MipmapBiasFixedOverride = mbFixed;
@@ -13489,7 +13768,7 @@ void MenuCommon::RenderApiAndTextureSettings(RenderMenuContext& ctx)
                                      config->MipmapBiasFixedOverride.value());
                 {
                     bool mbScale = config->MipmapBiasScaleOverride.value_or_default();
-                    if (IlionTheme::Checkbox("MB Scale Override", &mbScale))
+                    if (IlionTheme::Checkbox(TrL("MB Scale Override"), &mbScale))
                     {
                         config->MipmapBiasFixedOverride.reset();
                         config->MipmapBiasScaleOverride = mbScale;
@@ -13502,7 +13781,7 @@ void MenuCommon::RenderApiAndTextureSettings(RenderMenuContext& ctx)
                 ImGui::EndDisabled();
 
                 bool mbAll = config->MipmapBiasOverrideAll.value_or_default();
-                if (IlionTheme::Checkbox("MB Override All Textures", &mbAll))
+                if (IlionTheme::Checkbox(TrL("MB Override All Textures"), &mbAll))
                     config->MipmapBiasOverrideAll = mbAll;
 
                 ShowTooltip("Override all textures mipmap values\n"
@@ -13514,7 +13793,7 @@ void MenuCommon::RenderApiAndTextureSettings(RenderMenuContext& ctx)
             ImGui::BeginDisabled(config->MipmapBiasOverride.has_value() &&
                                  config->MipmapBiasOverride.value() == _mipBias);
             {
-                if (IlionTheme::Button("Set"))
+                if (IlionTheme::Button(TrL("Set")))
                 {
                     config->MipmapBiasOverride = _mipBias;
                     state.lastMipBias = 100.0f;
@@ -13527,7 +13806,7 @@ void MenuCommon::RenderApiAndTextureSettings(RenderMenuContext& ctx)
 
             ImGui::BeginDisabled(!config->MipmapBiasOverride.has_value());
             {
-                if (IlionTheme::Button("Reset"))
+                if (IlionTheme::Button(TrL("Reset")))
                 {
                     config->MipmapBiasOverride.reset();
                     _mipBias = 0.0f;
@@ -13541,7 +13820,7 @@ void MenuCommon::RenderApiAndTextureSettings(RenderMenuContext& ctx)
             {
                 ImGui::SameLine(0.0f, 6.0f);
 
-                if (IlionTheme::Button("Calculate Mipmap Bias"))
+                if (IlionTheme::Button(TrL("Calculate Mipmap Bias")))
                     _showMipmapCalcWindow = true;
             }
 
@@ -13549,26 +13828,26 @@ void MenuCommon::RenderApiAndTextureSettings(RenderMenuContext& ctx)
             {
                 if (config->MipmapBiasFixedOverride.value_or_default())
                 {
-                    ImGui::Text("Current : %.3f / %.3f, Target: %.3f", state.lastMipBias, state.lastMipBiasMax,
+                    ImGui::Text(Tr("Current : %.3f / %.3f, Target: %.3f"), state.lastMipBias, state.lastMipBiasMax,
                                 config->MipmapBiasOverride.value());
                 }
                 else if (config->MipmapBiasScaleOverride.value_or_default())
                 {
-                    ImGui::Text("Current : %.3f / %.3f, Target: Base * %.3f", state.lastMipBias, state.lastMipBiasMax,
+                    ImGui::Text(Tr("Current : %.3f / %.3f, Target: Base * %.3f"), state.lastMipBias, state.lastMipBiasMax,
                                 config->MipmapBiasOverride.value());
                 }
                 else
                 {
-                    ImGui::Text("Current : %.3f / %.3f, Target: Base + %.3f", state.lastMipBias, state.lastMipBiasMax,
+                    ImGui::Text(Tr("Current : %.3f / %.3f, Target: Base + %.3f"), state.lastMipBias, state.lastMipBiasMax,
                                 config->MipmapBiasOverride.value());
                 }
             }
             else
             {
-                ImGui::Text("Current : %.3f / %.3f", state.lastMipBias, state.lastMipBiasMax);
+                ImGui::Text(Tr("Current : %.3f / %.3f"), state.lastMipBias, state.lastMipBiasMax);
             }
 
-            ImGui::Text("Will be applied after RESOLUTION/PRESET change !!!");
+            ImGui::Text(Tr("Will be applied after RESOLUTION/PRESET change !!!"));
         }
 
         if (ScopedCard::Shows("anisotropy"))
@@ -13579,7 +13858,7 @@ void MenuCommon::RenderApiAndTextureSettings(RenderMenuContext& ctx)
 
             auto selectedAF =
                 config->AnisotropyOverride.has_value() ? std::to_string(config->AnisotropyOverride.value()) : "Auto";
-            if (IlionTheme::BeginCombo("Force Anisotropic Filtering", selectedAF.c_str()))
+            if (IlionTheme::BeginCombo(TrL("Force Anisotropic Filtering"), selectedAF.c_str()))
             {
                 if (ImGui::Selectable("Auto", !config->AnisotropyOverride.has_value()))
                     config->AnisotropyOverride.reset();
@@ -13605,7 +13884,7 @@ void MenuCommon::RenderApiAndTextureSettings(RenderMenuContext& ctx)
             ImGui::PopItemWidth();
 
             bool afComp = config->AnisotropyModifyComp.value_or_default();
-            if (IlionTheme::Checkbox("Modify Compare", &afComp))
+            if (IlionTheme::Checkbox(TrL("Modify Compare"), &afComp))
                 config->AnisotropyModifyComp = afComp;
 
             ShowTooltip("Update comparison filters");
@@ -13613,18 +13892,18 @@ void MenuCommon::RenderApiAndTextureSettings(RenderMenuContext& ctx)
             ImGui::SameLine(0.0f, 6.0f);
 
             bool afMinMax = config->AnisotropyModifyMinMax.value_or_default();
-            if (IlionTheme::Checkbox("Modify Min/Max", &afMinMax))
+            if (IlionTheme::Checkbox(TrL("Modify Min/Max"), &afMinMax))
                 config->AnisotropyModifyMinMax = afMinMax;
 
             ShowTooltip("Update min/max filters");
 
             bool afSkipPoint = config->AnisotropySkipPointFilter.value_or_default();
-            if (IlionTheme::Checkbox("Skip Point Filters", &afSkipPoint))
+            if (IlionTheme::Checkbox(TrL("Skip Point Filters"), &afSkipPoint))
                 config->AnisotropySkipPointFilter = afSkipPoint;
 
             ShowTooltip("Skip updating of point filters");
 
-            ImGui::Text("Will might be applied after RESOLUTION/PRESET change !!!");
+            ImGui::Text(Tr("Will might be applied after RESOLUTION/PRESET change !!!"));
         }
     }
 }
@@ -14054,9 +14333,12 @@ const MenuCommon::MenuBox* MenuCommon::GetMenuBoxes(size_t& count)
         { "gfx_color", "Graphics", "Colour and image", [](RenderMenuContext& c) { RenderCard(c, RenderGraphicsColorSettings); } },
         { "sharpness", "Graphics", "Sharpness",
           [](RenderMenuContext& c) { if (IsUpscalerActive(c.currentFeature)) RenderCard(c, RenderActiveImageSettings); } },
-        { "gfx_advanced", "Graphics", "Advanced adjustments", [](RenderMenuContext& c) { RenderCard(c, RenderGraphicsAdvancedSettings); } },
+        { "mipmap", "Graphics", "Mipmap Bias", nullptr, RenderApiAndTextureSettings },
+        { "anisotropy", "Graphics", "Anisotropic Filtering", nullptr, RenderApiAndTextureSettings },
+        { "gfx_compare", "Graphics", "Comparison", [](RenderMenuContext& c) { RenderCard(c, RenderGraphicsCompareSettings); } },
         { "magnifier", "Graphics", "Magnifier",
           [](RenderMenuContext& c) { if (IsUpscalerActive(c.currentFeature)) RenderCard(c, RenderMagnifierSettings); } },
+        { "gfx_advanced", "Graphics", "Advanced adjustments", [](RenderMenuContext& c) { RenderCard(c, RenderGraphicsAdvancedSettings); } },
 
         { "fg_selection", "Frame Gen", "Frame Generation", [](RenderMenuContext& c) { RenderCard(c, RenderFrameGenerationSelection); } },
         { "fg_fsrfg", "Frame Gen", "FSR FG Settings", nullptr, RenderFrameGenerationRuntimeSettings },
@@ -14072,7 +14354,14 @@ const MenuCommon::MenuBox* MenuCommon::GetMenuBoxes(size_t& count)
 #ifdef LOW_LATENCY_INPUTS
         { "low_latency", "Latency & FPS", "Low Latency", [](RenderMenuContext& c) { RenderCard(c, RenderLowLatencySettings); } },
 #else
-        { "low_latency", "Latency & FPS", "fakenvapi", [](RenderMenuContext& c) { RenderCard(c, RenderFakenvapiSettings); } },
+        { "ilion_latency", "Latency & FPS", "Intelligent Activation", [](RenderMenuContext& c) { RenderCard(c, RenderIntelligentLatency); } },
+        { "low_latency", "Latency & FPS", "fakenvapi",
+          [](RenderMenuContext& c)
+          {
+              ImGui::BeginDisabled(IlionLatency::Current() != IlionLatency::Manual);
+              RenderCard(c, RenderFakenvapiSettings);
+              ImGui::EndDisabled();
+          } },
 #endif
         { "vsync", "Latency & FPS", "V-Sync", [](RenderMenuContext& c) { RenderCard(c, RenderVsyncSettings); } },
 
@@ -14080,8 +14369,6 @@ const MenuCommon::MenuBox* MenuCommon::GetMenuBoxes(size_t& count)
 
         { "benchmark", "Benchmark", "Benchmark", [](RenderMenuContext& c) { RenderCard(c, RenderBenchmark); } },
 
-        { "mipmap", "Textures", "Mipmap Bias", nullptr, RenderApiAndTextureSettings },
-        { "anisotropy", "Textures", "Anisotropic Filtering", nullptr, RenderApiAndTextureSettings },
 
         { "init_flags", "Compatibility", "Init Flags", [](RenderMenuContext& c) { RenderCard(c, RenderInitFlagsSettings); } },
         { "fsr_common", "Compatibility", "FSR Common Settings", [](RenderMenuContext& c) { RenderCard(c, RenderFsrCommonSettings); } },
@@ -14290,12 +14577,11 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
     static const Tab tabs[] = {
         { "MAIN", "Custom", "Boxes picked in Menu > Custom Tab.", RenderCustomTab },
         { "MAIN", "Upscaling", "Backend and output scaling.", RenderUpscalerStateMessage },
-        { "MAIN", "Graphics", "Colour, sharpness and detail of the upscaled picture." },
         { "MAIN", "Frame Gen", "Frame generation source, output and pacing." },
         { "MAIN", "Latency & FPS", "Frame limiter, low latency and V-Sync." },
+        { "MAIN", "Graphics", "Colour, sharpness, textures and detail of the picture." },
         { "MAIN", "Overlay", "Real-time metrics over the game: FPS, frame times and hardware sensors." },
         { "MAIN", "Benchmark", "Manual performance tests of the upscaler in use." },
-        { "SYSTEM", "Textures", "Mipmap bias and anisotropic filtering." },
         { "SYSTEM", "Compatibility", "Init flags, hooks, plugins and game specific workarounds." },
         { "ADVANCED", "Menu", "Menu scale, theme and keybinds." },
         { "ADVANCED", "Quirks", "Game specific quirks applied by OptiScaler.",

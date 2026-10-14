@@ -360,7 +360,7 @@ class Config
     CustomOptional<bool> GfxVibranceEnabled { true };
     CustomOptional<float> GfxVibrance { 0.0f }; // -1..1
     CustomOptional<bool> GfxLocalContrastEnabled { false }; // experimental
-    CustomOptional<float> GfxLocalContrast { 0.3f };         // 0..1
+    CustomOptional<float> GfxLocalContrast { 0.0f };         // 0..1, neutral by default
 
     // Menu
     CustomOptional<float, NoDefault> MenuScale;
@@ -693,6 +693,8 @@ class Config
     CustomOptional<bool> FN_ForceLatencyFlex { false };
     CustomOptional<LFXMode> FN_LatencyFlexMode { LFXMode::Conservative };
     CustomOptional<ForceReflex> FN_ForceReflex { ForceReflex::InGame };
+    // ILION Intelligent Activation: 0 automatic, 1 manual, 2 off. Not set: derived from the options above
+    CustomOptional<int, NoDefault> IlionLatencyMode;
     CustomOptional<LowLatencyInput> LowLatencyInput { LowLatencyInput::Auto }; // TODO: no reading/saving to config
     CustomOptional<LowLatencyMode> LowLatencyOutput { LowLatencyMode::Auto };
 

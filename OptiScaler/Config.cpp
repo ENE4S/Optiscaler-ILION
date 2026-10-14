@@ -489,7 +489,7 @@ bool Config::Reload(std::filesystem::path iniPath)
             LightTheme.set_from_config(readBool("Menu", "LightTheme"));
             IndustrialTheme.set_from_config(readBool("Menu", "IndustrialTheme"));
 
-            if (auto setting = readInt("Menu", "IlionPalette"); setting.has_value() && setting >= 0 && setting <= 2)
+            if (auto setting = readInt("Menu", "IlionPalette"); setting.has_value() && setting >= 0 && setting <= 3)
                 IlionPalette.set_from_config(setting);
             OverlaysUseTheme.set_from_config(readBool("Menu", "OverlaysUseTheme"));
             MenuAccentColorR.set_from_config(readFloat("Menu", "AccentColorR"));
@@ -1697,6 +1697,9 @@ bool Config::SaveUpscalerChoice()
 {
     const auto config = Instance();
     const std::string upscaler = config->Dx12Upscaler.value_for_config().transform(UpscalerToCode).value_or("auto");
+    const std::string upscaler11 = config->Dx11Upscaler.value_for_config().transform(UpscalerToCode).value_or("auto");
+    const std::string upscalerVk = config->VulkanUpscaler.value_for_config().transform(UpscalerToCode).value_or("auto");
+    const std::string ffxIndex = GetIntValue(config->FfxUpscalerIndex.value_for_config());
     const std::string external = GetBoolValue(config->DLSSAllowExternalBackend.value_for_config());
     const std::string variant = wstring_to_string(config->Fsr4SrVariant.value_for_config_or(L"auto"));
     const std::string nvngx = wstring_to_string(config->NvngxPath.value_for_config_or(L"auto"));
@@ -1709,6 +1712,9 @@ bool Config::SaveUpscalerChoice()
     for (auto* target : { &ini, &file })
     {
         target->SetValue("Upscalers", "Dx12Upscaler", upscaler.c_str());
+        target->SetValue("Upscalers", "Dx11Upscaler", upscaler11.c_str());
+        target->SetValue("Upscalers", "VulkanUpscaler", upscalerVk.c_str());
+        target->SetValue("FSR", "UpscalerIndex", ffxIndex.c_str());
         target->SetValue("DLSS", "AllowExternalBackend", external.c_str());
         target->SetValue("FSR", "Fsr4SrVariant", variant.c_str());
         target->SetValue("Libraries", "NvngxPath", nvngx.c_str());

@@ -46,6 +46,27 @@ struct Translation
 inline constexpr Translation kSpanish[] = {
     // Universal upscaler selector (v1.2-dev.5)
     { "Upscaler##IlionUpscaler", "Escalador" },
+    { "Fallout 2", "Fallout 2" },
+    { "API not compatible", "API no compatible" },
+    { "Hardware not compatible", "Hardware no compatible" },
+    { "DLL not available", "DLL no disponible" },
+    { "Dependency not available", "Dependencia no disponible" },
+    { "d4r only works in DirectX 12", "d4r solo funciona en DirectX 12" },
+    { "d4r runs DLSS on AMD GPUs", "d4r ejecuta DLSS en GPU AMD" },
+    { "FSR 4 needs an AMD GPU", "FSR 4 necesita una GPU AMD" },
+    { "Hardware not compatible: XeSS in DirectX 11 runs natively only on Intel GPUs",
+      "Hardware no compatible: XeSS en DirectX 11 solo funciona de forma nativa en GPU Intel" },
+    { "the FFX dll in use lists no FSR 3.1 provider", "la dll FFX en uso no ofrece el proveedor FSR 3.1" },
+    { "Runs through OptiScaler's DirectX 12 interop.", "Funciona mediante la interoperabilidad DirectX 12 de OptiScaler." },
+    { "FSR 2.1.2 (DX12 interop)", "FSR 2.1.2 (interop. DX12)" },
+    { "XeSS (DX12 interop)", "XeSS (interop. DX12)" },
+    { "layers fell back to translated code", "capas pasaron a código traducido" },
+    { "no layer fell back to translated code; launches are only logged with Log = verbose",
+      "ninguna capa pasó a código traducido; los lanzamientos solo se registran con Log = verbose" },
+    { "GPU work of every accepted evaluation finished without CUDA errors",
+      "el trabajo GPU de cada evaluación aceptada terminó sin errores CUDA" },
+    { "Every accepted output was finite (d4r checks NaN/Inf)",
+      "cada salida aceptada fue finita (d4r comprueba NaN/Inf)" },
     { "Upscaler##IlionFamily", "Escalador" },
     { " official (AMD)", " oficial de AMD" },
     { "Built into OptiScaler, switches while the game runs.", "Incluido en OptiScaler, cambia sin reiniciar el juego." },
@@ -976,9 +997,9 @@ inline constexpr Translation kSpanish[] = {
     { "ILION (original)", "ILION (original)" },
     { "Fallout", "Fallout" },
     { "Light", "Claro" },
-    { "ILION (original), Fallout and Light: the instrument panel look of ILION in three palettes.\n"
+    { "ILION (original), Fallout, Light and Fallout 2: the instrument panel look of ILION in four styles.\n"
       "Classic: the original look, with the colour settings below.",
-      "ILION (original), Fallout y Claro: el aspecto de panel de instrumentación de ILION en tres paletas.\n"
+      "ILION (original), Fallout, Claro y Fallout 2: el aspecto de panel de instrumentación de ILION en cuatro estilos.\n"
       "Clásico: el aspecto original, con los ajustes de color de abajo." },
 
     // Overlay tab and extended readings

@@ -372,6 +372,49 @@ static std::string EntryName(const IlionUpscalers::Entry& entry)
 // Name of the upscaler a feature runs, the same in every place of the menu and the overlay. An FFX upscaler on DX12
 // is the one of the list the dll in use belongs to (FSR 4 official, FSR 4.1.1B, HelixSR...) with the provider it
 // reports; DLSS through d4r is marked as such. Anything else keeps OptiScaler's name and version.
+// The FFX upscaler backend of the API in use: FFX in DX12, FFX through OptiScaler's DX12 interop in DX11 and Vulkan
+// (where plain FFX is the Vulkan FSR 3.1 dll). Both run the dll ILION switches.
+static Upscaler FfxBackendForApi() { return State::Instance().api == DX12 ? Upscaler::FFX : Upscaler::FFX_on12; }
+
+static bool RunsSwitchedFfx(Upscaler type)
+{
+    return (type == Upscaler::FFX && State::Instance().api == DX12) || type == Upscaler::FFX_on12;
+}
+
+// The upscaler setting of the API in use
+static Upscaler ConfiguredUpscaler()
+{
+    auto config = Config::Instance();
+
+    switch (State::Instance().api)
+    {
+    case DX11:
+        return config->Dx11Upscaler.value_or_default();
+    case DX12:
+        return config->Dx12Upscaler.value_or_default();
+    default:
+        return config->VulkanUpscaler.value_or_default();
+    }
+}
+
+static void SetConfiguredUpscaler(Upscaler upscaler)
+{
+    auto config = Config::Instance();
+
+    switch (State::Instance().api)
+    {
+    case DX11:
+        config->Dx11Upscaler = upscaler;
+        break;
+    case DX12:
+        config->Dx12Upscaler = upscaler;
+        break;
+    default:
+        config->VulkanUpscaler = upscaler;
+        break;
+    }
+}
+
 static std::string UpscalerLabel(IFeature* feature)
 {
     if (feature == nullptr)
@@ -380,7 +423,7 @@ static std::string UpscalerLabel(IFeature* feature)
     const auto version = StrFmt("%u.%u.%u", feature->Version().major, feature->Version().minor, feature->Version().patch);
     const auto type = feature->GetUpscalerType();
 
-    if (type == Upscaler::FFX && State::Instance().api == DX12)
+    if (RunsSwitchedFfx(type))
     {
         // Short names everywhere; the full provider string stays in the log and the diagnostics
         auto entry = IlionUpscalers::FindByPath(FfxApiProxy::Dx12Module_SR_Path());
@@ -419,10 +462,12 @@ static UpscalerStatus StatusOf(const IlionUpscalers::Entry* entry, IFeature* fea
         const std::wstring path = entry != nullptr ? entry->path : SharedDefaultSrDll();
         const auto saved = config->Fsr4SrVariant.value_or(L"");
 
-        status.selected = !dlssChosen && _wcsicmp(saved.c_str(), key.c_str()) == 0;
+        // Outside DX12 the saved dll only counts while FFX through the interop is the chosen upscaler
+        status.selected = !dlssChosen && _wcsicmp(saved.c_str(), key.c_str()) == 0 &&
+                          (State::Instance().api == DX12 || ConfiguredUpscaler() == Upscaler::FFX_on12);
         status.loaded = !path.empty() && FfxApiProxy::IsActiveSrDll(path);
 
-        if (status.loaded && feature != nullptr && feature->GetUpscalerType() == Upscaler::FFX)
+        if (status.loaded && feature != nullptr && RunsSwitchedFfx(feature->GetUpscalerType()))
         {
             const auto active = FfxApiProxy::SrDiagGetActive();
             std::wstring activePath;
@@ -431,6 +476,10 @@ static UpscalerStatus StatusOf(const IlionUpscalers::Entry* entry, IFeature* fea
                 FfxApiProxy::SrDiagDescribeModule(active.module, &activePath);
 
             status.active = IlionUpscalers::SamePath(activePath, path);
+
+            // An FSR 4 dll also offers FSR 3.1: it is FSR 4 that runs only when the provider created is a 4.x one
+            if (entry == nullptr || entry->family == IlionUpscalers::Family::Fsr4)
+                status.active = status.active && feature->Version().major >= 4;
         }
 
         return status;
@@ -484,9 +533,12 @@ static void SelectUpscaler(const IlionUpscalers::Entry* entry)
         if (config->DLSSAllowExternalBackend.value_or_default())
             config->DLSSAllowExternalBackend = false;
 
-        config->Dx12Upscaler = Upscaler::FFX;
+        // The dll's own first provider (FSR 4, or HelixSR itself), also when FSR 3.1 of the same dll ran before
+        config->FfxUpscalerIndex.set_volatile_value(0);
+
+        SetConfiguredUpscaler(FfxBackendForApi());
         FfxApiProxy::RequestSrVariant(key);
-        state.newBackend = Upscaler::FFX;
+        state.newBackend = FfxBackendForApi();
         MARK_ALL_BACKENDS_CHANGED();
         config->SaveUpscalerChoice();
         return;
@@ -532,7 +584,7 @@ static void SelectBackend(Upscaler upscaler)
     if (config->DLSSAllowExternalBackend.value_or_default())
         config->DLSSAllowExternalBackend = false;
 
-    config->Dx12Upscaler = upscaler;
+    SetConfiguredUpscaler(upscaler);
     State::Instance().newBackend = upscaler;
     MARK_ALL_BACKENDS_CHANGED();
     config->SaveUpscalerChoice();
@@ -541,8 +593,35 @@ static void SelectBackend(Upscaler upscaler)
 static UpscalerStatus BackendStatus(Upscaler upscaler, IFeature* feature)
 {
     UpscalerStatus status;
-    status.selected = Config::Instance()->Dx12Upscaler.value_or_default() == upscaler;
+    status.selected = ConfiguredUpscaler() == upscaler;
     status.loaded = feature != nullptr && feature->GetUpscalerType() == upscaler;
+    status.active = status.loaded && feature->FrameCount() > 0;
+    return status;
+}
+
+// FSR 3.1 in DX12: a provider of the FFX dll in use, picked by its index, as OptiScaler's FFX upscaler list does it
+static void SelectFfxProvider(int index)
+{
+    auto config = Config::Instance();
+
+    if (FfxApiProxy::SrSwitchLocked())
+        return;
+
+    if (config->DLSSAllowExternalBackend.value_or_default())
+        config->DLSSAllowExternalBackend = false;
+
+    config->FfxUpscalerIndex = index;
+    SetConfiguredUpscaler(Upscaler::FFX);
+    State::Instance().newBackend = Upscaler::FFX;
+    MARK_ALL_BACKENDS_CHANGED();
+    config->SaveUpscalerChoice();
+}
+
+static UpscalerStatus FfxProviderStatus(int index, IFeature* feature)
+{
+    UpscalerStatus status;
+    status.selected = ConfiguredUpscaler() == Upscaler::FFX && Config::Instance()->FfxUpscalerIndex.value_or_default() == index;
+    status.loaded = feature != nullptr && feature->GetUpscalerType() == Upscaler::FFX && feature->Version().major == 3;
     status.active = status.loaded && feature->FrameCount() > 0;
     return status;
 }
@@ -558,8 +637,13 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
     const bool locked = FfxApiProxy::SrSwitchLocked();
 
     // Families in their order; the FFX ones and DLSS 4 only when something of them was found
-    enum FamilyId { FamFsr4, FamFsr2, FamXess, FamDlss4, FamHelix, FamFfx, FamCount };
-    static const char* familyNames[FamCount] = { "FSR 4", "FSR 2", "XeSS", "DLSS 4", "HelixSR", "FFX" };
+    enum FamilyId { FamFsr4, FamFsr31, FamFsr2, FamXess, FamDlss4, FamHelix, FamFfx, FamCount };
+    static const char* familyNames[FamCount] = { "FSR 4", "FSR 3.1", "FSR 2", "XeSS", "DLSS 4", "HelixSR", "FFX" };
+
+    const auto api = State::Instance().api;
+
+    // Vendor of the GPU, read once: FSR 4 needs AMD's driver, d4r runs DLSS on AMD GPUs, DX11 XeSS needs Intel
+    static const auto vendor = IdentifyGpu::getPrimaryGpu().vendorId;
 
     const auto familyOf = [](const IlionUpscalers::Entry& entry)
     {
@@ -576,7 +660,57 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
         }
     };
 
-    bool present[FamCount] = { showDefault, true, true, false, false, false };
+    bool present[FamCount] = { showDefault, true, true, true, false, false, false };
+
+    // FSR 3.1 in DX12 is a provider of the FFX dll in use
+    int fsr31Index = -1;
+
+    if (api == DX12)
+    {
+        FFXFeature::EnsureVersionsDx12();
+        const auto& names = State::Instance().ffxUpscalerVersionsDx12.names;
+
+        for (size_t i = 0; i < names.size() && fsr31Index < 0; i++)
+        {
+            if (names[i] != nullptr && strncmp(names[i], "3.1", 3) == 0)
+                fsr31Index = (int) i;
+        }
+    }
+
+    // The backends OptiScaler has for FSR 3.1, FSR 2 and XeSS in each API, with the names shown for them
+    struct BuiltIn
+    {
+        int family;
+        Upscaler backend;
+        const char* name;
+        const char* reason; // set when it can't be used here
+    };
+
+    std::vector<BuiltIn> builtIns;
+
+    if (api == DX12)
+    {
+        builtIns = { { FamFsr2, Upscaler::FSR22, "FSR 2.2.1", nullptr },
+                     { FamFsr2, Upscaler::FSR21, "FSR 2.1.2", nullptr },
+                     { FamXess, Upscaler::XeSS, "XeSS", nullptr } };
+    }
+    else if (api == DX11)
+    {
+        builtIns = { { FamFsr31, Upscaler::FSR31, "FSR 3.1", nullptr },
+                     { FamFsr2, Upscaler::FSR22, "FSR 2.2.1", nullptr },
+                     { FamFsr2, Upscaler::FSR21_on12, "FSR 2.1.2 (DX12 interop)", nullptr },
+                     { FamXess, Upscaler::XeSS, "XeSS",
+                       vendor == VendorId::Intel ? nullptr
+                                                 : "Hardware not compatible: XeSS in DirectX 11 runs natively only on Intel GPUs" },
+                     { FamXess, Upscaler::XeSS_on12, "XeSS (DX12 interop)", nullptr } };
+    }
+    else
+    {
+        builtIns = { { FamFsr31, Upscaler::FFX, "FSR 3.1", nullptr },
+                     { FamFsr2, Upscaler::FSR22, "FSR 2.2.1", nullptr },
+                     { FamFsr2, Upscaler::FSR21, "FSR 2.1.2", nullptr },
+                     { FamXess, Upscaler::XeSS, "XeSS", nullptr } };
+    }
 
     for (const auto& entry : entries)
         present[familyOf(entry)] = true;
@@ -599,9 +733,11 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
     for (const auto& entry : entries)
         consider(familyOf(entry), StatusOf(&entry, feature));
 
-    consider(FamFsr2, BackendStatus(Upscaler::FSR22, feature));
-    consider(FamFsr2, BackendStatus(Upscaler::FSR21, feature));
-    consider(FamXess, BackendStatus(Upscaler::XeSS, feature));
+    for (const auto& builtIn : builtIns)
+        consider(builtIn.family, BackendStatus(builtIn.backend, feature));
+
+    if (fsr31Index >= 0)
+        consider(FamFsr31, FfxProviderStatus(fsr31Index, feature));
 
     static int shown[2] = { -1, -1 };
     int& family = shown[strcmp(id, "benchmark") == 0 ? 1 : 0];
@@ -635,12 +771,47 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
         std::string name;
         UpscalerStatus status;
         bool usable = true;
+        std::string reason;  // why it can't be used: API, hardware, dll or dependency
+        int ffxIndex = -1;   // FSR 3.1 as a provider of the FFX dll in use (DX12)
+    };
+
+    // Why an upscaler of the list can't be used here, in the words of the four reasons
+    const auto entryReason = [&](const IlionUpscalers::Entry& entry) -> std::string
+    {
+        if (entry.kind == IlionUpscalers::Kind::D4r)
+        {
+            if (api != DX12)
+                return std::string(Tr("API not compatible")) + ": " + Tr("d4r only works in DirectX 12");
+            if (vendor != VendorId::AMD)
+                return std::string(Tr("Hardware not compatible")) + ": " + Tr("d4r runs DLSS on AMD GPUs");
+            if (!entry.valid)
+                return std::string(Tr("Dependency not available")) + ": " + Tr(entry.problem.c_str());
+            return "";
+        }
+
+        if (entry.family == IlionUpscalers::Family::Fsr4 && vendor != VendorId::AMD)
+            return std::string(Tr("Hardware not compatible")) + ": " + Tr("FSR 4 needs an AMD GPU");
+
+        if (!entry.valid)
+            return std::string(Tr("DLL not available")) + ": " + Tr(entry.problem.c_str());
+
+        return "";
     };
 
     std::vector<Variant> variants;
 
     if (family == FamFsr4 && showDefault)
-        variants.push_back({ nullptr, Upscaler::Reset, true, Tr("FSR (default dll)"), StatusOf(nullptr, feature) });
+    {
+        Variant variant { nullptr, Upscaler::Reset, true, Tr("FSR (default dll)"), StatusOf(nullptr, feature) };
+
+        if (vendor != VendorId::AMD)
+        {
+            variant.usable = false;
+            variant.reason = std::string(Tr("Hardware not compatible")) + ": " + Tr("FSR 4 needs an AMD GPU");
+        }
+
+        variants.push_back(variant);
+    }
 
     for (const auto& entry : entries)
     {
@@ -658,17 +829,38 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
             status.selected = status.selected || twin.selected;
         }
 
-        variants.push_back({ &entry, Upscaler::Reset, false, EntryName(entry), status, entry.valid });
+        const auto reason = entryReason(entry);
+        variants.push_back({ &entry, Upscaler::Reset, false, EntryName(entry), status, reason.empty(), reason });
     }
 
-    if (family == FamFsr2)
+    for (const auto& builtIn : builtIns)
     {
-        variants.push_back({ nullptr, Upscaler::FSR22, false, "FSR 2.2.1", BackendStatus(Upscaler::FSR22, feature) });
-        variants.push_back({ nullptr, Upscaler::FSR21, false, "FSR 2.1.2", BackendStatus(Upscaler::FSR21, feature) });
+        if (builtIn.family != family)
+            continue;
+
+        Variant variant { nullptr, builtIn.backend, false, Tr(builtIn.name), BackendStatus(builtIn.backend, feature) };
+
+        if (builtIn.reason != nullptr)
+        {
+            variant.usable = false;
+            variant.reason = Tr(builtIn.reason);
+        }
+
+        variants.push_back(variant);
     }
-    else if (family == FamXess)
+
+    if (family == FamFsr31 && api == DX12)
     {
-        variants.push_back({ nullptr, Upscaler::XeSS, false, "XeSS", BackendStatus(Upscaler::XeSS, feature) });
+        Variant variant { nullptr, Upscaler::Reset, false, "FSR 3.1", FfxProviderStatus(fsr31Index, feature) };
+        variant.ffxIndex = fsr31Index;
+
+        if (fsr31Index < 0)
+        {
+            variant.usable = false;
+            variant.reason = std::string(Tr("DLL not available")) + ": " + Tr("the FFX dll in use lists no FSR 3.1 provider");
+        }
+
+        variants.push_back(variant);
     }
 
     std::string preview = "-";
@@ -704,7 +896,9 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
             if (ImGui::Selectable(label.c_str(), variant.status.selected || variant.status.active) &&
                 !(variant.status.selected && variant.status.loaded))
             {
-                if (variant.backend != Upscaler::Reset)
+                if (variant.ffxIndex >= 0)
+                    SelectFfxProvider(variant.ffxIndex);
+                else if (variant.backend != Upscaler::Reset)
                     SelectBackend(variant.backend);
                 else
                     SelectUpscaler(variant.isDefault ? nullptr : variant.entry);
@@ -717,11 +911,11 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
 
             if (!variant.usable)
             {
-                ImGui::SetTooltip(Tr("Can't be used: %s"), Tr(variant.entry->problem.c_str()));
+                ImGui::SetTooltip("%s", variant.reason.c_str());
                 continue;
             }
 
-            if (variant.backend != Upscaler::Reset)
+            if (variant.backend != Upscaler::Reset || variant.ffxIndex >= 0)
             {
                 ImGui::SetTooltip("%s", Tr("Built into OptiScaler, switches while the game runs."));
                 continue;
@@ -741,6 +935,9 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
 
             if (entry.kind == IlionUpscalers::Kind::Ffx)
                 tip += std::string("\n") + Tr("Switches while the game runs.");
+
+            if (entry.kind == IlionUpscalers::Kind::Ffx && api != DX12)
+                tip += std::string("\n") + Tr("Runs through OptiScaler's DirectX 12 interop.");
             else if (!variant.status.loaded)
                 tip += std::string("\n") + Tr("Needs a restart of the game: d4r is loaded when the game starts.");
 
@@ -6542,7 +6739,7 @@ static void UpdateFsr4Comparison(State& state, double frameTime, double now)
     const auto feature = state.currentFeature;
 
     // An FFX upscaler: the dll that executed the dispatch, as the proxy's diagnostics follow it
-    if (feature == nullptr || feature->GetUpscalerType() == Upscaler::FFX)
+    if (feature == nullptr || RunsSwitchedFfx(feature->GetUpscalerType()))
     {
         FSR4Comparison::OnFrame(frameTime, now, active.module, active.name, active.slot, active.dispatchCount,
                                 active.errorCount, active.requestTick, fgActive);
@@ -8255,7 +8452,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                             currentFeature->Version().patch);
 
     // ILION's upscalers: every FFX upscaler found and DLSS 4 through d4r, whatever runs now
-    if (state.api == DX12 && !usesDlssd)
+    if (!usesDlssd)
     {
         ImGui::Spacing();
         DrawUpscalerSelector(currentFeature, menuResScale, "upscaling");
@@ -8387,7 +8584,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
     if (!usesDlssd && (currentBackend == Upscaler::FFX || currentBackend == Upscaler::FFX_on12))
     {
         // Upscaler dll selection, kept outside of the version checks so it's still reachable when a dll fails
-        if (currentBackend == Upscaler::FFX && state.api == DX12)
+        if (RunsSwitchedFfx(currentBackend))
         {
             // Path, hash, diagnostics and comparison stay in the full menu only
             if (!basicView)
@@ -12285,8 +12482,8 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         // The three ILION themes share every control and the layout, only their palette changes.
         // Classic: everything below works as it always did. The choice is saved at once.
         const bool industrialTheme = config->IndustrialTheme.value_or_default();
-        const int palette = std::clamp(config->IlionPalette.value_or_default(), 0, 2);
-        static const char* paletteNames[] = { "ILION (original)", "Fallout", "Light" };
+        const int palette = std::clamp(config->IlionPalette.value_or_default(), 0, 3);
+        static const char* paletteNames[] = { "ILION (original)", "Fallout", "Light", "Fallout 2" };
 
         ImGui::SetNextItemWidth(180.0f * ctx.menuResScale);
 
@@ -12315,7 +12512,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
             ImGui::EndCombo();
         }
 
-        ShowTooltip("ILION (original), Fallout and Light: the instrument panel look of ILION in three palettes.\n"
+        ShowTooltip("ILION (original), Fallout, Light and Fallout 2: the instrument panel look of ILION in four styles.\n"
                     "Classic: the original look, with the colour settings below.");
 
         // The colours below are the ones of the classic theme
@@ -14700,7 +14897,7 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
 
     // What would be tested, taken from what's really running
     const bool upscalerOn = IsUpscalerActive(currentFeature) && currentFeature->IsInited();
-    const bool fsrObservable = upscalerOn && currentBackend == Upscaler::FFX && state.api == DX12;
+    const bool fsrObservable = upscalerOn && RunsSwitchedFfx(currentBackend);
     const auto active = FfxApiProxy::SrDiagGetActive();
 
     std::wstring activeDllPath;
@@ -14808,7 +15005,7 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
     ShowTooltip("Opens ILION's upscaler selector here, without leaving Benchmark.\n"
                 "It can't be changed while a test is running.");
 
-    if (showVersionSelector && state.api == DX12)
+    if (showVersionSelector)
     {
         ImGui::Indent();
         DrawUpscalerSelector(currentFeature, menuResScale, "benchmark");
@@ -15330,7 +15527,7 @@ void MenuCommon::RenderBasicPanel(RenderMenuContext& ctx)
                              : std::string(Tr("None")));
 
         // Dll that's really executing the upscaling, from the hot-swap diagnostics
-        if (upscalerOn && currentBackend == Upscaler::FFX && state.api == DX12)
+        if (upscalerOn && RunsSwitchedFfx(currentBackend))
         {
             const auto diag = FfxApiProxy::SrDiagGetSnapshot();
             std::string value = Tr(diag.activeName.c_str());
@@ -15721,7 +15918,8 @@ void MenuCommon::Init(HWND InHwnd, bool isUWP)
         };
 
         IlionTheme::terminalFont = systemFont({ L"lucon.ttf", L"consola.ttf" });
-        IlionTheme::modernFont = systemFont({ L"segoeui.ttf", L"arial.ttf" });
+        IlionTheme::modernFont = systemFont({ L"bahnschrift.ttf", L"segoeui.ttf", L"arial.ttf" });
+        IlionTheme::crtFont = systemFont({ L"consola.ttf", L"lucon.ttf" });
     }
 
     if (!Config::Instance()->OverlayMenu.value_or_default())

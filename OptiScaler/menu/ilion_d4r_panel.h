@@ -145,7 +145,27 @@ inline void Draw(const std::wstring& logPath, unsigned versionMajor, unsigned ve
     }
     else
     {
-        ImGui::TextColored(IlionTheme::TextDim, "4 %s: %s", Tr("Native execution"), notVerified);
+        // Without launch lines it stays not verified; what the normal log does show is said next to it
+        const int missed = Evidence::Count(isM ? e.missedM : e.missedK);
+
+        if (logKnown && missed > 0)
+            ImGui::TextColored(IlionTheme::LampRed, "4 %s: %d/%d %s", Tr("Native execution"), missed, total,
+                               Tr("layers fell back to translated code"));
+        else if (stageBound)
+            ImGui::TextColored(IlionTheme::TextDim, "4 %s: %s (%s)", Tr("Native execution"), notVerified,
+                               Tr("no layer fell back to translated code; launches are only logged with Log = verbose"));
+        else
+            ImGui::TextColored(IlionTheme::TextDim, "4 %s: %s", Tr("Native execution"), notVerified);
+    }
+
+    // What every accepted evaluation proves with d4r's own settings: async=0 waits for the GPU before returning,
+    // validate=1 fails the evaluation on any NaN or Inf. Accepted evaluations alone prove neither.
+    if (logKnown && ok > 0 && !failing)
+    {
+        if (e.synchronous)
+            ImGui::TextColored(IlionTheme::TextDim, "  %s", Tr("GPU work of every accepted evaluation finished without CUDA errors"));
+        if (e.validateOutput)
+            ImGui::TextColored(IlionTheme::TextDim, "  %s", Tr("Every accepted output was finite (d4r checks NaN/Inf)"));
     }
 
     // Only when d4r's log has them: its own timing of the inference and its output check

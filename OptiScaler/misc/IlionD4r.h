@@ -38,6 +38,9 @@ struct Evidence
     std::string requestedModel; // "K", "M", ... exactly as d4r wrote it
     std::string architecture;   // "gfx1100", ...
     std::string logLevel;       // "normal" or "verbose"
+    bool validateOutput = false; // validate=1: every output checked for NaN/Inf, a bad one fails the evaluation
+    bool synchronous = false;    // async=0: every evaluation waits for all its CUDA streams before returning
+    uint32_t missedK = 0, missedM = 0;             // bit per layer d4r reported as "miss ... fallback=translated"
     uint32_t boundK = 0, boundM = 0;               // bit per layer bound to a native kernel file
     uint32_t launchedNativeK = 0, launchedNativeM = 0; // bit per layer launched with backend=native
     uint32_t launchedOtherK = 0, launchedOtherM = 0;   // bit per layer launched with any other backend
@@ -87,6 +90,23 @@ inline void ParseLine(std::string_view line, Evidence& e)
         e.requestedModel = std::string(ValueAfter(line, "model="));
         e.architecture = std::string(ValueAfter(line, "architecture="));
         e.logLevel = std::string(ValueAfter(line, "log="));
+        e.validateOutput = ValueAfter(line, "validate=") == "1";
+        e.synchronous = ValueAfter(line, "async=") == "0";
+        return;
+    }
+
+    // [d4r-native] miss kernel="name" reason=... fallback=translated  (written at the normal level too)
+    if (line.rfind("[d4r-native] miss kernel=\"", 0) == 0)
+    {
+        const auto rest = line.substr(26);
+        const auto quote = rest.find('"');
+        if (quote == std::string_view::npos)
+            return;
+        const auto name = rest.substr(0, quote);
+        if (const int k = LayerIndex(name, kLayersK, kCountK); k >= 0)
+            e.missedK |= 1u << k;
+        else if (const int m = LayerIndex(name, kLayersM, kCountM); m >= 0)
+            e.missedM |= 1u << m;
         return;
     }
 

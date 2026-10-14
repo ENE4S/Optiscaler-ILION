@@ -231,9 +231,10 @@ inline void AddHelix(const std::filesystem::path& folder, const std::wstring& ke
         entry.fileVersion = FileVersionOf(entry.path);
         entry.problem.clear();
 
-        // A file named like the game's FSR dll can be mixed up with it once loaded; HelixSR's setup uses its own
-        // name for OptiScaler for that reason (helixsr_upscaler.dll)
-        if (_wcsicmp(name, L"amd_fidelityfx_dx12.dll") == 0 || _wcsicmp(name, FfxDllName) == 0)
+        // Only the name of the main FFX dll can be mixed up once loaded (OptiScaler hooks that module; HelixSR's setup
+        // gives its copy its own name for that reason). Upscaler dlls of that name are loaded side by side already:
+        // every FSR 4 build ILION switches between is called amd_fidelityfx_upscaler_dx12.dll.
+        if (_wcsicmp(name, L"amd_fidelityfx_dx12.dll") == 0)
             entry.problem = "rename it to helixsr_upscaler.dll";
         else
             entry.valid = FSR4Versions::Validate(entry.path, &entry.problem);

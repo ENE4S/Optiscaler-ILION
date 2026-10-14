@@ -15,34 +15,119 @@ namespace IlionTheme
 inline bool industrial = true;
 
 // Painted steel
-inline constexpr ImVec4 GraphiteDeep { 0.070f, 0.075f, 0.070f, 1.0f };
-inline constexpr ImVec4 Graphite { 0.105f, 0.110f, 0.103f, 1.0f };
-inline constexpr ImVec4 Panel { 0.140f, 0.150f, 0.135f, 1.0f };
-inline constexpr ImVec4 OliveDim { 0.185f, 0.205f, 0.150f, 1.0f };
-inline constexpr ImVec4 Olive { 0.255f, 0.285f, 0.195f, 1.0f };
-inline constexpr ImVec4 OliveLit { 0.340f, 0.380f, 0.250f, 1.0f };
-inline constexpr ImVec4 OlivePressed { 0.150f, 0.170f, 0.120f, 1.0f };
+inline ImVec4 GraphiteDeep { 0.070f, 0.075f, 0.070f, 1.0f };
+inline ImVec4 Graphite { 0.105f, 0.110f, 0.103f, 1.0f };
+inline ImVec4 Panel { 0.140f, 0.150f, 0.135f, 1.0f };
+inline ImVec4 OliveDim { 0.185f, 0.205f, 0.150f, 1.0f };
+inline ImVec4 Olive { 0.255f, 0.285f, 0.195f, 1.0f };
+inline ImVec4 OliveLit { 0.340f, 0.380f, 0.250f, 1.0f };
+inline ImVec4 OlivePressed { 0.150f, 0.170f, 0.120f, 1.0f };
 
 // Bare metal of edges and levers
-inline constexpr ImVec4 MetalDark { 0.270f, 0.285f, 0.260f, 1.0f };
-inline constexpr ImVec4 Metal { 0.430f, 0.450f, 0.410f, 1.0f };
-inline constexpr ImVec4 MetalLight { 0.640f, 0.660f, 0.610f, 1.0f };
-inline constexpr ImVec4 Shadow { 0.020f, 0.022f, 0.020f, 1.0f };
+inline ImVec4 MetalDark { 0.270f, 0.285f, 0.260f, 1.0f };
+inline ImVec4 Metal { 0.430f, 0.450f, 0.410f, 1.0f };
+inline ImVec4 MetalLight { 0.640f, 0.660f, 0.610f, 1.0f };
+inline ImVec4 Shadow { 0.020f, 0.022f, 0.020f, 1.0f };
 
 // Engraved text
-inline constexpr ImVec4 Text { 0.870f, 0.885f, 0.810f, 1.0f };
-inline constexpr ImVec4 TextDim { 0.560f, 0.590f, 0.490f, 1.0f };
-inline constexpr ImVec4 TextTitle { 0.760f, 0.800f, 0.620f, 1.0f };
+inline ImVec4 Text { 0.870f, 0.885f, 0.810f, 1.0f };
+inline ImVec4 TextDim { 0.560f, 0.590f, 0.490f, 1.0f };
+inline ImVec4 TextTitle { 0.760f, 0.800f, 0.620f, 1.0f };
 
 // Lamps
-inline constexpr ImVec4 LampGreen { 0.224f, 1.000f, 0.078f, 1.0f }; // #39FF14
-inline constexpr ImVec4 LampGreenDim { 0.150f, 0.520f, 0.090f, 1.0f };
-inline constexpr ImVec4 LampAmber { 1.000f, 0.690f, 0.000f, 1.0f };
-inline constexpr ImVec4 LampRed { 0.800f, 0.000f, 0.000f, 1.0f }; // #CC0000
-inline constexpr ImVec4 RedDim { 0.400f, 0.060f, 0.050f, 1.0f };
-inline constexpr ImVec4 RedLit { 0.580f, 0.080f, 0.060f, 1.0f };
+inline ImVec4 LampGreen { 0.224f, 1.000f, 0.078f, 1.0f }; // #39FF14
+inline ImVec4 LampGreenDim { 0.150f, 0.520f, 0.090f, 1.0f };
+inline ImVec4 LampAmber { 1.000f, 0.690f, 0.000f, 1.0f };
+inline ImVec4 LampRed { 0.800f, 0.000f, 0.000f, 1.0f }; // #CC0000
+inline ImVec4 RedDim { 0.400f, 0.060f, 0.050f, 1.0f };
+inline ImVec4 RedLit { 0.580f, 0.080f, 0.060f, 1.0f };
 
 inline ImVec4 Alpha(const ImVec4& color, float alpha) { return ImVec4(color.x, color.y, color.z, alpha); }
+
+// Strength of the brushed metal grain drawn over panels, lower on palettes where it would be too visible
+inline float metalOpacity = 1.0f;
+
+inline ImVec4 TitleAmber { 0.800f, 0.690f, 0.400f, 1.0f };
+inline ImVec4 EdgeAmber { 0.224f, 1.000f, 0.078f, 1.0f };
+inline ImVec4 TrimGold { 0.560f, 0.575f, 0.590f, 1.0f };
+inline ImVec4 TrimTitanium { 0.560f, 0.575f, 0.590f, 1.0f };
+inline ImVec4 StripeYellow { 0.800f, 0.670f, 0.110f, 1.0f };
+
+// The three ILION palettes. Controls, layout and drawn parts are the same for all of them, only colours change.
+//   0 ILION: 70s Soviet industrial, aged metal, steel trims (no brown frames), radioactive green lamps and tabs
+//   1 Fallout: retro-futuristic phosphor green terminal
+//   2 Light: bright and plain, dark text
+inline void SetPalette(int palette)
+{
+    struct Palette
+    {
+        ImVec4 graphiteDeep, graphite, panel, oliveDim, olive, oliveLit, olivePressed;
+        ImVec4 metalDark, metal, metalLight, shadow;
+        ImVec4 text, textDim, textTitle;
+        ImVec4 lampGreen, lampGreenDim, lampAmber, lampRed, redDim, redLit;
+        ImVec4 titleAmber, edge, trimGold, trimTitanium, stripe;
+        float metal_;
+    };
+
+    static const Palette palettes[] = {
+        { { 0.070f, 0.075f, 0.070f, 1 }, { 0.105f, 0.110f, 0.103f, 1 }, { 0.140f, 0.150f, 0.135f, 1 },
+          { 0.185f, 0.205f, 0.150f, 1 }, { 0.255f, 0.285f, 0.195f, 1 }, { 0.340f, 0.380f, 0.250f, 1 },
+          { 0.150f, 0.170f, 0.120f, 1 }, { 0.270f, 0.285f, 0.260f, 1 }, { 0.430f, 0.450f, 0.410f, 1 },
+          { 0.640f, 0.660f, 0.610f, 1 }, { 0.020f, 0.022f, 0.020f, 1 }, { 0.870f, 0.885f, 0.810f, 1 },
+          { 0.560f, 0.590f, 0.490f, 1 }, { 0.760f, 0.800f, 0.620f, 1 }, { 0.224f, 1.000f, 0.078f, 1 },
+          { 0.150f, 0.520f, 0.090f, 1 }, { 1.000f, 0.690f, 0.000f, 1 }, { 0.800f, 0.000f, 0.000f, 1 },
+          { 0.400f, 0.060f, 0.050f, 1 }, { 0.580f, 0.080f, 0.060f, 1 }, { 0.800f, 0.690f, 0.400f, 1 },
+          { 0.224f, 1.000f, 0.078f, 1 }, { 0.560f, 0.575f, 0.590f, 1 }, { 0.560f, 0.575f, 0.590f, 1 },
+          { 0.800f, 0.670f, 0.110f, 1 }, 1.0f },
+        { { 0.010f, 0.030f, 0.015f, 1 }, { 0.020f, 0.055f, 0.028f, 1 }, { 0.030f, 0.080f, 0.040f, 1 },
+          { 0.040f, 0.150f, 0.070f, 1 }, { 0.060f, 0.230f, 0.100f, 1 }, { 0.090f, 0.330f, 0.150f, 1 },
+          { 0.030f, 0.110f, 0.050f, 1 }, { 0.080f, 0.260f, 0.130f, 1 }, { 0.120f, 0.450f, 0.220f, 1 },
+          { 0.200f, 0.700f, 0.350f, 1 }, { 0.000f, 0.010f, 0.000f, 1 }, { 0.300f, 1.000f, 0.520f, 1 },
+          { 0.160f, 0.600f, 0.300f, 1 }, { 0.250f, 0.900f, 0.450f, 1 }, { 0.180f, 1.000f, 0.400f, 1 },
+          { 0.090f, 0.500f, 0.200f, 1 }, { 1.000f, 0.720f, 0.200f, 1 }, { 0.950f, 0.250f, 0.150f, 1 },
+          { 0.400f, 0.080f, 0.050f, 1 }, { 0.600f, 0.120f, 0.080f, 1 }, { 0.300f, 1.000f, 0.520f, 1 },
+          { 0.300f, 1.000f, 0.520f, 1 }, { 0.180f, 0.700f, 0.350f, 1 }, { 0.150f, 0.500f, 0.260f, 1 },
+          { 0.250f, 0.900f, 0.450f, 1 }, 0.35f },
+        { { 0.820f, 0.835f, 0.815f, 1 }, { 0.900f, 0.910f, 0.895f, 1 }, { 0.950f, 0.955f, 0.945f, 1 },
+          { 0.760f, 0.800f, 0.720f, 1 }, { 0.680f, 0.730f, 0.620f, 1 }, { 0.600f, 0.660f, 0.530f, 1 },
+          { 0.560f, 0.610f, 0.500f, 1 }, { 0.620f, 0.640f, 0.610f, 1 }, { 0.450f, 0.470f, 0.440f, 1 },
+          { 0.300f, 0.320f, 0.290f, 1 }, { 0.600f, 0.610f, 0.600f, 1 }, { 0.080f, 0.090f, 0.070f, 1 },
+          { 0.360f, 0.380f, 0.330f, 1 }, { 0.150f, 0.200f, 0.100f, 1 }, { 0.080f, 0.560f, 0.030f, 1 },
+          { 0.300f, 0.600f, 0.250f, 1 }, { 0.780f, 0.420f, 0.000f, 1 }, { 0.750f, 0.050f, 0.030f, 1 },
+          { 0.900f, 0.700f, 0.680f, 1 }, { 0.850f, 0.550f, 0.520f, 1 }, { 0.400f, 0.300f, 0.050f, 1 },
+          { 0.080f, 0.560f, 0.030f, 1 }, { 0.450f, 0.460f, 0.470f, 1 }, { 0.450f, 0.460f, 0.470f, 1 },
+          { 0.750f, 0.600f, 0.100f, 1 }, 0.25f },
+    };
+
+    const auto& p = palettes[palette >= 0 && palette < (int) std::size(palettes) ? palette : 0];
+
+    GraphiteDeep = p.graphiteDeep;
+    Graphite = p.graphite;
+    Panel = p.panel;
+    OliveDim = p.oliveDim;
+    Olive = p.olive;
+    OliveLit = p.oliveLit;
+    OlivePressed = p.olivePressed;
+    MetalDark = p.metalDark;
+    Metal = p.metal;
+    MetalLight = p.metalLight;
+    Shadow = p.shadow;
+    Text = p.text;
+    TextDim = p.textDim;
+    TextTitle = p.textTitle;
+    LampGreen = p.lampGreen;
+    LampGreenDim = p.lampGreenDim;
+    LampAmber = p.lampAmber;
+    LampRed = p.lampRed;
+    RedDim = p.redDim;
+    RedLit = p.redLit;
+    TitleAmber = p.titleAmber;
+    EdgeAmber = p.edge;
+    TrimGold = p.trimGold;
+    TrimTitanium = p.trimTitanium;
+    StripeYellow = p.stripe;
+    metalOpacity = p.metal_;
+}
 
 // Every color and measure of the style. Frames get a light edge and a dark one a pixel below it, which is what
 // gives buttons, drop-downs and sliders their relief without drawing anything extra.
@@ -150,8 +235,6 @@ inline void ApplyStyle(ImGuiStyle& style, float backgroundAlpha)
 
 // --- Drawn parts ---------------------------------------------------------------------------------------------
 
-inline constexpr ImVec4 TitleAmber { 0.800f, 0.690f, 0.400f, 1.0f };
-inline constexpr ImVec4 EdgeAmber { 0.720f, 0.580f, 0.200f, 1.0f };
 
 inline ImVec4 Shade(const ImVec4& color, float factor)
 {
@@ -1045,7 +1128,7 @@ inline void DrawMetal(ImDrawList* draw, const ImVec2& min, const ImVec2& max, fl
     if (!MetalTileReady() || max.x <= min.x || max.y <= min.y)
         return;
 
-    const ImU32 tint = ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, opacity));
+    const ImU32 tint = ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, opacity * metalOpacity));
     const float size = (float) MetalTileSize;
 
     // Tiles are counted from a fixed grid, the wear doesn't slide when a panel moves by a few pixels
@@ -1072,9 +1155,6 @@ inline void DrawMetal(ImDrawList* draw, const ImVec2& min, const ImVec2& max, fl
 // Yellow is for what stands out; the secondary lines (the second line inside a plate, the joints of the chassis)
 // are bare titanium, a neutral grey that reads on the dark steel without competing with the trim.
 
-inline constexpr ImVec4 TrimGold { 0.700f, 0.585f, 0.150f, 1.0f };
-inline constexpr ImVec4 TrimTitanium { 0.560f, 0.575f, 0.590f, 1.0f };
-inline constexpr ImVec4 StripeYellow { 0.800f, 0.670f, 0.110f, 1.0f };
 
 // Outline of a rectangle with its four corners cut off
 inline void ChamferPoints(ImVec2 points[8], const ImVec2& min, const ImVec2& max, float cut)

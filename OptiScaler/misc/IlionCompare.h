@@ -50,6 +50,7 @@ class IlionCompare
         std::string technology;
         std::string provider;
         std::string model;
+        std::string quality;
         bool fgSeen = false;
         int fgMultiplier = 1;
         int requestedSeconds = 0;
@@ -257,6 +258,7 @@ class IlionCompare
             test.technology = text("technology");
             test.provider = text("provider");
             test.model = text("model");
+            test.quality = text("quality");
             test.fgSeen = text("fg_seen") == "1";
             test.fgMultiplier = (int) number("fg_multiplier").value;
             test.requestedSeconds = (int) number("requested_s").value;

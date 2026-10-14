@@ -42,6 +42,9 @@ class HwTelemetry
         VramTotal,  // MB
         CpuUsage,   // %
         CpuTemp,    // C
+        GpuPower,   // W
+        CpuPower,   // W
+        RamUsed,    // MB
         MetricCount,
     };
 
@@ -332,6 +335,7 @@ class HwTelemetry
 
     static constexpr DWORD HwinfoSignature = 0x53695748; // "HWiS"
     static constexpr DWORD HwinfoTypeTemperature = 1;
+    static constexpr DWORD HwinfoTypePower = 5;
     static constexpr DWORD HwinfoTypeUsage = 7;
     static constexpr DWORD HwinfoTypeOther = 8;
 
@@ -491,6 +495,27 @@ class HwTelemetry
                     Offer(candidates[CpuUsage], 100, reading.value, label);
                 }
             }
+            else if (reading.type == HwinfoTypePower)
+            {
+                // The whole board first, then the chip alone
+                if (gpuSensor)
+                {
+                    if (ContainsNoCase(label, "Total Board Power") || _stricmp(label, "GPU Power") == 0)
+                        Offer(candidates[GpuPower], 100 + hintBonus, reading.value, label);
+                    else if (_stricmp(label, "GPU ASIC Power") == 0)
+                        Offer(candidates[GpuPower], 90 + hintBonus, reading.value, label);
+                    else if (ContainsNoCase(label, "GPU PPT"))
+                        Offer(candidates[GpuPower], 70 + hintBonus, reading.value, label);
+                }
+                else if (_stricmp(label, "CPU Package Power") == 0)
+                {
+                    Offer(candidates[CpuPower], 100, reading.value, label);
+                }
+                else if (_stricmp(label, "CPU PPT") == 0)
+                {
+                    Offer(candidates[CpuPower], 90, reading.value, label);
+                }
+            }
 
             // Only values in MB are taken. Dedicated memory as Windows reports it comes first: it exists for every
             // vendor, and "GPU Memory Usage" was seen reporting more than the card has on an RX 7900 XTX.
@@ -503,6 +528,10 @@ class HwTelemetry
                 else if (_stricmp(label, "GPU Memory Usage") == 0)
                     Offer(candidates[VramUsed], 60 + hintBonus, reading.value, label);
             }
+
+            // System memory in use, from HWiNFO's system sensor
+            if (!gpuSensor && _stricmp(reading.unit, "MB") == 0 && _stricmp(label, "Physical Memory Used") == 0)
+                Offer(candidates[RamUsed], 100, reading.value, label);
         }
 
         for (int i = 0; i < MetricCount; i++)
@@ -653,6 +682,20 @@ class HwTelemetry
                 break;
 
             default:
+                // Without a documented id, taken only by unit and name: watts of something called power, and the
+                // RAM in use in MB. A power reading in % (power limit) is never taken.
+                if (_stricmp(entry.srcUnits, "W") == 0 && ContainsNoCase(entry.srcName, "power"))
+                {
+                    if (forGpu)
+                        SetValue(out.values[GpuPower], entry.data, Source::Afterburner, entry.srcName);
+                    else if (entry.gpu == AfterburnerGlobalSource && ContainsNoCase(entry.srcName, "CPU"))
+                        SetValue(out.values[CpuPower], entry.data, Source::Afterburner, entry.srcName);
+                }
+                else if (entry.gpu == AfterburnerGlobalSource && _stricmp(entry.srcUnits, "MB") == 0 &&
+                         ContainsNoCase(entry.srcName, "RAM") && !ContainsNoCase(entry.srcName, "commit"))
+                {
+                    SetValue(out.values[RamUsed], entry.data, Source::Afterburner, entry.srcName);
+                }
                 break;
             }
         }

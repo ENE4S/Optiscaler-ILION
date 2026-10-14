@@ -58,6 +58,8 @@ class IlionBenchmark
         std::string technology;
         std::string provider;
         std::string model;
+        // Quality mode from the upscale ratio (DLAA / native AA, Quality, Balanced, Performance...)
+        std::string quality;
 
         // Upscale dispatches can be seen (FSR through the ffx api on DX12), needed to count frames without them
         bool upscaleObservable = false;
@@ -420,7 +422,7 @@ class IlionBenchmark
                "low_01_fps,mean_ms,median_ms,p95_ms,p99_ms,min_ms,max_ms,stdev_ms,variation_percent,stutter_count,"
                "stutter_per_minute,stutter_total_ms,stutter_longest_ms,frames_without_upscale,gpu_usage_avg,"
                "gpu_usage_max,gpu_temp_avg,gpu_temp_max,gpu_hotspot_max,vram_used_avg_mb,vram_used_max_mb,"
-               "cpu_usage_avg,cpu_usage_max,cpu_temp_avg,cpu_temp_max,technology,provider,model";
+               "cpu_usage_avg,cpu_usage_max,cpu_temp_avg,cpu_temp_max,technology,provider,model,quality";
     }
 
     // Columns are only ever added at the end. A file written by an earlier ILION gets the current header once,
@@ -579,6 +581,7 @@ class IlionBenchmark
         text("technology", r.conditions.technology);
         text("provider", r.conditions.provider);
         text("model", r.conditions.model);
+        text("quality", r.conditions.quality);
         out << "    \"fg_seen_during_test\": " << (r.fgSeen ? "true" : "false") << ",\n";
         number("fg_multiplier", r.fgMultiplier, false);
         out << "  },\n";
@@ -613,7 +616,8 @@ class IlionBenchmark
 
         static constexpr const char* hardwareKeys[HwTelemetry::MetricCount] = {
             "gpu_usage_percent", "gpu_temperature_c", "gpu_hotspot_c", "vram_used_mb",
-            "vram_total_mb",     "cpu_usage_percent", "cpu_temperature_c"
+            "vram_total_mb",     "cpu_usage_percent", "cpu_temperature_c", "gpu_power_w",
+            "cpu_power_w",       "ram_used_mb"
         };
 
         out << "  \"hardware\": {\n";
@@ -734,6 +738,7 @@ class IlionBenchmark
         add(CsvText(r.conditions.technology));
         add(CsvText(r.conditions.provider));
         add(CsvText(r.conditions.model));
+        add(CsvText(r.conditions.quality));
 
         return line;
     }

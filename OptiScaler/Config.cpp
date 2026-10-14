@@ -449,6 +449,10 @@ bool Config::Reload(std::filesystem::path iniPath)
             HwVram.set_from_config(readBool("Menu", "HwVram"));
             HwCpuUsage.set_from_config(readBool("Menu", "HwCpuUsage"));
             HwCpuTemp.set_from_config(readBool("Menu", "HwCpuTemp"));
+            HwGpuPower.set_from_config(readBool("Menu", "HwGpuPower"));
+            HwCpuPower.set_from_config(readBool("Menu", "HwCpuPower"));
+            HwRam.set_from_config(readBool("Menu", "HwRam"));
+            FpsOverlayLow1.set_from_config(readBool("Menu", "FpsOverlayLow1"));
 
             if (auto setting = readInt("Menu", "HwSource"); setting.has_value() && setting >= 0 && setting <= 2)
                 HwSource.set_from_config(setting);
@@ -483,6 +487,9 @@ bool Config::Reload(std::filesystem::path iniPath)
 
             LightTheme.set_from_config(readBool("Menu", "LightTheme"));
             IndustrialTheme.set_from_config(readBool("Menu", "IndustrialTheme"));
+
+            if (auto setting = readInt("Menu", "IlionPalette"); setting.has_value() && setting >= 0 && setting <= 2)
+                IlionPalette.set_from_config(setting);
             OverlaysUseTheme.set_from_config(readBool("Menu", "OverlaysUseTheme"));
             MenuAccentColorR.set_from_config(readFloat("Menu", "AccentColorR"));
             MenuAccentColorG.set_from_config(readFloat("Menu", "AccentColorG"));
@@ -1274,6 +1281,10 @@ bool Config::SaveIni()
         ini.SetValue("Menu", "HwVram", GetBoolValue(Instance()->HwVram.value_for_config()).c_str());
         ini.SetValue("Menu", "HwCpuUsage", GetBoolValue(Instance()->HwCpuUsage.value_for_config()).c_str());
         ini.SetValue("Menu", "HwCpuTemp", GetBoolValue(Instance()->HwCpuTemp.value_for_config()).c_str());
+        ini.SetValue("Menu", "HwGpuPower", GetBoolValue(Instance()->HwGpuPower.value_for_config()).c_str());
+        ini.SetValue("Menu", "HwCpuPower", GetBoolValue(Instance()->HwCpuPower.value_for_config()).c_str());
+        ini.SetValue("Menu", "HwRam", GetBoolValue(Instance()->HwRam.value_for_config()).c_str());
+        ini.SetValue("Menu", "FpsOverlayLow1", GetBoolValue(Instance()->FpsOverlayLow1.value_for_config()).c_str());
         ini.SetValue("Menu", "HwSource", GetIntValue(Instance()->HwSource.value_for_config()).c_str());
         ini.SetValue("Menu", "UseHQFont", GetBoolValue(Instance()->UseHQFont.value_for_config()).c_str());
         ini.SetValue("Menu", "DisableSplash", GetBoolValue(Instance()->DisableSplash.value_for_config()).c_str());
@@ -1302,6 +1313,7 @@ bool Config::SaveIni()
 
         ini.SetValue("Menu", "LightTheme", GetBoolValue(Instance()->LightTheme.value_for_config()).c_str());
         ini.SetValue("Menu", "IndustrialTheme", GetBoolValue(Instance()->IndustrialTheme.value_for_config()).c_str());
+        ini.SetValue("Menu", "IlionPalette", GetIntValue(Instance()->IlionPalette.value_for_config()).c_str());
         ini.SetValue("Menu", "OverlaysUseTheme", GetBoolValue(Instance()->OverlaysUseTheme.value_for_config()).c_str());
         ini.SetValue("Menu", "AccentColorR", GetFloatValue(Instance()->MenuAccentColorR.value_for_config()).c_str());
         ini.SetValue("Menu", "AccentColorG", GetFloatValue(Instance()->MenuAccentColorG.value_for_config()).c_str());
@@ -1641,8 +1653,13 @@ bool Config::SaveMenuPreferences()
     const std::string basicMode = GetBoolValue(Instance()->MenuBasicMode.value_for_config());
 
     // The copy in memory too, so a later Save Settings writes the same
+    const std::string industrial = GetBoolValue(Instance()->IndustrialTheme.value_for_config());
+    const std::string palette = GetIntValue(Instance()->IlionPalette.value_for_config());
+
     ini.SetValue("Menu", "Language", language.c_str());
     ini.SetValue("Menu", "BasicMode", basicMode.c_str());
+    ini.SetValue("Menu", "IndustrialTheme", industrial.c_str());
+    ini.SetValue("Menu", "IlionPalette", palette.c_str());
 
     CSimpleIniA file;
 
@@ -1650,6 +1667,8 @@ bool Config::SaveMenuPreferences()
     file.LoadFile(absoluteFileName.c_str());
     file.SetValue("Menu", "Language", language.c_str());
     file.SetValue("Menu", "BasicMode", basicMode.c_str());
+    file.SetValue("Menu", "IndustrialTheme", industrial.c_str());
+    file.SetValue("Menu", "IlionPalette", palette.c_str());
 
     LOG_INFO("Saving menu language ({}) and basic mode ({}) to: {}", language, basicMode,
              wstring_to_string(absoluteFileName.wstring()));

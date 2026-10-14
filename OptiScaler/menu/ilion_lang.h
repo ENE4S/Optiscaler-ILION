@@ -933,12 +933,33 @@ inline constexpr Translation kSpanish[] = {
 
     // Theme
     { "Theme", "Tema" },
-    { "Industrial", "Industrial" },
     { "Classic", "Clásico" },
-    { "Industrial: the instrument panel look of ILION, with its own colours.\n"
+    { "ILION (original)", "ILION (original)" },
+    { "Fallout", "Fallout" },
+    { "Light", "Claro" },
+    { "ILION (original), Fallout and Light: the instrument panel look of ILION in three palettes.\n"
       "Classic: the original look, with the colour settings below.",
-      "Industrial: el aspecto de panel de instrumentación de ILION, con sus propios colores.\n"
+      "ILION (original), Fallout y Claro: el aspecto de panel de instrumentación de ILION en tres paletas.\n"
       "Clásico: el aspecto original, con los ajustes de color de abajo." },
+
+    // Overlay tab and extended readings
+    { "Overlay", "Overlay" },
+    { "Real-time metrics over the game: FPS, frame times and hardware sensors.",
+      "Métricas en tiempo real sobre el juego: FPS, tiempos de fotograma y sensores de hardware." },
+    { "Menu scale, theme and keybinds.", "Escala del menú, tema y atajos." },
+    { "GPU power", "Consumo de GPU" },
+    { "CPU power", "Consumo de CPU" },
+    { "RAM used", "RAM usada" },
+    { "Power", "Consumo" },
+    { "1% low", "1% bajo" },
+    { "1% low (last 300 frames)", "1% bajo (últimos 300 fotogramas)" },
+    { "FPS of the slowest 1% of the frames the overlay keeps. Shown in the ILION layouts.",
+      "FPS del 1% más lento de los fotogramas que guarda el overlay. Se muestra en los diseños de ILION." },
+    { "Native AA", "AA nativo" },
+    { "Ultra Quality", "Ultra calidad" },
+    { "Quality", "Calidad" },
+    { "Balanced", "Equilibrado" },
+    { "Ultra Performance", "Ultra rendimiento" },
 
     // Image captures
     { "Visual analysis", "Análisis visual" },

@@ -362,6 +362,10 @@ class Config
     CustomOptional<bool> HwVram { false };
     CustomOptional<bool> HwCpuUsage { false };
     CustomOptional<bool> HwCpuTemp { false };
+    CustomOptional<bool> HwGpuPower { false };
+    CustomOptional<bool> HwCpuPower { false };
+    CustomOptional<bool> HwRam { false };
+    CustomOptional<bool> FpsOverlayLow1 { false };
     CustomOptional<int> HwSource { 0 }; // 0 = auto, 1 = HWiNFO, 2 = MSI Afterburner
     /// 0 Top Left, 1 Top Right, 2 Bottom Left, 3 Bottom Right
     CustomOptional<FpsOverlayPos> FpsOverlayPosition { FpsOverlayPos_TopLeft };
@@ -381,6 +385,7 @@ class Config
     CustomOptional<int> FGShortcutKey { VK_END };
     CustomOptional<bool> LightTheme { false };
     CustomOptional<bool> IndustrialTheme { true };
+    CustomOptional<int> IlionPalette { 0 }; // ILION theme colours: 0 = original, 1 = Fallout, 2 = light
     CustomOptional<bool> OverlaysUseTheme { false };
     CustomOptional<float> MenuAccentColorR { 0.00f };
     CustomOptional<float> MenuAccentColorG { 0.40f };

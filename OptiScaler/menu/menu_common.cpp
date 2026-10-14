@@ -1610,6 +1610,7 @@ void MenuCommon::ApplyThemeStyle()
 
     // The industrial theme has its own fixed palette, the color settings below belong to the classic one
     IlionTheme::industrial = conf->IndustrialTheme.value_or_default();
+    IlionTheme::SetPalette(conf->IlionPalette.value_or_default());
 
     if (IlionTheme::industrial)
     {
@@ -5596,6 +5597,10 @@ static void DrawFinalReportWindow(float scale, ImGuiIO& io)
 }
 
 // Feeds the running benchmark with the frame that was just presented
+// 1% low of the frame times the overlay keeps, recalculated twice a second while it's shown
+static double gOverlayLow1Fps = 0.0;
+static uint64_t gOverlayLow1Tick = 0;
+
 static void UpdateBenchmark(State& state, double frameTime, double now)
 {
     const bool running = IlionBenchmark::Running();
@@ -5650,7 +5655,9 @@ static void UpdateHardwareTelemetry(decltype(Config::Instance()) config)
     const bool wanted = config->ShowFps.value_or_default() &&
                         (config->HwGpuUsage.value_or_default() || config->HwGpuTemp.value_or_default() ||
                          config->HwGpuHotspot.value_or_default() || config->HwVram.value_or_default() ||
-                         config->HwCpuUsage.value_or_default() || config->HwCpuTemp.value_or_default());
+                         config->HwCpuUsage.value_or_default() || config->HwCpuTemp.value_or_default() ||
+                         config->HwGpuPower.value_or_default() || config->HwCpuPower.value_or_default() ||
+                         config->HwRam.value_or_default());
 
     HwTelemetry::SetPreferred((HwTelemetry::Preferred) std::clamp(config->HwSource.value_or_default(), 0, 2));
     HwTelemetry::SetEnabled(wanted);
@@ -5811,9 +5818,12 @@ static void DrawHardwareTelemetry(decltype(Config::Instance()) config, float sca
     const bool vram = config->HwVram.value_or_default();
     const bool cpuUsage = config->HwCpuUsage.value_or_default();
     const bool cpuTemp = config->HwCpuTemp.value_or_default();
+    const bool gpuPower = config->HwGpuPower.value_or_default();
+    const bool cpuPower = config->HwCpuPower.value_or_default();
+    const bool ram = config->HwRam.value_or_default();
 
-    const bool anyGpu = gpuUsage || gpuTemp || gpuHotspot || vram;
-    const bool anyCpu = cpuUsage || cpuTemp;
+    const bool anyGpu = gpuUsage || gpuTemp || gpuHotspot || vram || gpuPower;
+    const bool anyCpu = cpuUsage || cpuTemp || cpuPower || ram;
 
     if (!anyGpu && !anyCpu)
         return;
@@ -5822,6 +5832,13 @@ static void DrawHardwareTelemetry(decltype(Config::Instance()) config, float sca
 
     // Readings that stopped arriving aren't shown as current
     const bool stale = snapshot.polledTick == 0 || GetTickCount64() - snapshot.polledTick > 5000;
+
+    // RAM in GB, from the MB the sources give
+    const auto ramText = [&]() -> std::string
+    {
+        const auto& value = snapshot.values[HwTelemetry::RamUsed];
+        return stale || !value.valid ? std::string(HwNotAvailable()) : StrFmt("%.1f GB", value.value / 1024.0f);
+    };
 
     // Component names in #39FF14, temperatures in #CC0000 and the hotspot in #FF6A00, number and unit
     const ImVec4 componentColor = toneMapColor(ImVec4(57.0f / 255.0f, 1.0f, 20.0f / 255.0f, 1.0f));
@@ -5856,6 +5873,9 @@ static void DrawHardwareTelemetry(decltype(Config::Instance()) config, float sca
             if (gpuHotspot)
                 cell("Hotspot", HwTelemetry::GpuHotspot, "%.0f \xC2\xB0""C", &hotspotColor);
 
+            if (gpuPower)
+                cell(Tr("Power"), HwTelemetry::GpuPower, "%.0f W");
+
             if (vram)
             {
                 const auto& used = snapshot.values[HwTelemetry::VramUsed];
@@ -5879,6 +5899,12 @@ static void DrawHardwareTelemetry(decltype(Config::Instance()) config, float sca
 
             if (cpuTemp)
                 cell(Tr("Temp"), HwTelemetry::CpuTemp, "%.0f \xC2\xB0""C", &temperatureColor);
+
+            if (cpuPower)
+                cell(Tr("Power"), HwTelemetry::CpuPower, "%.0f W");
+
+            if (ram)
+                OverlayCell("RAM", ramText());
         }
 
         return;
@@ -5912,6 +5938,9 @@ static void DrawHardwareTelemetry(decltype(Config::Instance()) config, float sca
             if (gpuHotspot)
                 aligned("Hotspot", HwTelemetry::GpuHotspot, "%.0f \xC2\xB0""C", &hotspotColor);
 
+            if (gpuPower)
+                aligned(Tr("Power"), HwTelemetry::GpuPower, "%.0f W");
+
             if (vram)
             {
                 const auto& used = snapshot.values[HwTelemetry::VramUsed];
@@ -5938,6 +5967,12 @@ static void DrawHardwareTelemetry(decltype(Config::Instance()) config, float sca
 
             if (cpuTemp)
                 aligned(Tr("Temp"), HwTelemetry::CpuTemp, "%.0f \xC2\xB0""C", &temperatureColor);
+
+            if (cpuPower)
+                aligned(Tr("Power"), HwTelemetry::CpuPower, "%.0f W");
+
+            if (ram)
+                OverlayRow("RAM", ramText(), alignedWidth);
         }
 
         return;
@@ -5981,6 +6016,9 @@ static void DrawHardwareTelemetry(decltype(Config::Instance()) config, float sca
         if (gpuHotspot)
             row("Hotspot", HwTelemetry::GpuHotspot, "%3.0f \xC2\xB0""C", &hotspotColor);
 
+        if (gpuPower)
+            row(Tr("Power"), HwTelemetry::GpuPower, "%3.0f W");
+
         if (vram)
         {
             const auto& used = snapshot.values[HwTelemetry::VramUsed];
@@ -6010,6 +6048,12 @@ static void DrawHardwareTelemetry(decltype(Config::Instance()) config, float sca
 
         if (cpuTemp)
             row(Tr("Temp"), HwTelemetry::CpuTemp, "%3.0f \xC2\xB0""C", &temperatureColor);
+
+        if (cpuPower)
+            row(Tr("Power"), HwTelemetry::CpuPower, "%3.0f W");
+
+        if (ram)
+            ImGui::Text("%-8s %s", "RAM", ramText().c_str());
 
         ImGui::EndGroup();
     }
@@ -6601,6 +6645,35 @@ void MenuCommon::UpdateFrameTimeAverages(RenderMenuContext& ctx)
 
         averageFrameTime = gFrameTimes.Average();
         averageUpscalerFT = gUpscalerTimes.Average();
+
+        if (config->FpsOverlayLow1.value_or_default() && GetTickCount64() - gOverlayLow1Tick > 500)
+        {
+            gOverlayLow1Tick = GetTickCount64();
+
+            std::vector<double> times;
+            times.reserve(state.frameTimes.size());
+
+            for (const double time : state.frameTimes)
+            {
+                if (time > 0.0)
+                    times.push_back(time);
+            }
+
+            gOverlayLow1Fps = 0.0;
+
+            // Not before there are enough frames for 1% to mean something
+            if (times.size() >= 100)
+            {
+                const size_t worst = (std::max)((size_t) 1, times.size() / 100);
+                std::partial_sort(times.begin(), times.begin() + worst, times.end(), std::greater<double>());
+
+                double sum = 0.0;
+                for (size_t i = 0; i < worst; i++)
+                    sum += times[i];
+
+                gOverlayLow1Fps = 1000.0 / (sum / (double) worst);
+            }
+        }
     }
 }
 
@@ -6944,6 +7017,9 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                     OverlayRow(Tr("FPS, average"), StrFmt("%.1f", 1000.0f / averageFrameTime), rowWidth);
                 }
 
+                if (config->FpsOverlayLow1.value_or_default() && gOverlayLow1Fps > 0.0)
+                    OverlayRow(Tr("1% low"), StrFmt("%.1f", gOverlayLow1Fps), rowWidth);
+
                 if (overlayType >= FpsOverlay_Detailed)
                 {
                     OverlayRow(Tr("Frame time"), StrFmt("%.2f ms", state.frameTimes.back()), rowWidth);
@@ -7021,6 +7097,9 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                     OverlayCell(Tr("Frame time"), StrFmt("%.2f ms", frameTime));
                 else
                     OverlayCell(Tr("FPS, average"), StrFmt("%.1f", 1000.0f / averageFrameTime));
+
+                if (config->FpsOverlayLow1.value_or_default() && gOverlayLow1Fps > 0.0)
+                    OverlayCell(Tr("1% low"), StrFmt("%.1f", gOverlayLow1Fps));
 
                 if (overlayType >= FpsOverlay_Detailed)
                 {
@@ -11770,29 +11849,40 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         ScopedIndent indent {};
         ImGui::Spacing();
 
-        // Industrial: the fixed palette of ILION. Classic: everything below works as it always did.
+        // The three ILION themes share every control and the layout, only their palette changes.
+        // Classic: everything below works as it always did. The choice is saved at once.
         const bool industrialTheme = config->IndustrialTheme.value_or_default();
+        const int palette = std::clamp(config->IlionPalette.value_or_default(), 0, 2);
+        static const char* paletteNames[] = { "ILION (original)", "Fallout", "Light" };
 
         ImGui::SetNextItemWidth(180.0f * ctx.menuResScale);
 
-        if (IlionTheme::BeginCombo(TrL("Theme"), Tr(industrialTheme ? "Industrial" : "Classic")))
+        if (IlionTheme::BeginCombo(TrL("Theme"), Tr(industrialTheme ? paletteNames[palette] : "Classic")))
         {
-            if (ImGui::Selectable(TrL("Industrial"), industrialTheme) && !industrialTheme)
+            for (int n = 0; n < (int) std::size(paletteNames); n++)
             {
-                config->IndustrialTheme = true;
-                ApplyThemeStyle();
+                const bool chosen = industrialTheme && palette == n;
+
+                if (ImGui::Selectable(Tr(paletteNames[n]), chosen) && !chosen)
+                {
+                    config->IndustrialTheme = true;
+                    config->IlionPalette = n;
+                    ApplyThemeStyle();
+                    config->SaveMenuPreferences();
+                }
             }
 
             if (ImGui::Selectable(TrL("Classic"), !industrialTheme) && industrialTheme)
             {
                 config->IndustrialTheme = false;
                 ApplyThemeStyle();
+                config->SaveMenuPreferences();
             }
 
             ImGui::EndCombo();
         }
 
-        ShowTooltip("Industrial: the instrument panel look of ILION, with its own colours.\n"
+        ShowTooltip("ILION (original), Fallout and Light: the instrument panel look of ILION in three palettes.\n"
                     "Classic: the original look, with the colour settings below.");
 
         // The colours below are the ones of the classic theme
@@ -12321,6 +12411,9 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
         if (IlionTheme::Checkbox("Use Theme Colors", &useTheme))
             config->OverlaysUseTheme = useTheme;
 
+        ConfigCheckbox("1% low (last 300 frames)", config->FpsOverlayLow1,
+                       "FPS of the slowest 1% of the frames the overlay keeps. Shown in the ILION layouts.");
+
         // Hardware readings, every one can be shown on its own. A section that folds, like the others of the menu.
         ImGui::Spacing();
 
@@ -12343,11 +12436,14 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
             ConfigCheckbox("GPU temperature", config->HwGpuTemp, nullptr);
             ConfigCheckbox("GPU hotspot", config->HwGpuHotspot, nullptr);
             ConfigCheckbox("VRAM used / total", config->HwVram, nullptr);
+            ConfigCheckbox("GPU power", config->HwGpuPower, nullptr);
 
             ImGui::TableNextColumn();
             ImGui::TextDisabled("CPU");
             ConfigCheckbox("CPU usage", config->HwCpuUsage, nullptr);
             ConfigCheckbox("CPU temperature", config->HwCpuTemp, nullptr);
+            ConfigCheckbox("CPU power", config->HwCpuPower, nullptr);
+            ConfigCheckbox("RAM used", config->HwRam, nullptr);
 
             ImGui::EndTable();
         }
@@ -12390,6 +12486,9 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
         hwSourceRow("VRAM total", HwTelemetry::VramTotal);
         hwSourceRow("CPU usage", HwTelemetry::CpuUsage);
         hwSourceRow("CPU temperature", HwTelemetry::CpuTemp);
+        hwSourceRow("GPU power", HwTelemetry::GpuPower);
+        hwSourceRow("CPU power", HwTelemetry::CpuPower);
+        hwSourceRow("RAM used", HwTelemetry::RamUsed);
         }
     }
 }
@@ -13234,6 +13333,8 @@ const MenuCommon::MenuBox* MenuCommon::GetMenuBoxes(size_t& count)
 #endif
         { "vsync", "Latency & FPS", "V-Sync", [](RenderMenuContext& c) { RenderCard(c, RenderVsyncSettings); } },
 
+        { "fps_overlay", "Overlay", "FPS Overlay", [](RenderMenuContext& c) { RenderCard(c, RenderFpsOverlaySettings); } },
+
         { "benchmark", "Benchmark", "Benchmark", [](RenderMenuContext& c) { RenderCard(c, RenderBenchmark); } },
 
         { "mipmap", "Textures", "Mipmap Bias", nullptr, RenderApiAndTextureSettings },
@@ -13250,7 +13351,6 @@ const MenuCommon::MenuBox* MenuCommon::GetMenuBoxes(size_t& count)
 
         { "menu_scale", "Menu", "Menu Scale", [](RenderMenuContext& c) { RenderCard(c, RenderMenuScaleSettings); } },
         { "theme", "Menu", "Theme and Color", [](RenderMenuContext& c) { RenderCard(c, RenderThemeSettings); } },
-        { "fps_overlay", "Menu", "FPS Overlay", [](RenderMenuContext& c) { RenderCard(c, RenderFpsOverlaySettings); } },
         { "keybinds", "Menu", "Keybinds", [](RenderMenuContext& c) { RenderCard(c, RenderKeybindSettings); } },
         { "custom_tab", "Menu", "Custom Tab", [](RenderMenuContext& c) { RenderCard(c, RenderCustomTabSettings); }, nullptr, false },
 
@@ -13449,10 +13549,11 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
         { "MAIN", "Upscaling", "Backend, sharpness and output scaling.", RenderUpscalerStateMessage },
         { "MAIN", "Frame Gen", "Frame generation source, output and pacing." },
         { "MAIN", "Latency & FPS", "Frame limiter, low latency and V-Sync." },
+        { "MAIN", "Overlay", "Real-time metrics over the game: FPS, frame times and hardware sensors." },
         { "MAIN", "Benchmark", "Manual performance tests of the upscaler in use." },
         { "SYSTEM", "Textures", "Mipmap bias and anisotropic filtering." },
         { "SYSTEM", "Compatibility", "Init flags, hooks, plugins and game specific workarounds." },
-        { "ADVANCED", "Menu", "Menu scale, theme, FPS overlay and keybinds." },
+        { "ADVANCED", "Menu", "Menu scale, theme and keybinds." },
         { "ADVANCED", "Quirks", "Game specific quirks applied by OptiScaler.",
 +          [](RenderMenuContext& c) { RenderCard(c, RenderQuirksSettings); }, false,
            // Only a list of texts, the same list is in Help / Status > System. Kept out of the sidebar.
@@ -14182,7 +14283,22 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
                    : std::string(Tr("None"));
 
     // Technology, what it reports about itself and its model, recorded with every test
-    std::string technology = Tr("None"), provider, model;
+    std::string technology = Tr("None"), provider, model, quality;
+
+    // Quality mode from the upscale ratio, as the presets define it
+    if (upscalerOn && currentFeature->RenderWidth() > 0)
+    {
+        const double ratio = (double) currentFeature->TargetWidth() / (double) currentFeature->RenderWidth();
+        const auto isRatio = [ratio](double value, double margin) { return std::abs(ratio - value) <= margin; };
+
+        quality = isRatio(1.0, 0.02)     ? "Native AA"
+                  : isRatio(1.3, 0.03)   ? "Ultra Quality"
+                  : isRatio(1.5, 0.03)   ? "Quality"
+                  : isRatio(1.724, 0.04) ? "Balanced"
+                  : isRatio(2.0, 0.04)   ? "Performance"
+                  : isRatio(3.0, 0.06)   ? "Ultra Performance"
+                                      : StrFmt("Custom %.2fx", ratio);
+    }
 
     if (upscalerOn)
     {
@@ -14211,8 +14327,8 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
     }
 
     ImGui::Text("%s: %s", Tr("Upscaler"), upscalerText.c_str());
-    ImGui::Text("%s: %s%s%s%s%s", Tr("Technology"), technology.c_str(), provider.empty() ? "" : " | ", provider.c_str(),
-                model.empty() ? "" : " | ", model.c_str());
+    ImGui::Text("%s: %s%s%s%s%s%s%s", Tr("Technology"), technology.c_str(), provider.empty() ? "" : " | ", provider.c_str(),
+                model.empty() ? "" : " | ", model.c_str(), quality.empty() ? "" : " | ", Tr(quality.c_str()));
 
     if (fsrObservable)
         ImGui::Text("%s: %s", Tr("FSR version"), activeFsrName.empty() ? "-" : Tr(activeFsrName.c_str()));
@@ -14336,6 +14452,7 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
         conditions.technology = technology;
         conditions.provider = provider;
         conditions.model = model;
+        conditions.quality = quality;
 
         if (upscalerOn)
         {
@@ -14359,6 +14476,25 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
             version_t dllVersion;
 
             if (Util::GetFileVersion(activeDllPath, &dllVersion))
+            {
+                conditions.dllFileVersion =
+                    StrFmt("%u.%u.%u.%u", dllVersion.major, dllVersion.minor, dllVersion.patch, dllVersion.reserved);
+            }
+        }
+
+        // DLSS: the feature library in use, with its version and hash like the FSR dlls
+        else if (upscalerOn && currentBackend == Upscaler::DLSS && state.NVNGX_DLSS_Path.has_value())
+        {
+            const auto& dlssPath = *state.NVNGX_DLSS_Path;
+            conditions.dllPath = wstring_to_string(dlssPath);
+            conditions.dllSha256 = FSR4Versions::HashForPath(dlssPath);
+
+            if (conditions.dllSha256.empty())
+                FSR4Versions::RequestHash(dlssPath);
+
+            version_t dllVersion;
+
+            if (Util::GetFileVersion(dlssPath, &dllVersion))
             {
                 conditions.dllFileVersion =
                     StrFmt("%u.%u.%u.%u", dllVersion.major, dllVersion.minor, dllVersion.patch, dllVersion.reserved);

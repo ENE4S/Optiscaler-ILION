@@ -10,4 +10,6 @@ namespace BuildInfo
 const char* ProductName() { return VER_PRODUCT_NAME; }
 
 const char* ProductVersion() { return VER_PRODUCT_VERSION_STR; }
+
+const char* IlionVersion() { return ILION_VERSION_STR; }
 } // namespace BuildInfo

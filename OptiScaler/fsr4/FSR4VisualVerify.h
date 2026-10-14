@@ -345,7 +345,8 @@ class FSR4VisualVerify
         if (lower.find("official") != std::string::npos)
             return Marker::Official;
 
-        if (lower.find("community") != std::string::npos)
+        // "FSR 4.1.1B" is how ILION's list names the community build
+        if (lower.find("community") != std::string::npos || lower.find("4.1.1b") != std::string::npos)
             return Marker::Community;
 
         if (lower.find("lite") != std::string::npos)

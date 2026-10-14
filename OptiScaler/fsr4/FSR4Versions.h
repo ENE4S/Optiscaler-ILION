@@ -16,12 +16,9 @@
 
 #pragma comment(lib, "bcrypt.lib")
 
-// Finds the FSR upscaler dlls the user can switch between.
-//
-// Every subfolder of "<game folder>/ILION/FSR_Versions" that has its own amd_fidelityfx_upscaler_dx12.dll is a
-// version, the folder name is its name. "<OptiDllPath>/FSR4" is still read for installs made before this folder
-// existed. Dlls are checked from the file on disk, nothing gets loaded or executed here. Loading and switching
-// stays in FfxApiProxy.
+// Checks and hashes FFX upscaler dlls from the file on disk, nothing gets loaded or executed here. Which dlls there
+// are and what they are is IlionUpscalers' job (misc/IlionUpscalers.h); loading and switching stays in FfxApiProxy.
+// Root() and LegacyRoot() are the folders of older installs, still read by IlionUpscalers.
 class FSR4Versions
 {
   public:
@@ -53,66 +50,8 @@ class FSR4Versions
         return std::filesystem::path(Config::Instance()->MainDllPath.value_or(L"")) / L"FSR4";
     }
 
-    // Reads the folders again, safe to call while a dll is in use
-    static std::vector<Entry> Scan()
-    {
-        std::vector<Entry> result;
-        std::error_code ec;
 
-        const auto root = Root();
-        std::filesystem::create_directories(root, ec);
 
-        AddFrom(root, false, result);
-        AddFrom(LegacyRoot(), true, result);
-
-        std::sort(result.begin(), result.end(), [](const Entry& a, const Entry& b) { return a.name < b.name; });
-
-        for (const auto& entry : result)
-        {
-            LOG_INFO("[FSR-VERSIONS] {} | {} | version: {} | {}", wstring_to_string(entry.name),
-                     wstring_to_string(entry.dllPath), entry.version.empty() ? "unknown" : entry.version,
-                     entry.valid ? "compatible" : entry.problem);
-        }
-
-        StartHashing(result);
-
-        return result;
-    }
-
-    // Path of the dll of a version, empty when there's no such version
-    static std::wstring DllPathFor(const std::wstring& name)
-    {
-        if (name.empty())
-            return L"";
-
-        std::error_code ec;
-        const auto folder = std::filesystem::path(name).filename();
-
-        for (const auto& root : { Root(), LegacyRoot() })
-        {
-            auto dllPath = root / folder / DllName;
-
-            if (std::filesystem::exists(dllPath, ec))
-                return dllPath.wstring();
-        }
-
-        return L"";
-    }
-
-    // Name of the version a dll path belongs to, empty when the dll isn't inside a versions folder
-    static std::wstring NameFromPath(const std::wstring& dllPath)
-    {
-        if (dllPath.empty())
-            return L"";
-
-        const auto folder = std::filesystem::path(dllPath).parent_path();
-        const auto parent = folder.parent_path();
-
-        if (IsSamePath(parent, Root()) || IsSamePath(parent, LegacyRoot()))
-            return folder.filename().wstring();
-
-        return L"";
-    }
 
     // Checks the file on disk: 64 bit dll that exports the five ffx api functions
     static bool Validate(const std::wstring& dllPath, std::string* problem = nullptr)
@@ -230,20 +169,12 @@ class FSR4Versions
         for (const bool exportFound : found)
         {
             if (!exportFound)
-                return fail("not an FSR upscaler dll (ffx exports missing)");
+                return fail("not an FFX upscaler dll (ffx exports missing)");
         }
 
         return true;
     }
 
-    // SHA-256 of the dll as hex, empty while it's still being calculated
-    static std::string HashFor(const Entry& entry)
-    {
-        std::scoped_lock lock(_hashMutex);
-
-        const auto it = _hashes.find(entry.hashKey);
-        return it != _hashes.end() ? it->second : std::string();
-    }
 
     // Starts hashing a dll that isn't part of the scanned folders, e.g. the default one
     static void RequestHash(const std::wstring& dllPath)
@@ -339,65 +270,6 @@ class FSR4Versions
         return key + L"|" + std::to_wstring(size) + L"|" + std::to_wstring(time);
     }
 
-    static void AddFrom(const std::filesystem::path& root, bool legacy, std::vector<Entry>& result)
-    {
-        std::error_code ec;
-
-        if (!std::filesystem::is_directory(root, ec))
-            return;
-
-        for (const auto& folder : std::filesystem::directory_iterator(root, ec))
-        {
-            if (!folder.is_directory(ec))
-                continue;
-
-            Entry entry;
-            entry.name = folder.path().filename().wstring();
-            entry.legacyFolder = legacy;
-
-            // The new folder wins when both have a version with the same name
-            const bool known = std::any_of(result.begin(), result.end(), [&](const Entry& other)
-                                           { return _wcsicmp(other.name.c_str(), entry.name.c_str()) == 0; });
-
-            if (known)
-                continue;
-
-            const auto dllPath = folder.path() / DllName;
-
-            if (std::filesystem::exists(dllPath, ec))
-            {
-                entry.dllPath = dllPath.wstring();
-                entry.valid = Validate(entry.dllPath, &entry.problem);
-                entry.hashKey = HashKey(entry.dllPath);
-
-                version_t version;
-
-                if (Util::GetFileVersion(entry.dllPath, &version))
-                {
-                    entry.version =
-                        std::format("{}.{}.{}.{}", version.major, version.minor, version.patch, version.reserved);
-                }
-            }
-            else
-            {
-                // Only listed when the folder has some other dll, so the user sees why it can't be used
-                bool hasOtherDll = false;
-
-                for (const auto& file : std::filesystem::directory_iterator(folder.path(), ec))
-                {
-                    if (_wcsicmp(file.path().extension().c_str(), L".dll") == 0)
-                        hasOtherDll = true;
-                }
-
-                if (!hasOtherDll)
-                    continue;
-
-                entry.problem = "the dll has to be named amd_fidelityfx_upscaler_dx12.dll";
-            }
-
-            result.push_back(std::move(entry));
-        }
-    }
 
     static std::string Sha256(const std::wstring& dllPath)
     {

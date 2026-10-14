@@ -6,6 +6,7 @@
 
 #include "nvapi/fakenvapi.h"
 #include <misc/IdentifyGpu.h>
+#include <misc/IlionUpscalers.h>
 
 #include <SimpleIni.h>
 
@@ -798,6 +799,22 @@ bool Config::Reload(std::filesystem::path iniPath)
             NvngxPath.set_from_config(libraryPath(readWString("Libraries", "NvngxPath")));
             NVNGX_DLSS_Library.set_from_config(libraryPath(readWString("Libraries", "NvngxDlssPath")));
             DLSSFeaturePath.set_from_config(libraryPath(readWString("Libraries", "NvngxFeaturePath")));
+
+            // DLSS 4 through d4r asked for without a folder: the one ILION finds (ILION\Escaladores\DLSS4\<name>,
+            // or the d4r folder of an older install), so nobody has to write paths into the ini
+            if (DLSSAllowExternalBackend.value_or_default() && !NvngxPath.has_value())
+            {
+                if (const auto d4r = IlionUpscalers::DefaultD4rFolder(); !d4r.empty())
+                {
+                    NvngxPath.set_volatile_value(d4r);
+
+                    if (!NVNGX_DLSS_Library.has_value())
+                        NVNGX_DLSS_Library.set_volatile_value(d4r);
+
+                    if (!DLSSFeaturePath.has_value())
+                        DLSSFeaturePath.set_volatile_value(d4r);
+                }
+            }
             NvapiDllPath.set_from_config(readWString("Libraries", "NvapiPath"));
 
             FfxDx12Path.set_from_config(readWString("Libraries", "FfxDx12Path"));
@@ -1672,6 +1689,35 @@ bool Config::SaveMenuPreferences()
 
     LOG_INFO("Saving menu language ({}) and basic mode ({}) to: {}", language, basicMode,
              wstring_to_string(absoluteFileName.wstring()));
+
+    return file.SaveFile(absoluteFileName.wstring().c_str()) >= 0;
+}
+
+bool Config::SaveUpscalerChoice()
+{
+    const auto config = Instance();
+    const std::string upscaler = config->Dx12Upscaler.value_for_config().transform(UpscalerToCode).value_or("auto");
+    const std::string external = GetBoolValue(config->DLSSAllowExternalBackend.value_for_config());
+    const std::string variant = wstring_to_string(config->Fsr4SrVariant.value_for_config_or(L"auto"));
+    const std::string nvngx = wstring_to_string(config->NvngxPath.value_for_config_or(L"auto"));
+    const std::string dlssLibrary = wstring_to_string(config->NVNGX_DLSS_Library.value_for_config_or(L"auto"));
+    const std::string feature = wstring_to_string(config->DLSSFeaturePath.value_for_config_or(L"auto"));
+
+    CSimpleIniA file;
+    file.LoadFile(absoluteFileName.c_str());
+
+    for (auto* target : { &ini, &file })
+    {
+        target->SetValue("Upscalers", "Dx12Upscaler", upscaler.c_str());
+        target->SetValue("DLSS", "AllowExternalBackend", external.c_str());
+        target->SetValue("FSR", "Fsr4SrVariant", variant.c_str());
+        target->SetValue("Libraries", "NvngxPath", nvngx.c_str());
+        target->SetValue("Libraries", "NvngxDlssPath", dlssLibrary.c_str());
+        target->SetValue("Libraries", "NvngxFeaturePath", feature.c_str());
+    }
+
+    LOG_INFO("Saving upscaler choice: Dx12Upscaler={} AllowExternalBackend={} Fsr4SrVariant={} NvngxPath={}", upscaler,
+             external, variant, nvngx);
 
     return file.SaveFile(absoluteFileName.wstring().c_str()) >= 0;
 }

@@ -6,11 +6,13 @@
 #include <cstdint>
 #include <cstring>
 
-// FSR 4 Comparison Mode
+// Upscaler comparison mode
 //
-// Collects frame time statistics per upscaler dll (Official / Community / Lite) while the user switches
-// between them. Everything here runs on the thread that renders the menu, once per presented frame, with
-// fixed storage. It only reads values that already exist, nothing about the upscaler is changed.
+// Collects frame time statistics per upscaler dll while the user switches between them: a box for every dll that
+// executes the upscaling (FSR 4 builds, HelixSR, any FFX upscaler), named as ILION's list knows it. Everything here
+// runs on the thread that renders the menu, once per presented frame, with fixed storage. It only reads values that
+// already exist, nothing about the upscaler is changed. Upscalers that aren't FFX dlls (DLSS through d4r) have no
+// dispatch counter to follow and are compared through saved Benchmark tests instead.
 //
 // A frame is only counted when an upscale dispatch was executed since the previous frame and the dll that
 // executed it is known, so what is selected in the menu never decides where a sample goes.
@@ -27,7 +29,8 @@ class FSR4Comparison
 
     struct Box
     {
-        const char* label = "";
+        char label[64] = "";
+        HMODULE module = nullptr;
         Status status = Status::Waiting;
 
         // Frames that were counted and the sum of their frame times
@@ -53,7 +56,10 @@ class FSR4Comparison
         double MaxFps() const { return HasResult() && minMs > 0.0 ? 1000.0 / minMs : 0.0; }
     };
 
-    static constexpr int BoxCount = 3;
+    // Most dlls measured in one session; the boxes are made as dlls show up
+    static constexpr int MaxBoxes = 6;
+
+    static int BoxCount() { return _boxCount; }
     static constexpr double StabilizeMs = 2000.0;
     static constexpr double StallMs = 1000.0;
 
@@ -62,7 +68,7 @@ class FSR4Comparison
     // Index of the box of the dll that's executing the upscaling, -1 when it isn't one of the three
     static int CurrentBox() { return _currentBox; }
 
-    // A dll is executing the upscaling but it is not Official, Community or Lite
+    // A dll is executing the upscaling but there was no box left for it
     static bool OtherDllActive() { return _currentModule != nullptr && _currentBox < 0; }
 
     static const Box& GetBox(int index) { return _boxes[index]; }
@@ -76,13 +82,11 @@ class FSR4Comparison
 
         if (enabled)
         {
-            // New session
-            for (int i = 0; i < BoxCount; i++)
-            {
-                const char* label = _boxes[i].label;
+            // New session, boxes are made again as dlls execute
+            for (int i = 0; i < MaxBoxes; i++)
                 _boxes[i] = {};
-                _boxes[i].label = label;
-            }
+
+            _boxCount = 0;
 
             _currentModule = nullptr;
             _currentBox = -1;
@@ -237,7 +241,8 @@ class FSR4Comparison
 
   private:
     inline static bool _enabled = false;
-    inline static Box _boxes[BoxCount] = { { "OFFICIAL" }, { "COMMUNITY" }, { "LITE" } };
+    inline static Box _boxes[MaxBoxes] = {};
+    inline static int _boxCount = 0;
 
     inline static HMODULE _currentModule = nullptr;
     inline static int _currentBox = -1;
@@ -283,21 +288,27 @@ class FSR4Comparison
         return false;
     }
 
-    // Same names as the visual verification markers, from the folder of the dll
+    // The box of the dll that executes, made the first time it does. Named by the caller (ILION's list), never
+    // decided from words in a folder name.
     static int Classify(HMODULE module, const char* name)
     {
-        if (module == nullptr || name == nullptr)
+        if (module == nullptr)
             return -1;
 
-        if (ContainsNoCase(name, "official"))
-            return 0;
+        for (int i = 0; i < _boxCount; i++)
+        {
+            if (_boxes[i].module == module)
+                return i;
+        }
 
-        if (ContainsNoCase(name, "community"))
-            return 1;
+        if (_boxCount >= MaxBoxes)
+            return -1;
 
-        if (ContainsNoCase(name, "lite"))
-            return 2;
+        auto& box = _boxes[_boxCount];
+        box = {};
+        box.module = module;
+        snprintf(box.label, sizeof(box.label), "%s", name != nullptr && *name != 0 ? name : "?");
 
-        return -1;
+        return _boxCount++;
     }
 };

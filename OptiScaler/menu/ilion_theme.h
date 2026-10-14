@@ -14,6 +14,52 @@ namespace IlionTheme
 // Set by MenuCommon::ApplyThemeStyle from the config. Off is the classic theme with its own color settings.
 inline bool industrial = true;
 
+// How the parts of the ILION themes are drawn. Same controls, same layout; only the drawing changes.
+enum class Skin
+{
+    Industrial, // ILION: 70s Soviet instrument panel, aged metal, keys with relief, pilot lamps
+    Terminal,   // Fallout: retro-futuristic terminal, phosphor text, amber keys and indicators, scanlines
+    Flat,       // Light: bright, flat keys, thin lines, few frames
+};
+
+inline Skin skin = Skin::Industrial;
+
+// Fonts of the themes, taken from the fonts Windows already has (nothing is shipped). Null: the menu's font.
+inline ImFont* terminalFont = nullptr;
+inline ImFont* modernFont = nullptr;
+
+inline ImFont* SkinFont()
+{
+    if (!industrial)
+        return nullptr;
+
+    return skin == Skin::Terminal ? terminalFont : skin == Skin::Flat ? modernFont : nullptr;
+}
+
+// Colours of states written in the menu (fine, warning, error). The ILION and classic themes keep the exact colour
+// written where it is used; the other two get one they can be read on.
+enum class Role
+{
+    Good,
+    Warn,
+    Bad,
+};
+
+inline ImVec4 Themed(const ImVec4& original, Role role)
+{
+    if (!industrial || skin == Skin::Industrial)
+        return original;
+
+    if (skin == Skin::Terminal)
+        return role == Role::Good ? ImVec4(0.30f, 1.00f, 0.50f, 1.0f)
+               : role == Role::Warn ? ImVec4(1.00f, 0.72f, 0.15f, 1.0f)
+                                    : ImVec4(1.00f, 0.32f, 0.22f, 1.0f);
+
+    return role == Role::Good ? ImVec4(0.10f, 0.50f, 0.22f, 1.0f)
+           : role == Role::Warn ? ImVec4(0.70f, 0.40f, 0.00f, 1.0f)
+                                : ImVec4(0.76f, 0.12f, 0.10f, 1.0f);
+}
+
 // Painted steel
 inline ImVec4 GraphiteDeep { 0.070f, 0.075f, 0.070f, 1.0f };
 inline ImVec4 Graphite { 0.105f, 0.110f, 0.103f, 1.0f };
@@ -43,6 +89,11 @@ inline ImVec4 RedDim { 0.400f, 0.060f, 0.050f, 1.0f };
 inline ImVec4 RedLit { 0.580f, 0.080f, 0.060f, 1.0f };
 
 inline ImVec4 Alpha(const ImVec4& color, float alpha) { return ImVec4(color.x, color.y, color.z, alpha); }
+
+inline ImVec4 Shade(const ImVec4& color, float factor)
+{
+    return ImVec4(ImMin(color.x * factor, 1.0f), ImMin(color.y * factor, 1.0f), ImMin(color.z * factor, 1.0f), color.w);
+}
 
 // Strength of the brushed metal grain drawn over panels, lower on palettes where it would be too visible
 inline float metalOpacity = 1.0f;
@@ -79,24 +130,24 @@ inline void SetPalette(int palette)
           { 0.400f, 0.060f, 0.050f, 1 }, { 0.580f, 0.080f, 0.060f, 1 }, { 0.800f, 0.690f, 0.400f, 1 },
           { 0.224f, 1.000f, 0.078f, 1 }, { 0.560f, 0.575f, 0.590f, 1 }, { 0.560f, 0.575f, 0.590f, 1 },
           { 0.800f, 0.670f, 0.110f, 1 }, 1.0f },
-        { { 0.010f, 0.030f, 0.015f, 1 }, { 0.020f, 0.055f, 0.028f, 1 }, { 0.030f, 0.080f, 0.040f, 1 },
-          { 0.040f, 0.150f, 0.070f, 1 }, { 0.060f, 0.230f, 0.100f, 1 }, { 0.090f, 0.330f, 0.150f, 1 },
-          { 0.030f, 0.110f, 0.050f, 1 }, { 0.080f, 0.260f, 0.130f, 1 }, { 0.120f, 0.450f, 0.220f, 1 },
-          { 0.200f, 0.700f, 0.350f, 1 }, { 0.000f, 0.010f, 0.000f, 1 }, { 0.300f, 1.000f, 0.520f, 1 },
-          { 0.160f, 0.600f, 0.300f, 1 }, { 0.250f, 0.900f, 0.450f, 1 }, { 0.180f, 1.000f, 0.400f, 1 },
-          { 0.090f, 0.500f, 0.200f, 1 }, { 1.000f, 0.720f, 0.200f, 1 }, { 0.950f, 0.250f, 0.150f, 1 },
-          { 0.400f, 0.080f, 0.050f, 1 }, { 0.600f, 0.120f, 0.080f, 1 }, { 0.300f, 1.000f, 0.520f, 1 },
-          { 0.300f, 1.000f, 0.520f, 1 }, { 0.180f, 0.700f, 0.350f, 1 }, { 0.150f, 0.500f, 0.260f, 1 },
-          { 0.250f, 0.900f, 0.450f, 1 }, 0.35f },
-        { { 0.820f, 0.835f, 0.815f, 1 }, { 0.900f, 0.910f, 0.895f, 1 }, { 0.950f, 0.955f, 0.945f, 1 },
-          { 0.760f, 0.800f, 0.720f, 1 }, { 0.680f, 0.730f, 0.620f, 1 }, { 0.600f, 0.660f, 0.530f, 1 },
-          { 0.560f, 0.610f, 0.500f, 1 }, { 0.620f, 0.640f, 0.610f, 1 }, { 0.450f, 0.470f, 0.440f, 1 },
-          { 0.300f, 0.320f, 0.290f, 1 }, { 0.600f, 0.610f, 0.600f, 1 }, { 0.080f, 0.090f, 0.070f, 1 },
-          { 0.360f, 0.380f, 0.330f, 1 }, { 0.150f, 0.200f, 0.100f, 1 }, { 0.080f, 0.560f, 0.030f, 1 },
-          { 0.300f, 0.600f, 0.250f, 1 }, { 0.780f, 0.420f, 0.000f, 1 }, { 0.750f, 0.050f, 0.030f, 1 },
-          { 0.900f, 0.700f, 0.680f, 1 }, { 0.850f, 0.550f, 0.520f, 1 }, { 0.400f, 0.300f, 0.050f, 1 },
-          { 0.080f, 0.560f, 0.030f, 1 }, { 0.450f, 0.460f, 0.470f, 1 }, { 0.450f, 0.460f, 0.470f, 1 },
-          { 0.750f, 0.600f, 0.100f, 1 }, 0.25f },
+        { { 0.012f, 0.020f, 0.012f, 1 }, { 0.020f, 0.035f, 0.022f, 1 }, { 0.030f, 0.050f, 0.032f, 1 },
+          { 0.060f, 0.075f, 0.035f, 1 }, { 0.150f, 0.110f, 0.030f, 1 }, { 0.300f, 0.215f, 0.040f, 1 },
+          { 0.380f, 0.270f, 0.040f, 1 }, { 0.090f, 0.200f, 0.110f, 1 }, { 0.180f, 0.420f, 0.220f, 1 },
+          { 0.300f, 0.700f, 0.380f, 1 }, { 0.000f, 0.000f, 0.000f, 1 }, { 0.260f, 1.000f, 0.460f, 1 },
+          { 0.160f, 0.640f, 0.310f, 1 }, { 1.000f, 0.720f, 0.150f, 1 }, { 1.000f, 0.690f, 0.080f, 1 },
+          { 0.520f, 0.350f, 0.040f, 1 }, { 1.000f, 0.850f, 0.350f, 1 }, { 1.000f, 0.300f, 0.200f, 1 },
+          { 0.300f, 0.060f, 0.040f, 1 }, { 0.500f, 0.100f, 0.060f, 1 }, { 1.000f, 0.720f, 0.150f, 1 },
+          { 1.000f, 0.690f, 0.080f, 1 }, { 0.180f, 0.500f, 0.260f, 1 }, { 0.120f, 0.340f, 0.180f, 1 },
+          { 1.000f, 0.690f, 0.080f, 1 }, 0.0f },
+        { { 0.925f, 0.930f, 0.940f, 1 }, { 0.972f, 0.975f, 0.980f, 1 }, { 1.000f, 1.000f, 1.000f, 1 },
+          { 0.905f, 0.915f, 0.930f, 1 }, { 0.860f, 0.880f, 0.910f, 1 }, { 0.820f, 0.860f, 0.930f, 1 },
+          { 0.780f, 0.810f, 0.870f, 1 }, { 0.880f, 0.890f, 0.905f, 1 }, { 0.780f, 0.795f, 0.820f, 1 },
+          { 0.600f, 0.620f, 0.660f, 1 }, { 0.700f, 0.710f, 0.730f, 1 }, { 0.110f, 0.120f, 0.140f, 1 },
+          { 0.360f, 0.380f, 0.420f, 1 }, { 0.130f, 0.200f, 0.330f, 1 }, { 0.150f, 0.430f, 0.800f, 1 },
+          { 0.600f, 0.720f, 0.900f, 1 }, { 0.760f, 0.440f, 0.000f, 1 }, { 0.780f, 0.160f, 0.120f, 1 },
+          { 0.960f, 0.860f, 0.850f, 1 }, { 0.930f, 0.740f, 0.720f, 1 }, { 0.130f, 0.200f, 0.330f, 1 },
+          { 0.150f, 0.430f, 0.800f, 1 }, { 0.820f, 0.835f, 0.860f, 1 }, { 0.880f, 0.890f, 0.905f, 1 },
+          { 0.150f, 0.430f, 0.800f, 1 }, 0.0f },
     };
 
     const auto& p = palettes[palette >= 0 && palette < (int) std::size(palettes) ? palette : 0];
@@ -127,6 +178,7 @@ inline void SetPalette(int palette)
     TrimTitanium = p.trimTitanium;
     StripeYellow = p.stripe;
     metalOpacity = p.metal_;
+    skin = palette == 1 ? Skin::Terminal : palette == 2 ? Skin::Flat : Skin::Industrial;
 }
 
 // Every color and measure of the style. Frames get a light edge and a dark one a pixel below it, which is what
@@ -231,15 +283,68 @@ inline void ApplyStyle(ImGuiStyle& style, float backgroundAlpha)
     c[ImGuiCol_NavWindowingHighlight] = Alpha(LampGreen, 0.70f);
     c[ImGuiCol_NavWindowingDimBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.25f);
     c[ImGuiCol_ModalWindowDimBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.60f);
+
+    if (skin == Skin::Terminal)
+    {
+        // Square everything, one fine line round each part, amber where something can be pressed
+        style.WindowRounding = style.ChildRounding = style.FrameRounding = style.PopupRounding = 0.0f;
+        style.ScrollbarRounding = style.GrabRounding = style.TabRounding = 0.0f;
+
+        c[ImGuiCol_Border] = Alpha(TrimGold, 0.90f);
+        c[ImGuiCol_BorderShadow] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+        c[ImGuiCol_TitleBg] = c[ImGuiCol_TitleBgActive] = c[ImGuiCol_TitleBgCollapsed] = GraphiteDeep;
+        c[ImGuiCol_Button] = OliveDim;
+        c[ImGuiCol_ButtonHovered] = Olive;
+        c[ImGuiCol_ButtonActive] = OliveLit;
+        c[ImGuiCol_Header] = Alpha(LampGreen, 0.14f);
+        c[ImGuiCol_HeaderHovered] = Alpha(LampGreen, 0.26f);
+        c[ImGuiCol_HeaderActive] = Alpha(LampGreen, 0.40f);
+        c[ImGuiCol_FrameBgHovered] = Alpha(LampGreen, 0.12f);
+        c[ImGuiCol_FrameBgActive] = Alpha(LampGreen, 0.22f);
+        c[ImGuiCol_SliderGrab] = LampGreenDim;
+        c[ImGuiCol_SliderGrabActive] = LampGreen;
+        c[ImGuiCol_TabSelected] = Alpha(LampGreen, 0.30f);
+        c[ImGuiCol_TabHovered] = Alpha(LampGreen, 0.20f);
+        c[ImGuiCol_TableHeaderBg] = Alpha(LampGreen, 0.16f);
+        c[ImGuiCol_TableRowBgAlt] = Alpha(Text, 0.04f);
+        c[ImGuiCol_TextSelectedBg] = Alpha(LampGreen, 0.35f);
+    }
+    else if (skin == Skin::Flat)
+    {
+        // Round, flat and borderless keys, thin lines, white panels on a light grey window
+        style.WindowRounding = 8.0f;
+        style.ChildRounding = 6.0f;
+        style.FrameRounding = 4.0f;
+        style.PopupRounding = 6.0f;
+        style.GrabRounding = 4.0f;
+        style.TabRounding = 4.0f;
+        style.ScrollbarRounding = 6.0f;
+        style.FrameBorderSize = 0.0f;
+        style.TabBorderSize = 0.0f;
+
+        c[ImGuiCol_WindowBg] = Alpha(Graphite, backgroundAlpha >= 0.85f ? backgroundAlpha : 0.85f);
+        c[ImGuiCol_ChildBg] = ImVec4(1.0f, 1.0f, 1.0f, 0.70f);
+        c[ImGuiCol_PopupBg] = ImVec4(1.0f, 1.0f, 1.0f, 0.99f);
+        c[ImGuiCol_Border] = Metal;
+        c[ImGuiCol_BorderShadow] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+        c[ImGuiCol_FrameBg] = Panel;
+        c[ImGuiCol_TitleBg] = c[ImGuiCol_TitleBgActive] = c[ImGuiCol_TitleBgCollapsed] = Graphite;
+        c[ImGuiCol_ScrollbarBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+        c[ImGuiCol_Header] = Alpha(LampGreen, 0.10f);
+        c[ImGuiCol_HeaderHovered] = Alpha(LampGreen, 0.16f);
+        c[ImGuiCol_HeaderActive] = Alpha(LampGreen, 0.24f);
+        c[ImGuiCol_SliderGrab] = LampGreen;
+        c[ImGuiCol_SliderGrabActive] = Shade(LampGreen, 0.85f);
+        c[ImGuiCol_TabSelected] = Panel;
+        c[ImGuiCol_TableHeaderBg] = GraphiteDeep;
+        c[ImGuiCol_TableRowBgAlt] = ImVec4(0.0f, 0.0f, 0.0f, 0.03f);
+        c[ImGuiCol_TextSelectedBg] = Alpha(LampGreen, 0.25f);
+        c[ImGuiCol_ModalWindowDimBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.25f);
+    }
 }
 
 // --- Drawn parts ---------------------------------------------------------------------------------------------
 
-
-inline ImVec4 Shade(const ImVec4& color, float factor)
-{
-    return ImVec4(ImMin(color.x * factor, 1.0f), ImMin(color.y * factor, 1.0f), ImMin(color.z * factor, 1.0f), color.w);
-}
 
 // Text as it is drawn on name plates and main keys: upper case, Spanish accents included. Only what is shown,
 // never what identifies the control. Stops where the visible part of a label ends.
@@ -289,7 +394,7 @@ inline ImVec4 LampColor(Lamp kind)
     case Lamp::Red:
         return ImVec4(1.0f, 0.13f, 0.10f, 1.0f);
     case Lamp::Neutral:
-        return ImVec4(0.80f, 0.83f, 0.76f, 1.0f);
+        return skin == Skin::Flat ? MetalLight : skin == Skin::Terminal ? LampAmber : ImVec4(0.80f, 0.83f, 0.76f, 1.0f);
     default:
         return LampGreen;
     }
@@ -301,6 +406,34 @@ inline void DrawLamp(ImDrawList* draw, const ImVec2& center, float radius, bool 
                      bool held = false, Lamp kind = Lamp::Green)
 {
     const ImVec4 color = LampColor(kind);
+
+    // Terminal: a square indicator, lit filled, out only its outline
+    if (skin == Skin::Terminal)
+    {
+        const float half = ImFloor(radius * 0.62f);
+        const ImVec2 a(center.x - half, center.y - half), b(center.x + half, center.y + half);
+
+        draw->AddRect(a, b, ImGui::GetColorU32(Alpha(color, hovered ? 1.0f : lit ? 0.95f : 0.55f)), 0.0f, 0, 1.0f);
+
+        if (lit)
+            draw->AddRectFilled(ImVec2(a.x + 2.0f, a.y + 2.0f), ImVec2(b.x - 2.0f, b.y - 2.0f),
+                                ImGui::GetColorU32(Alpha(color, held ? 0.70f : 1.0f)));
+
+        return;
+    }
+
+    // Flat: a small dot, filled when on, a thin ring when off
+    if (skin == Skin::Flat)
+    {
+        const float dot = ImFloor(radius * 0.48f);
+
+        if (lit)
+            draw->AddCircleFilled(center, dot, ImGui::GetColorU32(Alpha(color, held ? 0.75f : 1.0f)));
+        else
+            draw->AddCircle(center, dot, ImGui::GetColorU32(hovered ? MetalLight : Metal), 0, 1.2f);
+
+        return;
+    }
 
     // Light spilled on the panel around a lit lamp
     if (lit)
@@ -343,6 +476,9 @@ inline void DrawLamp(ImDrawList* draw, const ImVec2& center, float radius, bool 
 // The head of a slotted screw
 inline void DrawScrew(ImDrawList* draw, const ImVec2& center, float radius)
 {
+    if (skin != Skin::Industrial)
+        return;
+
     draw->AddCircleFilled(center, radius + 1.0f, ImGui::GetColorU32(Alpha(Shadow, 0.85f)));
     draw->AddCircleFilled(center, radius, ImGui::GetColorU32(MetalDark));
     draw->AddCircleFilled(ImVec2(center.x - radius * 0.2f, center.y - radius * 0.2f), radius * 0.62f,
@@ -354,6 +490,18 @@ inline void DrawScrew(ImDrawList* draw, const ImVec2& center, float radius)
 // The edge of a main panel: a metal frame with a dark seam, and a screw in every corner
 inline void DrawPanelFrame(ImDrawList* draw, const ImVec2& min, const ImVec2& max, bool screws, float scale = 1.0f)
 {
+    if (skin == Skin::Terminal)
+    {
+        draw->AddRect(min, max, ImGui::GetColorU32(Alpha(TrimGold, 0.90f)));
+        return;
+    }
+
+    if (skin == Skin::Flat)
+    {
+        draw->AddRect(min, max, ImGui::GetColorU32(MetalDark), 6.0f);
+        return;
+    }
+
     draw->AddRect(ImVec2(min.x + 1.0f, min.y + 1.0f), ImVec2(max.x + 1.0f, max.y + 1.0f),
                   ImGui::GetColorU32(Alpha(Shadow, 0.85f)));
     draw->AddRect(min, max, ImGui::GetColorU32(Metal));
@@ -374,7 +522,7 @@ inline void DrawPanelFrame(ImDrawList* draw, const ImVec2& min, const ImVec2& ma
 // Screws of the window being drawn, in the corners of its body. Not where a scrollbar takes the corner.
 inline void DrawWindowScrews(float scale = 1.0f)
 {
-    if (!industrial)
+    if (!industrial || skin != Skin::Industrial)
         return;
 
     ImGuiWindow* window = ImGui::GetCurrentWindow();
@@ -400,6 +548,22 @@ inline void DrawWindowScrews(float scale = 1.0f)
 // the pointer the cap brightens; held, it sinks into the frame with the shade of the frame falling on it.
 inline void DrawKey(ImDrawList* draw, const ImRect& bounds, const ImVec4& face, bool hovered, bool down)
 {
+    // Terminal: a dark box with an amber line, filled more under the pointer and when held
+    if (skin == Skin::Terminal)
+    {
+        draw->AddRectFilled(bounds.Min, bounds.Max, ImGui::GetColorU32(down ? Shade(face, 1.45f) : hovered ? Shade(face, 1.20f) : face));
+        draw->AddRect(bounds.Min, bounds.Max, ImGui::GetColorU32(Alpha(LampGreen, hovered || down ? 1.0f : 0.60f)), 0.0f, 0,
+                      hovered ? 1.5f : 1.0f);
+        return;
+    }
+
+    // Flat: a filled rounded rectangle, a little darker under the pointer and when held, no relief
+    if (skin == Skin::Flat)
+    {
+        draw->AddRectFilled(bounds.Min, bounds.Max, ImGui::GetColorU32(down ? Shade(face, 0.90f) : hovered ? Shade(face, 0.95f) : face), 4.0f);
+        return;
+    }
+
     // Frame and the gap the cap moves in
     draw->AddRectFilled(bounds.Min, bounds.Max, ImGui::GetColorU32(Shadow), 2.0f);
     draw->AddRect(bounds.Min, bounds.Max, ImGui::GetColorU32(hovered ? MetalLight : Metal), 2.0f);
@@ -440,6 +604,22 @@ inline void DrawKey(ImDrawList* draw, const ImRect& bounds, const ImVec4& face, 
 // A recess in the panel: dark, with the shade at the top and the light at the bottom
 inline void DrawWell(ImDrawList* draw, const ImVec2& min, const ImVec2& max, bool hovered = false)
 {
+    // Terminal: an input line, dark with an amber underline
+    if (skin == Skin::Terminal)
+    {
+        draw->AddRectFilled(min, max, ImGui::GetColorU32(Alpha(GraphiteDeep, 0.95f)));
+        draw->AddLine(ImVec2(min.x, max.y - 1.0f), ImVec2(max.x, max.y - 1.0f), ImGui::GetColorU32(Alpha(LampGreen, hovered ? 0.95f : 0.50f)));
+        return;
+    }
+
+    // Flat: a white field with a thin border
+    if (skin == Skin::Flat)
+    {
+        draw->AddRectFilled(min, max, ImGui::GetColorU32(Panel), 4.0f);
+        draw->AddRect(min, max, ImGui::GetColorU32(hovered ? MetalLight : Metal), 4.0f);
+        return;
+    }
+
     draw->AddRectFilled(min, max, ImGui::GetColorU32(Alpha(GraphiteDeep, 0.92f)), 1.0f);
     draw->AddLine(min, ImVec2(max.x - 1.0f, min.y), ImGui::GetColorU32(Shadow));
     draw->AddLine(min, ImVec2(min.x, max.y - 1.0f), ImGui::GetColorU32(Shadow));
@@ -486,11 +666,29 @@ inline bool Switch(const char* label, bool* value)
 
     ImGui::RenderNavCursor(bounds, id);
 
-    if (labelSize.x > 0.0f)
-        DrawWell(window->DrawList, bounds.Min, bounds.Max, hovered);
+    if (skin == Skin::Flat)
+    {
+        // A switch: a rounded track, the accent colour when on, with a white knob at its end
+        const float trackHeight = ImFloor(height * 0.56f);
+        const float trackWidth = ImFloor(height * 0.96f);
+        const ImVec2 trackMin(pos.x + ImFloor((height - trackWidth) * 0.5f), pos.y + ImFloor((height - trackHeight) * 0.5f));
+        const ImVec2 trackMax(trackMin.x + trackWidth, trackMin.y + trackHeight);
+        const float knob = trackHeight * 0.5f - 2.0f;
+        const float knobX = *value ? trackMax.x - trackHeight * 0.5f : trackMin.x + trackHeight * 0.5f;
 
-    DrawLamp(window->DrawList, ImVec2(ImFloor(pos.x + height * 0.5f), ImFloor(pos.y + height * 0.5f)),
-             ImFloor(height * 0.5f) - 2.0f, *value, hovered, held);
+        window->DrawList->AddRectFilled(trackMin, trackMax,
+                                        ImGui::GetColorU32(*value ? (hovered ? Shade(LampGreen, 0.92f) : LampGreen) : (hovered ? Metal : MetalDark)),
+                                        trackHeight * 0.5f);
+        window->DrawList->AddCircleFilled(ImVec2(knobX, (trackMin.y + trackMax.y) * 0.5f), knob, ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, 1.0f)));
+    }
+    else
+    {
+        if (labelSize.x > 0.0f)
+            DrawWell(window->DrawList, bounds.Min, bounds.Max, hovered);
+
+        DrawLamp(window->DrawList, ImVec2(ImFloor(pos.x + height * 0.5f), ImFloor(pos.y + height * 0.5f)),
+                 ImFloor(height * 0.5f) - 2.0f, *value, hovered, held);
+    }
 
     if (labelSize.x > 0.0f)
         ImGui::RenderText(ImVec2(pos.x + height + style.ItemInnerSpacing.x, pos.y + style.FramePadding.y), label);
@@ -659,6 +857,30 @@ inline void DrawSliderRail(ImDrawList* draw, const ImVec2& min, const ImVec2& ma
 
     const float center = ImFloor(ImLerp(min.x + 2.0f + grabSize * 0.5f, max.x - 2.0f - grabSize * 0.5f, fraction));
     const float middle = ImFloor((min.y + max.y) * 0.5f);
+
+    // Terminal: a dotted track, amber up to the value, a block for the cursor
+    if (skin == Skin::Terminal)
+    {
+        for (float x = min.x + 2.0f; x < max.x - 2.0f; x += 4.0f)
+            draw->AddRectFilled(ImVec2(x, middle), ImVec2(x + 1.0f, middle + 1.0f), ImGui::GetColorU32(Alpha(TextDim, 0.80f)));
+
+        draw->AddRectFilled(ImVec2(min.x + 2.0f, middle - 1.0f), ImVec2(center, middle + 2.0f), ImGui::GetColorU32(active ? LampGreen : LampGreenDim));
+        draw->AddRectFilled(ImVec2(center - 3.0f, min.y + 3.0f), ImVec2(center + 3.0f, max.y - 3.0f),
+                            ImGui::GetColorU32(hovered || active ? LampGreen : Alpha(LampGreen, 0.80f)));
+        return;
+    }
+
+    // Flat: a thin rounded track, the accent up to the value, a round white knob
+    if (skin == Skin::Flat)
+    {
+        const float knob = ImFloor((max.y - min.y) * 0.30f);
+
+        draw->AddRectFilled(ImVec2(min.x + 2.0f, middle - 2.0f), ImVec2(max.x - 2.0f, middle + 2.0f), ImGui::GetColorU32(MetalDark), 2.0f);
+        draw->AddRectFilled(ImVec2(min.x + 2.0f, middle - 2.0f), ImVec2(center, middle + 2.0f), ImGui::GetColorU32(LampGreen), 2.0f);
+        draw->AddCircleFilled(ImVec2(center, middle), knob, ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, 1.0f)));
+        draw->AddCircle(ImVec2(center, middle), knob, ImGui::GetColorU32(hovered || active ? LampGreen : Metal), 0, 1.5f);
+        return;
+    }
     const float groove = ImMax(2.0f, ImFloor((max.y - min.y) * 0.13f));
     const float left = min.x + 2.0f + grabSize * 0.5f;
     const float right = max.x - 2.0f - grabSize * 0.5f;
@@ -825,9 +1047,10 @@ inline bool BeginCombo(const char* label, const char* preview, ImGuiComboFlags f
     // Variants without the field or the button keep the stock parts, in the colours of the theme
     if (window->SkipItems || flags != 0 || preview == nullptr)
     {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.42f, 0.08f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.14f, 0.60f, 0.10f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, LampGreenDim);
+        const bool green = skin == Skin::Industrial;
+        ImGui::PushStyleColor(ImGuiCol_Button, green ? ImVec4(0.10f, 0.42f, 0.08f, 1.0f) : OliveDim);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, green ? ImVec4(0.14f, 0.60f, 0.10f, 1.0f) : Olive);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, green ? LampGreenDim : OliveLit);
 
         const bool open = ImGui::BeginCombo(label, preview, flags);
 
@@ -853,7 +1076,9 @@ inline bool BeginCombo(const char* label, const char* preview, ImGuiComboFlags f
     window->DrawList->PopClipRect();
 
     DrawKey(window->DrawList, ImRect(ImVec2(fieldMax.x, min.y), ImVec2(min.x + width, min.y + height)),
-            hovered ? ImVec4(0.14f, 0.55f, 0.10f, 1.0f) : ImVec4(0.10f, 0.40f, 0.08f, 1.0f), hovered, false);
+            skin != Skin::Industrial            ? (hovered ? Olive : OliveDim)
+            : hovered ? ImVec4(0.14f, 0.55f, 0.10f, 1.0f) : ImVec4(0.10f, 0.40f, 0.08f, 1.0f),
+            hovered, false);
 
     const ImVec4 none(0.0f, 0.0f, 0.0f, 0.0f);
 
@@ -991,6 +1216,30 @@ inline void SectionPlate(const char* text)
 
     ImDrawList* draw = window->DrawList;
 
+    // Terminal: "> NAME" in amber and a dashed line; Flat: the name in the title colour over a thin line
+    if (skin != Skin::Industrial)
+    {
+        const bool terminal = skin == Skin::Terminal;
+        const std::string name = terminal ? "> " + Upper(text) : std::string(text, textEnd);
+        const ImVec2 nameSize = ImGui::CalcTextSize(name.c_str());
+        const float y = ImFloor(pos.y + height * 0.5f);
+
+        draw->AddText(ImVec2(pos.x, pos.y + 3.0f), ImGui::GetColorU32(TextTitle), name.c_str());
+
+        if (terminal)
+        {
+            for (float x = pos.x + nameSize.x + 8.0f; x < right; x += 6.0f)
+                draw->AddLine(ImVec2(x, y), ImVec2(ImMin(x + 3.0f, right), y), ImGui::GetColorU32(Alpha(TrimGold, 0.85f)));
+        }
+        else if (right > pos.x + nameSize.x + 8.0f)
+        {
+            draw->AddLine(ImVec2(pos.x + nameSize.x + 8.0f, y), ImVec2(right, y), ImGui::GetColorU32(MetalDark));
+        }
+
+        ImGui::Dummy(ImVec2(ImMax(1.0f, right - pos.x), height));
+        return;
+    }
+
     // Tag: a small raised plate
     draw->AddRectFilledMultiColor(pos, tagMax, ImGui::GetColorU32(Shade(Olive, 1.10f)), ImGui::GetColorU32(Shade(Olive, 1.10f)),
                                   ImGui::GetColorU32(OliveDim), ImGui::GetColorU32(OliveDim));
@@ -1125,7 +1374,7 @@ inline bool MetalTileReady()
 // Lays the worn metal over a rectangle, tile next to tile
 inline void DrawMetal(ImDrawList* draw, const ImVec2& min, const ImVec2& max, float opacity)
 {
-    if (!MetalTileReady() || max.x <= min.x || max.y <= min.y)
+    if (skin != Skin::Industrial || !MetalTileReady() || max.x <= min.x || max.y <= min.y)
         return;
 
     const ImU32 tint = ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, opacity * metalOpacity));
@@ -1214,6 +1463,9 @@ inline void DrawStripes(ImDrawList* draw, const ImVec2& min, const ImVec2& max, 
 // the chassis is from the plate (-1 left or up, 1 right or down).
 inline void DrawCornerPlate(ImDrawList* draw, const ImVec2& corner, float size, int cornerX, int cornerY)
 {
+    if (skin != Skin::Industrial)
+        return;
+
     const float cut = ImFloor(size * 0.38f);
     const float dx = (float) -cornerX, dy = (float) -cornerY;
 
@@ -1240,7 +1492,8 @@ inline void PushChassisStyle()
 {
     const ImGuiStyle& style = ImGui::GetStyle();
 
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, ImFloor(style.WindowPadding.x * 1.25f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,
+                        skin == Skin::Terminal ? 0.0f : skin == Skin::Flat ? 8.0f : ImFloor(style.WindowPadding.x * 1.25f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(ImFloor(style.WindowPadding.x * 1.5f), ImFloor(style.WindowPadding.y * 1.5f)));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(style.FramePadding.x, ImFloor(style.FramePadding.y * 3.6f)));
 }
@@ -1270,6 +1523,61 @@ inline void DrawChassis()
     ImDrawList* draw = window->DrawList;
 
     draw->PushClipRect(min, max, false);
+
+    if (skin != Skin::Industrial)
+    {
+        const bool terminal = skin == Skin::Terminal;
+        const char* nameEnd = ImGui::FindRenderedTextEnd(window->Name);
+        const ImVec2 nameSize = ImGui::CalcTextSize(window->Name, nameEnd);
+
+        // Title bar painted over, the name drawn again in the skin's way
+        if (title > 0.0f)
+        {
+            draw->AddRectFilled(ImVec2(min.x + 1.0f, min.y + 1.0f), ImVec2(max.x - 1.0f, min.y + title),
+                                ImGui::GetColorU32(terminal ? GraphiteDeep : Graphite), terminal ? 0.0f : rounding,
+                                ImDrawFlags_RoundCornersTop);
+
+            const ImVec2 namePos(ImFloor(min.x + style.WindowPadding.x), ImFloor(min.y + (title - nameSize.y) * 0.5f));
+
+            if (terminal)
+            {
+                const std::string name = Upper(window->Name);
+                draw->AddText(namePos, ImGui::GetColorU32(TitleAmber), name.c_str());
+
+                // A cursor block after the name, and a double rule under the bar
+                const float x = namePos.x + ImGui::CalcTextSize(name.c_str()).x + 6.0f;
+                draw->AddRectFilled(ImVec2(x, namePos.y + 1.0f), ImVec2(x + ImFloor(nameSize.y * 0.5f), namePos.y + nameSize.y - 1.0f),
+                                    ImGui::GetColorU32(TitleAmber));
+                draw->AddLine(ImVec2(min.x + 2.0f, min.y + title - 3.0f), ImVec2(max.x - 2.0f, min.y + title - 3.0f),
+                              ImGui::GetColorU32(Alpha(LampGreen, 0.85f)));
+                draw->AddLine(ImVec2(min.x + 2.0f, min.y + title - 1.0f), ImVec2(max.x - 2.0f, min.y + title - 1.0f),
+                              ImGui::GetColorU32(Alpha(LampGreen, 0.45f)));
+            }
+            else
+            {
+                draw->AddText(namePos, ImGui::GetColorU32(TextTitle), window->Name, nameEnd);
+                draw->AddLine(ImVec2(min.x + 1.0f, min.y + title - 1.0f), ImVec2(max.x - 1.0f, min.y + title - 1.0f),
+                              ImGui::GetColorU32(MetalDark));
+            }
+        }
+
+        if (terminal)
+        {
+            // Scanlines of a phosphor screen and a double frame
+            for (float y = min.y + title; y < max.y; y += 3.0f)
+                draw->AddLine(ImVec2(min.x + 2.0f, y), ImVec2(max.x - 2.0f, y), ImGui::GetColorU32(Alpha(Text, 0.025f)));
+
+            draw->AddRect(ImVec2(min.x + 1.0f, min.y + 1.0f), ImVec2(max.x - 1.0f, max.y - 1.0f), ImGui::GetColorU32(Alpha(TrimGold, 0.95f)));
+            draw->AddRect(ImVec2(min.x + 4.0f, min.y + 4.0f), ImVec2(max.x - 4.0f, max.y - 4.0f), ImGui::GetColorU32(Alpha(TrimTitanium, 0.80f)));
+        }
+        else
+        {
+            draw->AddRect(min, max, ImGui::GetColorU32(Metal), rounding);
+        }
+
+        draw->PopClipRect();
+        return;
+    }
 
     // Paint of the cabinet
     DrawMetal(draw, ImVec2(min.x + rim, min.y + title), ImVec2(max.x - rim, max.y - rim), 0.10f);
@@ -1393,8 +1701,17 @@ inline void DrawChassisJoint()
     const float left = window->Pos.x + rim + 1.0f, right = window->Pos.x + window->Size.x - rim - 1.0f;
 
     window->DrawList->PushClipRect(window->Pos, ImVec2(window->Pos.x + window->Size.x, window->Pos.y + window->Size.y), false);
-    window->DrawList->AddLine(ImVec2(left, y), ImVec2(right, y), ImGui::GetColorU32(Shadow));
-    window->DrawList->AddLine(ImVec2(left, y + 1.0f), ImVec2(right, y + 1.0f), ImGui::GetColorU32(Alpha(TrimTitanium, 0.45f)));
+
+    if (skin == Skin::Industrial)
+    {
+        window->DrawList->AddLine(ImVec2(left, y), ImVec2(right, y), ImGui::GetColorU32(Shadow));
+        window->DrawList->AddLine(ImVec2(left, y + 1.0f), ImVec2(right, y + 1.0f), ImGui::GetColorU32(Alpha(TrimTitanium, 0.45f)));
+    }
+    else
+    {
+        window->DrawList->AddLine(ImVec2(left, y), ImVec2(right, y), ImGui::GetColorU32(skin == Skin::Terminal ? Alpha(TrimGold, 0.85f) : MetalDark));
+    }
+
     window->DrawList->PopClipRect();
 }
 
@@ -1406,6 +1723,35 @@ inline float CardCut() { return ImFloor(ImGui::GetStyle().WindowPadding.x * 0.75
 // corner.
 inline void DrawCardBody(ImDrawList* draw, const ImVec2& min, const ImVec2& max)
 {
+    // Terminal: a box in the dim green line with amber corner ticks
+    if (skin == Skin::Terminal)
+    {
+        const float tick = ImMin(10.0f, ImMin(max.x - min.x, max.y - min.y) * 0.25f);
+        const ImU32 amber = ImGui::GetColorU32(LampGreen);
+
+        draw->AddRectFilled(min, max, ImGui::GetColorU32(Alpha(Panel, 0.85f)));
+        draw->AddRect(min, max, ImGui::GetColorU32(Alpha(TrimGold, 0.80f)));
+
+        for (int corner = 0; corner < 4; corner++)
+        {
+            const float x = corner % 2 == 0 ? min.x : max.x, y = corner < 2 ? min.y : max.y;
+            const float dx = corner % 2 == 0 ? tick : -tick, dy = corner < 2 ? tick : -tick;
+
+            draw->AddLine(ImVec2(x, y), ImVec2(x + dx, y), amber, 2.0f);
+            draw->AddLine(ImVec2(x, y), ImVec2(x, y + dy), amber, 2.0f);
+        }
+
+        return;
+    }
+
+    // Flat: a white card with round corners and a hairline
+    if (skin == Skin::Flat)
+    {
+        draw->AddRectFilled(min, max, ImGui::GetColorU32(Panel), 6.0f);
+        draw->AddRect(min, max, ImGui::GetColorU32(MetalDark), 6.0f);
+        return;
+    }
+
     const float cut = CardCut();
     ImVec2 points[8];
 
@@ -1441,6 +1787,14 @@ inline void DrawCardBody(ImDrawList* draw, const ImVec2& min, const ImVec2& max)
 // stripes at its right end.
 inline void DrawCardBand(ImDrawList* draw, float left, float top, float right, float bottom)
 {
+    // Terminal: an amber rule under the name; Flat: a hairline
+    if (skin != Skin::Industrial)
+    {
+        draw->AddLine(ImVec2(left + 6.0f, bottom), ImVec2(right - 6.0f, bottom),
+                      ImGui::GetColorU32(skin == Skin::Terminal ? Alpha(LampGreen, 0.70f) : MetalDark));
+        return;
+    }
+
     const float cut = CardCut();
 
     // Follows the cut corners of the plate it sits on
@@ -1470,6 +1824,20 @@ inline void GroupPlate(const char* text)
 {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
 
+    if (skin == Skin::Terminal)
+    {
+        ImGui::TextColored(TitleAmber, "%s", ("> " + Upper(text)).c_str());
+        ImGui::Dummy(ImVec2(0.0f, 2.0f));
+        return;
+    }
+
+    if (skin == Skin::Flat)
+    {
+        ImGui::TextColored(TextDim, "%s", Upper(text).c_str());
+        ImGui::Dummy(ImVec2(0.0f, 2.0f));
+        return;
+    }
+
     ImGui::TextColored(TitleAmber, "%s", text);
 
     const float y = ImGui::GetItemRectMax().y + 1.0f;
@@ -1485,6 +1853,38 @@ inline void DrawTabPlate(ImDrawList* draw, const ImVec2& min, const ImVec2& max,
                          const char* text, float scale)
 {
     const ImRect bounds(min, max);
+    const float textY = min.y + (max.y - min.y - ImGui::GetTextLineHeight()) * 0.5f;
+
+    // Terminal: the open tab is the line shown in reverse (amber with dark letters), "> " before the others
+    if (skin == Skin::Terminal)
+    {
+        if (selected)
+            draw->AddRectFilled(min, max, ImGui::GetColorU32(LampGreen));
+        else if (hovered)
+            draw->AddRect(min, max, ImGui::GetColorU32(Alpha(LampGreen, 0.80f)));
+
+        const std::string label = (selected ? "> " : "  ") + Upper(text);
+        draw->AddText(ImVec2(min.x + 6.0f * scale, textY), ImGui::GetColorU32(selected ? GraphiteDeep : hovered ? Text : TextDim),
+                      label.c_str());
+        return;
+    }
+
+    // Flat: a light tint for the open tab with an accent bar at its left, a grey one under the pointer
+    if (skin == Skin::Flat)
+    {
+        if (selected)
+        {
+            draw->AddRectFilled(min, max, ImGui::GetColorU32(Alpha(LampGreen, 0.12f)), 4.0f);
+            draw->AddRectFilled(min, ImVec2(min.x + 3.0f, max.y), ImGui::GetColorU32(LampGreen), 2.0f);
+        }
+        else if (hovered)
+        {
+            draw->AddRectFilled(min, max, ImGui::GetColorU32(Alpha(Text, 0.05f)), 4.0f);
+        }
+
+        draw->AddText(ImVec2(min.x + 12.0f * scale, textY), ImGui::GetColorU32(selected ? TextTitle : Text), text);
+        return;
+    }
 
     DrawKey(draw, bounds, selected ? OliveLit : hovered ? Olive : OliveDim, hovered, held);
 
@@ -1517,7 +1917,11 @@ inline ImVec2 SelectorKeySize(float textWidth, bool square)
 // A key of a selector (language, mode) over its whole rectangle. The chosen one is lit.
 inline void DrawSelectorKey(ImDrawList* draw, const ImRect& bounds, bool selected, bool hovered)
 {
-    DrawKey(draw, bounds, selected ? ImVec4(0.12f, 0.52f, 0.08f, 1.0f) : hovered ? Olive : OliveDim, hovered, false);
+    const ImVec4 chosen = skin == Skin::Industrial ? ImVec4(0.12f, 0.52f, 0.08f, 1.0f)
+                          : skin == Skin::Terminal ? Alpha(LampGreen, 0.45f)
+                                                   : Alpha(LampGreen, 0.22f);
+
+    DrawKey(draw, bounds, selected ? chosen : hovered ? Olive : OliveDim, hovered, false);
 }
 
 // The bar between the two keys of a selector, in the middle of their height. With height 0 it is the plain

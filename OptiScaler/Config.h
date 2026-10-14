@@ -717,6 +717,9 @@ class Config
     bool SaveXeFG();
     bool SaveMenuPreferences();
 
+    // Writes only the settings of the upscaler chosen in ILION's selector, at once, like SaveMenuPreferences
+    bool SaveUpscalerChoice();
+
     void CheckUpscalerFiles();
 
     // FG on/off and interpolation count, following the game's DLSSG state when FGEnabled is unset

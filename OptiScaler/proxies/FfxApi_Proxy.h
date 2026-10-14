@@ -14,6 +14,7 @@
 #include <fsr4/FSR4ModelSelection.h>
 #include <fsr4/FSR4VisualVerify.h>
 #include <fsr4/FSR4Versions.h>
+#include <misc/IlionUpscalers.h>
 #include <menu/ilion_lang.h>
 
 #include "ffx_api.h"
@@ -219,8 +220,8 @@ class FfxApiProxy
         if (IsSamePath(path.parent_path().wstring(), optiPath.wstring()))
             return "Default";
 
-        if (const auto versionName = FSR4Versions::NameFromPath(dllPath); !versionName.empty())
-            return wstring_to_string(versionName);
+        if (const auto display = IlionUpscalers::DisplayForPath(dllPath); !display.empty())
+            return display;
 
         return "Custom path";
     }
@@ -484,10 +485,10 @@ class FfxApiProxy
         return result;
     }
 
-    // Versions found by FSR4Versions, every folder with its own amd_fidelityfx_upscaler_dx12.dll
-    using SrVariant = FSR4Versions::Entry;
+    // Every upscaler ILION knows of, FFX and others, read from disk again (IlionUpscalers)
+    using SrVariant = IlionUpscalers::Entry;
 
-    static std::vector<SrVariant> SrVariants() { return FSR4Versions::Scan(); }
+    static std::vector<SrVariant> SrVariants() { return IlionUpscalers::Rescan(); }
 
     // The upscaler dll in use reports providers that aren't AMD's (a third-party FFX upscaler such as HelixSR)
     static bool ActiveSrThirdParty()
@@ -521,7 +522,7 @@ class FfxApiProxy
     static std::wstring SrVariantDllPath(const std::wstring& name)
     {
         if (!name.empty())
-            return FSR4Versions::DllPathFor(name);
+            return IlionUpscalers::FfxDllPathFor(name);
 
         std::error_code ec;
         auto dllPath = std::filesystem::path(Config::Instance()->MainDllPath.value_or(L""));
@@ -827,7 +828,7 @@ class FfxApiProxy
         {
             LOG_ERROR("Can't find amd_fidelityfx_upscaler_dx12.dll for variant: {}", variantName);
             ImGui::InsertNotification(
-                { ImGuiToastType::Error, 10000, Ilion::Tr("Can't find the dll of the selected FSR variant") });
+                { ImGuiToastType::Error, 10000, Ilion::Tr("Can't find the dll of the selected upscaler") });
             SrDiagSetSwitchResult(diagFrom, diagTo, "FAILED, dll not found");
             return;
         }
@@ -860,7 +861,7 @@ class FfxApiProxy
             {
                 LOG_ERROR("{} can't be used: {}", wstring_to_string(targetPath), problem);
                 ImGui::InsertNotification(
-                    { ImGuiToastType::Error, 10000, Ilion::Tr("Selected FSR version isn't a compatible upscaler dll") });
+                    { ImGuiToastType::Error, 10000, Ilion::Tr("The selected upscaler isn't a compatible dll") });
                 SrDiagSetSwitchResult(diagFrom, diagTo, "FAILED, " + problem);
                 return;
             }
@@ -871,7 +872,7 @@ class FfxApiProxy
             {
                 LOG_ERROR("Can't load {}", wstring_to_string(targetPath));
                 ImGui::InsertNotification(
-                    { ImGuiToastType::Error, 10000, Ilion::Tr("Can't load the dll of the selected FSR variant") });
+                    { ImGuiToastType::Error, 10000, Ilion::Tr("Can't load the dll of the selected upscaler") });
                 SrDiagSetSwitchResult(diagFrom, diagTo, "FAILED, dll can't be loaded");
                 return;
             }
@@ -893,7 +894,7 @@ class FfxApiProxy
             {
                 LOG_ERROR("Missing ffx exports in {}", wstring_to_string(target.filePath));
                 ImGui::InsertNotification(
-                    { ImGuiToastType::Error, 10000, Ilion::Tr("Selected FSR variant is not a valid upscaler dll") });
+                    { ImGuiToastType::Error, 10000, Ilion::Tr("The selected upscaler is not a valid dll") });
                 SrDiagSetSwitchResult(diagFrom, diagTo, "FAILED, dll is missing ffx exports");
                 return;
             }
@@ -904,6 +905,10 @@ class FfxApiProxy
 
         // Model selection hooks are per source, move them to the module that's going to be used
         HookFsr4ModelSelection(target, true);
+
+        // Provider indexes belong to the dll they came from. The new dll starts with its own first provider, which
+        // is the dll itself: HelixSR lists AMD's FSR after itself, an index kept from before could pick that one.
+        Config::Instance()->FfxUpscalerIndex.set_volatile_value(0);
 
         {
             std::scoped_lock lock(_srMutex);
@@ -940,7 +945,8 @@ class FfxApiProxy
         const auto failedName = SrDiagNameFromPath(upscaling_dx12.filePath);
         const auto previousName = SrDiagNameFromPath(previous.filePath);
 
-        FSR4ModelSelection::Hook(previous.dll, FSR4Source::SDK, true);
+        FfxModule previousModule = previous;
+        HookFsr4ModelSelection(previousModule, true);
 
         {
             std::scoped_lock lock(_srMutex);
@@ -957,7 +963,8 @@ class FfxApiProxy
         }
 
         // Selection follows what's really in use again
-        const auto previousVersion = FSR4Versions::NameFromPath(previous.filePath);
+        const auto previousEntry = IlionUpscalers::FindByPath(previous.filePath);
+        const auto previousVersion = previousEntry.has_value() ? previousEntry->key : std::wstring();
 
         if (previousVersion.empty())
             Config::Instance()->Fsr4SrVariant.reset();
@@ -973,8 +980,7 @@ class FfxApiProxy
 
         LOG_ERROR("FSR version {} couldn't create a context, {} is active again", failedName, previousName);
         ImGui::InsertNotification({ ImGuiToastType::Error, 10000,
-                                    Ilion::Tr("Selected FSR version failed to start, the previous one was restored.\n"
-                                              "Select FSR again to keep using it.") });
+                                    Ilion::Tr("The selected upscaler failed to start, the previous one was restored.") });
 
         SrDiagSetSwitchResult(failedName, previousName, "REVERTED, the new dll couldn't create a context");
     }
@@ -1895,6 +1901,15 @@ class FfxApiProxy
 
         if (module.version.major == 0)
             QuerySrProvider(module);
+
+        // Known from the file: HelixSR (its network marker) or an FFX dll outside the FSR families
+        if (const auto entry = IlionUpscalers::FindByPath(module.filePath);
+            entry.has_value() && entry->family != IlionUpscalers::Family::Fsr4)
+        {
+            LOG_INFO("FSR 4 model selection not hooked in {}: it is {}", wstring_to_string(module.filePath),
+                     entry->display);
+            return;
+        }
 
         if (module.thirdParty)
         {

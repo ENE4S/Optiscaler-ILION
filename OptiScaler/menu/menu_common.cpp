@@ -205,23 +205,6 @@ static void RescanSrVariants()
     SharedDefaultSrDll() = FfxApiProxy::SrVariantDllPath(L"");
 }
 
-// The hot swap of the proxy, an empty name is the default dll
-static void SelectSrVariant(const std::wstring& name)
-{
-    // Not while a benchmark is running
-    if (FfxApiProxy::SrSwitchLocked())
-        return;
-
-    if (name.empty())
-        Config::Instance()->Fsr4SrVariant.reset();
-    else
-        Config::Instance()->Fsr4SrVariant = name;
-
-    FfxApiProxy::RequestSrVariant(name);
-    State::Instance().newBackend = currentBackend;
-    MARK_ALL_BACKENDS_CHANGED();
-}
-
 template <typename T, size_t N> struct RingBuffer
 {
     std::array<T, N> data {};
@@ -304,6 +287,316 @@ inline std::string StrFmt(const char* fmt, ...)
     return out;
 }
 
+using Ilion::Tr;
+using Ilion::TrL;
+
+// --- ILION's upscalers ----------------------------------------------------------------------------------------
+// Everything that says which upscaler is selected, loaded or running takes it from here: the selector of the
+// Upscaling tab and of Benchmark, the Benchmark labels, the overlay and the status rows. The list comes from
+// IlionUpscalers (files on disk), what runs from the proxy (the dll that executed the last upscale) and from d4r.
+
+static const char* FamilyName(IlionUpscalers::Family family)
+{
+    switch (family)
+    {
+    case IlionUpscalers::Family::HelixSR:
+        return "HelixSR";
+    case IlionUpscalers::Family::OtherFfx:
+        return "FFX";
+    case IlionUpscalers::Family::Dlss4:
+        return "DLSS 4";
+    default:
+        return "FSR 4";
+    }
+}
+
+// Name of an upscaler of the list as shown: translated name, plus the folder name of a build nobody named
+static std::string EntryName(const IlionUpscalers::Entry& entry)
+{
+    std::string name = Tr(entry.display.c_str());
+
+    if (!entry.detail.empty())
+        name += " " + entry.detail;
+
+    return name;
+}
+
+// Name of the upscaler a feature runs, the same in every place of the menu and the overlay. An FFX upscaler on DX12
+// is the one of the list the dll in use belongs to (FSR 4 official, FSR 4.1.1B, HelixSR...) with the provider it
+// reports; DLSS through d4r is marked as such. Anything else keeps OptiScaler's name and version.
+static std::string UpscalerLabel(IFeature* feature)
+{
+    if (feature == nullptr)
+        return Tr("None");
+
+    const auto version = StrFmt("%u.%u.%u", feature->Version().major, feature->Version().minor, feature->Version().patch);
+    const auto type = feature->GetUpscalerType();
+
+    if (type == Upscaler::FFX && State::Instance().api == DX12)
+    {
+        const auto provider = FfxApiProxy::ActiveSrProvider();
+        const auto entry = IlionUpscalers::FindByPath(FfxApiProxy::Dx12Module_SR_Path());
+
+        // The default dll, or the game's own: AMD's FSR
+        if (!entry.has_value())
+            return "FSR " + (provider.empty() ? version : provider);
+
+        auto name = EntryName(*entry);
+
+        if (!provider.empty() && IlionUpscalers::Lower(string_to_wstring(provider)).find(
+                                     IlionUpscalers::Lower(string_to_wstring(entry->display))) == std::wstring::npos)
+            name += " " + provider;
+
+        return name;
+    }
+
+    if (type == Upscaler::DLSS && State::Instance().dlssExternalBackend)
+        return "DLSS " + version + " (d4r)";
+
+    return feature->ShortName() + " " + version;
+}
+
+struct UpscalerStatus
+{
+    bool selected = false; // the choice saved in the config
+    bool loaded = false;   // FFX: the upscaler functions point to its dll. d4r: OptiScaler loaded it at start
+    bool active = false;   // FFX: its dll executed the last upscale. d4r: NGX accepted its evaluations
+};
+
+static UpscalerStatus StatusOf(const IlionUpscalers::Entry* entry, IFeature* feature)
+{
+    auto config = Config::Instance();
+    const auto& state = State::Instance();
+    const bool dlssChosen = config->Dx12Upscaler.value_or_default() == Upscaler::DLSS &&
+                            config->DLSSAllowExternalBackend.value_or_default();
+    UpscalerStatus status;
+
+    if (entry == nullptr || entry->kind == IlionUpscalers::Kind::Ffx)
+    {
+        const std::wstring key = entry != nullptr ? entry->key : L"";
+        const std::wstring path = entry != nullptr ? entry->path : SharedDefaultSrDll();
+        const auto saved = config->Fsr4SrVariant.value_or(L"");
+
+        status.selected = !dlssChosen && _wcsicmp(saved.c_str(), key.c_str()) == 0;
+        status.loaded = !path.empty() && FfxApiProxy::IsActiveSrDll(path);
+
+        if (status.loaded && feature != nullptr && feature->GetUpscalerType() == Upscaler::FFX)
+        {
+            const auto active = FfxApiProxy::SrDiagGetActive();
+            std::wstring activePath;
+
+            if (active.module != nullptr)
+                FfxApiProxy::SrDiagDescribeModule(active.module, &activePath);
+
+            status.active = IlionUpscalers::SamePath(activePath, path);
+        }
+
+        return status;
+    }
+
+    const auto nvngx = config->NvngxPath.value_or(L"");
+    const bool here = IlionUpscalers::SamePath(nvngx, entry->path);
+    const auto& calls = IlionD4r::GetCalls();
+
+    status.selected = dlssChosen && here;
+    status.loaded = state.dlssExternalBackend && here;
+    status.active = status.loaded && feature != nullptr && feature->GetUpscalerType() == Upscaler::DLSS &&
+                    calls.evaluateOk.load() > 0 && calls.lastResult.load() == 1;
+
+    return status;
+}
+
+static const char* StatusWord(const UpscalerStatus& status)
+{
+    if (status.active)
+        return "active";
+    if (status.loaded)
+        return "loaded";
+    if (status.selected)
+        return "selected";
+    return "";
+}
+
+// Picks an upscaler of the list (nullptr: the default FFX dll). FFX dlls switch while the game runs, through the
+// proxy's hot swap. DLSS 4 through d4r switches while the game runs only when OptiScaler loaded d4r at start;
+// otherwise it is saved and loaded at the next start, which is what the d4r backend needs (it hooks the D3D12 device
+// when the game creates it). The choice is written to the ini at once.
+static void SelectUpscaler(const IlionUpscalers::Entry* entry)
+{
+    auto config = Config::Instance();
+    auto& state = State::Instance();
+
+    if (FfxApiProxy::SrSwitchLocked())
+        return;
+
+    if (entry == nullptr || entry->kind == IlionUpscalers::Kind::Ffx)
+    {
+        const std::wstring key = entry != nullptr ? entry->key : L"";
+
+        if (key.empty())
+            config->Fsr4SrVariant.reset();
+        else
+            config->Fsr4SrVariant = key;
+
+        // d4r is only loaded at start when DLSS 4 is the chosen upscaler; this session keeps what it loaded
+        if (config->DLSSAllowExternalBackend.value_or_default())
+            config->DLSSAllowExternalBackend = false;
+
+        config->Dx12Upscaler = Upscaler::FFX;
+        FfxApiProxy::RequestSrVariant(key);
+        state.newBackend = Upscaler::FFX;
+        MARK_ALL_BACKENDS_CHANGED();
+        config->SaveUpscalerChoice();
+        return;
+    }
+
+    const bool loaded = state.dlssExternalBackend && IlionUpscalers::SamePath(config->NvngxPath.value_or(L""), entry->path);
+
+    config->DLSSAllowExternalBackend = true;
+    config->NvngxPath = entry->path;
+    config->NVNGX_DLSS_Library = entry->path;
+    config->DLSSFeaturePath = entry->path;
+    config->Dx12Upscaler = Upscaler::DLSS;
+    config->SaveUpscalerChoice();
+
+    if (loaded)
+    {
+        state.newBackend = Upscaler::DLSS;
+        MARK_ALL_BACKENDS_CHANGED();
+        return;
+    }
+
+    ImGui::InsertNotification({ ImGuiToastType::Info, 12000,
+                                Tr("DLSS 4 is saved as the upscaler. Restart the game to load it (d4r is loaded when the "
+                                   "game starts).") });
+}
+
+// Tooltip of the item just drawn, as MenuCommon::ShowTooltip does it
+static void UpscalerTip(const char* tip)
+{
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("%s", Tr(tip));
+}
+
+// The selector: every upscaler found, what is selected, loaded and active, and why one can't be used
+static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
+{
+    ImGui::PushID(id);
+
+    auto& entries = SharedSrVariants();
+    const auto& defaultDll = SharedDefaultSrDll();
+    const bool locked = FfxApiProxy::SrSwitchLocked();
+
+    // What the closed selector shows: the active one, else the loaded one, else the selected one
+    std::string preview = "-";
+    int rank = 0;
+
+    const auto consider = [&](const std::string& name, const UpscalerStatus& status)
+    {
+        const int value = status.active ? 3 : status.loaded ? 2 : status.selected ? 1 : 0;
+
+        if (value > rank)
+        {
+            rank = value;
+            preview = name;
+        }
+    };
+
+    if (!defaultDll.empty())
+        consider(Tr("FSR (default dll)"), StatusOf(nullptr, feature));
+
+    for (const auto& entry : entries)
+        consider(EntryName(entry), StatusOf(&entry, feature));
+
+    ImGui::BeginDisabled(locked);
+    ImGui::PushItemWidth(220.0f * scale);
+
+    if (IlionTheme::BeginCombo(TrL("Upscaler##IlionUpscaler"), preview.c_str()))
+    {
+        const auto row = [&](const IlionUpscalers::Entry* entry, const std::string& name)
+        {
+            const auto status = StatusOf(entry, feature);
+            const char* word = StatusWord(status);
+            const bool usable = entry == nullptr || entry->valid;
+
+            auto label = name;
+
+            if (*word != 0)
+                label += StrFmt("  [%s]", Tr(word));
+
+            label += "###" + (entry != nullptr ? wstring_to_string(entry->key) : std::string("default"));
+
+            ImGui::BeginDisabled(!usable);
+
+            if (ImGui::Selectable(label.c_str(), status.selected || status.active) && !(status.selected && status.loaded))
+                SelectUpscaler(entry);
+
+            ImGui::EndDisabled();
+
+            if (!ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                return;
+
+            if (!usable)
+            {
+                ImGui::SetTooltip(Tr("Can't be used: %s"), Tr(entry->problem.c_str()));
+                return;
+            }
+
+            if (entry == nullptr)
+            {
+                ImGui::SetTooltip("%s", Tr("AMD's FSR dll next to OptiScaler, or the game's own."));
+                return;
+            }
+
+            std::string tip = StrFmt("%s: %s\n%s", Tr("Technology"), FamilyName(entry->family),
+                                     wstring_to_string(entry->path).c_str());
+
+            if (!entry->fileVersion.empty())
+                tip += StrFmt("\n%s: %s", Tr("File version"), entry->fileVersion.c_str());
+
+            if (entry->kind == IlionUpscalers::Kind::Ffx)
+                tip += std::string("\n") + Tr("Switches while the game runs.");
+            else if (!status.loaded)
+                tip += std::string("\n") + Tr("Needs a restart of the game: d4r is loaded when the game starts.");
+
+            if (entry->forwardsToAmd)
+                tip += std::string("\n") + Tr("AMD's FSR is next to it: HelixSR lists it after itself. ILION always "
+                                              "starts HelixSR's own provider.");
+
+            ImGui::SetTooltip("%s", tip.c_str());
+        };
+
+        if (!defaultDll.empty())
+            row(nullptr, Tr("FSR (default dll)"));
+
+        for (const auto& entry : entries)
+            row(&entry, EntryName(entry));
+
+        ImGui::EndCombo();
+    }
+
+    ImGui::PopItemWidth();
+    ImGui::EndDisabled();
+
+    UpscalerTip("Upscalers ILION found in ILION\\Escaladores (next to the game exe):\n"
+                "  FSR4\\<name>\\amd_fidelityfx_upscaler_dx12.dll   FSR 4 builds, switch while playing\n"
+                "  HelixSR\\helixsr_upscaler.dll                    HelixSR, switches while playing\n"
+                "  DLSS4\\<name>\\ (d4r folder)                     DLSS 4 model K, needs a restart\n"
+                "Older ILION\\FSR_Versions folders keep working. What a dll is comes from the file, not from the\n"
+                "name of its folder. Add one and press Rescan.");
+
+    ImGui::SameLine();
+
+    if (IlionTheme::Button(TrL("Rescan##IlionUpscaler")))
+        RescanSrVariants();
+
+    if (locked)
+        ImGui::TextDisabled("%s", Tr("It can't be changed while a benchmark is running."));
+
+    ImGui::PopID();
+}
+
+
 // Frame generation that isn't OptiScaler's own: the DLSSG of the game, done by the real nvngx or by what stands in
 // for it (DLSS Enabler, Nukem's...). OptiScaler sees every one of its evaluations and how many frames each asks
 // for; that count is what "Current DLSSG state" shows in the Frame Gen tab and what this reads.
@@ -358,8 +651,6 @@ static ExternalFgStatus GetExternalFgStatus(int generatedFrames, FGNvngxReplacem
 }
 
 // CARDS -----------------------------
-using Ilion::Tr;
-using Ilion::TrL;
 
 // d4r writes its own log next to its loader, in the folder OptiScaler loads NGX from
 static std::wstring IlionD4rLogPath()
@@ -2641,7 +2932,7 @@ static void DrawVisualInterpretation(const IlionVisual::Capture& reference, cons
     }
 
     const ImVec4 titleColor = IlionTheme::industrial ? IlionTheme::TextTitle : ImGui::GetStyleColorVec4(ImGuiCol_Text);
-    const ImVec4 cautionColor = toneMapColor(ImVec4(1.0f, 0.8f, 0.0f, 1.0f));
+    const ImVec4 cautionColor = toneMapColor(IlionTheme::Themed(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), IlionTheme::Role::Warn));
 
     for (const auto& entry : entries)
     {
@@ -3596,7 +3887,7 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
             ImGui::Text(Tr("Magnifier %dx: %d x %d pixels around %d, %d"), magnifierLevel, magnifierCells, magnifierCells,
                         (int) magnifiedX, (int) magnifiedY);
 
-            const ImVec4 notAlignedColor = toneMapColor(ImVec4(1.0f, 0.8f, 0.0f, 1.0f));
+            const ImVec4 notAlignedColor = toneMapColor(IlionTheme::Themed(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), IlionTheme::Role::Warn));
 
             // The two areas are the same coordinates. Whether they are the same part of the scene is another thing.
             if (sizesDiffer)
@@ -3749,8 +4040,8 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
     {
         for (const auto& conclusion : BuildVisualSummary(*reference, entries))
         {
-            const ImVec4 color = conclusion.level == 0   ? ImVec4(0.3f, 1.0f, 0.3f, 1.0f)
-                                 : conclusion.level == 2 ? ImVec4(1.0f, 0.8f, 0.0f, 1.0f)
+            const ImVec4 color = conclusion.level == 0   ? IlionTheme::Themed(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), IlionTheme::Role::Good)
+                                 : conclusion.level == 2 ? IlionTheme::Themed(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), IlionTheme::Role::Warn)
                                                          : ImGui::GetStyleColorVec4(ImGuiCol_Text);
 
             ImGui::TextColored(conclusion.level == 1 ? color : toneMapColor(color), "%s", conclusion.title.c_str());
@@ -3759,8 +4050,8 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
     }
 
     // What keeps a capture from being measured, or makes its numbers doubtful
-    const ImVec4 blockingColor = toneMapColor(ImVec4(1.0f, 0.4f, 0.3f, 1.0f));
-    const ImVec4 warningColor = toneMapColor(ImVec4(1.0f, 0.8f, 0.0f, 1.0f));
+    const ImVec4 blockingColor = toneMapColor(IlionTheme::Themed(ImVec4(1.0f, 0.4f, 0.3f, 1.0f), IlionTheme::Role::Bad));
+    const ImVec4 warningColor = toneMapColor(IlionTheme::Themed(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), IlionTheme::Role::Warn));
 
     bool generatedFrames = reference->frameGeneration != "Off" && !reference->frameGeneration.empty();
     bool differentGame = false;
@@ -4252,9 +4543,9 @@ static void DrawDifference(const std::string& text, double percent, int better)
     if (better == 0 || std::abs(percent) < 0.05)
         ImGui::TextUnformatted(text.c_str());
     else if ((percent > 0.0) == (better > 0))
-        ImGui::TextColored(toneMapColor(ImVec4(0.3f, 1.0f, 0.3f, 1.0f)), "%s", text.c_str());
+        ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), IlionTheme::Role::Good)), "%s", text.c_str());
     else
-        ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.4f, 0.3f, 1.0f)), "%s", text.c_str());
+        ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.0f, 0.4f, 0.3f, 1.0f), IlionTheme::Role::Bad)), "%s", text.c_str());
 }
 
 static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
@@ -4375,7 +4666,7 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
     if (!deleteError.empty())
     {
         ImGui::SameLine();
-        ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.4f, 0.3f, 1.0f)), "%s", Tr(deleteError.c_str()));
+        ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.0f, 0.4f, 0.3f, 1.0f), IlionTheme::Role::Bad)), "%s", Tr(deleteError.c_str()));
     }
 
     ImGui::SameLine();
@@ -4402,7 +4693,7 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
     {
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableSetupColumn("##pick");
-        ImGui::TableSetupColumn(Tr("FSR version"));
+        ImGui::TableSetupColumn(Tr("Implementation"));
         ImGui::TableSetupColumn(Tr("Date and time"));
         ImGui::TableSetupColumn(Tr("Duration"));
         ImGui::TableSetupColumn(Tr("Game"));
@@ -4528,8 +4819,8 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
 
     for (const auto& conclusion : conclusions)
     {
-        const ImVec4 color = conclusion.level == 0   ? ImVec4(0.3f, 1.0f, 0.3f, 1.0f)
-                             : conclusion.level == 2 ? ImVec4(1.0f, 0.8f, 0.0f, 1.0f)
+        const ImVec4 color = conclusion.level == 0   ? IlionTheme::Themed(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), IlionTheme::Role::Good)
+                             : conclusion.level == 2 ? IlionTheme::Themed(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), IlionTheme::Role::Warn)
                                                      : ImGui::GetStyleColorVec4(ImGuiCol_Text);
 
         ImGui::TextColored(conclusion.level == 1 ? color : toneMapColor(color), "%s", conclusion.title.c_str());
@@ -4541,10 +4832,10 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
                         analysis.marginFromRepeats ? Tr(" Taken from the spread between tests of the same dll.") : "");
 
     for (const auto issue : analysis.blocking)
-        ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.4f, 0.3f, 1.0f)), "%s", Tr(CompareIssueText(issue)));
+        ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.0f, 0.4f, 0.3f, 1.0f), IlionTheme::Role::Bad)), "%s", Tr(CompareIssueText(issue)));
 
     for (const auto issue : analysis.warnings)
-        ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.8f, 0.0f, 1.0f)), "%s", Tr(CompareIssueText(issue)));
+        ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), IlionTheme::Role::Warn)), "%s", Tr(CompareIssueText(issue)));
 
     // One column per test
     IlionTheme::SectionPlate(Tr("Results"));
@@ -5182,7 +5473,7 @@ static void DrawFinalReportWindow(float scale, ImGuiIO& io)
                                     "the same configuration to get a report."));
 
         for (const auto issue : analysis.blocking)
-            ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.4f, 0.3f, 1.0f)), "%s", Tr(CompareIssueText(issue)));
+            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.0f, 0.4f, 0.3f, 1.0f), IlionTheme::Role::Bad)), "%s", Tr(CompareIssueText(issue)));
 
         ImGui::End();
         return;
@@ -5412,8 +5703,8 @@ static void DrawFinalReportWindow(float scale, ImGuiIO& io)
 
     for (const auto& conclusion : conclusions)
     {
-        const ImVec4 color = conclusion.level == 0   ? ImVec4(0.3f, 1.0f, 0.3f, 1.0f)
-                             : conclusion.level == 2 ? ImVec4(1.0f, 0.8f, 0.0f, 1.0f)
+        const ImVec4 color = conclusion.level == 0   ? IlionTheme::Themed(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), IlionTheme::Role::Good)
+                             : conclusion.level == 2 ? IlionTheme::Themed(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), IlionTheme::Role::Warn)
                                                      : ImGui::GetStyleColorVec4(ImGuiCol_Text);
 
         ImGui::TextColored(conclusion.level == 1 ? color : toneMapColor(color), "%s", conclusion.title.c_str());
@@ -5434,20 +5725,20 @@ static void DrawFinalReportWindow(float scale, ImGuiIO& io)
     }
 
     for (const auto issue : analysis.blocking)
-        ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.4f, 0.3f, 1.0f)), "%s", Tr(CompareIssueText(issue)));
+        ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.0f, 0.4f, 0.3f, 1.0f), IlionTheme::Role::Bad)), "%s", Tr(CompareIssueText(issue)));
 
     for (const auto issue : analysis.warnings)
-        ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.8f, 0.0f, 1.0f)), "%s", Tr(CompareIssueText(issue)));
+        ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), IlionTheme::Role::Warn)), "%s", Tr(CompareIssueText(issue)));
 
     if (reference != nullptr)
     {
-        ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.8f, 0.0f, 1.0f)), "%s",
+        ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), IlionTheme::Role::Warn)), "%s",
                            Tr("ILION can't check that the captures are from the scene of the tests."));
     }
 
     if (generatedFrames)
     {
-        ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.8f, 0.0f, 1.0f)), "%s",
+        ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), IlionTheme::Role::Warn)), "%s",
                            Tr("Frame generation was on in at least one capture, its frame may be a generated one."));
     }
 
@@ -6059,7 +6350,7 @@ static void DrawHardwareTelemetry(decltype(Config::Instance()) config, float sca
     }
 }
 
-// Feeds the FSR 4 comparison with the frame time that was just measured and the dll that executed the upscaling
+// Feeds the upscaler comparison with the frame time that was just measured and the dll that executed the upscaling
 static void UpdateFsr4Comparison(State& state, double frameTime, double now)
 {
     if (!FSR4Comparison::Enabled())
@@ -6073,7 +6364,7 @@ static void UpdateFsr4Comparison(State& state, double frameTime, double now)
                             active.errorCount, active.requestTick, fgActive);
 }
 
-// Three boxes under the performance overlay's own lines, drawn with the window's draw list.
+// A box per measured upscaler under the performance overlay's own lines, drawn with the window's draw list.
 // With columnWidth they share exactly that width, the one of the rows above them: the same left and right
 // edges, even gaps, and texts made smaller or split in two lines when a box is too narrow for them.
 static void DrawFsr4ComparisonPanel(float scale, float columnWidth = 0.0f)
@@ -6093,9 +6384,19 @@ static void DrawFsr4ComparisonPanel(float scale, float columnWidth = 0.0f)
 
     const bool fitted = columnWidth > 0.0f;
     const float minBoxWidth = textSize * 7.5f;
+    const int boxCount = FSR4Comparison::BoxCount();
+
+    // Nothing executed yet since the mode was turned on
+    if (boxCount == 0)
+    {
+        ImGui::TextDisabled("%s", Tr("Upscaler comparison: waiting for an upscale..."));
+        return;
+    }
+
     const float availWidth = fitted ? columnWidth : ImGui::GetContentRegionAvail().x;
-    const float boxWidth = fitted ? ImFloor((availWidth - gap * 2.0f) / 3.0f)
-                                  : std::max(minBoxWidth, (availWidth - gap * 2.0f) / 3.0f);
+    const float gaps = gap * (float) (boxCount - 1);
+    const float boxWidth = fitted ? ImFloor((availWidth - gaps) / (float) boxCount)
+                                  : std::max(minBoxWidth, (availWidth - gaps) / (float) boxCount);
     const float innerWidth = std::max(1.0f, boxWidth - padding * 2.0f);
 
     // What every box says, known before drawing so the three of them can use the same sizes
@@ -6108,9 +6409,9 @@ static void DrawFsr4ComparisonPanel(float scale, float columnWidth = 0.0f)
         const char* status = "";
     };
 
-    BoxText texts[FSR4Comparison::BoxCount];
+    BoxText texts[FSR4Comparison::MaxBoxes];
 
-    for (int i = 0; i < FSR4Comparison::BoxCount; i++)
+    for (int i = 0; i < boxCount; i++)
     {
         const auto& box = FSR4Comparison::GetBox(i);
         auto& text = texts[i];
@@ -6145,9 +6446,9 @@ static void DrawFsr4ComparisonPanel(float scale, float columnWidth = 0.0f)
 
     if (fitted)
     {
-        for (int i = 0; i < FSR4Comparison::BoxCount; i++)
+        for (int i = 0; i < boxCount; i++)
         {
-            labelSize = std::min(labelSize, fit(FSR4Comparison::GetBox(i).label, smallSize));
+            labelSize = std::min(labelSize, fit(Tr(FSR4Comparison::GetBox(i).label), smallSize));
             averageSize = std::min(averageSize, fit(texts[i].average, bigSize));
             statusSize = std::min(statusSize, fit(texts[i].status, smallSize));
 
@@ -6156,7 +6457,7 @@ static void DrawFsr4ComparisonPanel(float scale, float columnWidth = 0.0f)
                 twoLines = true;
         }
 
-        for (int i = 0; i < FSR4Comparison::BoxCount; i++)
+        for (int i = 0; i < boxCount; i++)
         {
             if (twoLines)
             {
@@ -6179,8 +6480,8 @@ static void DrawFsr4ComparisonPanel(float scale, float columnWidth = 0.0f)
     const ImU32 textColor = ImGui::GetColorU32(ImGuiCol_Text);
     const ImU32 dimColor = ImGui::GetColorU32(ImGuiCol_Text, 0.6f);
     const ImU32 borderColor = ImGui::GetColorU32(ImGuiCol_Text, 0.25f);
-    const ImU32 recordingColor = ImGui::ColorConvertFloat4ToU32(toneMapColor(ImVec4(0.3f, 1.0f, 0.3f, 1.0f)));
-    const ImU32 stabilizingColor = ImGui::ColorConvertFloat4ToU32(toneMapColor(ImVec4(1.0f, 0.8f, 0.0f, 1.0f)));
+    const ImU32 recordingColor = ImGui::ColorConvertFloat4ToU32(toneMapColor(IlionTheme::Themed(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), IlionTheme::Role::Good)));
+    const ImU32 stabilizingColor = ImGui::ColorConvertFloat4ToU32(toneMapColor(IlionTheme::Themed(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), IlionTheme::Role::Warn)));
 
     const auto centered = [&](const char* text, float size, float boxLeft, float y, ImU32 color)
     {
@@ -6190,14 +6491,14 @@ static void DrawFsr4ComparisonPanel(float scale, float columnWidth = 0.0f)
 
     bool fgSeen = false;
 
-    for (int i = 0; i < FSR4Comparison::BoxCount; i++)
+    for (int i = 0; i < boxCount; i++)
     {
         const auto& box = FSR4Comparison::GetBox(i);
         const bool current = i == FSR4Comparison::CurrentBox() && (box.status == FSR4Comparison::Status::Recording ||
                                                                    box.status == FSR4Comparison::Status::Stabilizing);
 
         // In a column the first box starts at its left edge and the last one ends at its right edge
-        const float left = fitted ? ImFloor(origin.x + (availWidth - boxWidth) * 0.5f * (float) i)
+        const float left = fitted ? ImFloor(origin.x + (boxCount > 1 ? (availWidth - boxWidth) / (float) (boxCount - 1) : 0.0f) * (float) i)
                                   : origin.x + (boxWidth + gap) * (float) i;
         const ImVec2 boxMin(left, origin.y);
         const ImVec2 boxMax(left + boxWidth, origin.y + boxHeight);
@@ -6223,7 +6524,7 @@ static void DrawFsr4ComparisonPanel(float scale, float columnWidth = 0.0f)
             y += lineHeight + lineGap;
         };
 
-        line(box.label, labelSize, smallSize, dimColor);
+        line(Tr(box.label), labelSize, smallSize, dimColor);
         line(text.average, averageSize, bigSize, textColor);
 
         if (twoLines)
@@ -6241,7 +6542,7 @@ static void DrawFsr4ComparisonPanel(float scale, float columnWidth = 0.0f)
         fgSeen = fgSeen || box.fgSeen;
     }
 
-    ImGui::Dummy(ImVec2(fitted ? availWidth : boxWidth * 3.0f + gap * 2.0f, boxHeight));
+    ImGui::Dummy(ImVec2(fitted ? availWidth : boxWidth * (float) boxCount + gaps, boxHeight));
 
     // The notes under the boxes stay inside the column too
     const auto note = [&](const char* text)
@@ -6260,7 +6561,12 @@ static void DrawFsr4ComparisonPanel(float scale, float columnWidth = 0.0f)
     };
 
     if (FSR4Comparison::OtherDllActive())
-        note(Tr("Active dll isn't Official, Community or Lite, not measured"));
+        note(Tr("More upscalers than boxes in this session, the last one isn't measured"));
+
+    // DLSS through d4r has no dispatch counter to follow: compared through saved Benchmark tests
+    if (State::Instance().dlssExternalBackend && State::Instance().currentFeature != nullptr &&
+        State::Instance().currentFeature->GetUpscalerType() == Upscaler::DLSS)
+        note(Tr("DLSS isn't measured live here: compare it with saved Benchmark tests"));
 
     if (fgSeen)
         note(Tr("Includes frames presented by frame generation"));
@@ -6860,10 +7166,8 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
             {
                 const bool usesDx12CompatLayer = currentFeature->IsWithDx12();
 
-                featurePart = StrFmt(" | %s -> %s %u.%u.%u%s", ApiUpscalerInputName(state.currentInputApiName).c_str(),
-                                     currentFeature->ShortName().c_str(), currentFeature->Version().major,
-                                     currentFeature->Version().minor, currentFeature->Version().patch,
-                                     usesDx12CompatLayer ? " w/Dx12" : "");
+                featurePart = StrFmt(" | %s -> %s%s", ApiUpscalerInputName(state.currentInputApiName).c_str(),
+                                     UpscalerLabel(currentFeature).c_str(), usesDx12CompatLayer ? " w/Dx12" : "");
             }
 
             uint32_t interpolatedFrameCount = 0;
@@ -7043,9 +7347,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                     OverlayRowParts(upscalerLabel,
                                     { { ApiUpscalerInputName(state.currentInputApiName), &inputOrange },
                                       { " -> ", nullptr },
-                                      { StrFmt("%s %u.%u.%u", currentFeature->ShortName().c_str(),
-                                               currentFeature->Version().major, currentFeature->Version().minor,
-                                               currentFeature->Version().patch),
+                                      { UpscalerLabel(currentFeature),
                                         &phosphor },
                                       { currentFeature->IsWithDx12() ? " w/Dx12" : "", nullptr } },
                                     rowWidth);
@@ -7123,8 +7425,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                     OverlayCell(Tr("Upscaler"),
                                 { { ApiUpscalerInputName(state.currentInputApiName), &inputOrange },
                                   { " -> ", nullptr },
-                                  { StrFmt("%s %u.%u.%u", currentFeature->ShortName().c_str(), currentFeature->Version().major,
-                                           currentFeature->Version().minor, currentFeature->Version().patch),
+                                  { UpscalerLabel(currentFeature),
                                     &phosphor },
                                   { currentFeature->IsWithDx12() ? " w/Dx12" : "", nullptr } });
                 }
@@ -7576,7 +7877,7 @@ void MenuCommon::RenderMainMenuHeaderMessages(RenderMenuContext& ctx)
         if (versionStatus.updateAvailable && !versionStatus.latestTag.empty())
         {
             ImGui::Spacing();
-            ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.8f, 0.f, 1.f)), "Update available: %s (current %s)",
+            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), "Update available: %s (current %s)",
                                versionStatus.latestTag.c_str(), currentVersionText.c_str());
 
             if (!versionStatus.latestUrl.empty())
@@ -7604,7 +7905,7 @@ void MenuCommon::RenderMainMenuHeaderMessages(RenderMenuContext& ctx)
     if (state.nvngxIniDetected)
     {
         ImGui::Spacing();
-        ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(ImVec4(1.f, 0.f, 0.f, 1.f)));
+        ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)));
         ImGui::TextWrapped("nvngx.ini detected, please move over to using OptiScaler.ini and delete the old config");
         ImGui::PopStyleColor();
         ImGui::Spacing();
@@ -7763,6 +8064,13 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
         IlionD4rPanel::Draw(IlionD4rLogPath(), currentFeature->Version().major, currentFeature->Version().minor,
                             currentFeature->Version().patch);
 
+    // ILION's upscalers: every FFX upscaler found and DLSS 4 through d4r, whatever runs now
+    if (state.api == DX12 && !usesDlssd)
+    {
+        ImGui::Spacing();
+        DrawUpscalerSelector(currentFeature, menuResScale, "upscaling");
+    }
+
     if (!usesDlssd)
     {
         if (state.newBackend != Upscaler::Reset && state.newBackend != currentBackend)
@@ -7781,7 +8089,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
     if (primaryGpu.dlssCapable && !state.NVNGX_DLSS_Path.has_value())
     {
         ImGui::Spacing();
-        ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.8f, 0.f, 1.f)), "nvngx_dlss.dll not found, DLSS disabled!");
+        ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), "nvngx_dlss.dll not found, DLSS disabled!");
     }
 
     // Dx11 with Dx12
@@ -7891,73 +8199,6 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
         // Upscaler dll selection, kept outside of the version checks so it's still reachable when a dll fails
         if (currentBackend == Upscaler::FFX && state.api == DX12)
         {
-            // Shared with the selector of the Benchmark tab
-            auto& srVariants = SharedSrVariants();
-            auto& defaultSrDll = SharedDefaultSrDll();
-
-            auto selectSrVariant = [&](const std::wstring& name) { SelectSrVariant(name); };
-
-            const bool defaultActive = !defaultSrDll.empty() && FfxApiProxy::IsActiveSrDll(defaultSrDll);
-            std::string activeSrName = defaultActive ? Tr("Default") : Tr("Custom path");
-
-            for (const auto& variant : srVariants)
-            {
-                if (FfxApiProxy::IsActiveSrDll(variant.dllPath))
-                    activeSrName = wstring_to_string(variant.name);
-            }
-
-            ImGui::Spacing();
-            ImGui::PushItemWidth(150.0f * menuResScale);
-
-            if (IlionTheme::BeginCombo(TrL("FSR Upscaler DLL"), activeSrName.c_str()))
-            {
-                if (!defaultSrDll.empty() && ImGui::Selectable(TrL("Default"), defaultActive) && !defaultActive)
-                    selectSrVariant(L"");
-
-                for (const auto& variant : srVariants)
-                {
-                    const bool variantActive =
-                        !variant.dllPath.empty() && FfxApiProxy::IsActiveSrDll(variant.dllPath);
-
-                    auto label = wstring_to_string(variant.name);
-
-                    if (!variant.version.empty())
-                        label += StrFmt("  (%s)", variant.version.c_str());
-
-                    // Dlls that didn't pass the checks stay listed so it's visible why they can't be used
-                    ImGui::BeginDisabled(!variant.valid);
-
-                    if (ImGui::Selectable(label.c_str(), variantActive) && !variantActive)
-                        selectSrVariant(variant.name);
-
-                    ImGui::EndDisabled();
-
-                    if (!variant.valid && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                        ImGui::SetTooltip(Tr("Can't be used: %s"), Tr(variant.problem.c_str()));
-                }
-
-                ImGui::EndCombo();
-            }
-
-            ImGui::PopItemWidth();
-
-            ShowTooltip("Switches amd_fidelityfx_upscaler_dx12.dll without restarting the game.\n"
-                        "Every subfolder of ILION\\FSR_Versions (next to the game exe) that has its own\n"
-                        "amd_fidelityfx_upscaler_dx12.dll is listed here, the folder name is the version name.\n"
-                        "Add a folder and press Rescan, no restart needed.\n\n"
-                        "Other upscalers with the same FFX interface (HelixSR, for example) can be used too.\n"
-                        "FSR 4 options are not applied to dlls whose providers are not AMD's.\n\n"
-                        "Dlls stay loaded once used. Only affects upscaling, not frame generation.");
-
-            // What the dll in use says it is, asked through ffxQuery: tells FSR 4 apart from other FFX upscalers
-            if (const auto provider = FfxApiProxy::ActiveSrProvider(); !provider.empty())
-                ImGui::TextDisabled(Tr("Reported by the dll: %s"), provider.c_str());
-
-            ImGui::SameLine();
-
-            if (IlionTheme::Button(TrL("Rescan##SrVariants")))
-                RescanSrVariants();
-
             // Path, hash, diagnostics and comparison stay in the full menu only
             if (!basicView)
             {
@@ -7991,13 +8232,13 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             }
 
             // Read-only, everything comes from the dispatch calls that were actually made
-            if (ImGui::TreeNode(TrL("FSR 4 HOT-SWAP DIAGNOSTICS")))
+            if (ImGui::TreeNode(TrL("UPSCALER HOT-SWAP DIAGNOSTICS")))
             {
                 const auto diag = FfxApiProxy::SrDiagGetSnapshot();
 
                 const ImVec4 statusColor = diag.statusLevel == 0   ? ImVec4(0.3f, 1.f, 0.3f, 1.f)
-                                           : diag.statusLevel == 2 ? ImVec4(1.f, 0.2f, 0.2f, 1.f)
-                                                                   : ImVec4(1.f, 0.8f, 0.f, 1.f);
+                                           : diag.statusLevel == 2 ? IlionTheme::Themed(ImVec4(1.f, 0.2f, 0.2f, 1.f), IlionTheme::Role::Bad)
+                                                                   : IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn);
 
                 ImGui::Text(Tr("Selected: %s"), Tr(diag.selectedName.c_str()));
                 ImGui::Text(Tr("Active: %s"), Tr(diag.activeName.c_str()));
@@ -8025,7 +8266,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             }
 
             // Experimental, the marker color is keyed to the dll that recorded the GPU work, not to the selection
-            if (ImGui::TreeNode(TrL("FSR 4 VISUAL VERIFICATION")))
+            if (ImGui::TreeNode(TrL("UPSCALER VISUAL VERIFICATION")))
             {
                 bool visualEnabled = FSR4VisualVerify::Enabled();
 
@@ -8034,7 +8275,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
                 ShowTooltip("Writes color bars into the output of the upscale dispatch, before the game's post\n"
                             "processing. Top and bottom bars: the dll below recorded the compute work of the frame.\n"
-                            "Blue = Official, Green = Community, Magenta = Lite, White = any other dll.\n"
+                            "Blue = FSR 4 official, Green = FSR 4.1.1B, Magenta = FSR 4 Lite, White = any other dll (HelixSR...).\n"
                             "Yellow top bar only = could not be verified.\n\n"
                             "The bars are drawn by OptiScaler, not by the dll. Not saved, off on next launch.");
 
@@ -8046,7 +8287,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                 }
                 else if (!evidence.hasFrame || evidence.msSinceLastFrame > 1000)
                 {
-                    ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.8f, 0.f, 1.f)),
+                    ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)),
                                        "%s", Tr("Verdict: NO DATA (no upscale dispatch in the last second)"));
                 }
                 else
@@ -8087,7 +8328,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                                              : evidence.computeFromExec == 0    ? "no compute dispatch seen"
                                                                                 : "dispatch failed";
 
-                        ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.2f, 0.2f, 1.f)),
+                        ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.2f, 0.2f, 1.f), IlionTheme::Role::Bad)),
                                            Tr("Verdict: NOT VERIFIED (%s)"), Tr(reason));
                     }
 
@@ -8100,7 +8341,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             // Not saved, results are shown under the performance overlay
             bool comparisonEnabled = FSR4Comparison::Enabled();
 
-            if (IlionTheme::Checkbox(TrL("FSR 4 Comparison Mode"), &comparisonEnabled))
+            if (IlionTheme::Checkbox(TrL("Upscaler comparison mode"), &comparisonEnabled))
             {
                 FSR4Comparison::SetEnabled(comparisonEnabled);
 
@@ -8110,7 +8351,9 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             }
 
             ShowTooltip("Measures every upscaler dll while it's the one executing the upscaling and shows\n"
-                        "the results under the performance overlay. Switch the dll above to measure the next one.\n\n"
+                        "the results under the performance overlay, one box per upscaler, named as ILION's list\n"
+                        "knows it. Switch the upscaler to measure the next one. Live only for FFX upscalers\n"
+                        "(FSR 4 builds, HelixSR); DLSS is compared through saved Benchmark tests.\n\n"
                         "AVG = counted frames / their total time\n"
                         "MIN / MAX = slowest / fastest single frame, as fps (not 1%% lows)\n\n"
                         "The first 2 seconds after a switch aren't counted.\n"
@@ -8232,7 +8475,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             if (state.currentFsr4Preset.has_value())
                 ImGui::TextDisabled("(Active: %d)", state.currentFsr4Preset.value());
             else if (FSR4ModelSelection::IsInt8FsrHooked())
-                ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.8f, 0.f, 1.f)), "(Potential FSR3 fallback)");
+                ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), "(Potential FSR3 fallback)");
             else
                 ImGui::TextDisabled("(Failed to hook)");
         }
@@ -8430,7 +8673,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
         if (overridden)
         {
-            ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.8f, 0.f, 1.f)), "Presets are overridden externally");
+            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), "Presets are overridden externally");
             ShowTooltip("This usually happens due to using tools\n"
                         "such as Nvidia App or Nvidia Inspector");
             // ImGui::Text("Selecting setting below will disable that external override\n"
@@ -9504,19 +9747,19 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         bool cantActivate = false;
         if (restartNeeded)
         {
-            ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.8f, 0.f, 1.f)),
+            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)),
                                "Restart the game to apply correct XeFG settings!");
         }
         else
         {
             if (!correctMVs)
-                ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.f, 0.f, 1.f)),
+                ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)),
                                    "Requires disabling dilated motion vectors");
 
             if (!ignoreChecks && state.realExclusiveFullscreen)
             {
                 cantActivate = true;
-                ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.f, 0.f, 1.f)), "Borderless display mode required!");
+                ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), "Borderless display mode required!");
             }
 
             if (!ignoreChecks && outputIsHdr)
@@ -9663,11 +9906,11 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         ImGui::SameLine();
         if (auto count = state.dlssgDetectedInterpolationCount; count > 0)
         {
-            ImGui::TextColored(toneMapColor(ImVec4(0.f, 1.f, 0.25f, 1.f)), std::format("ON {}x", count + 1).c_str());
+            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.f, 1.f, 0.25f, 1.f), IlionTheme::Role::Good)), std::format("ON {}x", count + 1).c_str());
         }
         else
         {
-            ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.f, 0.f, 1.f)), "OFF");
+            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), "OFF");
         }
 
         RenderFGModeCombo(ctx, "Frame Gen##dlssg", fgOutput->GetMaxInterpolationCount(),
@@ -10139,7 +10382,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
             if (!state.nukemsFgFileAvailable)
             {
-                ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.f, 0.f, 1.f)),
+                ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)),
                                    "Please put dlssg_to_fsr3_amd_is_better.dll into OptiScaler folder");
             }
         }
@@ -10150,11 +10393,11 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
             if (!state.artursFgFileAvailable)
             {
-                ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.f, 0.f, 1.f)),
+                ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)),
                                    "Please put dlss-enabler-headless.dll into OptiScaler folder");
             }
 
-            ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.8f, 0.f, 1.f)),
+            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)),
                                "Using a subset of features from DLSS Enabler");
         }
         else if (activeNvngxFg == FGNvngxReplacement::FFX)
@@ -10175,7 +10418,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
             if (!ReflexHooks::isReflexHooked())
             {
-                ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.f, 0.f, 1.f)), "Reflex not hooked");
+                ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), "Reflex not hooked");
                 ImGui::Text("If you are using an AMD/Intel GPU, then make sure you have Fakenvapi");
             }
             else if (ReflexHooks::dlssgFrameCountToGenerate() == 0 && !dmfgActive)
@@ -10190,12 +10433,12 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 ImGui::SameLine();
                 if (auto count = state.dlssgDetectedInterpolationCount; count > 0)
                 {
-                    ImGui::TextColored(toneMapColor(ImVec4(0.f, 1.f, 0.25f, 1.f)),
+                    ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.f, 1.f, 0.25f, 1.f), IlionTheme::Role::Good)),
                                        std::format("ON {}x", count + 1).c_str());
                 }
                 else
                 {
-                    ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.f, 0.f, 1.f)), "OFF");
+                    ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), "OFF");
                 }
 
                 // Issue mostly shows up on AMD on Windows on pre-RDNA3 in some non-UE games
@@ -10218,7 +10461,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             }
             else if (state.swapchainApi == Vulkan)
             {
-                ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.8f, 0.f, 1.f)),
+                ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)),
                                    "DLSSG is purposefully disabled when this menu is visible");
                 ImGui::Spacing();
             }
@@ -10438,13 +10681,13 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             if (state.fsrfgInputActive)
             {
                 if (fgOutput->IsActive())
-                    ImGui::TextColored(toneMapColor(ImVec4(0.f, 1.f, 0.25f, 1.f)), "ON");
+                    ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.f, 1.f, 0.25f, 1.f), IlionTheme::Role::Good)), "ON");
                 else
                     ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.647f, 0.0f, 1.f)), "ACTIVATE FG");
             }
             else
             {
-                ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.f, 0.f, 1.f)), "OFF");
+                ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), "OFF");
                 ImGui::Text("Please select FSR Frame Generation in the game options\n"
                             "You might need to select FSR first");
             }
@@ -10477,7 +10720,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
         if (!ReflexHooks::isReflexHooked())
         {
-            ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.f, 0.f, 1.f)), "Reflex not hooked");
+            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), "Reflex not hooked");
             ImGui::Text("If you are using an AMD/Intel GPU, then make sure you have fakenvapi");
         }
         else if (fgOutput != nullptr)
@@ -10487,13 +10730,13 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             if ((state.fgLastFrame - state.dlssgLastFrame) < 3)
             {
                 if (fgOutput->IsActive())
-                    ImGui::TextColored(toneMapColor(ImVec4(0.f, 1.f, 0.25f, 1.f)), "ON");
+                    ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.f, 1.f, 0.25f, 1.f), IlionTheme::Role::Good)), "ON");
                 else
                     ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.647f, 0.0f, 1.f)), "ACTIVATE FG");
             }
             else
             {
-                ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.f, 0.f, 1.f)), "OFF");
+                ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), "OFF");
                 ImGui::Text("Please select DLSS Frame Generation in the game options\n"
                             "You might need to select DLSS first");
             }
@@ -10638,7 +10881,7 @@ void MenuCommon::RenderFramerateSettings(RenderMenuContext& ctx)
 
             if (state.rtssReflexInjection && fakenvapiMode == LowLatencyMode::AntiLag2 &&
                 config->FGOutput.value_or_default() == FGOutput::FSRFG)
-                ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.8f, 0.f, 1.f)),
+                ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)),
                                    "Using RTSS Reflex injection with FSR Anti-Lag 2.0 and FSR FG "
                                    "might cause issues");
         }
@@ -10666,7 +10909,7 @@ void MenuCommon::RenderFramerateSettings(RenderMenuContext& ctx)
 
         if (state.reflexShowWarning)
         {
-            ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.f, 0.f, 1.f)),
+            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)),
                                "Using Reflex's limit with FSR FG has performance overhead");
 
             ImGui::Spacing();
@@ -12569,7 +12812,7 @@ void MenuCommon::RenderUpscalerInputsSettings(RenderMenuContext& ctx)
 
         if (restartNeeded)
         {
-            ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(ImVec4(1.f, 0.8f, 0.f, 1.f)));
+            ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)));
             ImGui::TextWrapped("Save Settings and restart the game for Enable and Pattern changes to apply");
             ImGui::PopStyleColor();
         }
@@ -12967,8 +13210,8 @@ static const char* ApiName(API api)
 // Filled dot for on / found, hollow dot for off / missing. Goes into the next table cell
 static void StatusFlag(const char* label, bool on, bool warnWhenOn = false)
 {
-    const ImVec4 onColor = toneMapColor(ImVec4(0.35f, 0.85f, 0.45f, 1.f));
-    const ImVec4 warnColor = toneMapColor(ImVec4(1.f, 0.8f, 0.f, 1.f));
+    const ImVec4 onColor = toneMapColor(IlionTheme::Themed(ImVec4(0.35f, 0.85f, 0.45f, 1.f), IlionTheme::Role::Good));
+    const ImVec4 warnColor = toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn));
 
     ImGui::TableNextColumn();
 
@@ -13140,8 +13383,7 @@ void MenuCommon::RenderStatusInfo(RenderMenuContext& ctx)
             if (active)
             {
                 pair("Upscaler",
-                     StrFmt("%s %d.%d.%d%s", currentFeature->ShortName().c_str(), currentFeature->Version().major,
-                            currentFeature->Version().minor, currentFeature->Version().patch,
+                     StrFmt("%s%s", UpscalerLabel(currentFeature).c_str(),
                             (currentFeature->IsWithDx12() && state.api != DX12) ? " w/Dx12" : ""));
                 pair("Render", StrFmt("%dx%d", currentFeature->RenderWidth(), currentFeature->RenderHeight()));
                 pair("Output", StrFmt("%dx%d (%.2fx)", currentFeature->TargetWidth(), currentFeature->TargetHeight(),
@@ -13695,14 +13937,14 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
         if (currentFeature == nullptr || !currentFeature->IsInited())
             ImGui::TextDisabled("%s", Tr("None"));
         else if (currentFeature->IsFrozen())
-            ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.8f, 0.f, 1.f)), "%s", Tr("Idle"));
+            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), "%s", Tr("Idle"));
         else
         {
             const float renderWidth = (float) currentFeature->RenderWidth();
             const float upscaleRatio = renderWidth > 0.0f ? (float) currentFeature->TargetWidth() / renderWidth : 0.0f;
 
-            ImGui::TextColored(toneMapColor(ImVec4(0.35f, 0.85f, 0.45f, 1.f)), "%s (%.2f)",
-                               currentFeature->ShortName().c_str(), upscaleRatio);
+            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.35f, 0.85f, 0.45f, 1.f), IlionTheme::Role::Good)), "%s (%.2f)",
+                               UpscalerLabel(currentFeature).c_str(), upscaleRatio);
         }
 
         ImGui::TextDisabled("FG");
@@ -13718,7 +13960,7 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
             if (fgName.ends_with(multiplierSuffix))
                 fgName.erase(fgName.size() - multiplierSuffix.size());
 
-            ImGui::TextColored(toneMapColor(ImVec4(0.35f, 0.85f, 0.45f, 1.f)), "%s %ux", fgName.c_str(), multiplier);
+            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.35f, 0.85f, 0.45f, 1.f), IlionTheme::Role::Good)), "%s %ux", fgName.c_str(), multiplier);
         }
         else
         {
@@ -13728,9 +13970,9 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
                                                       state.swapchainApi == DX12);
 
             if (external.kind == ExternalFgStatus::Kind::Active)
-                ImGui::TextColored(toneMapColor(ImVec4(0.35f, 0.85f, 0.45f, 1.f)), "%s", external.text.c_str());
+                ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.35f, 0.85f, 0.45f, 1.f), IlionTheme::Role::Good)), "%s", external.text.c_str());
             else if (external.kind == ExternalFgStatus::Kind::Unknown)
-                ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.8f, 0.f, 1.f)), "%s", external.text.c_str());
+                ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), "%s", external.text.c_str());
             else
                 ImGui::TextDisabled("%s", Tr("Off"));
         }
@@ -13739,7 +13981,7 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
         ImGui::TextDisabled("Spoof");
         ImGui::SameLine(0.0f, 8.0f * menuResScale);
         if (spoofing)
-            ImGui::TextColored(toneMapColor(ImVec4(0.35f, 0.85f, 0.45f, 1.f)), "Yes");
+            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.35f, 0.85f, 0.45f, 1.f), IlionTheme::Role::Good)), "Yes");
         else
             ImGui::TextDisabled("No");
 
@@ -13747,7 +13989,7 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
         {
             ImGui::TextDisabled("OP");
             ImGui::SameLine(0.0f, 8.0f * menuResScale);
-            ImGui::TextColored(toneMapColor(ImVec4(0.35f, 0.85f, 0.45f, 1.f)), "Yes");
+            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.35f, 0.85f, 0.45f, 1.f), IlionTheme::Role::Good)), "Yes");
         }
     }
 
@@ -14277,13 +14519,14 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
     if (fsrObservable && active.module != nullptr)
         activeFsrName = FfxApiProxy::SrDiagDescribeModule(active.module, &activeDllPath);
 
-    const std::string upscalerText =
-        upscalerOn ? StrFmt("%s %u.%u.%u", currentFeature->ShortName().c_str(), currentFeature->Version().major,
-                            currentFeature->Version().minor, currentFeature->Version().patch)
-                   : std::string(Tr("None"));
+    // What runs, from the same source as the selector and the overlay
+    const std::string upscalerText = upscalerOn ? UpscalerLabel(currentFeature) : std::string(Tr("None"));
 
-    // Technology, what it reports about itself and its model, recorded with every test
-    std::string technology = Tr("None"), provider, model, quality;
+    // Technology, implementation, mode and state, recorded with every test. A technology is only recorded as such
+    // once it is confirmed: the dll that executed the last upscale (FFX) or accepted evaluations (d4r).
+    std::string technology = Tr("None"), provider, model, quality, implementation = "-";
+    bool confirmed = false;
+    const char* statusText = "No upscaler running";
 
     // Quality mode from the upscale ratio, as the presets define it
     if (upscalerOn && currentFeature->RenderWidth() > 0)
@@ -14305,43 +14548,63 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
         provider = StrFmt("%u.%u.%u", currentFeature->Version().major, currentFeature->Version().minor,
                           currentFeature->Version().patch);
 
-        if (currentBackend == Upscaler::FFX && state.api == DX12)
+        if (fsrObservable)
         {
-            technology = FfxApiProxy::ActiveSrThirdParty() ? "FFX third party" : "FSR";
+            // The dll that executed the last upscale, as the list knows it; the default dll is AMD's FSR
+            const auto entry = IlionUpscalers::FindByPath(activeDllPath);
+            technology = entry.has_value() ? FamilyName(entry->family) : "FSR";
+            implementation = activeFsrName.empty() ? std::string("-") : std::string(Tr(activeFsrName.c_str()));
 
             if (const auto reported = FfxApiProxy::ActiveSrProvider(); !reported.empty())
                 provider = reported;
+
+            const auto diag = FfxApiProxy::SrDiagGetSnapshot();
+            confirmed = active.module != nullptr && diag.statusLevel == 0;
+            statusText = active.module == nullptr  ? "Waiting for the first upscale"
+                         : diag.statusLevel == 1   ? "Switching..."
+                         : diag.statusLevel != 0   ? "The DLL that executes is not the selected one"
+                                                   : "Active, confirmed by its upscale calls";
         }
         else if (currentBackend == Upscaler::DLSS && state.dlssExternalBackend)
         {
-            technology = "DLSS (d4r)";
+            technology = "DLSS 4";
+            implementation = "DLSS 4 (d4r)";
+
+            for (const auto& entry : SharedSrVariants())
+            {
+                if (entry.kind == IlionUpscalers::Kind::D4r && StatusOf(&entry, currentFeature).loaded)
+                    implementation = EntryName(entry);
+            }
 
             // The preset d4r left in the NGX parameters of the last evaluation
             if (const char letter = IlionD4r::PresetLetter(IlionD4r::GetCalls().presetAfter.load()))
                 model = std::string(1, letter);
+
+            const auto& calls = IlionD4r::GetCalls();
+            confirmed = calls.evaluateOk.load() > 0 && calls.lastResult.load() == 1;
+            statusText = confirmed ? "Active, NGX accepted its evaluations" : "Loaded, no evaluation confirmed yet";
         }
         else
         {
             technology = currentFeature->ShortName();
+            implementation = upscalerText;
+            confirmed = true;
+            statusText = "Active";
         }
     }
 
-    ImGui::Text("%s: %s", Tr("Upscaler"), upscalerText.c_str());
-    ImGui::Text("%s: %s%s%s%s%s%s%s", Tr("Technology"), technology.c_str(), provider.empty() ? "" : " | ", provider.c_str(),
-                model.empty() ? "" : " | ", model.c_str(), quality.empty() ? "" : " | ", Tr(quality.c_str()));
-
-    if (fsrObservable)
-        ImGui::Text("%s: %s", Tr("FSR version"), activeFsrName.empty() ? "-" : Tr(activeFsrName.c_str()));
+    ImGui::Text("%s: %s", Tr("Technology"), technology.c_str());
+    ImGui::Text("%s: %s%s%s%s%s", Tr("Implementation"), implementation.c_str(), provider.empty() ? "" : " | ",
+                provider.c_str(), model.empty() ? "" : " | ", model.c_str());
+    ImGui::Text("%s: %s", Tr("Upscaling mode"), quality.empty() ? "-" : Tr(quality.c_str()));
+    ImGui::TextColored(confirmed ? IlionTheme::LampGreen : IlionTheme::LampAmber, "%s: %s", Tr("Status"), Tr(statusText));
 
     ImGui::BeginDisabled(busy);
 
-    // The versions are picked right here, with the same list and the same hot swap as the Upscaling tab
+    // The selector of the Upscaling tab, the same list, states and switching
     static bool showVersionSelector = false;
-    const bool versionsSelectable = currentBackend == Upscaler::FFX && state.api == DX12;
 
-    ImGui::BeginDisabled(!versionsSelectable);
-
-    if (IlionTheme::Button(TrL("Change FSR version")))
+    if (IlionTheme::Button(TrL("Change upscaler")))
     {
         showVersionSelector = !showVersionSelector;
 
@@ -14349,74 +14612,13 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
             RescanSrVariants();
     }
 
-    ImGui::EndDisabled();
+    ShowTooltip("Opens ILION's upscaler selector here, without leaving Benchmark.\n"
+                "It can't be changed while a test is running.");
 
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    if (showVersionSelector && state.api == DX12)
     {
-        ImGui::SetTooltip("%s", Tr(versionsSelectable ? "Shows the FSR versions here. Picking one switches to it without "
-                                                        "leaving Benchmark.\nIt can't be changed while a test is running."
-                                                      : "Only with FSR as the upscaler in DX12."));
-    }
-
-    if (showVersionSelector && versionsSelectable)
-    {
-        const auto& variants = SharedSrVariants();
-        const auto& defaultDll = SharedDefaultSrDll();
-        const bool defaultActive = !defaultDll.empty() && FfxApiProxy::IsActiveSrDll(defaultDll);
-
         ImGui::Indent();
-        ImGui::PushID("versionSelector");
-
-        if (!defaultDll.empty())
-        {
-            if (IlionTheme::RadioButton(TrL("Default"), defaultActive) && !defaultActive)
-                SelectSrVariant(L"");
-        }
-
-        for (const auto& variant : variants)
-        {
-            const bool variantActive = !variant.dllPath.empty() && FfxApiProxy::IsActiveSrDll(variant.dllPath);
-
-            auto label = wstring_to_string(variant.name);
-
-            if (!variant.version.empty())
-                label += StrFmt("  (%s)", variant.version.c_str());
-
-            // The folder name is unique, it is the id of the row
-            label += "###" + wstring_to_string(variant.name);
-
-            ImGui::BeginDisabled(!variant.valid);
-
-            if (IlionTheme::RadioButton(label.c_str(), variantActive) && !variantActive)
-                SelectSrVariant(variant.name);
-
-            ImGui::EndDisabled();
-
-            if (!variant.valid && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip(Tr("Can't be used: %s"), Tr(variant.problem.c_str()));
-        }
-
-        if (IlionTheme::Button(TrL("Rescan")))
-            RescanSrVariants();
-
-        // What is selected against what is really executing, the test measures the second
-        if (fsrObservable)
-        {
-            const auto diag = FfxApiProxy::SrDiagGetSnapshot();
-
-            ImGui::SameLine();
-
-            if (diag.statusLevel == 1)
-                ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.8f, 0.0f, 1.0f)), "%s", Tr("Switching..."));
-            else if (diag.statusLevel != 0)
-                ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.4f, 0.3f, 1.0f)), "%s",
-                                   Tr("The DLL that executes is not the selected one"));
-            else
-                ImGui::TextColored(toneMapColor(ImVec4(0.3f, 1.0f, 0.3f, 1.0f)), "%s: %s", Tr("Active"),
-                                   activeFsrName.empty() ? "-" : Tr(activeFsrName.c_str()));
-        }
-
-        ImGui::PopID();
+        DrawUpscalerSelector(currentFeature, menuResScale, "benchmark");
         ImGui::Unindent();
     }
 
@@ -14449,10 +14651,12 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
         conditions.upscaler = upscalerOn ? upscalerText : std::string("None");
         conditions.upscaleObservable = fsrObservable;
         conditions.frameGeneration = "Off";
-        conditions.technology = technology;
+        // Never recorded under a technology that wasn't confirmed as the one running
+        conditions.technology = confirmed ? technology : technology + " (not confirmed)";
         conditions.provider = provider;
         conditions.model = model;
         conditions.quality = quality;
+        conditions.fsrVersion = implementation;
 
         if (upscalerOn)
         {
@@ -14465,7 +14669,6 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
 
         if (fsrObservable && active.module != nullptr)
         {
-            conditions.fsrVersion = activeFsrName;
             conditions.dllPath = wstring_to_string(activeDllPath);
             conditions.dllSha256 = FSR4Versions::HashForPath(activeDllPath);
 
@@ -14623,7 +14826,7 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
     }
     else if (benchState == IlionBenchmark::State::Aborted)
     {
-        ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.2f, 0.2f, 1.f)), "%s", Tr(IlionBenchmark::AbortReason()));
+        ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.2f, 0.2f, 1.f), IlionTheme::Role::Bad)), "%s", Tr(IlionBenchmark::AbortReason()));
     }
     else if (benchState == IlionBenchmark::State::Idle)
     {
@@ -14651,7 +14854,7 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
             row("Upscaler", result.conditions.upscaler);
 
             if (!result.conditions.fsrVersion.empty())
-                row("FSR version", result.conditions.fsrVersion);
+                row("Implementation", result.conditions.fsrVersion);
 
             row("Test time", StrFmt("%.1f s (%llu %s)%s", result.durationMs / 1000.0, result.frames, Tr("frames"),
                                     result.stoppedEarly ? Tr(", stopped early") : ""));
@@ -14691,7 +14894,7 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
 
         if (result.fgSeen)
         {
-            ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.8f, 0.f, 1.f)), Tr("Frame generation was active (x%d):"),
+            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), Tr("Frame generation was active (x%d):"),
                                result.fgMultiplier);
             ImGui::TextWrapped("%s", Tr("FPS values are presented frames and include generated ones."));
         }
@@ -14699,7 +14902,7 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
         if (!result.savedPath.empty())
             ImGui::TextWrapped("%s %s", Tr("Saved:"), result.savedPath.c_str());
         else if (!saveError.empty())
-            ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.2f, 0.2f, 1.f)), "%s", Tr(saveError.c_str()));
+            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.2f, 0.2f, 1.f), IlionTheme::Role::Bad)), "%s", Tr(saveError.c_str()));
     }
 
     // Captures of the game's image for the visual comparison, one per FSR version of the same scene
@@ -14806,7 +15009,7 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
     }
     else if (captureState == IlionCapture::State::Failed)
     {
-        ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.2f, 0.2f, 1.f)), "%s", Tr(IlionCapture::LastError().c_str()));
+        ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.2f, 0.2f, 1.f), IlionTheme::Role::Bad)), "%s", Tr(IlionCapture::LastError().c_str()));
     }
     else
     {
@@ -14833,7 +15036,7 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
 
     bool comparisonEnabled = FSR4Comparison::Enabled();
 
-    if (IlionTheme::Checkbox(TrL("FSR 4 Comparison Mode"), &comparisonEnabled))
+    if (IlionTheme::Checkbox(TrL("Upscaler comparison mode"), &comparisonEnabled))
     {
         FSR4Comparison::SetEnabled(comparisonEnabled);
 
@@ -14915,7 +15118,7 @@ void MenuCommon::RenderBasicPanel(RenderMenuContext& ctx)
         {
             const float size = ImGui::GetTextLineHeight();
             const ImVec2 pos = ImGui::GetCursorScreenPos();
-            const ImU32 color = on ? ImGui::ColorConvertFloat4ToU32(toneMapColor(ImVec4(0.3f, 1.0f, 0.3f, 1.0f)))
+            const ImU32 color = on ? ImGui::ColorConvertFloat4ToU32(toneMapColor(IlionTheme::Themed(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), IlionTheme::Role::Good)))
                                    : ImGui::GetColorU32(ImGuiCol_TextDisabled);
 
             ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(pos.x + size * 0.5f, pos.y + size * 0.5f),
@@ -14930,9 +15133,7 @@ void MenuCommon::RenderBasicPanel(RenderMenuContext& ctx)
         const bool upscalerOn = IsUpscalerActive(currentFeature) && currentFeature->IsInited();
 
         statusRow(upscalerOn, "Upscaler",
-                  upscalerOn ? StrFmt("%s %u.%u.%u", currentFeature->ShortName().c_str(),
-                                      currentFeature->Version().major, currentFeature->Version().minor,
-                                      currentFeature->Version().patch)
+                  upscalerOn ? UpscalerLabel(currentFeature)
                              : std::string(Tr("None")));
 
         // Dll that's really executing the upscaling, from the hot-swap diagnostics
@@ -14944,7 +15145,7 @@ void MenuCommon::RenderBasicPanel(RenderMenuContext& ctx)
             if (diag.statusLevel != 0)
                 value += std::string("  (") + Tr(diag.status.c_str()) + ")";
 
-            statusRow(diag.statusLevel == 0, "FSR version", value);
+            statusRow(diag.statusLevel == 0, "Implementation", value);
         }
 
         // The same sources as the sidebar of the full menu: OptiScaler's own frame generation when it is the
@@ -15063,11 +15264,17 @@ void MenuCommon::RenderMainMenuWindow(RenderMenuContext& ctx)
     if (windowTitle.empty())
     {
         // Name of this modified build, the OptiScaler build it is based on is shown in the Status tab
-        windowTitle = "OptiScaler - ILION V1.1";
+        windowTitle = std::string("OptiScaler - ILION v") + BuildInfo::IlionVersion();
     }
 
     // A chassis has round corners, a wider margin and a taller top bar. Only this window: the overlay and the
     // other windows keep theirs.
+    // The font of the theme for the whole main window, title included
+    ImFont* themeFont = IlionTheme::SkinFont();
+
+    if (themeFont != nullptr)
+        ImGui::PushFont(themeFont, -1.0f);
+
     if (IlionTheme::industrial)
         IlionTheme::PushChassisStyle();
 
@@ -15148,6 +15355,9 @@ void MenuCommon::RenderMainMenuWindow(RenderMenuContext& ctx)
 
         ImGui::End();
     }
+
+    if (themeFont != nullptr)
+        ImGui::PopFont();
 
     // Detached utility windows owned by the main menu.
     RenderMipmapBiasWindow(ctx, flags);
@@ -15292,6 +15502,33 @@ void MenuCommon::Init(HWND InHwnd, bool isUWP)
             io.FontDefault = atlas->AddFontFromMemoryCompressedBase85TTF(hack_compressed_compressed_data_base85,
                                                                          fontSize, &fontConfig);
         }
+
+        // Fonts of the Fallout and Light themes, from the fonts Windows already has: nothing is shipped with ILION.
+        // A terminal face for Fallout, a plain sans-serif for Light. Without one the theme keeps the menu's font.
+        const auto systemFont = [&](std::initializer_list<const wchar_t*> names) -> ImFont*
+        {
+            wchar_t windows[MAX_PATH] = {};
+
+            if (GetWindowsDirectoryW(windows, MAX_PATH) == 0)
+                return nullptr;
+
+            for (const wchar_t* name : names)
+            {
+                const auto path = std::filesystem::path(windows) / L"Fonts" / name;
+                std::error_code ec;
+
+                if (std::filesystem::exists(path, ec))
+                {
+                    ImFontConfig themeConfig;
+                    return atlas->AddFontFromFileTTF(wstring_to_string(path.wstring()).c_str(), fontSize, &themeConfig);
+                }
+            }
+
+            return nullptr;
+        };
+
+        IlionTheme::terminalFont = systemFont({ L"lucon.ttf", L"consola.ttf" });
+        IlionTheme::modernFont = systemFont({ L"segoeui.ttf", L"arial.ttf" });
     }
 
     if (!Config::Instance()->OverlayMenu.value_or_default())

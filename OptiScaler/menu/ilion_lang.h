@@ -44,6 +44,105 @@ struct Translation
 
 // Format specifiers (%s, %llu, %.0f, %%) have to stay the same and in the same order as in the English text
 inline constexpr Translation kSpanish[] = {
+    // Universal upscaler selector (v1.2-dev.5)
+    { "Upscaler##IlionUpscaler", "Escalador" },
+    { "Rescan##IlionUpscaler", "Actualizar lista" },
+    { "FSR (default dll)", "FSR (dll por defecto)" },
+    { "AMD's FSR dll next to OptiScaler, or the game's own.", "La dll de FSR de AMD junto a OptiScaler, o la propia del juego." },
+    { "FSR 4 official (AMD)", "FSR 4 oficial de AMD" },
+    { "DLSS 4 - model K", "DLSS 4 — modelo K" },
+    { "active", "activo" },
+    { "loaded", "cargado" },
+    { "selected", "seleccionado" },
+    { "File version", "Versión del archivo" },
+    { "Switches while the game runs.", "Cambia sin reiniciar el juego." },
+    { "Needs a restart of the game: d4r is loaded when the game starts.",
+      "Requiere reiniciar el juego: d4r se carga al arrancar el juego." },
+    { "AMD's FSR is next to it: HelixSR lists it after itself. ILION always starts HelixSR's own provider.",
+      "Tiene al lado la FSR de AMD: HelixSR la ofrece después de sí mismo. ILION arranca siempre el proveedor propio de HelixSR." },
+    { "Upscalers ILION found in ILION\\Escaladores (next to the game exe):\n"
+      "  FSR4\\<name>\\amd_fidelityfx_upscaler_dx12.dll   FSR 4 builds, switch while playing\n"
+      "  HelixSR\\helixsr_upscaler.dll                    HelixSR, switches while playing\n"
+      "  DLSS4\\<name>\\ (d4r folder)                     DLSS 4 model K, needs a restart\n"
+      "Older ILION\\FSR_Versions folders keep working. What a dll is comes from the file, not from the\n"
+      "name of its folder. Add one and press Rescan.",
+      "Escaladores que ILION encontró en ILION\\Escaladores (junto al exe del juego):\n"
+      "  FSR4\\<nombre>\\amd_fidelityfx_upscaler_dx12.dll   versiones de FSR 4, cambian sin reiniciar\n"
+      "  HelixSR\\helixsr_upscaler.dll                      HelixSR, cambia sin reiniciar\n"
+      "  DLSS4\\<nombre>\\ (carpeta de d4r)                 DLSS 4 modelo K, requiere reiniciar\n"
+      "Las carpetas antiguas ILION\\FSR_Versions siguen funcionando. Qué es cada dll se sabe por el archivo, no\n"
+      "por el nombre de su carpeta. Añade una y pulsa Actualizar lista." },
+    { "It can't be changed while a benchmark is running.", "No se puede cambiar mientras se ejecuta una prueba." },
+    { "DLSS 4 is saved as the upscaler. Restart the game to load it (d4r is loaded when the game starts).",
+      "DLSS 4 queda guardado como escalador. Reinicia el juego para cargarlo (d4r se carga al arrancar el juego)." },
+    { "this is AMD's FSR, not HelixSR (HelixSR's own dll is amd_fidelityfx_dx12.dll, built by its setup)",
+      "esto es la FSR de AMD, no HelixSR (la dll propia de HelixSR es amd_fidelityfx_dx12.dll, generada por su instalador)" },
+    { "HelixSR without its network: run HelixSR's setup and copy the dll it builds",
+      "HelixSR sin su red neuronal: ejecuta el instalador de HelixSR y copia la dll que genera" },
+    { "rename it to helixsr_upscaler.dll", "cámbiale el nombre a helixsr_upscaler.dll" },
+    { "this file is not HelixSR", "este archivo no es HelixSR" },
+    { "d4r.ini asks for another model; this version of ILION only uses model K",
+      "d4r.ini pide otro modelo; esta versión de ILION solo usa el modelo K" },
+    { "NVIDIA's nvngx_dlss.dll and ngx\\_nvngx.dll are missing in the d4r folder",
+      "faltan nvngx_dlss.dll y ngx\\_nvngx.dll de NVIDIA en la carpeta de d4r" },
+    { "Can't find the dll of the selected upscaler", "No se encuentra la dll del escalador seleccionado" },
+    { "Can't load the dll of the selected upscaler", "No se puede cargar la dll del escalador seleccionado" },
+    { "The selected upscaler is not a valid dll", "El escalador seleccionado no es una dll válida" },
+    { "The selected upscaler isn't a compatible dll", "El escalador seleccionado no es una dll compatible" },
+    { "The selected upscaler failed to start, the previous one was restored.",
+      "El escalador seleccionado no pudo arrancar; se ha restaurado el anterior." },
+
+    // Benchmark, universal labels
+    { "Implementation", "Implementación" },
+    { "Upscaling mode", "Modo de escalado" },
+    { "Status", "Estado" },
+    { "No upscaler running", "Ningún escalador en marcha" },
+    { "Waiting for the first upscale", "Esperando el primer escalado" },
+    { "Active, confirmed by its upscale calls", "Activo, confirmado por sus llamadas de escalado" },
+    { "Active, NGX accepted its evaluations", "Activo, NGX aceptó sus evaluaciones" },
+    { "Loaded, no evaluation confirmed yet", "Cargado, aún sin evaluaciones confirmadas" },
+    { "Change upscaler", "Cambiar escalador" },
+    { "Opens ILION's upscaler selector here, without leaving Benchmark.\n"
+      "It can't be changed while a test is running.",
+      "Abre aquí el selector de escaladores de ILION, sin salir de Benchmark.\n"
+      "No se puede cambiar mientras se ejecuta una prueba." },
+
+    // Upscaler comparison mode
+    { "Upscaler comparison mode", "Modo comparación de escaladores" },
+    { "Upscaler comparison: waiting for an upscale...", "Comparación de escaladores: esperando un escalado..." },
+    { "More upscalers than boxes in this session, the last one isn't measured",
+      "Hay más escaladores que recuadros en esta sesión; el último no se mide" },
+    { "DLSS isn't measured live here: compare it with saved Benchmark tests",
+      "DLSS no se mide aquí en directo: compáralo con pruebas guardadas de Benchmark" },
+    { "Measures every upscaler dll while it's the one executing the upscaling and shows\n"
+      "the results under the performance overlay, one box per upscaler, named as ILION's list\n"
+      "knows it. Switch the upscaler to measure the next one. Live only for FFX upscalers\n"
+      "(FSR 4 builds, HelixSR); DLSS is compared through saved Benchmark tests.\n\n"
+      "AVG = counted frames / their total time\n"
+      "MIN / MAX = slowest / fastest single frame, as fps (not 1%% lows)\n\n"
+      "The first 2 seconds after a switch aren't counted.\n"
+      "Enabling it starts a new session and shows the performance overlay.",
+      "Mide cada dll de escalado mientras es la que ejecuta el escalado y muestra\n"
+      "los resultados bajo el overlay de rendimiento, un recuadro por escalador, con el nombre\n"
+      "que le da la lista de ILION. Cambia de escalador para medir el siguiente. En directo solo\n"
+      "para escaladores FFX (versiones de FSR 4, HelixSR); DLSS se compara con pruebas guardadas.\n\n"
+      "MEDIA = fotogramas contados / su tiempo total\n"
+      "MÍN / MÁX = fotograma más lento / más rápido, en fps (no son 1%% bajos)\n\n"
+      "No se cuentan los 2 primeros segundos tras un cambio.\n"
+      "Activarlo empieza una sesión nueva y muestra el overlay de rendimiento." },
+    { "UPSCALER HOT-SWAP DIAGNOSTICS", "DIAGNÓSTICO DE CAMBIO EN CALIENTE" },
+    { "UPSCALER VISUAL VERIFICATION", "VERIFICACIÓN VISUAL DEL ESCALADOR" },
+    { "Writes color bars into the output of the upscale dispatch, before the game's post\n"
+      "processing. Top and bottom bars: the dll below recorded the compute work of the frame.\n"
+      "Blue = FSR 4 official, Green = FSR 4.1.1B, Magenta = FSR 4 Lite, White = any other dll (HelixSR...).\n"
+      "Yellow top bar only = could not be verified.\n\n"
+      "The bars are drawn by OptiScaler, not by the dll. Not saved, off on next launch.",
+      "Escribe barras de color en la salida del escalado, antes del posprocesado del juego.\n"
+      "Barras arriba y abajo: la dll de abajo registró el trabajo de cómputo del fotograma.\n"
+      "Azul = FSR 4 oficial, Verde = FSR 4.1.1B, Magenta = FSR 4 Lite, Blanco = cualquier otra dll (HelixSR...).\n"
+      "Solo barra amarilla arriba = no se pudo verificar.\n\n"
+      "Las barras las dibuja OptiScaler, no la dll. No se guarda; desactivado al volver a arrancar." },
+
     // Tabs and sidebar
     { "Custom", "Personal" },
     { "Upscaling", "Escalado" },
@@ -137,10 +236,8 @@ inline constexpr Translation kSpanish[] = {
     { "Loaded DLL path", "Ruta de DLL cargada" },
 
     // FSR versions selector
-    { "FSR Upscaler DLL", "DLL del escalador FSR" },
     { "Default", "Predeterminada" },
     { "Custom path", "Ruta personalizada" },
-    { "Rescan##SrVariants", "Actualizar lista" },
     { "calculating...", "calculando..." },
     { "Can't be used: %s", "No se puede usar: %s" },
     { "file can't be opened", "no se puede abrir el archivo" },
@@ -148,40 +245,12 @@ inline constexpr Translation kSpanish[] = {
     { "not a 64 bit dll", "no es una dll de 64 bits" },
     { "damaged dll", "dll dañada" },
     { "dll has no exports", "la dll no tiene exportaciones" },
-    { "not an FSR upscaler dll (ffx exports missing)",
-      "no es una dll de escalado FSR (faltan las exportaciones ffx)" },
-    { "the dll has to be named amd_fidelityfx_upscaler_dx12.dll",
-      "la dll tiene que llamarse amd_fidelityfx_upscaler_dx12.dll" },
-    { "Switches amd_fidelityfx_upscaler_dx12.dll without restarting the game.\n"
-      "Every subfolder of ILION\\FSR_Versions (next to the game exe) that has its own\n"
-      "amd_fidelityfx_upscaler_dx12.dll is listed here, the folder name is the version name.\n"
-      "Add a folder and press Rescan, no restart needed.\n\n"
-      "Other upscalers with the same FFX interface (HelixSR, for example) can be used too.\n"
-      "FSR 4 options are not applied to dlls whose providers are not AMD's.\n\n"
-      "Dlls stay loaded once used. Only affects upscaling, not frame generation.",
-      "Cambia amd_fidelityfx_upscaler_dx12.dll sin reiniciar el juego.\n"
-      "Aquí aparece cada subcarpeta de ILION\\FSR_Versions (junto al exe del juego) que tenga su propia\n"
-      "amd_fidelityfx_upscaler_dx12.dll; el nombre de la carpeta es el nombre de la versión.\n"
-      "Añade una carpeta y pulsa Actualizar lista, no hace falta reiniciar.\n\n"
-      "También se pueden usar otros escaladores con la misma interfaz FFX (HelixSR, por ejemplo).\n"
-      "Las opciones de FSR 4 no se aplican a las dll cuyos proveedores no son de AMD.\n\n"
-      "Las dll siguen cargadas una vez usadas. Solo afecta al escalado, no a frame generation." },
-    { "Reported by the dll: %s", "La dll se identifica como: %s" },
+    { "not an FFX upscaler dll (ffx exports missing)",
+      "no es una dll de escalado FFX (faltan las exportaciones ffx)" },
 
     // Notifications of the versions switch
-    { "Can't find the dll of the selected FSR variant", "No se encuentra la dll de la versión FSR seleccionada" },
-    { "Can't load the dll of the selected FSR variant", "No se puede cargar la dll de la versión FSR seleccionada" },
-    { "Selected FSR variant is not a valid upscaler dll",
-      "La versión FSR seleccionada no es una dll de escalado válida" },
-    { "Selected FSR version isn't a compatible upscaler dll",
-      "La versión FSR seleccionada no es una dll de escalado compatible" },
-    { "Selected FSR version failed to start, the previous one was restored.\n"
-      "Select FSR again to keep using it.",
-      "La versión FSR seleccionada no pudo iniciarse y se restauró la anterior.\n"
-      "Vuelve a seleccionar FSR para seguir usándola." },
 
     // Hot-swap diagnostics
-    { "FSR 4 HOT-SWAP DIAGNOSTICS", "DIAGNÓSTICO DE HOT-SWAP FSR 4" },
     { "Selected: %s", "Seleccionada: %s" },
     { "Active: %s", "Activa: %s" },
     { "DLL Path: %s", "Ruta de la DLL: %s" },
@@ -217,7 +286,6 @@ inline constexpr Translation kSpanish[] = {
       "eso no se puede distinguir desde la llamada de dispatch." },
 
     // Visual verification
-    { "FSR 4 VISUAL VERIFICATION", "VERIFICACIÓN VISUAL FSR 4" },
     { "Color marker on upscaler output", "Marcador de color en la salida del escalador" },
     { "Disabled", "Desactivado" },
     { "Verdict: NO DATA (no upscale dispatch in the last second)",
@@ -255,19 +323,8 @@ inline constexpr Translation kSpanish[] = {
     { "skipped, output format isn't supported", "omitido, formato de salida no admitido" },
     { "skipped, can't create the marker texture", "omitido, no se puede crear la textura del marcador" },
     { "not run", "no ejecutado" },
-    { "Writes color bars into the output of the upscale dispatch, before the game's post\n"
-      "processing. Top and bottom bars: the dll below recorded the compute work of the frame.\n"
-      "Blue = Official, Green = Community, Magenta = Lite, White = any other dll.\n"
-      "Yellow top bar only = could not be verified.\n\n"
-      "The bars are drawn by OptiScaler, not by the dll. Not saved, off on next launch.",
-      "Escribe barras de color en la salida del dispatch de escalado, antes del posprocesado\n"
-      "del juego. Barras arriba y abajo: la dll indicada emitió el trabajo de cómputo del fotograma.\n"
-      "Azul = Official, Verde = Community, Magenta = Lite, Blanco = cualquier otra dll.\n"
-      "Solo barra amarilla arriba = no se pudo verificar.\n\n"
-      "Las barras las dibuja OptiScaler, no la dll. No se guarda; desactivado en el próximo inicio." },
 
     // Comparison mode
-    { "FSR 4 Comparison Mode", "Modo de comparación FSR 4" },
     { "WAITING", "ESPERANDO" },
     { "STABILIZING", "ESTABILIZANDO" },
     { "RECORDING", "MIDIENDO" },
@@ -278,21 +335,7 @@ inline constexpr Translation kSpanish[] = {
     { "max --", "máx --" },
     { "min %.0f", "mín %.0f" },
     { "max %.0f", "máx %.0f" },
-    { "Active dll isn't Official, Community or Lite, not measured",
-      "La dll activa no es Official, Community ni Lite; no se mide" },
     { "Includes frames presented by frame generation", "Incluye fotogramas presentados por frame generation" },
-    { "Measures every upscaler dll while it's the one executing the upscaling and shows\n"
-      "the results under the performance overlay. Switch the dll above to measure the next one.\n\n"
-      "AVG = counted frames / their total time\n"
-      "MIN / MAX = slowest / fastest single frame, as fps (not 1%% lows)\n\n"
-      "The first 2 seconds after a switch aren't counted.\n"
-      "Enabling it starts a new session and shows the performance overlay.",
-      "Mide cada dll de escalado mientras es la que ejecuta el escalado y muestra\n"
-      "los resultados bajo el overlay de rendimiento. Cambia la dll arriba para medir la siguiente.\n\n"
-      "AVG = fotogramas contados / su tiempo total\n"
-      "MIN / MAX = fotograma más lento / más rápido, en fps (no son 1%% lows)\n\n"
-      "Los primeros 2 segundos tras un cambio no se cuentan.\n"
-      "Al activarlo empieza una sesión nueva y se muestra el overlay de rendimiento." },
 
     // Interface mode and the Basic Mode panel
     { "Basic", "Básico" },
@@ -325,7 +368,6 @@ inline constexpr Translation kSpanish[] = {
       "Una lectura que ningún programa ofrece se muestra como N/D; no se estima nada." },
 
     // Benchmark
-    { "Change FSR version", "Cambiar versión FSR" },
     { "Opens the Upscaling tab, the FSR version is selected there.\nIt can't be changed while a test is running.",
       "Abre la pestaña Escalado; la versión FSR se selecciona allí.\nNo se puede cambiar mientras hay una prueba en curso." },
     { "Duration", "Duración" },
@@ -912,11 +954,6 @@ inline constexpr Translation kSpanish[] = {
       "fijas; lo que ocurre en movimiento no se mide." },
 
     // FSR version selector of the Benchmark tab
-    { "Shows the FSR versions here. Picking one switches to it without leaving Benchmark.\n"
-      "It can't be changed while a test is running.",
-      "Muestra aquí las versiones FSR. Al elegir una se cambia a ella sin salir de Benchmark.\n"
-      "No se puede cambiar mientras hay una prueba en curso." },
-    { "Only with FSR as the upscaler in DX12.", "Solo con FSR como escalador en DX12." },
     { "Rescan", "Actualizar lista" },
     { "Switching...", "Cambiando..." },
     { "The DLL that executes is not the selected one", "La DLL que se ejecuta no es la seleccionada" },

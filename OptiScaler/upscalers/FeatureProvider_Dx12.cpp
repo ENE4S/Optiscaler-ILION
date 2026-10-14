@@ -42,6 +42,11 @@ bool FeatureProvider_Dx12::GetFeature(Upscaler upscaler, UINT handleId, NVSDK_NG
         break;
 
     case Upscaler::DLSS:
+        if (state.dlssExternalBackend && (!primaryGpu.dlssCapable || !state.NVNGX_DLSS_Path.has_value()))
+        {
+            LOG_ERROR("Configured external D3D12 DLSS backend is unavailable; refusing FSR fallback");
+            return false;
+        }
         if (primaryGpu.dlssCapable && state.NVNGX_DLSS_Path.has_value())
         {
             *feature = std::make_unique<DLSSFeatureDx12>(handleId, parameters);
@@ -77,6 +82,11 @@ bool FeatureProvider_Dx12::GetFeature(Upscaler upscaler, UINT handleId, NVSDK_NG
 
     if (!loaded)
     {
+        if (state.dlssExternalBackend && upscaler == Upscaler::DLSS)
+        {
+            LOG_ERROR("External D3D12 DLSS module failed to load; refusing FSR fallback");
+            return false;
+        }
         // Fail after the constructor
         ImGui::InsertNotification({ ImGuiToastType::Warning, 10000, "Falling back to FSR 2.1.2" });
         *feature = std::make_unique<FSR2FeatureDx12_212>(handleId, parameters);

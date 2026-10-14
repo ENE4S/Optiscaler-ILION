@@ -14,6 +14,7 @@
 #include <proxies/IGDExt_Proxy.h>
 #include <proxies/Streamline_Proxy.h>
 #include <proxies/KernelBase_Proxy.h>
+#include <proxies/NVNGX_Proxy.h>
 
 #include <detours/detours.h>
 
@@ -2206,10 +2207,19 @@ static HRESULT hkD3D12GetInterface(REFCLSID rclsid, REFIID riid, void** ppvDebug
     return result;
 }
 
+// Device discovery and NGX initialization can overlap. Installing d4r's
+// command hooks can also create a device and re-enter this function. Never
+// overwrite live Detours trampolines from a second installation attempt.
+static std::recursive_mutex deviceHookMutex;
+static bool deviceHookInstalling = false;
 static void HookToDevice(ID3D12Device* InDevice)
 {
-    if (o_CreateSampler != nullptr || InDevice == nullptr)
+    std::lock_guard<std::recursive_mutex> lock(deviceHookMutex);
+    if (o_CreateSampler != nullptr || InDevice == nullptr || deviceHookInstalling)
         return;
+
+    deviceHookInstalling = true;
+    struct InstallationGuard { ~InstallationGuard() { deviceHookInstalling = false; } } installationGuard;
 
     LOG_DEBUG("Dx12");
 
@@ -2219,6 +2229,19 @@ static void HookToDevice(ID3D12Device* InDevice)
     ID3D12Device* realDevice = nullptr;
     if (Util::CheckForRealObject(__FUNCTION__, InDevice, (IUnknown**) &realDevice))
         pVTable = *(PVOID**) realDevice;
+
+    if (State::Instance().dlssExternalBackend)
+    {
+        // Capture command signatures/resources created before the game's NGX
+        // Init. Install before adding OptiScaler's own method trampolines.
+        using InstallCommandBackend = unsigned (*)(ID3D12Device*);
+        auto install = reinterpret_cast<InstallCommandBackend>(KernelBaseProxy::GetProcAddress_()(
+            NVNGXProxy::NVNGXModule(), "d4r_D3D12_InstallCommandBackend"));
+        auto result = install ? install(realDevice ? realDevice : InDevice) : 0;
+        LOG_INFO("External d4r command backend installed at device discovery: result={:X}", result);
+        if (result != 1)
+            LOG_ERROR("External d4r early command tracking failed; DLSS initialization must be checked");
+    }
 
     // hudless
     o_D3D12DeviceRelease = (PFN_Release) pVTable[2];
@@ -2310,6 +2333,7 @@ static void HookToDevice(ID3D12Device* InDevice)
 
 static void UnhookDevice()
 {
+    std::lock_guard<std::recursive_mutex> lock(deviceHookMutex);
     LOG_FUNC();
 
     DetourTransactionBegin();

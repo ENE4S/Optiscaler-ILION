@@ -949,7 +949,7 @@ static void CheckWorkingMode()
 
     // NVAPI
     // Doesn't seem to like GetModuleHandle for some reason, so call our load to make sure
-    if (GetDllNameWModule(&nvapiNamesW) != nullptr)
+    if (!State::Instance().dlssExternalBackend && GetDllNameWModule(&nvapiNamesW) != nullptr)
     {
         // This hooks nvapi as well when possible
         auto nvapi64 = LibraryLoadHooks::LoadNvApi();
@@ -1647,7 +1647,33 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
             return nvidiaDetected;
         };
 
-        bool possibleNvidia = isNvidiaViaNvapi();
+        // Opt in only to a configured, versioned Windows d4r backend. The
+        // marker performs no HIP/NGX initialization under DLL_PROCESS_ATTACH.
+        // GPU support is still checked by its public NGX requirements API.
+        if (Config::Instance()->DLSSEnabled.value_or_default() &&
+            Config::Instance()->DLSSAllowExternalBackend.value_or_default() &&
+            Config::Instance()->NvngxPath.has_value())
+        {
+            auto backendPath = std::filesystem::path(Config::Instance()->NvngxPath.value()) / L"_nvngx.dll";
+            if (backendPath.is_absolute())
+            {
+                auto module = NtdllProxy::LoadLibraryExW_Ldr(backendPath.c_str(), nullptr,
+                    LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+                if (module)
+                {
+                    using BackendVersion = unsigned (*)();
+                    auto version = reinterpret_cast<BackendVersion>(
+                        KernelBaseProxy::GetProcAddress_()(module, "d4r_WindowsBackendVersion"));
+                    State::Instance().dlssExternalBackend = version && version() == 1;
+                    NtdllProxy::FreeLibrary_Ldr(module);
+                }
+            }
+            if (State::Instance().dlssExternalBackend)
+                spdlog::info("Validated external Windows d4r DLSS backend; retaining physical GPU identity");
+            else
+                spdlog::error("AllowExternalBackend requires an absolute NvngxPath containing Windows d4r ABI 1");
+        }
+        bool possibleNvidia = !State::Instance().dlssExternalBackend && isNvidiaViaNvapi();
 
         spdlog::info("");
         spdlog::info("Check for DLSS files");
@@ -1681,7 +1707,8 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
             State::Instance().NVNGX_DLSSG_Path = Util::FindFilePath(exePath, "nvngx_dlssg.dll");
 
         // Not 100% accurate for Nvidia cards without DLSS
-        if (Config::Instance()->DLSSEnabled.value_or_default() && possibleNvidia)
+        if (Config::Instance()->DLSSEnabled.value_or_default() &&
+            (possibleNvidia || State::Instance().dlssExternalBackend))
         {
             if (State::Instance().NVNGX_DLSS_Path.has_value())
             {

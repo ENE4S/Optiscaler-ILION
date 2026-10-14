@@ -185,6 +185,8 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D12_Init_Ext(unsigned long long InApp
 
             if (result == NVSDK_NGX_Result_Success)
                 NVNGXProxy::SetDx12Inited(true);
+            else if (State::Instance().dlssExternalBackend)
+                return result;
         }
         else
         {
@@ -256,6 +258,8 @@ NVSDK_NGX_Result NVSDK_NGX_D3D12_Init(unsigned long long InApplicationId,
 
             if (result == NVSDK_NGX_Result_Success)
                 NVNGXProxy::SetDx12Inited(true);
+            else if (State::Instance().dlssExternalBackend)
+                return result;
         }
     }
 
@@ -315,6 +319,8 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D12_Init_ProjectID(const char* InProj
 
             if (result == NVSDK_NGX_Result_Success)
                 NVNGXProxy::SetDx12Inited(true);
+            else if (State::Instance().dlssExternalBackend)
+                return result;
         }
     }
 
@@ -345,6 +351,10 @@ NVSDK_NGX_Result NVSDK_NGX_D3D12_Init_with_ProjectID(
     NVSDK_NGX_Version InSDKVersion)
 {
     LOG_FUNC();
+
+    if (State::Instance().dlssExternalBackend)
+        return NVSDK_NGX_D3D12_Init_ProjectID(InProjectId, InEngineType, InEngineVersion,
+                                               InApplicationDataPath, InDevice, InSDKVersion, InFeatureInfo);
 
     LOG_INFO("InProjectId: {0}", InProjectId);
     LOG_INFO("InEngineType: {0}", (int) InEngineType);
@@ -700,6 +710,7 @@ static NVSDK_NGX_Result TryCreateOptiFeature(ID3D12GraphicsCommandList* InCmdLis
     }
 
     // Assign handle
+    const bool allocatedHandle = *OutHandle == nullptr;
     if (*OutHandle == nullptr)
         *OutHandle = new NVSDK_NGX_Handle { handleId };
     else
@@ -718,6 +729,16 @@ static NVSDK_NGX_Result TryCreateOptiFeature(ID3D12GraphicsCommandList* InCmdLis
     }
     else
     {
+        if (state.dlssExternalBackend && upscalerBackend == Upscaler::DLSS)
+        {
+            LOG_ERROR("External DLSS initialization failed; refusing FSR fallback");
+            if (shouldRestoreSigs)
+                D3D12Hooks::RestoreRoot(InCmdList);
+            D3D12Hooks::SetRootSignatureTracking(true);
+            Dx12Contexts.erase(handleId);
+            if (allocatedHandle) { delete *OutHandle; *OutHandle = nullptr; }
+            return NVSDK_NGX_Result_Fail;
+        }
         LOG_ERROR("Feature '{}' initialization failed falling back to FSR 2.1.2", UpscalerDisplayName(upscalerBackend));
         state.newBackend = Upscaler::FSR21;
         state.changeBackend[handleId] = true;
@@ -1040,6 +1061,12 @@ static NVSDK_NGX_Result TryEvaluateOptiFeature(ID3D12GraphicsCommandList* InCmdL
     // Fallback to FSR 2.1.2 if feature failed to initialize and user didn't explicitly request it
     if (!feature->IsInited() && cfg.Dx12Upscaler.value_or_default() != Upscaler::FSR21)
     {
+        if (state.dlssExternalBackend && cfg.Dx12Upscaler.value_or_default() == Upscaler::DLSS)
+        {
+            LOG_ERROR("External DLSS feature is not initialized; refusing FSR fallback");
+            D3D12Hooks::SetRootSignatureTracking(true);
+            return NVSDK_NGX_Result_Fail;
+        }
         LOG_WARN("Feature '{}' failed to initialize. Falling back to FSR 2.1.2", feature->Name());
         ImGui::InsertNotification({ ImGuiToastType::Warning, 10000, "Falling back to FSR 2.1.2" });
 

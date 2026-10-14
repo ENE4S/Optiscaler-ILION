@@ -8,6 +8,7 @@
 #include <proxies/D3d12_Proxy.h>
 #include "nvapi/NvApiTypes.h"
 #include <hooks/Amdxc64_Hooks.h>
+#include <proxies/NVNGX_Proxy.h>
 
 using Microsoft::WRL::ComPtr;
 
@@ -187,6 +188,25 @@ std::vector<GpuInformation> IdentifyGpu::checkGpuInfo()
 
     for (auto& gpuInfo : localCachedInfo)
     {
+        if (State::Instance().dlssExternalBackend && !gpuInfo.softwareAdapter)
+        {
+            // Query the configured D3D12 backend outside DLL_PROCESS_ATTACH.
+            // Preserve vendor/device/architecture data obtained from DXGI.
+            auto requirements = NVNGXProxy::D3D12_GetFeatureRequirements();
+            ComPtr<IDXGIAdapter1> physicalAdapter;
+            if (requirements && SUCCEEDED(factory->EnumAdapterByLuid(gpuInfo.luid, IID_PPV_ARGS(&physicalAdapter))))
+            {
+                NVSDK_NGX_FeatureDiscoveryInfo discovery {};
+                discovery.SDKVersion = NVSDK_NGX_Version_API;
+                discovery.FeatureID = NVSDK_NGX_Feature_SuperSampling;
+                NVSDK_NGX_FeatureRequirement supported {};
+                const auto result = requirements(physicalAdapter.Get(), &discovery, &supported);
+                gpuInfo.dlssCapable = result == NVSDK_NGX_Result_Success &&
+                    supported.FeatureSupported == NVSDK_NGX_FeatureSupportResult_Supported;
+                LOG_INFO("External D3D12 DLSS backend: {} support={} result={:X}",
+                         gpuInfo.name, gpuInfo.dlssCapable, (unsigned) result);
+            }
+        }
         if (gpuInfo.vendorId == VendorId::Nvidia)
         {
             queryNvapi(gpuInfo);

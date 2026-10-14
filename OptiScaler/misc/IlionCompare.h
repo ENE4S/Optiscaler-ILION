@@ -47,6 +47,9 @@ class IlionCompare
         std::string dllFileVersion;
         std::string dllSha256;
         std::string frameGeneration;
+        std::string technology;
+        std::string provider;
+        std::string model;
         bool fgSeen = false;
         int fgMultiplier = 1;
         int requestedSeconds = 0;
@@ -61,7 +64,17 @@ class IlionCompare
         Number vramUsedAvg, vramUsedMax, cpuUsageAvg, cpuUsageMax, cpuTempAvg, cpuTempMax;
 
         // FSR version when there's one, the upscaler otherwise
-        std::string Name() const { return !fsrVersion.empty() ? fsrVersion : upscaler; }
+        std::string Name() const
+        {
+            if (!fsrVersion.empty())
+                return fsrVersion;
+
+            // Tests saved since v1.2 say what ran; older ones only have the upscaler
+            if (!technology.empty())
+                return technology + (provider.empty() ? "" : " " + provider) + (model.empty() ? "" : " " + model);
+
+            return upscaler;
+        }
     };
 
     enum class Issue : int
@@ -70,6 +83,7 @@ class IlionCompare
         DifferentResolution,
         DifferentUpscaler,
         DifferentFrameGeneration,
+        DifferentModel,
         DifferentDuration,
         StoppedEarly,
         FramesWithoutUpscale,
@@ -240,6 +254,9 @@ class IlionCompare
             test.dllFileVersion = text("dll_file_version");
             test.dllSha256 = text("dll_sha256");
             test.frameGeneration = text("frame_generation");
+            test.technology = text("technology");
+            test.provider = text("provider");
+            test.model = text("model");
             test.fgSeen = text("fg_seen") == "1";
             test.fgMultiplier = (int) number("fg_multiplier").value;
             test.requestedSeconds = (int) number("requested_s").value;
@@ -478,6 +495,12 @@ class IlionCompare
     }
 
     // "FSR 4.1.1" and "FSR 4.1.0" are the same technology, the version belongs to the dll being compared
+    // The recorded technology when there is one, otherwise the first word of the upscaler (tests before v1.2)
+    static std::string Technology(const Test& test)
+    {
+        return !test.technology.empty() ? test.technology : Technology(test.upscaler);
+    }
+
     static std::string Technology(const std::string& upscaler)
     {
         const auto space = upscaler.find(' ');
@@ -488,14 +511,15 @@ class IlionCompare
     {
         const auto& first = *tests.front();
 
-        bool game = false, resolution = false, upscaler = false, fg = false;
+        bool game = false, resolution = false, upscaler = false, fg = false, model = false;
         bool duration = false, stopped = false, withoutUpscale = false, fewFrames = false;
 
         for (const auto* test : tests)
         {
             game = game || _stricmp(test->game.c_str(), first.game.c_str()) != 0;
             resolution = resolution || test->resolution != first.resolution;
-            upscaler = upscaler || Technology(test->upscaler) != Technology(first.upscaler);
+            upscaler = upscaler || Technology(*test) != Technology(first);
+            model = model || (!test->model.empty() && !first.model.empty() && test->model != first.model);
             fg = fg || test->frameGeneration != first.frameGeneration || test->fgSeen != first.fgSeen ||
                  test->fgMultiplier != first.fgMultiplier;
 
@@ -519,8 +543,13 @@ class IlionCompare
         if (resolution)
             analysis.blocking.push_back(Issue::DifferentResolution);
 
+        // Comparing technologies is what the comparison is for: their performance and stability are compared like
+        // anything else measured under the same conditions, with a reminder that image quality isn't
         if (upscaler)
-            analysis.blocking.push_back(Issue::DifferentUpscaler);
+            analysis.warnings.push_back(Issue::DifferentUpscaler);
+
+        if (model)
+            analysis.warnings.push_back(Issue::DifferentModel);
 
         if (fg)
             analysis.blocking.push_back(Issue::DifferentFrameGeneration);

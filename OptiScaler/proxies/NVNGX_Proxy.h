@@ -500,7 +500,10 @@ class NVNGXProxy
         {
             LOG_INFO("Getting nvngx method addresses");
 
-            HookNgxApi(_module.dll);
+            // The external bridge reports physical adapter support itself.
+            // Do not overwrite its unsupported result with NVIDIA spoofing.
+            if (!State::Instance().dlssExternalBackend)
+                HookNgxApi(_module.dll);
 
             _module.D3D11_Init =
                 (PFN_D3D11_Init) KernelBaseProxy::GetProcAddress_()(_module.dll, "NVSDK_NGX_D3D11_Init");

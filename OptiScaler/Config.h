@@ -275,6 +275,7 @@ class Config
 
     // DLSS
     CustomOptional<bool> DLSSEnabled { true };
+    CustomOptional<bool> DLSSAllowExternalBackend { false };
     CustomOptional<bool> RenderPresetOverride { false };
     CustomOptional<uint32_t> RenderPresetForAll { 0 };
     CustomOptional<uint32_t> RenderPresetDLAA { 0 };

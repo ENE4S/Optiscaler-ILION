@@ -489,6 +489,13 @@ class FfxApiProxy
 
     static std::vector<SrVariant> SrVariants() { return FSR4Versions::Scan(); }
 
+    // The upscaler dll in use reports providers that aren't AMD's (a third-party FFX upscaler such as HelixSR)
+    static bool ActiveSrThirdParty()
+    {
+        std::scoped_lock lock(_srMutex);
+        return upscaling_dx12.thirdParty;
+    }
+
     // Provider the upscaler dll in use reports, empty when none is loaded or it didn't answer
     static std::string ActiveSrProvider()
     {

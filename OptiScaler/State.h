@@ -294,6 +294,7 @@ class State
     int dlssgInputGameInterpolationCount = 1;
 
     // DLSS
+    bool dlssExternalBackend = false;
     bool dlssPresetsOverriddenExternally = false;
     bool dlssPresetsOverridenByOpti = false;
     uint32_t dlssRenderPresetExternal = 0;

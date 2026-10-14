@@ -486,8 +486,16 @@ bool Util::GetFileVersion(std::wstring dllPath, version_t* fileVersionOut, versi
 
 bool Util::IsSubpath(const std::filesystem::path& path, const std::filesystem::path& base)
 {
-    auto rel = std::filesystem::relative(path, base);
-    auto first = *rel.begin();
+    // Called by LdrLoadDll hooks: relative()/weakly_canonical() perform file
+    // queries, can re-enter the hooks, and throw when an optional directory or
+    // a bare DLL search name cannot be resolved. This is a lexical routing
+    // check, not a filesystem access control decision.
+    auto normalizedPath = std::filesystem::path(ToLower(path.lexically_normal().wstring()));
+    auto normalizedBase = std::filesystem::path(ToLower(base.lexically_normal().wstring()));
+    auto rel = normalizedPath.lexically_relative(normalizedBase);
+    if (rel.empty())
+        return false;
+    const auto first = *rel.begin();
     return first != "." && first != "..";
 }
 

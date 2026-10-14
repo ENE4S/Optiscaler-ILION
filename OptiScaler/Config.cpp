@@ -292,6 +292,7 @@ bool Config::Reload(std::filesystem::path iniPath)
         {
             // Don't enable again if set false because of no nvngx found
             DLSSEnabled.set_from_config(readBool("DLSS", "Enabled"));
+            DLSSAllowExternalBackend.set_from_config(readBool("DLSS", "AllowExternalBackend"));
             UseGenericAppIdWithDlss.set_from_config(readBool("DLSS", "UseGenericAppIdWithDlss"));
 
             RenderPresetOverride.set_from_config(readBool("DLSS", "RenderPresetOverride"));
@@ -779,9 +780,17 @@ bool Config::Reload(std::filesystem::path iniPath)
         {
             MainDllPath.set_from_config(readWString("Libraries", "OptiDllPath"));
 
-            NvngxPath.set_from_config(readWString("Libraries", "NvngxPath"));
-            NVNGX_DLSS_Library.set_from_config(readWString("Libraries", "NvngxDlssPath"));
-            DLSSFeaturePath.set_from_config(readWString("Libraries", "NvngxFeaturePath"));
+            // A relative library folder (d4r drag-in installs use "d4r") is resolved
+            // against this DLL's folder, as LogFileName is. Absolute paths are unchanged.
+            auto libraryPath = [](std::optional<std::wstring> value) -> std::optional<std::wstring>
+            {
+                if (!value.has_value() || value->empty() || std::filesystem::path(*value).is_absolute())
+                    return value;
+                return (Util::DllPath().parent_path() / *value).lexically_normal().wstring();
+            };
+            NvngxPath.set_from_config(libraryPath(readWString("Libraries", "NvngxPath")));
+            NVNGX_DLSS_Library.set_from_config(libraryPath(readWString("Libraries", "NvngxDlssPath")));
+            DLSSFeaturePath.set_from_config(libraryPath(readWString("Libraries", "NvngxFeaturePath")));
             NvapiDllPath.set_from_config(readWString("Libraries", "NvapiPath"));
 
             FfxDx12Path.set_from_config(readWString("Libraries", "FfxDx12Path"));
@@ -1140,6 +1149,8 @@ bool Config::SaveIni()
     // DLSS
     {
         ini.SetValue("DLSS", "Enabled", GetBoolValue(Instance()->DLSSEnabled.value_for_config()).c_str());
+        ini.SetValue("DLSS", "AllowExternalBackend",
+                     GetBoolValue(Instance()->DLSSAllowExternalBackend.value_for_config()).c_str());
         ini.SetValue("DLSS", "RenderPresetOverride",
                      GetBoolValue(Instance()->RenderPresetOverride.value_for_config()).c_str());
         ini.SetValue("DLSS", "RenderPresetForAll",

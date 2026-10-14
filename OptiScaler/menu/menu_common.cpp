@@ -31,6 +31,7 @@
 #include <imgui/imgui_internal.h>
 #include "ilion_visual_panel.h"
 #include "ilion_theme.h"
+#include "ilion_d4r_panel.h"
 #include <imgui/ImGuiNotify.hpp>
 #include <imgui/imgui_impl_win32.h>
 #include <imgui/imgui_impl_uwp.h>
@@ -359,6 +360,15 @@ static ExternalFgStatus GetExternalFgStatus(int generatedFrames, FGNvngxReplacem
 // CARDS -----------------------------
 using Ilion::Tr;
 using Ilion::TrL;
+
+// d4r writes its own log next to its loader, in the folder OptiScaler loads NGX from
+static std::wstring IlionD4rLogPath()
+{
+    if (!Config::Instance()->NvngxPath.has_value())
+        return {};
+
+    return (std::filesystem::path(Config::Instance()->NvngxPath.value()) / L"d4r_nvngx.log").wstring();
+}
 
 // Set only while the Basic Mode panel is being drawn. The section functions below stop after their main
 // controls when it's set, so both modes run the same code on the same config and state.
@@ -1922,7 +1932,10 @@ static const char* CompareIssueText(IlionCompare::Issue issue)
     case IlionCompare::Issue::DifferentResolution:
         return "Render or output resolution differs between the tests.";
     case IlionCompare::Issue::DifferentUpscaler:
-        return "The tests used different upscaling technologies.";
+        return "The tests used different upscaling technologies: performance and stability are compared, image "
+               "quality is not.";
+    case IlionCompare::Issue::DifferentModel:
+        return "The tests used different models of the same technology.";
     case IlionCompare::Issue::DifferentFrameGeneration:
         return "Frame generation was not in the same state in all the tests.";
     case IlionCompare::Issue::DifferentDuration:
@@ -7666,6 +7679,11 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                             (float) currentFeature->TargetWidth() / (float) currentFeature->RenderWidth());
     }
 
+    // ILION experiment: what the external d4r backend is really running, from its log and from NGX's answers
+    if (state.dlssExternalBackend && currentFeature->GetUpscalerType() == Upscaler::DLSS)
+        IlionD4rPanel::Draw(IlionD4rLogPath(), currentFeature->Version().major, currentFeature->Version().minor,
+                            currentFeature->Version().patch);
+
     if (!usesDlssd)
     {
         if (state.newBackend != Upscaler::Reset && state.newBackend != currentBackend)
@@ -8341,6 +8359,10 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
             ImGui::Spacing();
         }
+
+        // With d4r the neural model is set in d4r.ini and imposed by its shim on every evaluation
+        if (state.dlssExternalBackend && !usesDlssd)
+            IlionD4rPanel::PresetNote();
 
         if (usesDlssd)
         {
@@ -14159,7 +14181,38 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
                             currentFeature->Version().minor, currentFeature->Version().patch)
                    : std::string(Tr("None"));
 
+    // Technology, what it reports about itself and its model, recorded with every test
+    std::string technology = Tr("None"), provider, model;
+
+    if (upscalerOn)
+    {
+        provider = StrFmt("%u.%u.%u", currentFeature->Version().major, currentFeature->Version().minor,
+                          currentFeature->Version().patch);
+
+        if (currentBackend == Upscaler::FFX && state.api == DX12)
+        {
+            technology = FfxApiProxy::ActiveSrThirdParty() ? "FFX third party" : "FSR";
+
+            if (const auto reported = FfxApiProxy::ActiveSrProvider(); !reported.empty())
+                provider = reported;
+        }
+        else if (currentBackend == Upscaler::DLSS && state.dlssExternalBackend)
+        {
+            technology = "DLSS (d4r)";
+
+            // The preset d4r left in the NGX parameters of the last evaluation
+            if (const char letter = IlionD4r::PresetLetter(IlionD4r::GetCalls().presetAfter.load()))
+                model = std::string(1, letter);
+        }
+        else
+        {
+            technology = currentFeature->ShortName();
+        }
+    }
+
     ImGui::Text("%s: %s", Tr("Upscaler"), upscalerText.c_str());
+    ImGui::Text("%s: %s%s%s%s%s", Tr("Technology"), technology.c_str(), provider.empty() ? "" : " | ", provider.c_str(),
+                model.empty() ? "" : " | ", model.c_str());
 
     if (fsrObservable)
         ImGui::Text("%s: %s", Tr("FSR version"), activeFsrName.empty() ? "-" : Tr(activeFsrName.c_str()));
@@ -14280,6 +14333,9 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
         conditions.upscaler = upscalerOn ? upscalerText : std::string("None");
         conditions.upscaleObservable = fsrObservable;
         conditions.frameGeneration = "Off";
+        conditions.technology = technology;
+        conditions.provider = provider;
+        conditions.model = model;
 
         if (upscalerOn)
         {

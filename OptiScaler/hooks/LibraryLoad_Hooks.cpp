@@ -46,6 +46,18 @@ HMODULE LibraryLoadHooks::LoadLibraryCheckW(std::wstring libName, LPCWSTR lpLibF
 {
     auto libNameA = wstring_to_string(libName);
 
+    // The external D3D12 shim itself uses a locally supplied CUDA NGX core.
+    // Keep that exact absolute path distinct from game-facing NGX interception.
+    if (State::Instance().dlssExternalBackend)
+    {
+        wchar_t corePath[32768] {};
+        const auto length = GetEnvironmentVariableW(L"D4R_NGX_CORE", corePath, 32768);
+        if (length && length < 32768 &&
+            Util::ToLower(std::filesystem::path(libName).lexically_normal().wstring()) ==
+                Util::ToLower(std::filesystem::path(corePath).lexically_normal().wstring()))
+            return nullptr;
+    }
+
 #ifdef LOG_LIB_OPERATIONS
     LOG_TRACE("{}", libNameA);
 #endif
@@ -132,6 +144,11 @@ HMODULE LibraryLoadHooks::LoadLibraryCheckW(std::wstring libName, LPCWSTR lpLibF
     // NvApi64.dll
     if (CheckDllNameW(&libName, &nvapiNamesW))
     {
+        // An explicit external CUDA backend owns its NVAPI topology provider.
+        // Returning OptiScaler's fake-NVAPI would replace that provider and can
+        // recurse into DXGI while the NGX loader holds the loader lock.
+        if (State::Instance().dlssExternalBackend)
+            return nullptr; // Continue through the original loader.
         LOG_INFO("{} call!", libNameA);
 
         return LibraryLoadHooks::LoadNvApi();

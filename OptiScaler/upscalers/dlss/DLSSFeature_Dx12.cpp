@@ -2,6 +2,7 @@
 #include "DLSSFeature_Dx12.h"
 #include <dxgi1_4.h>
 #include <Config.h>
+#include <misc/IlionD4r.h>
 
 bool DLSSFeatureDx12::InitInternal(ID3D12GraphicsCommandList* InCommandList, NVSDK_NGX_Parameter* InParameters)
 {
@@ -71,6 +72,8 @@ bool DLSSFeatureDx12::InitDLSS(ID3D12GraphicsCommandList* InCommandList, NVSDK_N
 
     ReadVersion();
 
+    IlionD4r::OnFeatureCreated();
+
     SetInit(true);
     return true;
 }
@@ -89,7 +92,34 @@ bool DLSSFeatureDx12::EvaluateInternal(ID3D12GraphicsCommandList* InCommandList,
     {
         ProcessEvaluateParams(InParameters);
 
+        // ILION experiment: the render preset in the NGX parameters, before the call and once d4r has taken them
+        const bool d4r = State::Instance().dlssExternalBackend;
+        auto commonPreset = [InParameters]() -> uint32_t
+        {
+            static const char* names[] = { "DLSS.Hint.Render.Preset.DLAA",        "DLSS.Hint.Render.Preset.Quality",
+                                           "DLSS.Hint.Render.Preset.Balanced",    "DLSS.Hint.Render.Preset.Performance",
+                                           "DLSS.Hint.Render.Preset.UltraPerformance",
+                                           "DLSS.Hint.Render.Preset.UltraQuality" };
+            uint32_t common = IlionD4r::kPresetUnknown;
+            for (const char* name : names)
+            {
+                unsigned int value = 0;
+                if (InParameters->Get(name, &value) != NVSDK_NGX_Result_Success)
+                    return IlionD4r::kPresetUnknown;
+
+                if (common == IlionD4r::kPresetUnknown)
+                    common = value;
+                else if (common != value)
+                    return IlionD4r::kPresetMixed;
+            }
+            return common;
+        };
+        const uint32_t presetBefore = d4r ? commonPreset() : IlionD4r::kPresetUnknown;
+
         nvResult = NVNGXProxy::D3D12_EvaluateFeature()(InCommandList, _p_dlssHandle, InParameters, NULL);
+        IlionD4r::OnEvaluate((uint32_t) nvResult);
+        if (d4r)
+            IlionD4r::OnPresets(presetBefore, commonPreset());
 
         if (nvResult != NVSDK_NGX_Result_Success)
         {

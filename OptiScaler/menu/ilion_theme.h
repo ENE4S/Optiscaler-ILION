@@ -43,6 +43,44 @@ inline ImFont* SkinFont()
     return skin == Skin::Terminal ? terminalFont : skin == Skin::Crt ? crtFont : skin == Skin::Flat ? modernFont : nullptr;
 }
 
+// ILION in the window name: a radioactive yellow, darker on light backgrounds so it can still be read
+inline ImVec4 IlionYellow(const ImVec4& background)
+{
+    const float light = background.x * 0.299f + background.y * 0.587f + background.z * 0.114f;
+    return light > 0.55f ? ImVec4(0.62f, 0.46f, 0.00f, 1.0f) : ImVec4(1.00f, 0.86f, 0.08f, 1.0f);
+}
+
+// The window name drawn in three pieces: what comes before ILION, ILION in its yellow, the rest
+inline void AddWindowName(ImDrawList* draw, ImFont* font, float size, const ImVec2& pos, ImU32 colour, ImU32 ilionColour,
+                          const char* name, const char* end = nullptr)
+{
+    if (end == nullptr)
+        end = name + strlen(name);
+
+    const char* at = nullptr;
+    for (const char* p = name; p + 5 <= end; p++)
+    {
+        if (strncmp(p, "ILION", 5) == 0)
+        {
+            at = p;
+            break;
+        }
+    }
+
+    if (at == nullptr)
+    {
+        draw->AddText(font, size, pos, colour, name, end);
+        return;
+    }
+
+    float x = pos.x;
+    draw->AddText(font, size, ImVec2(x, pos.y), colour, name, at);
+    x += font->CalcTextSizeA(size, FLT_MAX, 0.0f, name, at).x;
+    draw->AddText(font, size, ImVec2(x, pos.y), ilionColour, at, at + 5);
+    x += font->CalcTextSizeA(size, FLT_MAX, 0.0f, at, at + 5).x;
+    draw->AddText(font, size, ImVec2(x, pos.y), colour, at + 5, end);
+}
+
 // Font of names (plates, card heads, tabs, the title bar). Only Fallout 2 has one; null keeps the current font.
 inline ImFont* TitleFont() { return industrial && skin == Skin::Crt ? crtTitleFont : nullptr; }
 
@@ -78,10 +116,11 @@ inline ImVec4 Themed(const ImVec4& original, Role role)
         return original;
 
     // Fallout 2: aged phosphor and amber, softer than the other terminal
+    // Active, running: a bright retro orange (FG multipliers, the upscaler in use); warnings in aged yellow
     if (skin == Skin::Crt)
-        return role == Role::Good ? ImVec4(0.52f, 0.88f, 0.46f, 1.0f)
-               : role == Role::Warn ? ImVec4(0.88f, 0.65f, 0.28f, 1.0f)
-                                    : ImVec4(0.92f, 0.40f, 0.28f, 1.0f);
+        return role == Role::Good ? ImVec4(1.00f, 0.62f, 0.18f, 1.0f)
+               : role == Role::Warn ? ImVec4(0.90f, 0.80f, 0.34f, 1.0f)
+                                    : ImVec4(0.95f, 0.30f, 0.24f, 1.0f);
 
     if (TerminalLike())
         return role == Role::Good ? ImVec4(0.30f, 1.00f, 0.50f, 1.0f)
@@ -355,6 +394,12 @@ inline void ApplyStyle(ImGuiStyle& style, float backgroundAlpha)
         c[ImGuiCol_TableHeaderBg] = Alpha(LampGreen, 0.16f);
         c[ImGuiCol_TableRowBgAlt] = Alpha(Text, 0.04f);
         c[ImGuiCol_TextSelectedBg] = Alpha(LampGreen, 0.35f);
+
+        if (skin == Skin::Crt)
+        {
+            c[ImGuiCol_CheckMark] = ImVec4(1.00f, 0.60f, 0.16f, 1.0f);
+            c[ImGuiCol_SliderGrabActive] = ImVec4(1.00f, 0.60f, 0.16f, 1.0f);
+        }
     }
     else if (skin == Skin::Flat)
     {
@@ -444,7 +489,8 @@ inline ImVec4 LampColor(Lamp kind)
     case Lamp::Neutral:
         return skin == Skin::Flat ? MetalLight : TerminalLike() ? LampAmber : ImVec4(0.80f, 0.83f, 0.76f, 1.0f);
     default:
-        return LampGreen;
+        // Fallout 2: what is on glows in retro orange, the rest keeps the faded phosphor
+        return skin == Skin::Crt ? ImVec4(1.00f, 0.60f, 0.16f, 1.0f) : LampGreen;
     }
 }
 
@@ -1637,7 +1683,30 @@ inline void PopChassisStyle() { ImGui::PopStyleVar(3); }
 inline void DrawChassis()
 {
     if (!industrial)
+    {
+        ImGuiWindow* window = ImGui::GetCurrentWindow();
+
+        if (window->SkipItems || window->TitleBarHeight <= 0.0f)
+            return;
+
+        // Where ImGui writes the title: after the frame padding, centred in the bar's height
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const char* nameEnd = ImGui::FindRenderedTextEnd(window->Name);
+        const char* at = strstr(window->Name, "ILION");
+
+        if (at == nullptr || at >= nameEnd)
+            return;
+
+        const ImRect bar = window->TitleBarRect();
+        const float x = bar.Min.x + style.FramePadding.x + ImGui::CalcTextSize(window->Name, at).x;
+        const float y = bar.Min.y + ImFloor((bar.GetHeight() - ImGui::GetFontSize()) * 0.5f);
+        const ImVec4 background = ImGui::GetStyleColorVec4(ImGuiCol_TitleBgActive);
+
+        window->DrawList->PushClipRect(bar.Min, bar.Max, false);
+        window->DrawList->AddText(ImVec2(x, y), ImGui::GetColorU32(IlionYellow(background)), at, at + 5);
+        window->DrawList->PopClipRect();
         return;
+    }
 
     ImGuiWindow* window = ImGui::GetCurrentWindow();
 
@@ -1679,7 +1748,20 @@ inline void DrawChassis()
 
                 draw->AddRectFilled(ImVec2(namePos.x - pad, namePos.y - 2.0f), ImVec2(namePos.x + size.x + pad, namePos.y + size.y + 2.0f),
                                     ImGui::GetColorU32(Alpha(TitleAmber, 0.90f)));
-                AddTitleText(draw, namePos, ImGui::GetColorU32(GraphiteDeep), name.c_str());
+
+                const size_t at = name.find("ILION");
+                ImFont* titleFont = TitleFont() != nullptr ? TitleFont() : ImGui::GetFont();
+
+                if (at != std::string::npos)
+                {
+                    const float start = namePos.x + TitleTextSize(name.c_str(), name.c_str() + at).x;
+                    const float width = TitleTextSize(name.c_str() + at, name.c_str() + at + 5).x;
+                    draw->AddRectFilled(ImVec2(start - 2.0f, namePos.y - 1.0f), ImVec2(start + width + 2.0f, namePos.y + size.y + 1.0f),
+                                        ImGui::GetColorU32(GraphiteDeep));
+                }
+
+                AddWindowName(draw, titleFont, ImGui::GetFontSize(), namePos, ImGui::GetColorU32(GraphiteDeep),
+                              ImGui::GetColorU32(IlionYellow(GraphiteDeep)), name.c_str());
                 draw->AddLine(ImVec2(min.x + 8.0f, min.y + title - 3.0f), ImVec2(max.x - 8.0f, min.y + title - 3.0f),
                               ImGui::GetColorU32(Alpha(LampGreen, 0.70f)));
                 draw->AddLine(ImVec2(min.x + 8.0f, min.y + title - 1.0f), ImVec2(max.x - 8.0f, min.y + title - 1.0f),
@@ -1688,7 +1770,8 @@ inline void DrawChassis()
             else if (terminal)
             {
                 const std::string name = Upper(window->Name);
-                draw->AddText(namePos, ImGui::GetColorU32(TitleAmber), name.c_str());
+                AddWindowName(draw, ImGui::GetFont(), ImGui::GetFontSize(), namePos, ImGui::GetColorU32(TitleAmber),
+                              ImGui::GetColorU32(IlionYellow(GraphiteDeep)), name.c_str());
 
                 // A cursor block after the name, and a double rule under the bar
                 const float x = namePos.x + ImGui::CalcTextSize(name.c_str()).x + 6.0f;
@@ -1701,7 +1784,8 @@ inline void DrawChassis()
             }
             else
             {
-                draw->AddText(namePos, ImGui::GetColorU32(TextTitle), window->Name, nameEnd);
+                AddWindowName(draw, ImGui::GetFont(), ImGui::GetFontSize(), namePos, ImGui::GetColorU32(TextTitle),
+                              ImGui::GetColorU32(IlionYellow(Graphite)), window->Name, nameEnd);
                 draw->AddLine(ImVec2(min.x + 1.0f, min.y + title - 1.0f), ImVec2(max.x - 1.0f, min.y + title - 1.0f),
                               ImGui::GetColorU32(Alpha(LampGreen, 0.65f)));
             }
@@ -1812,7 +1896,8 @@ inline void DrawChassis()
 
             draw->AddText(font, fontSize, ImVec2(textPos.x + 1.0f, textPos.y + 1.0f), ImGui::GetColorU32(Alpha(Shadow, 0.90f)), window->Name,
                           nameEnd);
-            draw->AddText(font, fontSize, textPos, ImGui::GetColorU32(ImVec4(0.96f, 0.95f, 0.86f, 1.0f)), window->Name, nameEnd);
+            AddWindowName(draw, font, fontSize, textPos, ImGui::GetColorU32(ImVec4(0.96f, 0.95f, 0.86f, 1.0f)),
+                          ImGui::GetColorU32(IlionYellow(Olive)), window->Name, nameEnd);
         }
 
         // Warning stripes: a worn grey stretch after the name, a yellow one towards the right end
@@ -2183,6 +2268,7 @@ inline ImVec2 SelectorKeySize(float textWidth, bool square)
 inline void DrawSelectorKey(ImDrawList* draw, const ImRect& bounds, bool selected, bool hovered)
 {
     const ImVec4 chosen = skin == Skin::Industrial ? ImVec4(0.12f, 0.52f, 0.08f, 1.0f)
+                          : skin == Skin::Crt ? ImVec4(0.55f, 0.30f, 0.06f, 1.0f)
                           : TerminalLike() ? Alpha(LampGreen, 0.45f)
                                                    : Alpha(LampGreen, 0.22f);
 

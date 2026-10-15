@@ -166,6 +166,8 @@ enum FpsOverlay : uint32_t
     FpsOverlay_Full,
     FpsOverlay_FullGraph,
     FpsOverlay_ReflexTimings,
+    FpsOverlay_Latency, // ILION: frame times and both latency meters
+    FpsOverlay_Custom,  // ILION: the elements in FpsOverlayElements
     FpsOverlay_COUNT,
 };
 
@@ -388,6 +390,7 @@ class Config
     /// 3 +Upscaler Time, 4 +Frame Time Graph, 5 +Upscaler Time Graph
     /// 6 +Reflex timings
     CustomOptional<FpsOverlay> FpsOverlayType { FpsOverlay_JustFPS };
+    CustomOptional<uint32_t> FpsOverlayElements { 1 }; // ILION: elements of the Custom type (misc/IlionOverlay.h)
     CustomOptional<int> FpsShortcutKey { VK_PRIOR };
     CustomOptional<int> FpsCycleShortcutKey { VK_NEXT };
     CustomOptional<bool> FpsOverlayHorizontal { false };

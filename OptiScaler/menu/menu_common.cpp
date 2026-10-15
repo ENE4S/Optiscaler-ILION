@@ -17,6 +17,7 @@
 #include <misc/IlionCompare.h>
 #include <misc/IlionCapture.h>
 #include <misc/IlionLatency.h>
+#include <misc/IlionOverlay.h>
 #include <misc/IlionVisual.h>
 #include <misc/IlionVisualInterpret.h>
 #include "ilion_lang.h"
@@ -7648,6 +7649,15 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
             }
 
             const auto overlayType = config->FpsOverlayType.value_or_default();
+
+            // ILION: what is drawn comes from the type, or from the elements of Custom (misc/IlionOverlay.h)
+            const uint32_t overlayElements = IlionOverlay::Elements();
+            const bool showFrameTimes = (overlayElements & IlionOverlay::FrameTimes) != 0;
+            const bool showFrameGraph = (overlayElements & IlionOverlay::FrameGraph) != 0;
+            const bool showUpscalerTime = (overlayElements & IlionOverlay::UpscalerTime) != 0;
+            const bool showUpscalerGraph = (overlayElements & IlionOverlay::UpscalerGraph) != 0;
+            const bool showReflexTimings = (overlayElements & IlionOverlay::ReflexTimings) != 0;
+            const bool showIlionLatency = (overlayElements & IlionOverlay::IlionLatency) != 0;
             const bool hasFeature = currentFeature && !currentFeature->IsFrozen();
 
             // Prepare Line 1
@@ -7720,7 +7730,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
             bool processingTitled = false;
 
             // Prepare Line 2
-            if (config->FpsOverlayType.value_or_default() >= FpsOverlay_Detailed)
+            if (showFrameTimes)
             {
                 if (industrialHorizontal)
                 {
@@ -7741,7 +7751,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
             }
 
             // Prepare Line 3
-            if (config->FpsOverlayType.value_or_default() >= FpsOverlay_Full)
+            if (showUpscalerTime)
             {
                 thirdLine =
                     StrFmt("Upscaler Time: %7.2f ms, Avg: %7.2f ms", state.upscaleTimes.back(), averageUpscalerFT);
@@ -7806,7 +7816,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                                     nullptr } },
                                 rowWidth);
 
-                if (overlayType == FpsOverlay_Simple)
+                if (!showFrameTimes)
                 {
                     OverlayRow(Tr("Frame time"), StrFmt("%.2f ms", frameTime), rowWidth);
                 }
@@ -7818,13 +7828,13 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                 if (config->FpsOverlayLow1.value_or_default() && gOverlayLow1Fps > 0.0)
                     OverlayRow(Tr("1% low"), StrFmt("%.1f", gOverlayLow1Fps), rowWidth);
 
-                if (overlayType >= FpsOverlay_Detailed)
+                if (showFrameTimes)
                 {
                     OverlayRow(Tr("Frame time"), StrFmt("%.2f ms", state.frameTimes.back()), rowWidth);
                     OverlayRow(Tr("Frame time, average"), StrFmt("%.2f ms", averageFrameTime), rowWidth);
                 }
 
-                if (overlayType >= FpsOverlay_DetailedGraph)
+                if (showFrameGraph)
                 {
                     ImGui::PlotLines(
                         "##FrameTimeGraph",
@@ -7850,7 +7860,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                 if (!fgValue.empty())
                     OverlayRow("Frame Gen", fgValue, rowWidth);
 
-                if (overlayType >= FpsOverlay_Full)
+                if (showUpscalerTime)
                 {
                     OverlayBlockTitle(Tr("PROCESSING TIMES"), rowWidth, false);
                     processingTitled = true;
@@ -7859,7 +7869,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                     OverlayRow(Tr("Upscaler, average"), StrFmt("%.2f ms", averageUpscalerFT), rowWidth);
                 }
 
-                if (overlayType >= FpsOverlay_FullGraph)
+                if (showUpscalerGraph)
                 {
                     ImGui::PlotLines(
                         "##UpscalerFrameTimeGraph",
@@ -7891,7 +7901,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                                            : std::string(),
                                        nullptr } });
 
-                if (overlayType == FpsOverlay_Simple)
+                if (!showFrameTimes)
                     OverlayCell(Tr("Frame time"), StrFmt("%.2f ms", frameTime));
                 else
                     OverlayCell(Tr("FPS, average"), StrFmt("%.1f", 1000.0f / averageFrameTime));
@@ -7899,13 +7909,13 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                 if (config->FpsOverlayLow1.value_or_default() && gOverlayLow1Fps > 0.0)
                     OverlayCell(Tr("1% low"), StrFmt("%.1f", gOverlayLow1Fps));
 
-                if (overlayType >= FpsOverlay_Detailed)
+                if (showFrameTimes)
                 {
                     OverlayCell(Tr("Frame time"), StrFmt("%.2f ms", state.frameTimes.back()));
                     OverlayCell(Tr("Frame time, average"), StrFmt("%.2f ms", averageFrameTime));
                 }
 
-                if (overlayType >= FpsOverlay_DetailedGraph)
+                if (showFrameGraph)
                 {
                     ImGui::SameLine(0.0f, graphGap);
                     ImGui::PlotLines(
@@ -7929,7 +7939,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                 if (!fgValue.empty())
                     OverlayCell("Frame Gen", fgValue);
 
-                if (overlayType >= FpsOverlay_Full)
+                if (showUpscalerTime)
                 {
                     OverlayCellRowTitle(Tr("PROCESSING TIMES"));
                     processingTitled = true;
@@ -7938,7 +7948,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                     OverlayCell(Tr("Upscaler, average"), StrFmt("%.2f ms", averageUpscalerFT));
                 }
 
-                if (overlayType >= FpsOverlay_FullGraph)
+                if (showUpscalerGraph)
                 {
                     ImGui::SameLine(0.0f, graphGap);
                     ImGui::PlotLines(
@@ -7976,7 +7986,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                 }
             }
 
-            if (config->FpsOverlayType.value_or_default() >= FpsOverlay_Detailed)
+            if (showFrameTimes)
             {
                 if (config->FpsOverlayHorizontal.value_or_default())
                 {
@@ -7992,7 +8002,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                 ImGui::Text(secondLine.c_str());
             }
 
-            if (config->FpsOverlayType.value_or_default() >= FpsOverlay_DetailedGraph)
+            if (showFrameGraph)
             {
                 if (config->FpsOverlayHorizontal.value_or_default())
                     ImGui::SameLine(0.0f, 0.0f);
@@ -8004,7 +8014,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                     &gFrameTimes, plotWidth, 0, nullptr, 0.0f, 66.6f, plotSize);
             }
 
-            if (config->FpsOverlayType.value_or_default() >= FpsOverlay_Full)
+            if (showUpscalerTime)
             {
                 if (config->FpsOverlayHorizontal.value_or_default())
                 {
@@ -8020,7 +8030,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                 ImGui::Text(thirdLine.c_str());
             }
 
-            if (config->FpsOverlayType.value_or_default() >= FpsOverlay_FullGraph)
+            if (showUpscalerGraph)
             {
                 if (config->FpsOverlayHorizontal.value_or_default())
                     ImGui::SameLine(0.0f, 0.0f);
@@ -8034,7 +8044,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
 
             }
 
-            if (config->FpsOverlayType.value_or_default() >= FpsOverlay_ReflexTimings)
+            if (showReflexTimings)
             {
                 constexpr auto delayBetweenPollsMs = 500;
                 static auto previousPoll = 0.0;
@@ -8078,7 +8088,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                     }
                     else
                     {
-                        ImGui::Text(Tr("Low latency timings, whole frame: %.1fms"), rangeInNs / 1000.0);
+                        ImGui::Text("Low latency timings, whole frame: %.1fms", rangeInNs / 1000.0);
                     }
 
                     const auto maxWidth =
@@ -8107,7 +8117,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                             return;
                         }
 
-                        ImGui::TextColored(toneMappedColor, Tr("%-12s %4.1fms"), desc, duration);
+                        ImGui::TextColored(toneMappedColor, "%-12s %4.1fms", desc, duration);
 
                         auto leftLimit = ImGui::GetItemRectMin().x + offsetForText * fpsScale;
 
@@ -8139,79 +8149,12 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
 
                 auto& timingData = ReflexHooks::timingData;
 
-                // ILION: the latency value in yellow, whichever source it comes from
-                const ImVec4 latencyYellow = toneMapColor(ImVec4(1.0f, 0.86f, 0.10f, 1.0f));
-
-                // fakenvapi only knows the CPU markers: its driver, queue and GPU times are filled in, not measured
-                const bool reflexCpuOnly = fakenvapi::isUsingAsMainNvapi();
-
-                // ILION, DirectX 12: latency measured from the frame itself (input or simulation, Present, end of the
-                // GPU work, the refresh it reached). It takes the place of the Reflex report in the same block.
-                const auto latency = IlionLatency::Get();
-
-                if (latency.valid && state.swapchainApi == DX12)
-                {
-                    const char* systemLabel = latency.fromInput ? (latency.onScreen ? Tr("Input to screen") : Tr("Input to GPU end"))
-                                                                : (latency.onScreen ? Tr("Simulation to screen") : Tr("Simulation to GPU end"));
-                    const auto ms = [](double value) { return value >= 0.0 ? StrFmt("%.1f ms", value) : std::string(Tr("N/A")); };
-
-                    const std::string systemValue = StrFmt("%.1f ms", latency.system);
-                    const std::string fpsValue = latency.displayedFps >= 0.0 ? StrFmt("%.1f", latency.displayedFps) : std::string(Tr("N/A"));
-                    const std::string presentation = latency.composed ? Tr("composed") : Tr("independent flip");
-
-                    if (industrialVertical)
-                    {
-                        // Rows as wide as their longest label and value, like the other blocks
-                        const float gap = ImGui::CalcTextSize("  ").x;
-                        const std::pair<const char*, std::string> widest[] = { { systemLabel, systemValue },
-                                                                               { Tr("Screen"), ms(latency.display) },
-                                                                               { Tr("Displayed FPS"), fpsValue },
-                                                                               { Tr("Presentation"), presentation } };
-                        for (const auto& [label, value] : widest)
-                            rowWidth = std::max(rowWidth, ImGui::CalcTextSize(label).x + gap + ImGui::CalcTextSize(value.c_str()).x);
-
-                        if (!processingTitled)
-                            OverlayBlockTitle(Tr("LATENCY"), rowWidth, false);
-
-                        OverlayRow(systemLabel, systemValue, rowWidth, &latencyYellow);
-                        OverlayRow("CPU", ms(latency.cpu), rowWidth);
-                        OverlayRow("GPU", ms(latency.gpu), rowWidth);
-                        OverlayRow(Tr("Screen"), ms(latency.display), rowWidth);
-                        OverlayRow(Tr("Displayed FPS"), fpsValue, rowWidth);
-                        OverlayRow(Tr("Presentation"), presentation, rowWidth);
-                    }
-                    else if (industrialHorizontal)
-                    {
-                        if (!processingTitled)
-                            OverlayCellRowTitle(Tr("LATENCY"));
-
-                        OverlayCell(systemLabel, systemValue, &latencyYellow);
-                        OverlayCell("CPU", ms(latency.cpu));
-                        OverlayCell("GPU", ms(latency.gpu));
-                        OverlayCell(Tr("Screen"), ms(latency.display));
-                        OverlayCell(Tr("Displayed FPS"), fpsValue);
-                        OverlayCell(Tr("Presentation"), presentation);
-                    }
-                    else
-                    {
-                        ImGui::Text("%s:", systemLabel);
-                        ImGui::SameLine();
-                        ImGui::TextColored(latencyYellow, "%s", systemValue.c_str());
-                        ImGui::Text("CPU %s | GPU %s | %s %s", ms(latency.cpu).c_str(), ms(latency.gpu).c_str(), Tr("Screen"),
-                                    ms(latency.display).c_str());
-                        ImGui::Text("%s %s | %s", Tr("Displayed FPS"), fpsValue.c_str(), presentation.c_str());
-                    }
-                }
-                else if (gotData && timingData[TimingType::TimeRange].has_value())
+                if (gotData && timingData[TimingType::TimeRange].has_value())
                 {
                     ImDrawList* drawList = ImGui::GetWindowDrawList();
                     constexpr float offsetForText = 155;
 
                     const auto& rangeInNs = timingData[TimingType::TimeRange].value().length;
-
-                    // DX11, Vulkan or no measured latency yet: the span of the Reflex frame report. With fakenvapi it
-                    // only reaches the last CPU marker (about the Present); with real Reflex, the start of GPU render.
-                    const char* reflexLabel = reflexCpuOnly ? Tr("Simulation to Present (CPU)") : Tr("Simulation to GPU start");
 
                     UINT64 localFrameCount = 0;
 
@@ -8224,20 +8167,18 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                         if (!processingTitled)
                             OverlayBlockTitle(Tr("PROCESSING TIMES"), rowWidth, false);
 
-                        OverlayRow(reflexLabel, StrFmt("%.1f ms", rangeInNs / 1000.0), rowWidth, &latencyYellow);
+                        OverlayRow(Tr("Whole frame"), StrFmt("%.1f ms", rangeInNs / 1000.0), rowWidth);
                     }
                     else if (industrialHorizontal)
                     {
                         if (!processingTitled)
                             OverlayCellRowTitle(Tr("PROCESSING TIMES"));
 
-                        OverlayCell(reflexLabel, StrFmt("%.1f ms", rangeInNs / 1000.0), &latencyYellow);
+                        OverlayCell(Tr("Whole frame"), StrFmt("%.1f ms", rangeInNs / 1000.0));
                     }
                     else
                     {
-                        ImGui::Text("%s:", reflexLabel);
-                        ImGui::SameLine();
-                        ImGui::TextColored(latencyYellow, Tr("%.1f ms"), rangeInNs / 1000.0);
+                        ImGui::Text("Reflex timings, whole frame: %.1fms", rangeInNs / 1000.0);
                     }
 
                     const auto maxWidth =
@@ -8266,7 +8207,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                             return;
                         }
 
-                        ImGui::TextColored(toneMappedColor, Tr("%-12s %4.1fms"), desc, duration);
+                        ImGui::TextColored(toneMappedColor, "%-12s %4.1fms", desc, duration);
                         auto leftLimit = ImGui::GetItemRectMin().x + offsetForText * fpsScale;
                         auto start = static_cast<float>(leftLimit + (ImGui::GetItemRectMin().x + maxWidth - leftLimit) *
                                                                         timing.position);
@@ -8280,14 +8221,93 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                     drawTiming(TimingType::Simulation, "Simulation", ImVec4(0.768f, 0.169f, 0.169f, 1.0f));
                     drawTiming(TimingType::RenderSubmit, "RenderSubmit", ImVec4(0.235f, 0.705f, 0.294f, 1.0f));
                     drawTiming(TimingType::Present, "Present", ImVec4(1.0f, 0.88f, 0.098f, 1.0f));
-                    if (!reflexCpuOnly)
-                    {
-                        drawTiming(TimingType::Driver, "Driver", ImVec4(0.263f, 0.388f, 0.847f, 1.0f));
-                        drawTiming(TimingType::OsRenderQueue, "RenderQueue", ImVec4(0.76f, 0.51f, 0.188f, 1.0f));
-                        drawTiming(TimingType::GpuRender, "GpuRender", ImVec4(0.569f, 0.117f, 0.705f, 1.0f));
-                    }
+                    drawTiming(TimingType::Driver, "Driver", ImVec4(0.263f, 0.388f, 0.847f, 1.0f));
+                    drawTiming(TimingType::OsRenderQueue, "RenderQueue", ImVec4(0.76f, 0.51f, 0.188f, 1.0f));
+                    drawTiming(TimingType::GpuRender, "GpuRender", ImVec4(0.569f, 0.117f, 0.705f, 1.0f));
                 }
 #endif
+            }
+
+            // ILION estimated latency (misc/IlionLatency.h): measured times of each frame in DirectX 12. Separate
+            // from the Reflex timings above, which keep working as they were; both can be on at once.
+            if (showIlionLatency)
+            {
+                const ImVec4 latencyYellow = toneMapColor(ImVec4(1.0f, 0.86f, 0.10f, 1.0f));
+                const auto latency = IlionLatency::Get();
+                const auto ms = [](double value) { return value >= 0.0 ? StrFmt("%.1f ms", value) : std::string(Tr("N/A")); };
+                const bool measured = state.swapchainApi == DX12 && latency.valid;
+
+                // Label and value; the first one is the latency, in yellow
+                std::vector<std::pair<std::string, std::string>> rows;
+
+                if (state.swapchainApi != DX12)
+                {
+                    rows.push_back({ Tr("DirectX 12 only"), "" });
+                }
+                else if (!latency.valid)
+                {
+                    rows.push_back({ Tr("Waiting for frames"), "" });
+                }
+                else
+                {
+                    rows.push_back({ latency.onScreen ? Tr("Simulation to screen") : Tr("Simulation to GPU end"), ms(latency.system) });
+
+                    if (latency.inputToScreen >= 0.0)
+                        rows.push_back({ Tr("Input to screen"), ms(latency.inputToScreen) });
+
+                    if (latency.onScreen)
+                    {
+                        rows.push_back({ "CPU", ms(latency.cpu) });
+                        rows.push_back({ "GPU", ms(latency.gpu) });
+                        rows.push_back({ Tr("Screen"), ms(latency.display) });
+                    }
+
+                    rows.push_back({ Tr("Displayed FPS"),
+                                     latency.displayedFps >= 0.0 ? StrFmt("%.1f", latency.displayedFps) : std::string(Tr("N/A")) });
+                    rows.push_back({ Tr("Presentation"), latency.composed ? Tr("composed") : Tr("independent flip") });
+                }
+
+                const char* title = Tr("ILION ESTIMATED LATENCY");
+
+                if (industrialVertical)
+                {
+                    // As wide as its title and its longest row, like the other blocks
+                    const float gap = ImGui::CalcTextSize("  ").x;
+                    rowWidth = std::max(rowWidth, ImGui::CalcTextSize(title).x);
+                    for (const auto& [label, value] : rows)
+                        rowWidth = std::max(rowWidth, ImGui::CalcTextSize(label.c_str()).x + gap + ImGui::CalcTextSize(value.c_str()).x);
+
+                    OverlayBlockTitle(title, rowWidth, false);
+
+                    for (size_t i = 0; i < rows.size(); i++)
+                        OverlayRow(rows[i].first.c_str(), rows[i].second, rowWidth, i == 0 && measured ? &latencyYellow : nullptr);
+                }
+                else if (industrialHorizontal)
+                {
+                    OverlayCellRowTitle(title);
+
+                    for (size_t i = 0; i < rows.size(); i++)
+                        OverlayCell(rows[i].first.c_str(), rows[i].second, i == 0 && measured ? &latencyYellow : nullptr);
+                }
+                else
+                {
+                    ImGui::TextUnformatted(Tr("ILION estimated latency"));
+
+                    for (size_t i = 0; i < rows.size(); i++)
+                    {
+                        ImGui::TextUnformatted(rows[i].first.c_str());
+
+                        if (!rows[i].second.empty())
+                        {
+                            ImGui::SameLine();
+
+                            if (i == 0 && measured)
+                                ImGui::TextColored(latencyYellow, "%s", rows[i].second.c_str());
+                            else
+                                ImGui::TextUnformatted(rows[i].second.c_str());
+                        }
+                    }
+                }
             }
 
             DrawBenchmarkStatus(now);
@@ -13678,7 +13698,8 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
         }
 
         const char* fpsType[] = { Tr("Just FPS"), Tr("Simple"),       Tr("Detailed"),      Tr("Detailed + Graph"),
-                                  Tr("Full"),     Tr("Full + Graph"), Tr("Reflex timings") };
+                                  Tr("Full"),     Tr("Full + Graph"), Tr("Reflex timings"), Tr("Latency (both meters)"),
+                                  Tr("Custom##overlay") };
         const char* selectedType = fpsType[config->FpsOverlayType.value_or_default()];
 
         if (IlionTheme::BeginCombo(TrL("Overlay Type"), selectedType))
@@ -13690,6 +13711,58 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
             }
 
             ImGui::EndCombo();
+        }
+        ShowTooltip("A type sets the elements below. Changing any of them turns the type into Custom.");
+
+        // ILION: the elements of the type in use; one changed here becomes Custom, starting from what was shown
+        {
+            struct ElementOption
+            {
+                const char* label;
+                const char* tip;
+                IlionOverlay::Element element;
+            };
+
+            static const ElementOption elementOptions[] = {
+                { "Frame times", "FPS average, frame time and its average", IlionOverlay::FrameTimes },
+                { "Frame time graph", "Graph of the last frame times", IlionOverlay::FrameGraph },
+                { "Upscaler time", "GPU time of the upscaler and its average", IlionOverlay::UpscalerTime },
+                { "Upscaler time graph", "Graph of the last upscaler times", IlionOverlay::UpscalerGraph },
+                { "Reflex timings##element", "OptiScaler's Reflex timings: the frame report of Reflex or fakenvapi",
+                  IlionOverlay::ReflexTimings },
+                { "ILION estimated latency##element",
+                  "ILION's latency, DirectX 12: simulation start to the refresh that shows the frame, from the frame's "
+                  "own times (Reflex markers, Present, GPU timestamp, DXGI frame statistics)",
+                  IlionOverlay::IlionLatency },
+            };
+
+            const uint32_t shown = IlionOverlay::Elements();
+
+            // Two columns only when the longest name fits in each, in either language
+            float widest = 0.0f;
+            for (const auto& option : elementOptions)
+                widest = std::max(widest, CheckboxWidth(TrL(option.label)));
+
+            const int columns =
+                ImGui::GetContentRegionAvail().x >= (widest + ImGui::GetStyle().CellPadding.x * 2.0f) * 2.0f ? 2 : 1;
+
+            if (ImGui::BeginTable("##overlayElements", columns, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings))
+            {
+                for (const auto& option : elementOptions)
+                {
+                    ImGui::TableNextColumn();
+
+                    bool on = (shown & option.element) != 0;
+                    if (IlionTheme::Checkbox(TrL(option.label), &on))
+                    {
+                        config->FpsOverlayElements = on ? (shown | option.element) : (shown & (IlionOverlay::AllElements ^ (uint32_t) option.element));
+                        config->FpsOverlayType = FpsOverlay_Custom;
+                    }
+                    ShowTooltip(option.tip);
+                }
+
+                ImGui::EndTable();
+            }
         }
 
         float fpsAlpha = config->FpsOverlayAlpha.value_or_default();

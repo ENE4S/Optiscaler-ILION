@@ -18,6 +18,7 @@
 #include <mutex>
 
 #include <Config.h>
+#include <misc/IlionOverlay.h>
 
 namespace IlionLatency
 {
@@ -41,25 +42,26 @@ inline uint64_t QpcFrequency()
 
 inline double QpcToMs(int64_t ticks) { return (double) ticks * 1000.0 / (double) QpcFrequency(); }
 
+// Only while the overlay shows the ILION estimated latency
 inline bool Enabled()
 {
-    auto config = Config::Instance();
-    return config->ShowFps.value_or_default() && config->FpsOverlayType.value_or_default() >= FpsOverlay_ReflexTimings;
+    return Config::Instance()->ShowFps.value_or_default() && IlionOverlay::Shows(IlionOverlay::IlionLatency);
 }
 
-// What the overlay shows, medians of the last frames
+// What the overlay shows: means of the last complete frames. Total and parts come from the same frames, so
+// CPU + GPU + screen add up to the total (rounding apart).
 struct Result
 {
-    bool valid = false;        // a full latency sample exists
-    bool fromInput = false;    // starts at the game's input sample, else at the simulation start
-    bool onScreen = false;     // ends on screen, else at the end of the GPU work
-    double system = 0.0;       // input or simulation -> screen (or end of GPU)
-    double cpu = -1.0;         // simulation -> Present
-    double gpu = -1.0;         // Present -> end of the GPU work
-    double display = -1.0;     // end of the GPU work -> screen (queue, FG holding the frame, refresh)
+    bool valid = false;          // complete frames exist
+    bool onScreen = false;       // ends at the refresh that showed the frame; else at the end of the GPU work
+    double system = 0.0;         // simulation start -> screen (or end of GPU)
+    double inputToScreen = -1.0; // the game's input sample -> screen, when the game sends that marker
+    double cpu = -1.0;           // simulation start -> Present
+    double gpu = -1.0;           // Present -> end of the GPU work on the present queue
+    double display = -1.0;       // end of the GPU work -> refresh that showed it (queue, flip, wait for vblank)
     double displayedFps = -1.0;
-    bool composed = false;     // Windows composes the window: no screen time
-    uint64_t at = 0;           // when it was last updated
+    bool composed = false;       // Windows composes the window: no screen time
+    uint64_t at = 0;             // when it was last updated
 };
 
 namespace detail
@@ -104,15 +106,20 @@ struct Window
         count = std::min(count + 1, kSamples);
     }
 
-    double Median() const
+    // A mean, not a median: means of the parts of the same frames add up to the mean of their totals
+    double Mean() const
     {
         if (count == 0)
             return -1.0;
 
-        std::array<double, kSamples> sorted = values;
-        std::sort(sorted.begin(), sorted.begin() + count);
-        return sorted[count / 2];
+        double sum = 0.0;
+        for (size_t i = 0; i < count; i++)
+            sum += values[i];
+
+        return sum / (double) count;
     }
+
+    void Clear() { count = next = 0; }
 };
 
 struct Gpu
@@ -142,8 +149,9 @@ inline std::array<Frame, kFrames> frames {};
 inline size_t frameNext = 0;
 inline int current = -1; // frame of the Present being made
 inline Gpu gpu;
-inline Window systemWindow, cpuWindow, gpuWindow, displayWindow;
-inline bool lastFromInput = false, lastOnScreen = false, composed = false;
+inline Window systemWindow, inputWindow, cpuWindow, gpuWindow, displayWindow; // frames that reached the screen
+inline Window toGpuWindow;                                                    // composed window: simulation -> end of GPU
+inline bool lastOnScreen = false, composed = false;
 inline UINT statsCount = 0;
 inline uint64_t statsAt = 0;
 inline double displayedFps = -1.0;
@@ -228,22 +236,49 @@ inline void CloseFrame(Frame& frame)
     if (frame.gpuEnd != 0 && frame.gpuEnd < frame.present)
         frame.gpuEnd = 0;
 
-    const uint64_t start = frame.input != 0 ? frame.input : frame.simulation;
-    const uint64_t end = frame.screen != 0 ? frame.screen : frame.gpuEnd;
-    if (start == 0 || end == 0 || end < start)
+    // Every sample starts at the simulation start of the same frame; a frame without it isn't counted
+    if (frame.simulation == 0 || frame.present < frame.simulation)
         return;
 
-    systemWindow.Add(QpcToMs((int64_t) (end - start)));
-    if (frame.simulation != 0 && frame.present >= frame.simulation)
-        cpuWindow.Add(QpcToMs((int64_t) (frame.present - frame.simulation)));
-    if (frame.gpuEnd != 0)
-        gpuWindow.Add(QpcToMs((int64_t) (frame.gpuEnd - frame.present)));
-    if (frame.screen != 0 && frame.gpuEnd != 0 && frame.screen >= frame.gpuEnd)
-        displayWindow.Add(QpcToMs((int64_t) (frame.screen - frame.gpuEnd)));
+    if (frame.screen != 0)
+    {
+        if (frame.screen < frame.present)
+            return;
 
-    lastFromInput = frame.input != 0;
-    lastOnScreen = frame.screen != 0;
-    updatedAt = Qpc();
+        // GPU timestamps work but this frame's didn't arrive: the frame is left out whole, so parts and total
+        // keep coming from the same frames
+        if (gpu.ok && (frame.gpuEnd == 0 || frame.screen < frame.gpuEnd))
+            return;
+
+        systemWindow.Add(QpcToMs((int64_t) (frame.screen - frame.simulation)));
+        cpuWindow.Add(QpcToMs((int64_t) (frame.present - frame.simulation)));
+
+        if (frame.gpuEnd != 0)
+        {
+            gpuWindow.Add(QpcToMs((int64_t) (frame.gpuEnd - frame.present)));
+            displayWindow.Add(QpcToMs((int64_t) (frame.screen - frame.gpuEnd)));
+        }
+        else
+        {
+            displayWindow.Add(QpcToMs((int64_t) (frame.screen - frame.present))); // no GPU timestamps on this queue
+        }
+
+        // The game's input sample, on its own: it isn't mixed into the total
+        if (frame.input != 0 && frame.input <= frame.screen)
+            inputWindow.Add(QpcToMs((int64_t) (frame.screen - frame.input)));
+
+        lastOnScreen = true;
+        updatedAt = Qpc();
+        return;
+    }
+
+    // No screen time (composed window): up to the end of the GPU work, in its own window
+    if (frame.gpuEnd != 0)
+    {
+        toGpuWindow.Add(QpcToMs((int64_t) (frame.gpuEnd - frame.simulation)));
+        lastOnScreen = false;
+        updatedAt = Qpc();
+    }
 }
 } // namespace detail
 
@@ -432,13 +467,24 @@ inline Result Get()
     if (updatedAt == 0 || Qpc() - updatedAt > QpcFrequency())
         return result;
 
-    result.valid = systemWindow.count > 0;
-    result.fromInput = lastFromInput;
-    result.onScreen = lastOnScreen;
-    result.system = systemWindow.Median();
-    result.cpu = cpuWindow.Median();
-    result.gpu = gpuWindow.Median();
-    result.display = displayWindow.Median();
+    // Frames reaching the screen give the full figure; a composed window only the part up to the end of the GPU
+    result.onScreen = lastOnScreen && systemWindow.count > 0;
+
+    if (result.onScreen)
+    {
+        result.valid = true;
+        result.system = systemWindow.Mean();
+        result.inputToScreen = inputWindow.Mean();
+        result.cpu = cpuWindow.Mean();
+        result.gpu = gpuWindow.Mean();
+        result.display = displayWindow.Mean();
+    }
+    else if (toGpuWindow.count > 0)
+    {
+        result.valid = true;
+        result.system = toGpuWindow.Mean();
+    }
+
     return result;
 }
 } // namespace IlionLatency

@@ -46,6 +46,9 @@ struct Translation
 inline constexpr Translation kSpanish[] = {
     // Universal upscaler selector (v1.2-dev.5)
     { "Upscaler##IlionUpscaler", "Escalador" },
+    // dev.13: advanced selectors
+    { "Advanced selectors", "Selectores avanzados" },
+    { "OptiScaler's backend list", "Lista de motores de OptiScaler" },
     // dev.12: keys passed in variables
     { "Close customisation", "Cerrar personalización" },
     { "Advanced: Upscale Ratio Override", "Avanzado: forzar relación de escalado" },

@@ -8553,32 +8553,10 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
     GetCurrentBackendInfo(state.api, currentBackend, &currentBackendName);
 
-    ImGui::PushItemWidth(150.0f * menuResScale);
-
     const bool usesDlssd = currentFeature->GetUpscalerType() == Upscaler::DLSSD;
-
-    if (!usesDlssd)
-    {
-        switch (state.api)
-        {
-        case DX11:
-            AddDx11Backends(currentBackend);
-            break;
-
-        case DX12:
-            AddDx12Backends(currentBackend);
-            break;
-
-        default:
-            AddVulkanBackends(currentBackend);
-        }
-    }
-
-    ImGui::PopItemWidth();
 
     if (!basicView)
     {
-        ImGui::SameLine();
         ImGui::TextDisabled(Tr("%dx%d -> %dx%d (%.2fx)"), currentFeature->RenderWidth(), currentFeature->RenderHeight(),
                             currentFeature->TargetWidth(), currentFeature->TargetHeight(),
                             (float) currentFeature->TargetWidth() / (float) currentFeature->RenderWidth());
@@ -8594,6 +8572,65 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
     {
         ImGui::Spacing();
         DrawUpscalerSelector(currentFeature, menuResScale, "upscaling");
+
+        // ILION: OptiScaler's own backend list (native DLSS on NVIDIA included) and the FFX provider list, unchanged,
+        // folded under one key; ILION's manager above stays the main selector
+        ImGui::Spacing();
+        if (auto ch = ScopedCollapsingHeader(TrL("Advanced selectors")); ch.IsHeaderOpen())
+        {
+            ImGui::TextDisabled("%s", Tr("OptiScaler's backend list"));
+        ImGui::PushItemWidth(150.0f * menuResScale);
+
+        switch (state.api)
+        {
+        case DX11:
+            AddDx11Backends(currentBackend);
+            break;
+
+        case DX12:
+            AddDx12Backends(currentBackend);
+            break;
+
+        default:
+            AddVulkanBackends(currentBackend);
+        }
+
+        ImGui::PopItemWidth();
+            if (currentBackend == Upscaler::FFX || currentBackend == Upscaler::FFX_on12)
+            {
+            if (auto versions = GetFfxVersionList(currentBackend, state.api);
+                versions != nullptr && !versions->names.empty())
+            {
+                ImGui::Spacing();
+    
+                const int ffxIndex = config->FfxUpscalerIndex.value_or_default();
+                auto currentName =
+                    ffxIndex >= 0 && ffxIndex < versions->names.size() ? StrFmt("FSR %s", versions->names[ffxIndex]) : "";
+    
+                ImGui::PushItemWidth(150.0f * menuResScale);
+    
+                if (IlionTheme::BeginCombo(TrL("FFX Upscaler"), currentName.c_str()))
+                {
+                    for (auto n : FfxVersionsNewestFirst(*versions))
+                    {
+                        if (ImGui::Selectable(StrFmt("FSR %s##%d", versions->names[n], n).c_str(), ffxIndex == n) &&
+                            ffxIndex != n)
+                        {
+                            config->FfxUpscalerIndex = n;
+                            state.newBackend = currentBackend;
+                            MARK_ALL_BACKENDS_CHANGED();
+                        }
+                    }
+    
+                    ImGui::EndCombo();
+                }
+    
+                ImGui::PopItemWidth();
+    
+                ShowTooltip("List of upscalers reported by FFX SDK");
+            }
+            }
+        }
     }
 
     if (!usesDlssd)
@@ -8884,38 +8921,6 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                         "The first 2 seconds after a switch aren't counted.\n"
                         "Enabling it starts a new session and shows the performance overlay.");
             }
-        }
-
-        if (auto versions = GetFfxVersionList(currentBackend, state.api);
-            versions != nullptr && !versions->names.empty())
-        {
-            ImGui::Spacing();
-
-            const int ffxIndex = config->FfxUpscalerIndex.value_or_default();
-            auto currentName =
-                ffxIndex >= 0 && ffxIndex < versions->names.size() ? StrFmt("FSR %s", versions->names[ffxIndex]) : "";
-
-            ImGui::PushItemWidth(150.0f * menuResScale);
-
-            if (IlionTheme::BeginCombo(TrL("FFX Upscaler"), currentName.c_str()))
-            {
-                for (auto n : FfxVersionsNewestFirst(*versions))
-                {
-                    if (ImGui::Selectable(StrFmt("FSR %s##%d", versions->names[n], n).c_str(), ffxIndex == n) &&
-                        ffxIndex != n)
-                    {
-                        config->FfxUpscalerIndex = n;
-                        state.newBackend = currentBackend;
-                        MARK_ALL_BACKENDS_CHANGED();
-                    }
-                }
-
-                ImGui::EndCombo();
-            }
-
-            ImGui::PopItemWidth();
-
-            ShowTooltip("List of upscalers reported by FFX SDK");
         }
 
         if (basicView)

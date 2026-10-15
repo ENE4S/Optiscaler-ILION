@@ -46,6 +46,19 @@ struct Translation
 inline constexpr Translation kSpanish[] = {
     // Universal upscaler selector (v1.2-dev.5)
     { "Upscaler##IlionUpscaler", "Escalador" },
+    // dev.14: latency
+    { "Displayed FPS", "FPS mostrados" },
+    { "Input to GPU end", "Entrada a fin de GPU" },
+    { "Input to screen", "Entrada a pantalla" },
+    { "LATENCY", "LATENCIA" },
+    { "Presentation", "Presentación" },
+    { "Screen", "Pantalla" },
+    { "Simulation to GPU end", "Simulación a fin de GPU" },
+    { "Simulation to GPU start", "Simulación a inicio de GPU" },
+    { "Simulation to Present (CPU)", "Simulación a Present (CPU)" },
+    { "Simulation to screen", "Simulación a pantalla" },
+    { "composed", "compuesta" },
+    { "independent flip", "volteo directo" },
     // dev.13: advanced selectors
     { "Advanced selectors", "Selectores avanzados" },
     { "OptiScaler's backend list", "Lista de motores de OptiScaler" },
@@ -201,7 +214,6 @@ inline constexpr Translation kSpanish[] = {
     { "Close##4", "Cerrar" },
     { "Close##personal", "Cerrar" },
     { "Common", "Común" },
-    { "Configure overlay", "Configurar overlay" },
     { "Controls the DXGI Present sync interval, which determines how\nthe swap chain waits for vertical refresh.\n\n0  = Present immediately, no VSync wait.\n1  = Sync to every refresh, normal VSync.\n2+ = Present every N refreshes, reducing effective frame rate.\n\nHigher values can reduce tearing but may increase latency and cap FPS.\nFor most games, use 0 for lowest latency or 1 for normal VSync.", "Controla el intervalo de sincronización de DXGI Present, que fija cómo\nespera la cadena de intercambio al refresco vertical.\n\n0  = Presentar al instante, sin esperar a VSync.\n1  = Sincronizar con cada refresco, VSync normal.\n2+ = Presentar cada N refrescos, reduciendo la tasa real.\n\nValores altos reducen el tearing pero pueden aumentar la latencia y limitar los FPS.\nEn la mayoría de juegos: 0 para la menor latencia o 1 para VSync normal." },
     { "Corresponds to amount of accumulation added per frame\nat pixel coordinate where disocclusion occured or when\nreactive mask value is > 0.0f. Decreasing this and \ndrawing the ghosting object (IE no mv) to reactive mask \nwith value close to 1.0f can decrease temporal ghosting.\nDecreasing this could result in more thin feature pixels flickering.", "Acumulación añadida por fotograma en el píxel\ndonde hay desoclusión o cuando la máscara\nreactiva es > 0.0f. Bajarlo y dibujar el objeto\ncon ghosting (sin MV) en la máscara reactiva\ncon un valor cercano a 1.0f puede reducir el ghosting.\nBajarlo puede hacer parpadear más los detalles finos." },
     { "Current DLSSG state:", "Estado actual de DLSSG:" },
@@ -481,7 +493,6 @@ inline constexpr Translation kSpanish[] = {
     { "Red", "Rojo" },
     { "Red##2", "Rojo" },
     { "Reflex not hooked", "Reflex no enganchado" },
-    { "Reflex timings, sim to GPU start:", "Tiempos Reflex, simulación a inicio GPU:" },
     { "Relax resolution checks for HUDless by 32 pixels \nHelps games which use black borders for some \nresolutions and screen ratios (e.g. Witcher 3)", "Relaja en 32 píxeles la comprobación de resolución del HUDless \nAyuda en juegos con bordes negros en algunas \nresoluciones y proporciones (p. ej. Witcher 3)" },
     { "Relaxed Resource Check", "Comprobación de recursos relajada" },
     { "Render Presets Override", "Forzar presets de render" },
@@ -525,7 +536,6 @@ inline constexpr Translation kSpanish[] = {
     { "Show Detected UI", "Mostrar UI detectada" },
     { "Show Personal tab", "Mostrar pestaña Personal" },
     { "Show static elements", "Mostrar elementos estáticos" },
-    { "Sim to GPU start", "Simulación a inicio GPU" },
     { "Similar to Lanczos2.\nSmoother and less prone to artefacts than Lanczos, but slightly blurrier.", "Parecido a Lanczos2.\nMás suave y con menos artefactos que Lanczos, pero algo más borroso." },
     { "Similar to Lanczos3.\nFar less prone to artefacting than Lanczos3, but much heavier on the GPU.\nConsidered the best along with Lanczos3.", "Parecido a Lanczos3.\nMucho menos propenso a artefactos que Lanczos3, pero bastante más pesado para la GPU.\nConsiderado el mejor junto con Lanczos3." },
     { "Single File", "Un solo archivo" },

@@ -3,6 +3,7 @@
 #include <Config.h>
 
 #include <nvapi/fakenvapi.h>
+#include <misc/IlionLatency.h>
 
 #include <proxies/Streamline_Proxy.h>
 
@@ -106,6 +107,10 @@ NvAPI_Status ReflexHooks::hkNvAPI_D3D_GetLatency(IUnknown* pDev, NV_LATENCY_RESU
 NvAPI_Status ReflexHooks::hkNvAPI_D3D_SetLatencyMarker(IUnknown* pDev,
                                                        NV_LATENCY_MARKER_PARAMS* pSetLatencyMarkerParams)
 {
+    // ILION latency, observation only: times of the input sample, simulation start and Present markers
+    if (pSetLatencyMarkerParams != nullptr)
+        IlionLatency::OnMarker((uint32_t) pSetLatencyMarkerParams->markerType, pSetLatencyMarkerParams->frameID);
+
 #ifdef LOG_REFLEX_CALLS
     LOG_FUNC();
 #endif

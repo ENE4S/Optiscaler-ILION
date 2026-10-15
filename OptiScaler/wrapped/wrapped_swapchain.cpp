@@ -12,6 +12,7 @@
 #include <menu/menu_overlay_dx.h>
 
 #include <misc/FrameLimit.h>
+#include <misc/IlionLatency.h>
 
 #include <d3d11.h>
 #include <d3d12.h>
@@ -319,6 +320,7 @@ static HRESULT LocalPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
     ID3D11Device* device = nullptr;
     ID3D12Device* device12 = nullptr;
     ID3D12CommandQueue* cq = nullptr;
+    bool ilionInterpolated = false; // ILION latency: frames made by frame generation aren't followed
 
     bool isD3D11 = false;
 
@@ -497,12 +499,16 @@ static HRESULT LocalPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
             auto isInterpolated = fgIsActive && (_frameCounter - fgPresentFrame) > 0;
 
             fakenvapi::reportFGPresent(pSwapChain, fgIsActive, isInterpolated);
+            ilionInterpolated = isInterpolated;
         }
 #endif
 
         _frameCounter++;
         State::Instance().frameCount = _frameCounter;
     }
+
+    // ILION latency: a GPU timestamp after the frame's work and the time of the Present (DX12 only)
+    IlionLatency::BeforePresent(cq, ilionInterpolated);
 
     LOG_DEBUG("Calling original present");
 
@@ -511,6 +517,9 @@ static HRESULT LocalPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
         presentResult = pSwapChain->Present(SyncInterval, Flags);
     else
         presentResult = ((IDXGISwapChain1*) pSwapChain)->Present1(SyncInterval, Flags, pPresentParameters);
+
+    if (cq != nullptr)
+        IlionLatency::AfterPresent(pSwapChain, presentResult);
 
     if (presentResult == S_OK)
     {

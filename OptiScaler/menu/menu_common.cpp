@@ -16,6 +16,7 @@
 #include <misc/IlionBenchmark.h>
 #include <misc/IlionCompare.h>
 #include <misc/IlionCapture.h>
+#include <misc/IlionLatency.h>
 #include <misc/IlionVisual.h>
 #include <misc/IlionVisualInterpret.h>
 #include "ilion_lang.h"
@@ -8138,16 +8139,79 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
 
                 auto& timingData = ReflexHooks::timingData;
 
-                if (gotData && timingData[TimingType::TimeRange].has_value())
+                // ILION: the latency value in yellow, whichever source it comes from
+                const ImVec4 latencyYellow = toneMapColor(ImVec4(1.0f, 0.86f, 0.10f, 1.0f));
+
+                // fakenvapi only knows the CPU markers: its driver, queue and GPU times are filled in, not measured
+                const bool reflexCpuOnly = fakenvapi::isUsingAsMainNvapi();
+
+                // ILION, DirectX 12: latency measured from the frame itself (input or simulation, Present, end of the
+                // GPU work, the refresh it reached). It takes the place of the Reflex report in the same block.
+                const auto latency = IlionLatency::Get();
+
+                if (latency.valid && state.swapchainApi == DX12)
+                {
+                    const char* systemLabel = latency.fromInput ? (latency.onScreen ? Tr("Input to screen") : Tr("Input to GPU end"))
+                                                                : (latency.onScreen ? Tr("Simulation to screen") : Tr("Simulation to GPU end"));
+                    const auto ms = [](double value) { return value >= 0.0 ? StrFmt("%.1f ms", value) : std::string(Tr("N/A")); };
+
+                    const std::string systemValue = StrFmt("%.1f ms", latency.system);
+                    const std::string fpsValue = latency.displayedFps >= 0.0 ? StrFmt("%.1f", latency.displayedFps) : std::string(Tr("N/A"));
+                    const std::string presentation = latency.composed ? Tr("composed") : Tr("independent flip");
+
+                    if (industrialVertical)
+                    {
+                        // Rows as wide as their longest label and value, like the other blocks
+                        const float gap = ImGui::CalcTextSize("  ").x;
+                        const std::pair<const char*, std::string> widest[] = { { systemLabel, systemValue },
+                                                                               { Tr("Screen"), ms(latency.display) },
+                                                                               { Tr("Displayed FPS"), fpsValue },
+                                                                               { Tr("Presentation"), presentation } };
+                        for (const auto& [label, value] : widest)
+                            rowWidth = std::max(rowWidth, ImGui::CalcTextSize(label).x + gap + ImGui::CalcTextSize(value.c_str()).x);
+
+                        if (!processingTitled)
+                            OverlayBlockTitle(Tr("LATENCY"), rowWidth, false);
+
+                        OverlayRow(systemLabel, systemValue, rowWidth, &latencyYellow);
+                        OverlayRow("CPU", ms(latency.cpu), rowWidth);
+                        OverlayRow("GPU", ms(latency.gpu), rowWidth);
+                        OverlayRow(Tr("Screen"), ms(latency.display), rowWidth);
+                        OverlayRow(Tr("Displayed FPS"), fpsValue, rowWidth);
+                        OverlayRow(Tr("Presentation"), presentation, rowWidth);
+                    }
+                    else if (industrialHorizontal)
+                    {
+                        if (!processingTitled)
+                            OverlayCellRowTitle(Tr("LATENCY"));
+
+                        OverlayCell(systemLabel, systemValue, &latencyYellow);
+                        OverlayCell("CPU", ms(latency.cpu));
+                        OverlayCell("GPU", ms(latency.gpu));
+                        OverlayCell(Tr("Screen"), ms(latency.display));
+                        OverlayCell(Tr("Displayed FPS"), fpsValue);
+                        OverlayCell(Tr("Presentation"), presentation);
+                    }
+                    else
+                    {
+                        ImGui::Text("%s:", systemLabel);
+                        ImGui::SameLine();
+                        ImGui::TextColored(latencyYellow, "%s", systemValue.c_str());
+                        ImGui::Text("CPU %s | GPU %s | %s %s", ms(latency.cpu).c_str(), ms(latency.gpu).c_str(), Tr("Screen"),
+                                    ms(latency.display).c_str());
+                        ImGui::Text("%s %s | %s", Tr("Displayed FPS"), fpsValue.c_str(), presentation.c_str());
+                    }
+                }
+                else if (gotData && timingData[TimingType::TimeRange].has_value())
                 {
                     ImDrawList* drawList = ImGui::GetWindowDrawList();
                     constexpr float offsetForText = 155;
 
                     const auto& rangeInNs = timingData[TimingType::TimeRange].value().length;
 
-                    // Simulation start to GPU render start: the span of the Reflex frame report the overlay has
-                    // (gpuRenderEndTime is not in it). The closest to latency here, not end to end; value in yellow.
-                    const ImVec4 latencyYellow = toneMapColor(ImVec4(1.0f, 0.86f, 0.10f, 1.0f));
+                    // DX11, Vulkan or no measured latency yet: the span of the Reflex frame report. With fakenvapi it
+                    // only reaches the last CPU marker (about the Present); with real Reflex, the start of GPU render.
+                    const char* reflexLabel = reflexCpuOnly ? Tr("Simulation to Present (CPU)") : Tr("Simulation to GPU start");
 
                     UINT64 localFrameCount = 0;
 
@@ -8160,18 +8224,18 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                         if (!processingTitled)
                             OverlayBlockTitle(Tr("PROCESSING TIMES"), rowWidth, false);
 
-                        OverlayRow(Tr("Sim to GPU start"), StrFmt("%.1f ms", rangeInNs / 1000.0), rowWidth, &latencyYellow);
+                        OverlayRow(reflexLabel, StrFmt("%.1f ms", rangeInNs / 1000.0), rowWidth, &latencyYellow);
                     }
                     else if (industrialHorizontal)
                     {
                         if (!processingTitled)
                             OverlayCellRowTitle(Tr("PROCESSING TIMES"));
 
-                        OverlayCell(Tr("Sim to GPU start"), StrFmt("%.1f ms", rangeInNs / 1000.0), &latencyYellow);
+                        OverlayCell(reflexLabel, StrFmt("%.1f ms", rangeInNs / 1000.0), &latencyYellow);
                     }
                     else
                     {
-                        ImGui::TextUnformatted(Tr("Reflex timings, sim to GPU start:"));
+                        ImGui::Text("%s:", reflexLabel);
                         ImGui::SameLine();
                         ImGui::TextColored(latencyYellow, Tr("%.1f ms"), rangeInNs / 1000.0);
                     }
@@ -8216,9 +8280,12 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                     drawTiming(TimingType::Simulation, "Simulation", ImVec4(0.768f, 0.169f, 0.169f, 1.0f));
                     drawTiming(TimingType::RenderSubmit, "RenderSubmit", ImVec4(0.235f, 0.705f, 0.294f, 1.0f));
                     drawTiming(TimingType::Present, "Present", ImVec4(1.0f, 0.88f, 0.098f, 1.0f));
-                    drawTiming(TimingType::Driver, "Driver", ImVec4(0.263f, 0.388f, 0.847f, 1.0f));
-                    drawTiming(TimingType::OsRenderQueue, "RenderQueue", ImVec4(0.76f, 0.51f, 0.188f, 1.0f));
-                    drawTiming(TimingType::GpuRender, "GpuRender", ImVec4(0.569f, 0.117f, 0.705f, 1.0f));
+                    if (!reflexCpuOnly)
+                    {
+                        drawTiming(TimingType::Driver, "Driver", ImVec4(0.263f, 0.388f, 0.847f, 1.0f));
+                        drawTiming(TimingType::OsRenderQueue, "RenderQueue", ImVec4(0.76f, 0.51f, 0.188f, 1.0f));
+                        drawTiming(TimingType::GpuRender, "GpuRender", ImVec4(0.569f, 0.117f, 0.705f, 1.0f));
+                    }
                 }
 #endif
             }

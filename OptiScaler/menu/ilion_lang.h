@@ -46,6 +46,15 @@ struct Translation
 inline constexpr Translation kSpanish[] = {
     // Universal upscaler selector (v1.2-dev.5)
     { "Upscaler##IlionUpscaler", "Escalador" },
+    { "Reducer changed: new frames", "Reductor cambiado: fotogramas nuevos" },
+    { "No DirectX 12 frames", "Sin fotogramas DirectX 12" },
+    { "No simulation marker from the game", "El juego no envía marcador de simulación" },
+    { "No GPU timestamp", "Sin marca de tiempo de GPU" },
+    { "No DXGI frame statistics", "Sin estadísticas de fotograma DXGI" },
+    { "Refresh of the frame not seen", "Refresco del fotograma no observado" },
+    { "DXGI refresh before GPU end", "Refresco DXGI antes del fin de GPU" },
+    { "Tearing: refresh time unusable", "Tearing: tiempo de refresco no utilizable" },
+    { "GPU + screen", "GPU + pantalla" },
     // dev.15: overlay types and elements, two latency meters
     { "A type sets the elements below. Changing any of them turns the type into Custom.", "Cada tipo fija los elementos de abajo. Cambiar cualquiera pasa el tipo a Personalizado." },
     { "Custom##overlay", "Personalizado" },

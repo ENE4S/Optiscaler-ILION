@@ -107,9 +107,10 @@ NvAPI_Status ReflexHooks::hkNvAPI_D3D_GetLatency(IUnknown* pDev, NV_LATENCY_RESU
 NvAPI_Status ReflexHooks::hkNvAPI_D3D_SetLatencyMarker(IUnknown* pDev,
                                                        NV_LATENCY_MARKER_PARAMS* pSetLatencyMarkerParams)
 {
-    // ILION latency, observation only: times of the input sample, simulation start and Present markers
-    if (pSetLatencyMarkerParams != nullptr)
-        IlionLatency::OnMarker((uint32_t) pSetLatencyMarkerParams->markerType, pSetLatencyMarkerParams->frameID);
+    // ILION latency, observation only: times of the input sample, simulation start and Present markers, taken when
+    // this call returns (a latency reducer may sleep inside the SIMULATION_START marker)
+    IlionLatency::MarkerScope ilionMarker { pSetLatencyMarkerParams ? (uint32_t) pSetLatencyMarkerParams->markerType : 0u,
+                                            pSetLatencyMarkerParams ? (uint64_t) pSetLatencyMarkerParams->frameID : 0ull };
 
 #ifdef LOG_REFLEX_CALLS
     LOG_FUNC();

@@ -7658,6 +7658,10 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
             const bool showUpscalerGraph = (overlayElements & IlionOverlay::UpscalerGraph) != 0;
             const bool showReflexTimings = (overlayElements & IlionOverlay::ReflexTimings) != 0;
             const bool showIlionLatency = (overlayElements & IlionOverlay::IlionLatency) != 0;
+
+            // Main figure of each latency meter (Reflex timings, ILION estimated latency): the same yellow in both, the
+            // blocks are told apart by their titles
+            const ImVec4 mainFigureYellow = toneMapColor(ImVec4(1.0f, 0.86f, 0.10f, 1.0f));
             const bool hasFeature = currentFeature && !currentFeature->IsFrozen();
 
             // Prepare Line 1
@@ -8074,21 +8078,20 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                     // Frame ids are shown in Help / Status instead, they only added noise here
                     if (industrialVertical)
                     {
-                        if (!processingTitled)
-                            OverlayBlockTitle(Tr("PROCESSING TIMES"), rowWidth, false);
-
-                        OverlayRow(Tr("Whole frame"), StrFmt("%.1f ms", rangeInNs / 1000.0), rowWidth);
+                        rowWidth = std::max(rowWidth, ImGui::CalcTextSize("Reflex timings").x);
+                        OverlayBlockTitle("Reflex timings", rowWidth, false);
+                        OverlayRow(Tr("Whole frame"), StrFmt("%.1f ms", rangeInNs / 1000.0), rowWidth, &mainFigureYellow);
                     }
                     else if (industrialHorizontal)
                     {
-                        if (!processingTitled)
-                            OverlayCellRowTitle(Tr("PROCESSING TIMES"));
-
-                        OverlayCell(Tr("Whole frame"), StrFmt("%.1f ms", rangeInNs / 1000.0));
+                        OverlayCellRowTitle("Reflex timings");
+                        OverlayCell(Tr("Whole frame"), StrFmt("%.1f ms", rangeInNs / 1000.0), &mainFigureYellow);
                     }
                     else
                     {
-                        ImGui::Text("Low latency timings, whole frame: %.1fms", rangeInNs / 1000.0);
+                        ImGui::TextUnformatted("Low latency timings, whole frame:");
+                        ImGui::SameLine();
+                        ImGui::TextColored(mainFigureYellow, "%.1fms", rangeInNs / 1000.0);
                     }
 
                     const auto maxWidth =
@@ -8164,21 +8167,20 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                     // Frame ids are shown in Help / Status instead, they only added noise here
                     if (industrialVertical)
                     {
-                        if (!processingTitled)
-                            OverlayBlockTitle(Tr("PROCESSING TIMES"), rowWidth, false);
-
-                        OverlayRow(Tr("Whole frame"), StrFmt("%.1f ms", rangeInNs / 1000.0), rowWidth);
+                        rowWidth = std::max(rowWidth, ImGui::CalcTextSize("Reflex timings").x);
+                        OverlayBlockTitle("Reflex timings", rowWidth, false);
+                        OverlayRow(Tr("Whole frame"), StrFmt("%.1f ms", rangeInNs / 1000.0), rowWidth, &mainFigureYellow);
                     }
                     else if (industrialHorizontal)
                     {
-                        if (!processingTitled)
-                            OverlayCellRowTitle(Tr("PROCESSING TIMES"));
-
-                        OverlayCell(Tr("Whole frame"), StrFmt("%.1f ms", rangeInNs / 1000.0));
+                        OverlayCellRowTitle("Reflex timings");
+                        OverlayCell(Tr("Whole frame"), StrFmt("%.1f ms", rangeInNs / 1000.0), &mainFigureYellow);
                     }
                     else
                     {
-                        ImGui::Text("Reflex timings, whole frame: %.1fms", rangeInNs / 1000.0);
+                        ImGui::TextUnformatted("Reflex timings, whole frame:");
+                        ImGui::SameLine();
+                        ImGui::TextColored(mainFigureYellow, "%.1fms", rangeInNs / 1000.0);
                     }
 
                     const auto maxWidth =
@@ -8232,10 +8234,47 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
             // from the Reflex timings above, which keep working as they were; both can be on at once.
             if (showIlionLatency)
             {
-                const ImVec4 latencyYellow = toneMapColor(ImVec4(1.0f, 0.86f, 0.10f, 1.0f));
-                const auto latency = IlionLatency::Get();
+                const ImVec4& latencyYellow = mainFigureYellow;
+
+                // The active reducer and whether it is on: a change makes the meter drop its frames and start again
+                int reducerId = 0;
+                if (fakenvapi::isUsingAsMainNvapi())
+                    reducerId = 1 + (int) fakenvapi::getCurrentMode() * 2 + (fakenvapi::isLowLatencyActive() ? 1 : 0);
+
+                const auto latency = IlionLatency::Get(reducerId);
                 const auto ms = [](double value) { return value >= 0.0 ? StrFmt("%.1f ms", value) : std::string(Tr("N/A")); };
                 const bool measured = state.swapchainApi == DX12 && latency.valid;
+
+                const char* why = nullptr;
+                switch (latency.missing)
+                {
+                case IlionLatency::Missing::Settling:
+                    why = Tr("Reducer changed: new frames");
+                    break;
+                case IlionLatency::Missing::NoFrames:
+                    why = Tr("No DirectX 12 frames");
+                    break;
+                case IlionLatency::Missing::NoSimulation:
+                    why = Tr("No simulation marker from the game");
+                    break;
+                case IlionLatency::Missing::NoGpuTime:
+                    why = Tr("No GPU timestamp");
+                    break;
+                case IlionLatency::Missing::Composed:
+                    why = Tr("No DXGI frame statistics");
+                    break;
+                case IlionLatency::Missing::RefreshNotSeen:
+                    why = Tr("Refresh of the frame not seen");
+                    break;
+                case IlionLatency::Missing::RefreshBeforeGpu:
+                    why = Tr("DXGI refresh before GPU end");
+                    break;
+                case IlionLatency::Missing::Tearing:
+                    why = Tr("Tearing: refresh time unusable");
+                    break;
+                default:
+                    break;
+                }
 
                 // Label and value; the first one is the latency, in yellow
                 std::vector<std::pair<std::string, std::string>> rows;
@@ -8247,6 +8286,8 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                 else if (!latency.valid)
                 {
                     rows.push_back({ Tr("Waiting for frames"), "" });
+                    if (why != nullptr)
+                        rows.push_back({ why, "" });
                 }
                 else
                 {
@@ -8255,16 +8296,27 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                     if (latency.inputToScreen >= 0.0)
                         rows.push_back({ Tr("Input to screen"), ms(latency.inputToScreen) });
 
-                    if (latency.onScreen)
-                    {
-                        rows.push_back({ "CPU", ms(latency.cpu) });
+                    // Consecutive parts of the same frames: they add up to the figure above
+                    rows.push_back({ "CPU", ms(latency.cpu) });
+
+                    if (latency.gpu >= 0.0)
                         rows.push_back({ "GPU", ms(latency.gpu) });
+
+                    if (latency.display >= 0.0)
                         rows.push_back({ Tr("Screen"), ms(latency.display) });
-                    }
+                    else if (latency.afterPresent >= 0.0)
+                        rows.push_back({ Tr("GPU + screen"), ms(latency.afterPresent) });
 
                     rows.push_back({ Tr("Displayed FPS"),
                                      latency.displayedFps >= 0.0 ? StrFmt("%.1f", latency.displayedFps) : std::string(Tr("N/A")) });
-                    rows.push_back({ Tr("Presentation"), latency.composed ? Tr("composed") : Tr("independent flip") });
+
+                    if (latency.presentation == 0)
+                        rows.push_back({ Tr("Presentation"), Tr("composed") });
+                    else if (latency.presentation == 1 || latency.presentation == 2)
+                        rows.push_back({ Tr("Presentation"), Tr("independent flip") });
+
+                    if (why != nullptr)
+                        rows.push_back({ why, "" });
                 }
 
                 const char* title = Tr("ILION ESTIMATED LATENCY");
@@ -14372,6 +14424,35 @@ static void StatusFlag(const char* label, bool on, bool warnWhenOn = false)
         ImGui::TextDisabled("%s", Tr(label));
 }
 
+// Flags in as many columns as the widest translated label allows (up to four), so none is cut
+struct StatusFlagItem
+{
+    const char* label;
+    bool on;
+    bool warnWhenOn = false;
+};
+
+static void StatusFlagGrid(const char* id, std::initializer_list<StatusFlagItem> items)
+{
+    const auto& style = ImGui::GetStyle();
+    float widest = 0.0f;
+
+    for (const auto& item : items)
+        widest = std::max(widest, ImGui::CalcTextSize(Tr(item.label)).x);
+
+    // Dot + label + the cell padding on both sides + the spacing between columns
+    const float cell = ImGui::GetTextLineHeight() + widest + style.CellPadding.x * 2.0f + style.ItemSpacing.x;
+    const int columns = std::clamp((int) (ImGui::GetContentRegionAvail().x / cell), 1, 4);
+
+    if (ImGui::BeginTable(id, columns, ImGuiTableFlags_SizingStretchSame))
+    {
+        for (const auto& item : items)
+            StatusFlag(item.label, item.on, item.warnWhenOn);
+
+        ImGui::EndTable();
+    }
+}
+
 // Which libraries and GPU features were found. Used by the Status tab and when no upscaler is available
 void MenuCommon::RenderDetectedInfo(RenderMenuContext& ctx)
 {
@@ -14383,24 +14464,20 @@ void MenuCommon::RenderDetectedInfo(RenderMenuContext& ctx)
 
     ScopedCard card { "Detected" };
 
-    if (ImGui::BeginTable("statusDetected", 4, ImGuiTableFlags_SizingStretchProp))
-    {
-        StatusFlag("nvngx.dll", state.nvngxExists);
-        StatusFlag("nvngx_dlss", state.NVNGX_DLSS_Path.has_value());
-        StatusFlag("nvngx_dlssd", state.NVNGX_DLSSD_Path.has_value());
-        StatusFlag("nvngx replacement", state.nvngxReplacement.has_value());
-        StatusFlag("libxess", state.libxessExists || XeSSProxy::Module() != nullptr);
-        StatusFlag("FSR hooks", state.fsrHooks);
-        StatusFlag("FFX 3.1", FfxApiProxy::Dx12Module() != nullptr);
-        StatusFlag("FFX SR", FfxApiProxy::Dx12Module_SR() != nullptr);
-        StatusFlag("FFX FG", FfxApiProxy::Dx12Module_FG() != nullptr);
-        StatusFlag("OptiPatcher", state.isOptiPatcherSucceed);
-        StatusFlag("DLSS capable GPU", primaryGpu.dlssCapable);
-        StatusFlag("FSR4 capable GPU", primaryGpu.fsr4Support != FSR4Support::None,
-                   primaryGpu.fsr4Support == FSR4Support::INT8);
-
-        ImGui::EndTable();
-    }
+    StatusFlagGrid("statusDetected", {
+        { "nvngx.dll", state.nvngxExists },
+        { "nvngx_dlss", state.NVNGX_DLSS_Path.has_value() },
+        { "nvngx_dlssd", state.NVNGX_DLSSD_Path.has_value() },
+        { "nvngx replacement", state.nvngxReplacement.has_value() },
+        { "libxess", state.libxessExists || XeSSProxy::Module() != nullptr },
+        { "FSR hooks", state.fsrHooks },
+        { "FFX 3.1", FfxApiProxy::Dx12Module() != nullptr },
+        { "FFX SR", FfxApiProxy::Dx12Module_SR() != nullptr },
+        { "FFX FG", FfxApiProxy::Dx12Module_FG() != nullptr },
+        { "OptiPatcher", state.isOptiPatcherSucceed },
+        { "DLSS capable GPU", primaryGpu.dlssCapable },
+        { "FSR4 capable GPU", primaryGpu.fsr4Support != FSR4Support::None, primaryGpu.fsr4Support == FSR4Support::INT8 },
+    });
 
     // Frame ids that used to be in the performance overlay
     const auto statusFg = state.currentFG;
@@ -14492,13 +14569,13 @@ void MenuCommon::RenderStatusInfo(RenderMenuContext& ctx)
     auto pair = [&](const char* label, const std::string& value, bool dim = false)
     {
         ImGui::TableNextColumn();
-        ImGui::TextDisabled("%s", Tr(label));
+        TextWrappedDisabled("%s", Tr(label));
 
         ImGui::TableNextColumn();
         if (dim)
-            ImGui::TextDisabled("%s", value.c_str());
+            TextWrappedDisabled("%s", value.c_str());
         else
-            ImGui::TextUnformatted(value.c_str());
+            ImGui::TextWrapped("%s", value.c_str());
     };
 
     auto flag = [](const char* label, bool on, bool warnWhenOn = false) { StatusFlag(label, on, warnWhenOn); };
@@ -14527,7 +14604,7 @@ void MenuCommon::RenderStatusInfo(RenderMenuContext& ctx)
                 ImGui::TableNextColumn();
                 ImGui::TextDisabled("%s", Tr(label));
                 ImGui::TableNextColumn();
-                ImGui::TextUnformatted(value.c_str());
+                ImGui::TextWrapped("%s", value.c_str());
             };
 
             row("GPU", primaryGpu.name);
@@ -14634,23 +14711,20 @@ void MenuCommon::RenderStatusInfo(RenderMenuContext& ctx)
     {
         ScopedCard card { "Hooks / Config" };
 
-        if (ImGui::BeginTable("statusConfig", 4, ImGuiTableFlags_SizingStretchSame))
-        {
-            flag("DXGI spoofing", config->DxgiSpoofing.value_or_default());
-            flag("VLK spoofing", config->VulkanSpoofing.value_or_default());
-            flag("VLK ext. spoofing", config->VulkanExtensionSpoofing.value_or_default());
-            flag("Ntdll hooks", config->UseNtdllHooks.value_or_default());
-            flag("Disable overlays", config->DisableOverlays.value_or_default(), true);
-            flag("ASI plugins", config->LoadAsiPlugins.value_or_default());
-            flag("Precomp. shaders", config->UsePrecompiledShaders.value_or_default());
-            flag("Extended limits", config->ExtendedLimits.value_or_default(), true);
-            flag("DRS min override", config->DrsMinOverrideEnabled.value_or_default());
-            flag("DRS max override", config->DrsMaxOverrideEnabled.value_or_default());
-            flag("Compute root sig.", config->RestoreComputeSignature.value_or_default());
-            flag("Graphic root sig.", config->RestoreGraphicSignature.value_or_default());
-
-            ImGui::EndTable();
-        }
+        StatusFlagGrid("statusConfig", {
+            { "DXGI spoofing", config->DxgiSpoofing.value_or_default() },
+            { "VLK spoofing", config->VulkanSpoofing.value_or_default() },
+            { "VLK ext. spoofing", config->VulkanExtensionSpoofing.value_or_default() },
+            { "Ntdll hooks", config->UseNtdllHooks.value_or_default() },
+            { "Disable overlays", config->DisableOverlays.value_or_default(), true },
+            { "ASI plugins", config->LoadAsiPlugins.value_or_default() },
+            { "Precomp. shaders", config->UsePrecompiledShaders.value_or_default() },
+            { "Extended limits", config->ExtendedLimits.value_or_default(), true },
+            { "DRS min override", config->DrsMinOverrideEnabled.value_or_default() },
+            { "DRS max override", config->DrsMaxOverrideEnabled.value_or_default() },
+            { "Compute root sig.", config->RestoreComputeSignature.value_or_default() },
+            { "Graphic root sig.", config->RestoreGraphicSignature.value_or_default() },
+        });
 
         // Only shown when something was overridden
         std::string barriers;
@@ -14670,9 +14744,8 @@ void MenuCommon::RenderStatusInfo(RenderMenuContext& ctx)
 
         if (!barriers.empty())
         {
-            ImGui::TextDisabled(Tr("Barriers overridden"));
-            ImGui::SameLine();
-            ImGui::TextUnformatted(barriers.c_str());
+            TextWrappedDisabled("%s", Tr("Barriers overridden"));
+            ImGui::TextWrapped("%s", barriers.c_str());
         }
     }
 
@@ -14681,19 +14754,16 @@ void MenuCommon::RenderStatusInfo(RenderMenuContext& ctx)
     {
         ScopedCard card { "Init Flags" };
 
-        if (ImGui::BeginTable("statusInit", 4, ImGuiTableFlags_SizingStretchSame))
-        {
-            flag("Auto exposure", currentFeature->AutoExposure());
-            flag("Depth inverted", currentFeature->DepthInverted());
-            flag("HDR", currentFeature->IsHdr());
-            flag("Display res. MV", !currentFeature->LowResMV());
-            flag("Jitter cancel.", currentFeature->JitteredMV());
-            flag("Output scaling", config->OutputScalingEnabled.value_or_default());
-            flag("Sharp. override", config->OverrideSharpness.value_or_default());
-            flag("V-Sync override", config->OverrideVsync.value_or_default());
-
-            ImGui::EndTable();
-        }
+        StatusFlagGrid("statusInit", {
+            { "Auto exposure", currentFeature->AutoExposure() },
+            { "Depth inverted", currentFeature->DepthInverted() },
+            { "HDR", currentFeature->IsHdr() },
+            { "Display res. MV", !currentFeature->LowResMV() },
+            { "Jitter cancel.", currentFeature->JitteredMV() },
+            { "Output scaling", config->OutputScalingEnabled.value_or_default() },
+            { "Sharp. override", config->OverrideSharpness.value_or_default() },
+            { "V-Sync override", config->OverrideVsync.value_or_default() },
+        });
     }
 
     ImGui::PopStyleVar(2);
@@ -16090,7 +16160,7 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
                 ImGui::TableNextColumn();
                 ImGui::TextDisabled("%s", Tr(label));
                 ImGui::TableNextColumn();
-                ImGui::TextUnformatted(value.c_str());
+                ImGui::TextWrapped("%s", value.c_str());
             };
 
             row("Upscaler", result.conditions.upscaler);

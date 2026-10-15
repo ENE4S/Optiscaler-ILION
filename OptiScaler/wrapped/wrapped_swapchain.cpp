@@ -508,7 +508,7 @@ static HRESULT LocalPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
     }
 
     // ILION latency: a GPU timestamp after the frame's work and the time of the Present (DX12 only)
-    IlionLatency::BeforePresent(cq, ilionInterpolated);
+    IlionLatency::BeforePresent(cq, ilionInterpolated, SyncInterval == 0 && (Flags & DXGI_PRESENT_ALLOW_TEARING) != 0);
 
     LOG_DEBUG("Calling original present");
 

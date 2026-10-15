@@ -4,6 +4,8 @@
 #include "input/input_system.h"
 
 #include "font/Hack_Compressed.h"
+#include "font/RussoOne_Compressed.h"
+#include "font/ShareTechMono_Compressed.h"
 
 #include <proxies/XeSS_Proxy.h>
 #include <proxies/XeFG_Proxy.h>
@@ -185,6 +187,7 @@ static int lastKey = 0;
 static bool capturingKey = false;
 static int selectedMenuTab = 0;
 static const char* requestedMenuTab = nullptr; // Label of a tab to switch to on the next frame
+static bool personalPanelOpen = false;          // ILION: Customise panel of Personal, at the right of its boxes
 
 // The FSR upscaler dlls that can be selected. One list and one way of selecting for the Upscaling tab and for
 // Benchmark, both show the same state.
@@ -1064,13 +1067,22 @@ static void DrawCardTitle(const char* label)
     // On the plate the name goes in upper case, only as it is drawn
     const std::string plate = IlionTheme::industrial ? IlionTheme::Upper(label) : std::string();
 
-    ImGui::PushStyleColor(ImGuiCol_Text, IlionTheme::industrial ? IlionTheme::TitleAmber
-                                                                : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    const bool inverseHead = IlionTheme::industrial && IlionTheme::skin == IlionTheme::Skin::Crt;
+    ImGui::PushStyleColor(ImGuiCol_Text, inverseHead               ? IlionTheme::GraphiteDeep
+                                         : IlionTheme::industrial ? IlionTheme::TitleAmber
+                                                                  : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+
+    ImFont* titleFont = IlionTheme::TitleFont();
+    if (titleFont != nullptr)
+        ImGui::PushFont(titleFont, -1.0f);
 
     if (IlionTheme::industrial)
         ImGui::TextUnformatted(plate.c_str());
     else
         ImGui::TextUnformatted(label, ImGui::FindRenderedTextEnd(label));
+
+    if (titleFont != nullptr)
+        ImGui::PopFont();
 
     ImGui::PopStyleColor();
 
@@ -1088,9 +1100,18 @@ static void DrawCardTitle(const char* label)
     ImGui::SetLastItemData(titleId, 0, hovered, titleRect);
 }
 
+// ILION: the title a folded card already shows on its key, skipped once inside it
+static const char* skipSectionTitle = nullptr;
+
 // Used instead of ImGui::SeparatorText. The first one in a card becomes the title of the card
 static void SectionTitle(const char* label)
 {
+    if (skipSectionTitle != nullptr && strcmp(skipSectionTitle, label) == 0)
+    {
+        skipSectionTitle = nullptr;
+        return;
+    }
+
     if (!ScopedCard::TryTitle(label))
         IlionTheme::SectionPlate(Tr(label));
 }
@@ -1229,6 +1250,21 @@ void MenuCommon::RenderCard(RenderMenuContext& ctx, void (*render)(RenderMenuCon
 {
     ScopedCard card;
     render(ctx);
+}
+
+// ILION: a card that starts folded, only a key with its name until it is opened. For advanced and diagnostic
+// settings; the section draws as always inside, without repeating the title the key already shows.
+void MenuCommon::RenderFoldedCard(RenderMenuContext& ctx, const char* key, const char* title,
+                                  void (*render)(RenderMenuContext&))
+{
+    ScopedCard card;
+
+    if (auto ch = ScopedCollapsingHeader(TrL(key)); ch.IsHeaderOpen())
+    {
+        skipSectionTitle = title;
+        render(ctx);
+        skipSectionTitle = nullptr;
+    }
 }
 
 void MenuCommon::UpdateManualInput(HWND targetHwnd)
@@ -1396,7 +1432,7 @@ class Keybind
     void Render(CustomOptional<int>& configKey)
     {
         ImGui::PushID(id);
-        if (IlionTheme::Button(name.c_str()))
+        if (IlionTheme::Button(TrL(name.c_str())))
         {
             waitingForKey = true;
             capturingKey = true;
@@ -1407,7 +1443,7 @@ class Keybind
         if (waitingForKey)
         {
             ImGui::SameLine();
-            ImGui::Text("Press any key...");
+            ImGui::Text(Tr("Press any key..."));
 
             if (lastKey == 0 || lastKey == VK_LBUTTON || lastKey == VK_RBUTTON || lastKey == VK_MBUTTON)
                 return;
@@ -1975,7 +2011,7 @@ void MenuCommon::PopulateCombo(const std::string& name, TStorage& currentValue,
         currentVal = currentValue.value_or(options[0].value);
 
     // Find the label for the currently selected item
-    std::string preview = "Unknown";
+    std::string preview = Tr("Unknown");
     for (const auto& opt : options)
     {
         if (opt.value == currentVal)
@@ -1985,7 +2021,8 @@ void MenuCommon::PopulateCombo(const std::string& name, TStorage& currentValue,
         }
     }
 
-    if (IlionTheme::BeginCombo(name.c_str(), preview.c_str()))
+    // ILION: names, options and their tips in the language of the menu, the English label stays the id
+    if (IlionTheme::BeginCombo(TrL(name.c_str()), Tr(preview.c_str())))
     {
         for (const auto& opt : options)
         {
@@ -1996,12 +2033,12 @@ void MenuCommon::PopulateCombo(const std::string& name, TStorage& currentValue,
                 ImGui::BeginDisabled();
 
             bool isSelected = (currentVal == opt.value);
-            if (ImGui::Selectable(opt.label.c_str(), isSelected))
+            if (ImGui::Selectable(TrL(opt.label.c_str()), isSelected))
                 currentValue = opt.value;
 
             // Show tooltip for the individual item if it exists
             if (!opt.tooltip.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("%s", opt.tooltip.c_str());
+                ImGui::SetTooltip("%s", Tr(opt.tooltip.c_str()));
 
             if (opt.disabled)
                 ImGui::EndDisabled();
@@ -6323,11 +6360,11 @@ static void DrawBenchmarkStatus(double now)
 
     if (benchState == IlionBenchmark::State::Stabilizing)
     {
-        ImGui::Text("Benchmark: %s %.1f s", Tr("STABILIZING"), IlionBenchmark::StabilizeLeftMs(now) / 1000.0);
+        ImGui::Text(Tr("Benchmark: %s %.1f s"), Tr("STABILIZING"), IlionBenchmark::StabilizeLeftMs(now) / 1000.0);
     }
     else if (benchState == IlionBenchmark::State::Recording)
     {
-        ImGui::Text("Benchmark: %s %.0f / %d s", Tr("RECORDING"), IlionBenchmark::ElapsedMs() / 1000.0,
+        ImGui::Text(Tr("Benchmark: %s %.0f / %d s"), Tr("RECORDING"), IlionBenchmark::ElapsedMs() / 1000.0,
                     IlionBenchmark::RequestedSeconds());
     }
 }
@@ -6613,7 +6650,7 @@ static void DrawHardwareTelemetry(decltype(Config::Instance()) config, float sca
 
         if (anyGpu)
         {
-            ImGui::TextColored(componentColor, "GPU");
+            ImGui::TextColored(componentColor, Tr("GPU"));
 
             if (gpuUsage)
                 aligned(Tr("Usage"), HwTelemetry::GpuUsage, "%.0f %%");
@@ -6646,7 +6683,7 @@ static void DrawHardwareTelemetry(decltype(Config::Instance()) config, float sca
             if (anyGpu)
                 ImGui::Dummy(ImVec2(0.0f, ImGui::GetStyle().ItemSpacing.y * 0.5f));
 
-            ImGui::TextColored(componentColor, "CPU");
+            ImGui::TextColored(componentColor, Tr("CPU"));
 
             if (cpuUsage)
                 aligned(Tr("Usage"), HwTelemetry::CpuUsage, "%.0f %%");
@@ -6691,7 +6728,7 @@ static void DrawHardwareTelemetry(decltype(Config::Instance()) config, float sca
     if (anyGpu)
     {
         ImGui::BeginGroup();
-        ImGui::TextColored(componentColor, "GPU");
+        ImGui::TextColored(componentColor, Tr("GPU"));
 
         if (gpuUsage)
             row(Tr("Usage"), HwTelemetry::GpuUsage, "%3.0f %%");
@@ -6713,9 +6750,9 @@ static void DrawHardwareTelemetry(decltype(Config::Instance()) config, float sca
             if (stale || !used.valid)
                 ImGui::Text("%-8s %s", "VRAM", HwNotAvailable());
             else if (total.valid)
-                ImGui::Text("%-8s %.1f / %.1f GB", "VRAM", used.value / 1024.0f, total.value / 1024.0f);
+                ImGui::Text(Tr("%-8s %.1f / %.1f GB"), "VRAM", used.value / 1024.0f, total.value / 1024.0f);
             else
-                ImGui::Text("%-8s %.1f GB", "VRAM", used.value / 1024.0f);
+                ImGui::Text(Tr("%-8s %.1f GB"), "VRAM", used.value / 1024.0f);
         }
 
         ImGui::EndGroup();
@@ -6727,7 +6764,7 @@ static void DrawHardwareTelemetry(decltype(Config::Instance()) config, float sca
             ImGui::SameLine(0.0f, 24.0f * scale);
 
         ImGui::BeginGroup();
-        ImGui::TextColored(componentColor, "CPU");
+        ImGui::TextColored(componentColor, Tr("CPU"));
 
         if (cpuUsage)
             row(Tr("Usage"), HwTelemetry::CpuUsage, "%3.0f %%");
@@ -7260,7 +7297,7 @@ void MenuCommon::RenderSplashWindow(RenderMenuContext& ctx)
                 else
                     ImGui::SetWindowFontScale(splashScale);
 
-                ImGui::Text("OptiScaler - %s for menu",
+                ImGui::Text(Tr("OptiScaler - %s for menu"),
                             Keybind::KeyNameFromVirtualKeyCode(config->ShortcutKey.value_or_default()).c_str());
                 ImGui::TextColored(toneMapColor(ImVec4(1.0f, 1.0f, 1.0f, 0.7f)), splashMessage.c_str());
 
@@ -7964,7 +8001,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                     }
                     else
                     {
-                        ImGui::Text("Low latency timings, whole frame: %.1fms", rangeInNs / 1000.0);
+                        ImGui::Text(Tr("Low latency timings, whole frame: %.1fms"), rangeInNs / 1000.0);
                     }
 
                     const auto maxWidth =
@@ -7993,7 +8030,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                             return;
                         }
 
-                        ImGui::TextColored(toneMappedColor, "%-12s %4.1fms", desc, duration);
+                        ImGui::TextColored(toneMappedColor, Tr("%-12s %4.1fms"), desc, duration);
 
                         auto leftLimit = ImGui::GetItemRectMin().x + offsetForText * fpsScale;
 
@@ -8032,6 +8069,10 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
 
                     const auto& rangeInNs = timingData[TimingType::TimeRange].value().length;
 
+                    // Simulation start to GPU render start: the span of the Reflex frame report the overlay has
+                    // (gpuRenderEndTime is not in it). The closest to latency here, not end to end; value in yellow.
+                    const ImVec4 latencyYellow = toneMapColor(ImVec4(1.0f, 0.86f, 0.10f, 1.0f));
+
                     UINT64 localFrameCount = 0;
 
                     if (fg != nullptr)
@@ -8043,18 +8084,20 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                         if (!processingTitled)
                             OverlayBlockTitle(Tr("PROCESSING TIMES"), rowWidth, false);
 
-                        OverlayRow(Tr("Whole frame"), StrFmt("%.1f ms", rangeInNs / 1000.0), rowWidth);
+                        OverlayRow(Tr("Sim to GPU start"), StrFmt("%.1f ms", rangeInNs / 1000.0), rowWidth, &latencyYellow);
                     }
                     else if (industrialHorizontal)
                     {
                         if (!processingTitled)
                             OverlayCellRowTitle(Tr("PROCESSING TIMES"));
 
-                        OverlayCell(Tr("Whole frame"), StrFmt("%.1f ms", rangeInNs / 1000.0));
+                        OverlayCell(Tr("Sim to GPU start"), StrFmt("%.1f ms", rangeInNs / 1000.0), &latencyYellow);
                     }
                     else
                     {
-                        ImGui::Text("Reflex timings, whole frame: %.1fms", rangeInNs / 1000.0);
+                        ImGui::TextUnformatted(Tr("Reflex timings, sim to GPU start:"));
+                        ImGui::SameLine();
+                        ImGui::TextColored(latencyYellow, Tr("%.1f ms"), rangeInNs / 1000.0);
                     }
 
                     const auto maxWidth =
@@ -8083,7 +8126,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                             return;
                         }
 
-                        ImGui::TextColored(toneMappedColor, "%-12s %4.1fms", desc, duration);
+                        ImGui::TextColored(toneMappedColor, Tr("%-12s %4.1fms"), desc, duration);
                         auto leftLimit = ImGui::GetItemRectMin().x + offsetForText * fpsScale;
                         auto start = static_cast<float>(leftLimit + (ImGui::GetItemRectMin().x + maxWidth - leftLimit) *
                                                                         timing.position);
@@ -8283,13 +8326,13 @@ void MenuCommon::RenderMainMenuHeaderMessages(RenderMenuContext& ctx)
         if (versionStatus.updateAvailable && !versionStatus.latestTag.empty())
         {
             ImGui::Spacing();
-            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), "Update available: %s (current %s)",
+            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), Tr("Update available: %s (current %s)"),
                                versionStatus.latestTag.c_str(), currentVersionText.c_str());
 
             if (!versionStatus.latestUrl.empty())
             {
                 ImGui::SameLine();
-                ImGui::TextLinkOpenURL("Open release page", versionStatus.latestUrl.c_str());
+                ImGui::TextLinkOpenURL(Tr("Open release page"), versionStatus.latestUrl.c_str());
             }
 
             ImGui::Spacing();
@@ -8312,7 +8355,7 @@ void MenuCommon::RenderMainMenuHeaderMessages(RenderMenuContext& ctx)
     {
         ImGui::Spacing();
         ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)));
-        ImGui::TextWrapped("nvngx.ini detected, please move over to using OptiScaler.ini and delete the old config");
+        ImGui::TextWrapped(Tr("nvngx.ini detected, please move over to using OptiScaler.ini and delete the old config"));
         ImGui::PopStyleColor();
         ImGui::Spacing();
     }
@@ -8357,8 +8400,8 @@ void MenuCommon::RenderUpscalerStateMessage(RenderMenuContext& ctx)
             std::string joinedUpscalers(joined.begin(), joined.end());
 
             ImGui::PushTextWrapPos(0.0f);
-            ImGui::Text("Please select %s as upscaler from game options and load a save game to enable Opti settings.\n"
-                        "Upscalers don't always work in menus.",
+            ImGui::Text(Tr("Please select %s as upscaler from game options and load a save game to enable Opti settings.\n"
+                        "Upscalers don't always work in menus."),
                         joinedUpscalers.c_str());
             ImGui::PopTextWrapPos();
 
@@ -8377,7 +8420,7 @@ void MenuCommon::RenderUpscalerStateMessage(RenderMenuContext& ctx)
         {
             ImGui::Spacing();
             ImGui::PushTextWrapPos(0.0f);
-            ImGui::Text("Can't find nvngx.dll and libxess.dll and FSR inputs\nUpscaling support will NOT work.");
+            ImGui::Text(Tr("Can't find nvngx.dll and libxess.dll and FSR inputs\nUpscaling support will NOT work."));
             ImGui::PopTextWrapPos();
             ImGui::Spacing();
 
@@ -8399,7 +8442,7 @@ void MenuCommon::RenderUpscalerStateMessage(RenderMenuContext& ctx)
             ImGui::SetWindowFontScale(menuResScale * 2.0f);
 
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::Text("%s active, but currently not used by the game\nPlease load into the game",
+        ImGui::Text(Tr("%s active, but currently not used by the game\nPlease load into the game"),
                     currentFeature->Name().c_str());
         ImGui::PopTextWrapPos();
 
@@ -8425,7 +8468,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
     // Row - API | GPU | Upscaler input
     if (!basicView)
-        ImGui::TextWrapped("%s%s | %s | Input: %s", ApiName(state.api),
+        ImGui::TextWrapped(Tr("%s%s | %s | Input: %s"), ApiName(state.api),
                        IdentifyGpu::gameUsesDxvk()          ? " (DXVK)"
                        : IdentifyGpu::gameUsesVkd3dProton() ? " (VKD3D)"
                                                             : "",
@@ -8460,7 +8503,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
     if (!basicView)
     {
         ImGui::SameLine();
-        ImGui::TextDisabled("%dx%d -> %dx%d (%.2fx)", currentFeature->RenderWidth(), currentFeature->RenderHeight(),
+        ImGui::TextDisabled(Tr("%dx%d -> %dx%d (%.2fx)"), currentFeature->RenderWidth(), currentFeature->RenderHeight(),
                             currentFeature->TargetWidth(), currentFeature->TargetHeight(),
                             (float) currentFeature->TargetWidth() / (float) currentFeature->RenderWidth());
     }
@@ -8495,20 +8538,20 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
     if (primaryGpu.dlssCapable && !state.NVNGX_DLSS_Path.has_value())
     {
         ImGui::Spacing();
-        ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), "nvngx_dlss.dll not found, DLSS disabled!");
+        ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), Tr("nvngx_dlss.dll not found, DLSS disabled!"));
     }
 
     // Dx11 with Dx12
     if (state.api == DX11 && currentFeature->IsWithDx12() && !basicView)
     {
         ImGui::Spacing();
-        if (auto ch = ScopedCollapsingHeader("Dx11 with Dx12 Settings"); ch.IsHeaderOpen())
+        if (auto ch = ScopedCollapsingHeader(TrL("Dx11 with Dx12 Settings")); ch.IsHeaderOpen())
         {
             ScopedIndent indent {};
             ImGui::Spacing();
 
             if (bool dontUseNTShared = config->DontUseNTShared.value_or_default();
-                IlionTheme::Checkbox("Don't Use NTShared", &dontUseNTShared))
+                IlionTheme::Checkbox(TrL("Don't Use NTShared"), &dontUseNTShared))
                 config->DontUseNTShared = dontUseNTShared;
 
             ImGui::Spacing();
@@ -8519,17 +8562,17 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
     if (state.api == Vulkan && currentFeature->IsWithDx12() && !basicView)
     {
         ImGui::Spacing();
-        if (auto ch = ScopedCollapsingHeader("Vulkan with Dx12 Settings"); ch.IsHeaderOpen())
+        if (auto ch = ScopedCollapsingHeader(TrL("Vulkan with Dx12 Settings")); ch.IsHeaderOpen())
         {
             ScopedIndent indent {};
             ImGui::Spacing();
 
             if (bool inputsUseCopy = config->VulkanUseCopyForInputs.value_or_default();
-                IlionTheme::Checkbox("Use CopyResource for Inputs", &inputsUseCopy))
+                IlionTheme::Checkbox(TrL("Use CopyResource for Inputs"), &inputsUseCopy))
                 config->VulkanUseCopyForInputs = inputsUseCopy;
 
             if (bool outputUseCopy = config->VulkanUseCopyForOutput.value_or_default();
-                IlionTheme::Checkbox("Use CopyResource for Output", &outputUseCopy))
+                IlionTheme::Checkbox(TrL("Use CopyResource for Output"), &outputUseCopy))
                 config->VulkanUseCopyForOutput = outputUseCopy;
 
             ImGui::Spacing();
@@ -8543,7 +8586,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
     if (currentBackend == Upscaler::XeSS && !usesDlssd)
     {
         ImGui::Spacing();
-        if (auto ch = ScopedCollapsingHeader("XeSS Settings"); ch.IsHeaderOpen())
+        if (auto ch = ScopedCollapsingHeader(TrL("XeSS Settings")); ch.IsHeaderOpen())
         {
             ScopedIndent indent {};
             ImGui::Spacing();
@@ -8556,7 +8599,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
             const char* selectedModel = models[configModes];
 
-            if (IlionTheme::BeginCombo("Network Models", selectedModel))
+            if (IlionTheme::BeginCombo(TrL("Network Models"), selectedModel))
             {
                 for (int n = 0; n < 6; n++)
                 {
@@ -8574,14 +8617,14 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
             if (!basicView)
             {
-            if (bool dbg = state.xessDebug; IlionTheme::Checkbox("Dump (Shift+Del)", &dbg))
+            if (bool dbg = state.xessDebug; IlionTheme::Checkbox(TrL("Dump (Shift+Del)"), &dbg))
                 state.xessDebug = dbg;
 
             ImGui::SameLine(0.0f, 6.0f);
             int dbgCount = state.xessDebugFrames;
 
             ImGui::PushItemWidth(95.0f * menuResScale);
-            if (ImGui::InputInt("frames", &dbgCount))
+            if (ImGui::InputInt(TrL("frames"), &dbgCount))
             {
                 if (dbgCount < 4)
                     dbgCount = 4;
@@ -8632,7 +8675,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             if (ImGui::TreeNode(TrL("Loaded DLL path")))
             {
                 ImGui::TextWrapped("%s", wstring_to_string(activeSrPath).c_str());
-                ImGui::TextDisabled("SHA-256: %s", activeSrHash.empty() ? Tr("calculating...") : activeSrHash.c_str());
+                ImGui::TextDisabled(Tr("SHA-256: %s"), activeSrHash.empty() ? Tr("calculating...") : activeSrHash.c_str());
 
                 ImGui::TreePop();
             }
@@ -8778,7 +8821,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
             ImGui::PushItemWidth(150.0f * menuResScale);
 
-            if (IlionTheme::BeginCombo("FFX Upscaler", currentName.c_str()))
+            if (IlionTheme::BeginCombo(TrL("FFX Upscaler"), currentName.c_str()))
             {
                 for (auto n : FfxVersionsNewestFirst(*versions))
                 {
@@ -8809,7 +8852,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             ImGui::Spacing();
 
             // Colorspaces
-            const char* colorSpaces[] = { "Linear (Default)", "Non-Linear", "Non-Linear sRGB", "Non-Linear PQ" };
+            const char* colorSpaces[] = { Tr("Linear (Default)"), Tr("Non-Linear"), Tr("Non-Linear sRGB"), Tr("Non-Linear PQ") };
             int currentColorSpace = 0;
             if (config->FsrNonLinearPQ.value_or_default())
                 currentColorSpace = 3;
@@ -8819,7 +8862,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                 currentColorSpace = 1;
 
             ImGui::SetNextItemWidth(150.0f * menuResScale);
-            if (ImGui::Combo("Input Color Space", &currentColorSpace, colorSpaces, IM_ARRAYSIZE(colorSpaces)))
+            if (ImGui::Combo(TrL("Input Color Space"), &currentColorSpace, colorSpaces, IM_ARRAYSIZE(colorSpaces)))
             {
                 bool isSrgb = (currentColorSpace == 2);
                 bool isPq = (currentColorSpace == 3);
@@ -8849,7 +8892,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
             // FSR 4 Presets
             const char* presets[] = {
-                "Default", "Preset 0", "Preset 1", "Preset 2", "Preset 3", "Preset 4", "Preset 5"
+                Tr("Default"), Tr("Preset 0"), Tr("Preset 1"), Tr("Preset 2"), Tr("Preset 3"), Tr("Preset 4"), Tr("Preset 5")
             };
             int currentPresetIdx = config->Fsr4Preset.has_value() ? config->Fsr4Preset.value() + 1 : 0;
 
@@ -8857,7 +8900,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                 currentPresetIdx = 0;
 
             ImGui::SetNextItemWidth(150.0f * menuResScale);
-            if (ImGui::Combo("FSR4 Preset", &currentPresetIdx, presets, IM_ARRAYSIZE(presets)))
+            if (ImGui::Combo(TrL("FSR4 Preset"), &currentPresetIdx, presets, IM_ARRAYSIZE(presets)))
             {
                 if (currentPresetIdx == 0)
                     config->Fsr4Preset.reset();
@@ -8879,11 +8922,11 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             // Display the active preset right next to the combo box instead of using a table
             ImGui::SameLine();
             if (state.currentFsr4Preset.has_value())
-                ImGui::TextDisabled("(Active: %d)", state.currentFsr4Preset.value());
+                ImGui::TextDisabled(Tr("(Active: %d)"), state.currentFsr4Preset.value());
             else if (FSR4ModelSelection::IsInt8FsrHooked())
-                ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), "(Potential FSR3 fallback)");
+                ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), Tr("(Potential FSR3 fallback)"));
             else
-                ImGui::TextDisabled("(Failed to hook)");
+                ImGui::TextDisabled(Tr("(Failed to hook)"));
         }
 
         if (majorFsrVersion >= 3)
@@ -8891,7 +8934,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             ImGui::Spacing();
 
             bool debugView = config->FsrDebugView.value_or_default();
-            if (IlionTheme::Checkbox("Upscaler Debug View", &debugView))
+            if (IlionTheme::Checkbox(TrL("Upscaler Debug View"), &debugView))
             {
                 config->FsrDebugView = debugView;
 
@@ -8923,7 +8966,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             {
                 ImGui::SameLine(0.0f, 20.0f * menuResScale);
                 bool fsr4wm = config->Fsr4EnableWatermark.value_or_default();
-                if (IlionTheme::Checkbox("Watermark", &fsr4wm))
+                if (IlionTheme::Checkbox(TrL("Watermark"), &fsr4wm))
                 {
                     LOG_DEBUG("FSR4 Watermark set to {}", fsr4wm);
                     config->Fsr4EnableWatermark = fsr4wm;
@@ -8941,12 +8984,12 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
             if (currentFeature != nullptr)
             {
-                ImGui::Text("FSR 3.1 Presets:");
+                ImGui::Text(Tr("FSR 3.1 Presets:"));
 
                 ImGui::SameLine(0.0f, 6.0f);
 
                 // This will be applied by default
-                if (IlionTheme::Button("Stability"))
+                if (IlionTheme::Button(TrL("Stability")))
                 {
                     auto const scaleRatioX =
                         (float) currentFeature->TargetWidth() / (float) currentFeature->RenderWidth();
@@ -8967,7 +9010,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
                 ImGui::SameLine(0.0f, 6.0f);
 
-                if (IlionTheme::Button("Motion"))
+                if (IlionTheme::Button(TrL("Motion")))
                 {
                     auto const scaleRatioX =
                         (float) currentFeature->TargetWidth() / (float) currentFeature->RenderWidth();
@@ -8988,7 +9031,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
                 ImGui::SameLine(0.0f, 6.0f);
 
-                if (IlionTheme::Button("Default"))
+                if (IlionTheme::Button(TrL("Default")))
                 {
                     config->FsrVelocity = 1.0f;
                     config->FsrReactiveScale = 1.0f;
@@ -9000,7 +9043,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
             ImGui::Spacing();
 
-            if (auto ch = ScopedCollapsingHeader("FSR 3 Upscaler Manual Tuning"); ch.IsHeaderOpen())
+            if (auto ch = ScopedCollapsingHeader(TrL("FSR 3 Upscaler Manual Tuning")); ch.IsHeaderOpen())
             {
                 ScopedIndent indent {};
                 ImGui::Spacing();
@@ -9009,7 +9052,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                 ImGui::PushItemWidth(220.0f * menuResScale);
 
                 float velocity = config->FsrVelocity.value_or_default();
-                if (IlionTheme::SliderFloat("Velocity Factor", &velocity, 0.00f, 1.0f, "%.2f"))
+                if (IlionTheme::SliderFloat(TrL("Velocity Factor"), &velocity, 0.00f, 1.0f, "%.2f"))
                     config->FsrVelocity = velocity;
 
                 ShowTooltip("Value of 0.0f can improve temporal stability of bright pixels\n"
@@ -9020,7 +9063,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                 {
                     // Reactive Scale
                     float reactiveScale = config->FsrReactiveScale.value_or_default();
-                    if (IlionTheme::SliderFloat("Reactive Scale", &reactiveScale, 0.0f, 1.0f, "%.3f"))
+                    if (IlionTheme::SliderFloat(TrL("Reactive Scale"), &reactiveScale, 0.0f, 1.0f, "%.3f"))
                         config->FsrReactiveScale = reactiveScale;
 
                     ShowTooltip("Meant for development purpose to test if\n"
@@ -9028,7 +9071,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
                     // Shading Scale
                     float shadingScale = config->FsrShadingScale.value_or_default();
-                    if (IlionTheme::SliderFloat("Shading Scale", &shadingScale, 0.0f, 1.0f, "%.3f"))
+                    if (IlionTheme::SliderFloat(TrL("Shading Scale"), &shadingScale, 0.0f, 1.0f, "%.3f"))
                         config->FsrShadingScale = shadingScale;
 
                     ShowTooltip("Increasing this scales FSR3.1 computed shading\n"
@@ -9036,7 +9079,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
                     // Accumulation Added Per Frame
                     float accAddPerFrame = config->FsrAccAddPerFrame.value_or_default();
-                    if (IlionTheme::SliderFloat("Acc. Added Per Frame", &accAddPerFrame, 0.0f, 1.0f, "%.3f"))
+                    if (IlionTheme::SliderFloat(TrL("Acc. Added Per Frame"), &accAddPerFrame, 0.0f, 1.0f, "%.3f"))
                         config->FsrAccAddPerFrame = accAddPerFrame;
 
                     ShowTooltip("Corresponds to amount of accumulation added per frame\n"
@@ -9048,7 +9091,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
                     // Min Disocclusion Accumulation
                     float minDisOccAcc = config->FsrMinDisOccAcc.value_or_default();
-                    if (IlionTheme::SliderFloat("Min. Disocclusion Acc.", &minDisOccAcc, -1.0f, 1.0f, "%.3f"))
+                    if (IlionTheme::SliderFloat(TrL("Min. Disocclusion Acc."), &minDisOccAcc, -1.0f, 1.0f, "%.3f"))
                         config->FsrMinDisOccAcc = minDisOccAcc;
 
                     ShowTooltip("Increasing this value may reduce white pixel temporal\n"
@@ -9079,10 +9122,10 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
         if (overridden)
         {
-            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), "Presets are overridden externally");
+            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), Tr("Presets are overridden externally"));
             ShowTooltip("This usually happens due to using tools\n"
                         "such as Nvidia App or Nvidia Inspector");
-            // ImGui::Text("Selecting setting below will disable that external override\n"
+            // ImGui::Text(Tr("Selecting setting below will disable that external override\n")
             //             "but you need to Save Settings and restart the game");
 
             ImGui::Spacing();
@@ -9095,7 +9138,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
         if (usesDlssd)
         {
             if (bool pOverride = config->DLSSDRenderPresetOverride.value_or_default();
-                IlionTheme::Checkbox("Render Presets Override", &pOverride))
+                IlionTheme::Checkbox(TrL("Render Presets Override"), &pOverride))
                 config->DLSSDRenderPresetOverride = pOverride;
 
             ShowTooltip("Each render preset has it strengths and weaknesses\n"
@@ -9106,9 +9149,9 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             auto currentPresetIndex = GetPresetIndex(currentFeature, true);
 
             if (currentPresetIndex == 0)
-                ImGui::Text("Current Preset: Default");
+                ImGui::Text(Tr("Current Preset: Default"));
             else
-                ImGui::Text("Current Preset: %c", 64 + currentPresetIndex);
+                ImGui::Text(Tr("Current Preset: %c"), 64 + currentPresetIndex);
             */
 
             ImGui::BeginDisabled(!config->DLSSDRenderPresetOverride.value_or_default() /*|| overridden*/);
@@ -9122,7 +9165,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
         else
         {
             if (bool pOverride = config->RenderPresetOverride.value_or_default();
-                IlionTheme::Checkbox("Render Presets Override", &pOverride))
+                IlionTheme::Checkbox(TrL("Render Presets Override"), &pOverride))
                 config->RenderPresetOverride = pOverride;
 
             ShowTooltip("Each render preset has it strengths and weaknesses\n"
@@ -9133,9 +9176,9 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             auto currentPresetIndex = GetPresetIndex(currentFeature, false);
 
             if (currentPresetIndex == 0)
-                ImGui::Text("Current Preset: Default");
+                ImGui::Text(Tr("Current Preset: Default"));
             else
-                ImGui::Text("Current Preset: %c", 64 + currentPresetIndex);
+                ImGui::Text(Tr("Current Preset: %c"), 64 + currentPresetIndex);
             */
 
             ImGui::BeginDisabled(!config->RenderPresetOverride.value_or_default() /*|| overridden*/);
@@ -9150,7 +9193,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
         ImGui::SameLine(0.0f, 6.0f);
 
-        if (IlionTheme::Button("Apply Changes"))
+        if (IlionTheme::Button(TrL("Apply Changes")))
         {
             LOG_DEBUG("Applying DLSS/DLSSD preset override changes, preset index: {}", comboPreset.value_or_default());
 
@@ -9170,14 +9213,14 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
         ImGui::Spacing();
 
-        if (auto ch = ScopedCollapsingHeader(usesDlssd ? "Advanced DLSSD Settings" : "Advanced DLSS Settings");
+        if (auto ch = ScopedCollapsingHeader(TrL(usesDlssd ? "Advanced DLSSD Settings" : "Advanced DLSS Settings"));
             ch.IsHeaderOpen())
         {
             ScopedIndent indent {};
             ImGui::Spacing();
 
             bool appIdOverride = config->UseGenericAppIdWithDlss.value_or_default();
-            if (IlionTheme::Checkbox("Use Generic App Id with DLSS", &appIdOverride))
+            if (IlionTheme::Checkbox(TrL("Use Generic App Id with DLSS"), &appIdOverride))
                 config->UseGenericAppIdWithDlss = appIdOverride;
 
             ShowTooltip("Use generic appid with NGX\n"
@@ -9436,7 +9479,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
         {
             ImGui::TableNextColumn();
 
-            PopulateCombo("FG Input", config->FGInput, inputOptions);
+            PopulateCombo(TrL("FG Input"), config->FGInput, inputOptions);
             ShowTooltip("The data source to be used for FG\n"
                         "The native FG which the game supports");
 
@@ -9445,12 +9488,12 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             if (replaceFgOutputWithNvngx)
             {
                 // Disable None?
-                PopulateCombo("FG Nvngx", config->FGNvngxReplacement, nvngxOptions);
+                PopulateCombo(TrL("FG Nvngx"), config->FGNvngxReplacement, nvngxOptions);
                 ShowTooltip("What backend to use instead of the real DLSSG");
             }
             else
             {
-                PopulateCombo("FG Output", config->FGOutput, outputOptions);
+                PopulateCombo(TrL("FG Output"), config->FGOutput, outputOptions);
                 ShowTooltip("The FG that you will actually be using");
             }
 
@@ -9458,7 +9501,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             {
                 ImGui::TableNextColumn();
 
-                PopulateCombo("FG Nvngx Replacement", config->FGNvngxReplacement, nvngxOptions);
+                PopulateCombo(TrL("FG Nvngx Replacement"), config->FGNvngxReplacement, nvngxOptions);
                 ShowTooltip("What backend to use instead of the real DLSSG");
             }
 
@@ -9488,7 +9531,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
         {
             ImGui::Spacing();
             ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.f, 0.0f, 1.f)),
-                               "Save Settings and restart to apply the changes");
+                               Tr("Save Settings and restart to apply the changes"));
             ImGui::Spacing();
         }
 
@@ -9519,7 +9562,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
                 ImGui::PushItemWidth(95.0f * menuResScale);
 
-                if (IlionTheme::BeginCombo("Override DLSSG Ratio", currentIntCountStr.c_str()))
+                if (IlionTheme::BeginCombo(TrL("Override DLSSG Ratio"), currentIntCountStr.c_str()))
                 {
                     for (int i = 0; i <= maxInterpolationCount + 1; i++)
                     {
@@ -9569,7 +9612,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             ImGui::SameLine(0.0f, 16.0f);
 
             if (bool dynamicMFG = config->FGDLSSGOverrideForceDMFG.value_or_default();
-                IlionTheme::Checkbox("Force Dynamic MFG", &dynamicMFG))
+                IlionTheme::Checkbox(TrL("Force Dynamic MFG"), &dynamicMFG))
             {
                 config->FGDLSSGOverrideForceDMFG = dynamicMFG;
                 StreamlineHooks::updateDlssgOptions();
@@ -9577,11 +9620,11 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
             ImGui::BeginDisabled(state.dlssgLastSetMode != sl::DLSSGMode::eDynamic);
             static float fpsTarget = config->FGDLSSGFramerateTargetDMFG.value_or_default();
-            IlionTheme::SliderFloat("DMFG FPS Target", &fpsTarget, 0, 200, "%.0f");
+            IlionTheme::SliderFloat(TrL("DMFG FPS Target"), &fpsTarget, 0, 200, "%.0f");
 
             ShowTooltip("An active limit of 0 means auto-detect the display refresh rate");
 
-            if (IlionTheme::Button("Apply Target"))
+            if (IlionTheme::Button(TrL("Apply Target")))
             {
                 config->FGDLSSGFramerateTargetDMFG = fpsTarget;
                 StreamlineHooks::updateDlssgOptions();
@@ -9589,7 +9632,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
             ImGui::SameLine(0.0f, 16.0f);
 
-            if (IlionTheme::Button("Reset Target"))
+            if (IlionTheme::Button(TrL("Reset Target")))
             {
                 fpsTarget = 0.0f;
                 config->FGDLSSGFramerateTargetDMFG.reset();
@@ -9603,7 +9646,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
              state.activeFgInput != FGInput::NoFG && state.activeFgInput != FGInput::NvngxFG) &&
             fgOutput)
         {
-            IlionTheme::Checkbox("Show Detected UI", &state.fgHudlessCompare);
+            IlionTheme::Checkbox(TrL("Show Detected UI"), &state.fgHudlessCompare);
             ShowTooltip("Needs HUDless texture to compare with final image.\n"
                         "UI elements and ONLY UI elements should have a pink tint!");
 
@@ -9612,7 +9655,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             ImGui::BeginDisabled(!isUsingUIAny);
 
             if (bool drawUIOverFG = config->FGDrawUIOverFG.value_or_default();
-                IlionTheme::Checkbox("Draw UI over", &drawUIOverFG))
+                IlionTheme::Checkbox(TrL("Draw UI over"), &drawUIOverFG))
             {
                 config->FGDrawUIOverFG = drawUIOverFG;
             }
@@ -9626,7 +9669,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             ImGui::BeginDisabled(!isUsingUIAny || !config->FGDrawUIOverFG.value_or_default());
 
             if (bool uiPremultipliedAlpha = config->FGUIPremultipliedAlpha.value_or_default();
-                IlionTheme::Checkbox("UI Premult. alpha", &uiPremultipliedAlpha))
+                IlionTheme::Checkbox(TrL("UI Premult. alpha"), &uiPremultipliedAlpha))
             {
                 config->FGUIPremultipliedAlpha = uiPremultipliedAlpha;
             }
@@ -9643,7 +9686,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
         if (showOutputSpecificFGSettings || showHudCutoff)
         {
-            if (auto ch = ScopedCollapsingHeader("Advanced FG Settings"); ch.IsHeaderOpen())
+            if (auto ch = ScopedCollapsingHeader(TrL("Advanced FG Settings")); ch.IsHeaderOpen())
             {
                 ScopedIndent indent {};
                 ImGui::Spacing();
@@ -9661,7 +9704,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                         bool disableUI = config->FGDisableUI.value_or_default();
                         ImGui::BeginDisabled(!isUsingUIAny && !disableUI);
 
-                        if (IlionTheme::Checkbox("Disable UI texture", &disableUI))
+                        if (IlionTheme::Checkbox(TrL("Disable UI texture"), &disableUI))
                         {
                             config->FGDisableUI = disableUI;
                             fgOutput->UpdateTarget();
@@ -9676,7 +9719,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                         bool disableHudless = config->FGDisableHudless.value_or_default();
                         ImGui::BeginDisabled(!isUsingHudlessAny && !disableHudless);
 
-                        if (IlionTheme::Checkbox("Disable HUDless", &disableHudless))
+                        if (IlionTheme::Checkbox(TrL("Disable HUDless"), &disableHudless))
                         {
                             config->FGDisableHudless = disableHudless;
                         }
@@ -9686,7 +9729,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                         ImGui::EndDisabled();
 
                         bool depthValidNow = config->FGDepthValidNow.value_or_default();
-                        if (IlionTheme::Checkbox("Depth as ValidNow", &depthValidNow))
+                        if (IlionTheme::Checkbox(TrL("Depth as ValidNow"), &depthValidNow))
                             config->FGDepthValidNow = depthValidNow;
 
                         ShowTooltip("Will use more VRAM, but Uniscaler needs this\n"
@@ -9695,14 +9738,14 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                         ImGui::SameLine(0.0f, 16.0f);
 
                         bool velocityValidNow = config->FGVelocityValidNow.value_or_default();
-                        if (IlionTheme::Checkbox("Velocity as ValidNow", &velocityValidNow))
+                        if (IlionTheme::Checkbox(TrL("Velocity as ValidNow"), &velocityValidNow))
                             config->FGVelocityValidNow = velocityValidNow;
 
                         ShowTooltip("Will use more VRAM, but Uniscaler needs this\n"
                                     "Maybe some other games might need too");
 
                         bool hudlessValidNow = config->FGHudlessValidNow.value_or_default();
-                        if (IlionTheme::Checkbox("HUDless as ValidNow", &hudlessValidNow))
+                        if (IlionTheme::Checkbox(TrL("HUDless as ValidNow"), &hudlessValidNow))
                             config->FGHudlessValidNow = hudlessValidNow;
 
                         ShowTooltip("Will use more VRAM, but some games might need this");
@@ -9710,13 +9753,13 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                         ImGui::SameLine(0.0f, 16.0f);
 
                         bool firstHudless = config->FGOnlyAcceptFirstHudless.value_or_default();
-                        if (IlionTheme::Checkbox("Accept First HUDless", &firstHudless))
+                        if (IlionTheme::Checkbox(TrL("Accept First HUDless"), &firstHudless))
                             config->FGOnlyAcceptFirstHudless = firstHudless;
 
                         ShowTooltip("If source tags more than one HUDless, only use the first one");
 
                         if (bool skipReset = config->FGSkipReset.value_or_default();
-                            IlionTheme::Checkbox("Skip Reset", &skipReset))
+                            IlionTheme::Checkbox(TrL("Skip Reset"), &skipReset))
                         {
                             config->FGSkipReset = skipReset;
                         }
@@ -9728,7 +9771,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                         ImGui::PushItemWidth(80.0f * menuResScale);
 
                         auto frameAhead = config->FGAllowedFrameAhead.value_or_default();
-                        if (ImGui::InputInt("Frame Ahead", &frameAhead, 1, 1) && frameAhead > 0 && frameAhead < 4)
+                        if (ImGui::InputInt(TrL("Frame Ahead"), &frameAhead, 1, 1) && frameAhead > 0 && frameAhead < 4)
                         {
                             config->FGAllowedFrameAhead = frameAhead;
                         }
@@ -9740,17 +9783,17 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
                         ImGui::SameLine(0.0f, 16.0f);
 
-                        const char* ftSources[] = { "Input", "Opti", "Zero" };
-                        const char* ftSourceInfos[] = { "Uses frametimes provided by\nDLSSG or FSR-FG ",
-                                                        "Uses frametimes calculated by Opti",
-                                                        "Let XeFG to handle frametimes" };
+                        const char* ftSources[] = { Tr("Input"), Tr("Opti"), Tr("Zero") };
+                        const char* ftSourceInfos[] = { Tr("Uses frametimes provided by\nDLSSG or FSR-FG "),
+                                                        Tr("Uses frametimes calculated by Opti"),
+                                                        Tr("Let XeFG to handle frametimes") };
 
                         auto currentSet = (int) config->FTInput.value_or_default();
                         auto currentSourceCount = state.activeFgOutput == FGOutput::XeFG ? 3 : 2;
 
                         ImGui::PushItemWidth(95.0f * menuResScale);
 
-                        if (IlionTheme::BeginCombo("FT Input", ftSources[currentSet]))
+                        if (IlionTheme::BeginCombo(TrL("FT Input"), ftSources[currentSet]))
                         {
                             for (size_t i = 0; i < currentSourceCount; i++)
                             {
@@ -9778,7 +9821,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                 if (showHudCutoff)
                 {
                     float fgHudCutoff = config->FGHudCutoff.value_or_default();
-                    if (IlionTheme::SliderFloat("Hud Cutoff", &fgHudCutoff, 0.00f, 1.0f, "%.2f"))
+                    if (IlionTheme::SliderFloat(TrL("Hud Cutoff"), &fgHudCutoff, 0.00f, 1.0f, "%.2f"))
                         config->FGHudCutoff = fgHudCutoff;
 
                     ShowTooltip("Cutoffs transparency from UI to help with interpolation\n"
@@ -9801,13 +9844,13 @@ void MenuCommon::RenderFGModeCombo(RenderMenuContext& ctx, const char* label, in
     auto modeName = [&](int mode) -> std::string
     {
         if (mode < 0)
-            return "Default";
+            return Tr("Default");
 
         if (mode == 0)
-            return "Off";
+            return Tr("Off");
 
         if (maxInterpolationCount == 0)
-            return "On";
+            return Tr("On");
 
         return std::format("{}X", mode + 1);
     };
@@ -9899,7 +9942,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 ImGui::PushItemWidth(115.0f * menuResScale);
 
                 auto currentName = StrFmt("FSR %s", state.ffxFGVersionNames[_ffxFGIndex]);
-                if (IlionTheme::BeginCombo("FFX FG Version", currentName.c_str()))
+                if (IlionTheme::BeginCombo(TrL("FFX FG Version"), currentName.c_str()))
                 {
                     for (int n = 0; n < state.ffxFGVersionIds.size(); n++)
                     {
@@ -9926,7 +9969,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 return;
 
             bool fgAsync = config->FGAsync.value_or_default();
-            if (IlionTheme::Checkbox("Allow Async", &fgAsync))
+            if (IlionTheme::Checkbox(TrL("Allow Async"), &fgAsync))
             {
                 config->FGAsync = fgAsync;
 
@@ -9939,10 +9982,11 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             }
             ShowTooltip("Enable Async for better FG performance\nMight cause crashes, especially with HUD Fix!");
 
-            ImGui::SameLine(0.0f, 16.0f);
-
+            // ILION: debug view and watermark under one folded key
+            if (auto display = ScopedCollapsingHeader(TrL("Display and debug##fsrfg")); display.IsHeaderOpen())
+            {
             bool fgDV = config->FGDebugView.value_or_default();
-            if (IlionTheme::Checkbox("Debug View##2", &fgDV))
+            if (IlionTheme::Checkbox(TrL("Debug View##2"), &fgDV))
             {
                 config->FGDebugView = fgDV;
 
@@ -9966,7 +10010,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             if (state.currentFG && state.currentFG->Version().major > 3)
             {
                 if (bool fgwm = config->FSRFGEnableWatermark.value_or_default();
-                    IlionTheme::Checkbox("Enable Watermark", &fgwm))
+                    IlionTheme::Checkbox(TrL("Enable Watermark"), &fgwm))
                 {
                     LOG_DEBUG("FSRFGEnableWatermark set FGWatermark: {}", fgwm);
                     config->FSRFGEnableWatermark = fgwm;
@@ -9975,20 +10019,21 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 ShowTooltip("After changing this option, please Save Settings\n"
                             "It will be applied on next launch.");
             }
+            } // display and debug
 
             ImGui::Spacing();
 
-            if (auto ch = ScopedCollapsingHeader("Extended FSR FG Settings"); ch.IsHeaderOpen())
+            if (auto ch = ScopedCollapsingHeader(TrL("Extended FSR FG Settings")); ch.IsHeaderOpen())
             {
                 ScopedIndent indent {};
                 ImGui::Spacing();
 
-                IlionTheme::Checkbox("FG Only Generated", &state.fgOnlyGenerated);
+                IlionTheme::Checkbox(TrL("FG Only Generated"), &state.fgOnlyGenerated);
                 ShowTooltip("Display only FSR 3.1 Generated frames");
 
                 ImGui::SameLine(0.0f, 16.0f);
                 auto debugResetLines = config->FGDebugResetLines.value_or_default();
-                if (IlionTheme::Checkbox("Debug Reset Lines", &debugResetLines))
+                if (IlionTheme::Checkbox(TrL("Debug Reset Lines"), &debugResetLines))
                 {
                     config->FGDebugResetLines = debugResetLines;
                     LOG_DEBUG("Enabled set FGDebugLines: {}", debugResetLines);
@@ -9996,7 +10041,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 ShowTooltip("Enables drawing of Interpolation skip lines");
 
                 auto debugTearLines = config->FGDebugTearLines.value_or_default();
-                if (IlionTheme::Checkbox("Debug Tear Lines", &debugTearLines))
+                if (IlionTheme::Checkbox(TrL("Debug Tear Lines"), &debugTearLines))
                 {
                     config->FGDebugTearLines = debugTearLines;
                     LOG_DEBUG("Enabled set FGDebugLines: {}", debugTearLines);
@@ -10005,7 +10050,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
                 ImGui::SameLine(0.0f, 16.0f);
                 auto debugPacingLines = config->FGDebugPacingLines.value_or_default();
-                if (IlionTheme::Checkbox("Debug Pacing Lines", &debugPacingLines))
+                if (IlionTheme::Checkbox(TrL("Debug Pacing Lines"), &debugPacingLines))
                 {
                     config->FGDebugPacingLines = debugPacingLines;
                     LOG_DEBUG("Enabled set FGDebugLines: {}", debugPacingLines);
@@ -10013,25 +10058,25 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 ShowTooltip("Enables drawing of Pacing lines");
 
                 ImGui::Spacing();
-                if (ImGui::TreeNode("FG Rectangle Settings"))
+                if (ImGui::TreeNode(TrL("FG Rectangle Settings")))
                 {
                     ImGui::PushItemWidth(95.0f * menuResScale);
                     int rectLeft = config->FGRectLeft.value_or(0);
-                    if (ImGui::InputInt("Rect Left", &rectLeft))
+                    if (ImGui::InputInt(TrL("Rect Left"), &rectLeft))
                         config->FGRectLeft = rectLeft;
 
                     ImGui::SameLine(0.0f, 16.0f);
                     int rectTop = config->FGRectTop.value_or(0);
-                    if (ImGui::InputInt("Rect Top", &rectTop))
+                    if (ImGui::InputInt(TrL("Rect Top"), &rectTop))
                         config->FGRectTop = rectTop;
 
                     int rectWidth = config->FGRectWidth.value_or(0);
-                    if (ImGui::InputInt("Rect Width", &rectWidth))
+                    if (ImGui::InputInt(TrL("Rect Width"), &rectWidth))
                         config->FGRectWidth = rectWidth;
 
                     ImGui::SameLine(0.0f, 16.0f);
                     int rectHeight = config->FGRectHeight.value_or(0);
-                    if (ImGui::InputInt("Rect Height", &rectHeight))
+                    if (ImGui::InputInt(TrL("Rect Height"), &rectHeight))
                         config->FGRectHeight = rectHeight;
 
                     ImGui::PopItemWidth();
@@ -10040,7 +10085,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                     ImGui::BeginDisabled(!config->FGRectLeft.has_value() && !config->FGRectTop.has_value() &&
                                          !config->FGRectWidth.has_value() && !config->FGRectHeight.has_value());
 
-                    if (IlionTheme::Button("Reset FG Rect"))
+                    if (IlionTheme::Button(TrL("Reset FG Rect")))
                     {
                         config->FGRectLeft.reset();
                         config->FGRectTop.reset();
@@ -10060,10 +10105,10 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 {
                     ImGui::Spacing();
 
-                    if (ImGui::TreeNode("Frame Pacing Tuning"))
+                    if (ImGui::TreeNode(TrL("Frame Pacing Tuning")))
                     {
                         auto fptEnabled = config->FGFramePacingTuning.value_or_default();
-                        if (IlionTheme::Checkbox("Enable Tuning", &fptEnabled))
+                        if (IlionTheme::Checkbox(TrL("Enable Tuning"), &fptEnabled))
                         {
                             config->FGFramePacingTuning = fptEnabled;
                             state.fsrfgFramePaceTuningChanged = true;
@@ -10073,14 +10118,14 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
                         ImGui::PushItemWidth(115.0f * menuResScale);
                         auto fptSafetyMargin = config->FGFPTSafetyMarginInMs.value_or_default();
-                        if (ImGui::InputFloat("Safety Margins in ms", &fptSafetyMargin, 0.01f, 0.1f, "%.2f"))
+                        if (ImGui::InputFloat(TrL("Safety Margins in ms"), &fptSafetyMargin, 0.01f, 0.1f, "%.2f"))
                             config->FGFPTSafetyMarginInMs = fptSafetyMargin;
                         ShowTooltip("Safety margins in millisecons\n"
                                     "FSR default value: 0.1ms\n"
                                     "Opti default value: 0.01ms");
 
                         auto fptVarianceFactor = config->FGFPTVarianceFactor.value_or_default();
-                        if (IlionTheme::SliderFloat("Variance Factor", &fptVarianceFactor, 0.0f, 1.0f, "%.2f"))
+                        if (IlionTheme::SliderFloat(TrL("Variance Factor"), &fptVarianceFactor, 0.0f, 1.0f, "%.2f"))
                             config->FGFPTVarianceFactor = fptVarianceFactor;
                         ShowTooltip("Variance factor\n"
                                     "FSR default value: 0.1\n"
@@ -10088,14 +10133,14 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                         ImGui::PopItemWidth();
 
                         auto fpHybridSpin = config->FGFPTAllowHybridSpin.value_or_default();
-                        if (IlionTheme::Checkbox("Enable Hybrid Spin", &fpHybridSpin))
+                        if (IlionTheme::Checkbox(TrL("Enable Hybrid Spin"), &fpHybridSpin))
                             config->FGFPTAllowHybridSpin = fpHybridSpin;
                         ShowTooltip("Allows pacing spinlock to sleep, should reduce CPU usage\n"
                                     "Might cause slow ramp up of FPS");
 
                         ImGui::PushItemWidth(115.0f * menuResScale);
                         auto fptHybridSpinTime = config->FGFPTHybridSpinTime.value_or_default();
-                        if (IlionTheme::SliderInt("Hybrid Spin Time", &fptHybridSpinTime, 0, 100))
+                        if (IlionTheme::SliderInt(TrL("Hybrid Spin Time"), &fptHybridSpinTime, 0, 100))
                             config->FGFPTHybridSpinTime = fptHybridSpinTime;
                         ShowTooltip("How long to spin if FPTHybridSpin is true. Measured in timer "
                                     "resolution units.\n"
@@ -10104,13 +10149,13 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
                         auto fpWaitForSingleObjectOnFence =
                             config->FGFPTAllowWaitForSingleObjectOnFence.value_or_default();
-                        if (IlionTheme::Checkbox("Enable WaitForSingleObjectOnFence", &fpWaitForSingleObjectOnFence))
+                        if (IlionTheme::Checkbox(TrL("Enable WaitForSingleObjectOnFence"), &fpWaitForSingleObjectOnFence))
                         {
                             config->FGFPTAllowWaitForSingleObjectOnFence = fpWaitForSingleObjectOnFence;
                         }
                         ShowTooltip("Allows WaitForSingleObject instead of spinning for fence value");
 
-                        if (IlionTheme::Button("Apply Timing Changes"))
+                        if (IlionTheme::Button(TrL("Apply Timing Changes")))
                             state.fsrfgFramePaceTuningChanged = true;
 
                         ImGui::EndDisabled();
@@ -10154,18 +10199,18 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         if (restartNeeded)
         {
             ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)),
-                               "Restart the game to apply correct XeFG settings!");
+                               Tr("Restart the game to apply correct XeFG settings!"));
         }
         else
         {
             if (!correctMVs)
                 ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)),
-                                   "Requires disabling dilated motion vectors");
+                                   Tr("Requires disabling dilated motion vectors"));
 
             if (!ignoreChecks && state.realExclusiveFullscreen)
             {
                 cantActivate = true;
-                ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), "Borderless display mode required!");
+                ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), Tr("Borderless display mode required!"));
             }
 
             if (!ignoreChecks && outputIsHdr)
@@ -10174,14 +10219,14 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                     state.currentSwapchainDesc.BufferDesc.Format <= DXGI_FORMAT_R16G16B16A16_SINT)
                 {
                     cantActivate = true;
-                    ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.0f, 0.0f, 1.f)), "XeFG only supports HDR10");
+                    ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.0f, 0.0f, 1.f)), Tr("XeFG only supports HDR10"));
                 }
             }
         }
 
         if (!correctMVs || cantActivate || ignoreChecks)
         {
-            if (IlionTheme::Checkbox("Ignore Init Checks", &ignoreChecks))
+            if (IlionTheme::Checkbox(TrL("Ignore Init Checks"), &ignoreChecks))
                 config->FGXeFGIgnoreInitChecks = ignoreChecks;
 
             ShowTooltip("Ignores all prechecks for XeFG\n"
@@ -10200,10 +10245,15 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             return;
         }
 
-        ImGui::SameLine(0.0f, 16.0f);
+        ImGui::EndDisabled();
+
+        // ILION: UI composition, debug view and borderless of XeFG under one folded key, same controls and states
+        if (auto display = ScopedCollapsingHeader(TrL("Display and debug##xefg")); display.IsHeaderOpen())
+        {
+        ImGui::BeginDisabled(!correctMVs || cantActivate);
         ImGui::BeginDisabled(!fgOutput->IsUsingHudlessAny() || XeFGProxy::SetUiCompositionState() == nullptr);
         bool fgCompositeUI = config->FGXeFGUIComposition.value_or_default();
-        if (IlionTheme::Checkbox("UI Composition", &fgCompositeUI))
+        if (IlionTheme::Checkbox(TrL("UI Composition"), &fgCompositeUI))
             config->FGXeFGUIComposition = fgCompositeUI;
 
         ShowTooltip("Disable HUD/UI interpolation\n"
@@ -10212,7 +10262,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         ImGui::EndDisabled();
 
         bool fgDV = config->FGXeFGDebugView.value_or_default();
-        if (IlionTheme::Checkbox("Debug View##2", &fgDV))
+        if (IlionTheme::Checkbox(TrL("Debug View##2"), &fgDV))
         {
             config->FGXeFGDebugView = fgDV;
 
@@ -10226,9 +10276,8 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
         ImGui::EndDisabled();
 
-        ImGui::SameLine(0.0f, 16.0f);
         bool fgBorderless = config->FGXeFGForceBorderless.value_or_default();
-        if (IlionTheme::Checkbox("Force Borderless", &fgBorderless))
+        if (IlionTheme::Checkbox(TrL("Force Borderless"), &fgBorderless))
             config->FGXeFGForceBorderless = fgBorderless;
 
         ShowTooltip("Forces Borderless display mode\n\n"
@@ -10236,35 +10285,36 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                     "resolution to your display resolution\n"
                     "Might cause some instability issues.\n\n"
                     "NEEDS GAME RESTART TO BE ACTIVE!");
+        } // display and debug
 
         // Disable this for now
         // ImGui::SameLine(0.0f, 16.0f);
-        // IlionTheme::Checkbox("Only Generated##2", &state.fgOnlyGenerated);
+        // IlionTheme::Checkbox(TrL("Only Generated##2"), &state.fgOnlyGenerated);
         // ShowTooltip("Display only XeFG generated frames");
 
         ImGui::Spacing();
-        if (auto ch = ScopedCollapsingHeader("Extended XeFG Settings"); ch.IsHeaderOpen())
+        if (auto ch = ScopedCollapsingHeader(TrL("Extended XeFG Settings")); ch.IsHeaderOpen())
         {
             ImGui::Spacing();
-            if (ImGui::TreeNode("Rectangle Settings"))
+            if (ImGui::TreeNode(TrL("Rectangle Settings")))
             {
                 ImGui::PushItemWidth(95.0f * menuResScale);
                 int rectLeft = config->FGRectLeft.value_or(0);
-                if (ImGui::InputInt("Rect Left##2", &rectLeft))
+                if (ImGui::InputInt(TrL("Rect Left##2"), &rectLeft))
                     config->FGRectLeft = rectLeft;
 
                 ImGui::SameLine(0.0f, 16.0f);
                 int rectTop = config->FGRectTop.value_or(0);
-                if (ImGui::InputInt("Rect Top##2", &rectTop))
+                if (ImGui::InputInt(TrL("Rect Top##2"), &rectTop))
                     config->FGRectTop = rectTop;
 
                 int rectWidth = config->FGRectWidth.value_or(0);
-                if (ImGui::InputInt("Rect Width##2", &rectWidth))
+                if (ImGui::InputInt(TrL("Rect Width##2"), &rectWidth))
                     config->FGRectWidth = rectWidth;
 
                 ImGui::SameLine(0.0f, 16.0f);
                 int rectHeight = config->FGRectHeight.value_or(0);
-                if (ImGui::InputInt("Rect Height##2", &rectHeight))
+                if (ImGui::InputInt(TrL("Rect Height##2"), &rectHeight))
                     config->FGRectHeight = rectHeight;
 
                 ImGui::PopItemWidth();
@@ -10273,7 +10323,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 ImGui::BeginDisabled(!config->FGRectLeft.has_value() && !config->FGRectTop.has_value() &&
                                      !config->FGRectWidth.has_value() && !config->FGRectHeight.has_value());
 
-                if (IlionTheme::Button("Reset FG Rect##2"))
+                if (IlionTheme::Button(TrL("Reset FG Rect##2")))
                 {
                     config->FGRectLeft.reset();
                     config->FGRectTop.reset();
@@ -10304,11 +10354,11 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             if (state.currentSwapchainDesc.BufferDesc.Format >= DXGI_FORMAT_R32G32B32A32_TYPELESS &&
                 state.currentSwapchainDesc.BufferDesc.Format <= DXGI_FORMAT_R16G16B16A16_SINT)
             {
-                ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.0f, 0.0f, 1.f)), "DLSSG only supports HDR10");
+                ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.0f, 0.0f, 1.f)), Tr("DLSSG only supports HDR10"));
             }
         }
 
-        ImGui::Text("Current DLSSG state:");
+        ImGui::Text(Tr("Current DLSSG state:"));
         ImGui::SameLine();
         if (auto count = state.dlssgDetectedInterpolationCount; count > 0)
         {
@@ -10316,7 +10366,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         }
         else
         {
-            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), "OFF");
+            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), Tr("OFF"));
         }
 
         RenderFGModeCombo(ctx, "Frame Gen##dlssg", fgOutput->GetMaxInterpolationCount(),
@@ -10332,7 +10382,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 ImGui::SameLine(0.0f, 16.0f);
 
                 if (bool dynamicMFG = config->FGDLSSGForceDMFG.value_or_default();
-                    IlionTheme::Checkbox("Force Dynamic MFG", &dynamicMFG))
+                    IlionTheme::Checkbox(TrL("Force Dynamic MFG"), &dynamicMFG))
                 {
                     config->FGDLSSGForceDMFG = dynamicMFG;
                     state.fgChanged = true;
@@ -10341,18 +10391,18 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 ImGui::BeginDisabled(!config->FGDLSSGForceDMFG.value_or_default());
                 static float fpsTarget = config->FGDLSSGFramerateTargetDMFG.value_or_default();
                 float fpsSliderMax = (float) std::max(200, refreshRate);
-                IlionTheme::SliderFloat("DMFG FPS Target", &fpsTarget, 0, fpsSliderMax, "%.0f");
+                IlionTheme::SliderFloat(TrL("DMFG FPS Target"), &fpsTarget, 0, fpsSliderMax, "%.0f");
 
                 ShowTooltip("An active limit of 0 means auto-detect the display refresh rate");
 
-                if (IlionTheme::Button("Apply Target"))
+                if (IlionTheme::Button(TrL("Apply Target")))
                 {
                     config->FGDLSSGFramerateTargetDMFG = fpsTarget;
                 }
 
                 ImGui::SameLine(0.0f, 16.0f);
 
-                if (IlionTheme::Button("Reset Target"))
+                if (IlionTheme::Button(TrL("Reset Target")))
                 {
                     fpsTarget = 0.0f;
                     config->FGDLSSGFramerateTargetDMFG.reset();
@@ -10364,7 +10414,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
         bool useGamesMarkers = config->FGDLSSGUseGamesReflexMarkers.value_or_default();
         ImGui::BeginDisabled(!ReflexHooks::gameIsSendingMarkers());
-        if (IlionTheme::Checkbox("Use Game's Reflex Markers", &useGamesMarkers))
+        if (IlionTheme::Checkbox(TrL("Use Game's Reflex Markers"), &useGamesMarkers))
         {
             config->FGDLSSGUseGamesReflexMarkers = useGamesMarkers;
             LOG_DEBUG("Changed set FGDLSSGUseGamesReflexMarkers: {}", useGamesMarkers);
@@ -10378,12 +10428,12 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
         if (fgOutput->IsActive() && fgOutput->IsReprojectionActive())
         {
-            ImGui::Text("Updated camera rotation by: %.1fms",
+            ImGui::Text(Tr("Updated camera rotation by: %.1fms"),
                         (float) fgOutput->GetLastTimeSinceSimStartNs() / 1'000'000.f);
         }
         else
         {
-            ImGui::TextDisabled("Not updating camera rotation");
+            ImGui::TextDisabled(Tr("Not updating camera rotation"));
         }
 
         if (state.activeFgOutput == FGOutput::Reprojection)
@@ -10393,7 +10443,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         else
         {
             bool reprojectionActive = config->FGReprojectionEnabled.value_or_default();
-            if (IlionTheme::Checkbox("Active##5", &reprojectionActive))
+            if (IlionTheme::Checkbox(TrL("Active##5"), &reprojectionActive))
             {
                 config->FGReprojectionEnabled = reprojectionActive;
                 LOG_DEBUG("Reprojection enabled: {}", reprojectionActive);
@@ -10403,7 +10453,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
         ImGui::SameLine();
 
-        IlionTheme::Checkbox("Show static elements", &state.fgHudlessCompare);
+        IlionTheme::Checkbox(TrL("Show static elements"), &state.fgHudlessCompare);
         ShowTooltip("For fine tuning the depth cutoff\n"
                     "Shows UI and depth cutoff areas\n"
                     "Adjust depth cutoff so that only stuff like your gun and hands are marked");
@@ -10423,13 +10473,13 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         if (!config->ReprojectionFillMode.has_value())
             config->ReprojectionFillMode = config->ReprojectionFillMode.value_or_default();
 
-        PopulateCombo("Edge fill mode", config->ReprojectionFillMode, fillModes);
+        PopulateCombo(TrL("Edge fill mode"), config->ReprojectionFillMode, fillModes);
         ShowTooltip("You want either dither or noise\n"
                     "Those two use the unprojected image as fill\n"
                     "and then some blending on the edges to fool the eye");
 
         float cutoff = config->ReprojectionDepthCutoff.value_or_default();
-        if (IlionTheme::SliderFloat("Depth cutoff", &cutoff, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_Logarithmic))
+        if (IlionTheme::SliderFloat(TrL("Depth cutoff"), &cutoff, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_Logarithmic))
             config->ReprojectionDepthCutoff = cutoff;
         ShowTooltip("Selects how many elements close to the camera\n"
                     "should be shown over the reprojected image.\n"
@@ -10439,13 +10489,13 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                     "Cyberpunk is around 0.02");
 
         uint32_t cutoffExpandPx = config->ReprojectionCutoffExpand.value_or_default();
-        if (SliderUInt("Cutoff expand", &cutoffExpandPx, 0, 8))
+        if (SliderUInt(TrL("Cutoff expand"), &cutoffExpandPx, 0, 8))
             config->ReprojectionCutoffExpand = cutoffExpandPx;
         ShowTooltip("Expands the cutoff area by this many depth pixels\n"
                     "Use only when you see an outline left by the cutoff process");
 
         if (bool lateLatch = config->ReprojectionLateLatch.value_or_default();
-            IlionTheme::Checkbox("Late latch mouse", &lateLatch))
+            IlionTheme::Checkbox(TrL("Late latch mouse"), &lateLatch))
         {
             config->ReprojectionLateLatch = lateLatch;
         }
@@ -10475,7 +10525,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             {
                 bool fgHudfix = config->FGHUDFix.value_or_default();
 
-                if (IlionTheme::Checkbox("HUDFix", &fgHudfix))
+                if (IlionTheme::Checkbox(TrL("HUDFix"), &fgHudfix))
                 {
                     config->FGHUDFix = fgHudfix;
                     LOG_DEBUG("Enabled set FGHUDFix: {}", fgHudfix);
@@ -10490,7 +10540,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 ImGui::SameLine(0.0f, 16.0f);
                 ImGui::PushItemWidth(95.0f * menuResScale);
                 int hudFixLimit = config->FGHUDLimit.value_or_default();
-                if (ImGui::InputInt("Limit", &hudFixLimit))
+                if (ImGui::InputInt(TrL("Limit"), &hudFixLimit))
                 {
                     if (hudFixLimit < 1)
                         hudFixLimit = 1;
@@ -10503,13 +10553,13 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 ShowTooltip("Delay HUDless capture, high values might cause crash!");
 
                 ImGui::SameLine(0.0f, 16.0f);
-                if (IlionTheme::Button("Res##2"))
+                if (IlionTheme::Button(TrL("Res##2")))
                     _showHudlessWindow = !_showHudlessWindow;
 
                 ImGui::EndDisabled();
 
                 auto hudExtended = config->FGHUDFixExtended.value_or_default();
-                if (IlionTheme::Checkbox("Extended", &hudExtended))
+                if (IlionTheme::Checkbox(TrL("Extended"), &hudExtended))
                 {
                     LOG_DEBUG("Enabled set FGHUDFixExtended: {}", hudExtended);
                     config->FGHUDFixExtended = hudExtended;
@@ -10520,7 +10570,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 ImGui::BeginDisabled(!config->FGHUDFix.value_or_default());
 
                 auto immediate = config->FGImmediateCapture.value_or_default();
-                if (IlionTheme::Checkbox("Immediate Capture", &immediate))
+                if (IlionTheme::Checkbox(TrL("Immediate Capture"), &immediate))
                 {
                     LOG_DEBUG("Enabled set FGImmediateCapture: {}", immediate);
                     config->FGImmediateCapture = immediate;
@@ -10534,23 +10584,23 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             }
 
             bool depthScale = config->FGEnableDepthScale.value_or_default();
-            if (IlionTheme::Checkbox("Scale Depth to fix DLSS RR", &depthScale))
+            if (IlionTheme::Checkbox(TrL("Scale Depth to fix DLSS RR"), &depthScale))
                 config->FGEnableDepthScale = depthScale;
             ShowTooltip("Fix for DLSS-D wrong depth inputs");
 
             bool resourceFlip = config->FGResourceFlip.value_or_default();
-            if (IlionTheme::Checkbox("Flip (Unity)", &resourceFlip))
+            if (IlionTheme::Checkbox(TrL("Flip (Unity)"), &resourceFlip))
                 config->FGResourceFlip = resourceFlip;
             ShowTooltip("Flip Velocity & Depth resources of Unity games");
 
             ImGui::SameLine(0.0f, 16.0f);
 
             bool resourceFlipOffset = config->FGResourceFlipOffset.value_or_default();
-            if (IlionTheme::Checkbox("Flip Use Offset", &resourceFlipOffset))
+            if (IlionTheme::Checkbox(TrL("Flip Use Offset"), &resourceFlipOffset))
                 config->FGResourceFlipOffset = resourceFlipOffset;
             ShowTooltip("Use height difference as offset");
 
-            if (auto ch = ScopedCollapsingHeader("Advanced OptiFG Settings"); ch.IsHeaderOpen())
+            if (auto ch = ScopedCollapsingHeader(TrL("Advanced OptiFG Settings")); ch.IsHeaderOpen())
             {
                 ScopedIndent indent {};
 
@@ -10558,7 +10608,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
                 auto disablehudfix = config->FGDisableHUDFix.value_or_default();
                 {
-                    if (IlionTheme::Checkbox("Disable HUDFix Resource Tracking", &disablehudfix))
+                    if (IlionTheme::Checkbox(TrL("Disable HUDFix Resource Tracking"), &disablehudfix))
                     {
                         config->FGDisableHUDFix = disablehudfix;
                         LOG_DEBUG("Enabled FGDisableHUDFix: {}", disablehudfix);
@@ -10574,7 +10624,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                     ImGui::Spacing();
 
                     auto rb = config->FGResourceBlocking.value_or_default();
-                    if (IlionTheme::Checkbox("Resource Blocking", &rb))
+                    if (IlionTheme::Checkbox(TrL("Resource Blocking"), &rb))
                     {
                         config->FGResourceBlocking = rb;
                         LOG_DEBUG("Enabled set FGResourceBlocking: {}", rb);
@@ -10586,7 +10636,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                     ImGui::SameLine(0.0f, 16.0f);
 
                     auto rrc = config->FGRelaxedResolutionCheck.value_or_default();
-                    if (IlionTheme::Checkbox("Relaxed Resource Check", &rrc))
+                    if (IlionTheme::Checkbox(TrL("Relaxed Resource Check"), &rrc))
                     {
                         config->FGRelaxedResolutionCheck = rrc;
                         LOG_DEBUG("Enabled set FGRelaxedResolutionCheck: {}", rrc);
@@ -10597,7 +10647,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
                     ImGui::BeginDisabled(state.fgResetCapturedResources);
                     ImGui::PushItemWidth(95.0f * menuResScale);
-                    if (IlionTheme::Checkbox("FG Create List", &state.fgCaptureResources))
+                    if (IlionTheme::Checkbox(TrL("FG Create List"), &state.fgCaptureResources))
                     {
                         if (!state.fgCaptureResources)
                             config->FGHUDLimit = 1;
@@ -10606,7 +10656,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                     }
 
                     ImGui::SameLine(0.0f, 16.0f);
-                    if (IlionTheme::Checkbox("FG Use List", &state.fgOnlyUseCapturedResources))
+                    if (IlionTheme::Checkbox(TrL("FG Use List"), &state.fgOnlyUseCapturedResources))
                     {
                         if (state.fgCaptureResources)
                         {
@@ -10622,7 +10672,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
                     ImGui::SameLine(0.0f, 16.0f);
 
-                    if (IlionTheme::Button("Reset List"))
+                    if (IlionTheme::Button(TrL("Reset List")))
                     {
                         LOG_DEBUG("Resetting captured resource list");
 
@@ -10634,12 +10684,12 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
                     ImGui::Spacing();
                     ImGui::Spacing();
-                    if (ImGui::TreeNode("Tracking Settings"))
+                    if (ImGui::TreeNode(TrL("Tracking Settings")))
                     {
                         ImGui::BeginDisabled(dx11HudfixTracking);
 
                         auto ath = config->FGAlwaysTrackHeaps.value_or_default();
-                        if (IlionTheme::Checkbox("Always Track Heaps", &ath))
+                        if (IlionTheme::Checkbox(TrL("Always Track Heaps"), &ath))
                         {
                             config->FGAlwaysTrackHeaps = ath;
                             LOG_DEBUG("Enabled set FGAlwaysTrackHeaps: {}", ath);
@@ -10652,7 +10702,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                                           "fix HUDFix related crashes!");
 
                         auto disableRTV = config->FGHudfixDisableRTV.value_or_default();
-                        if (IlionTheme::Checkbox("Disable RTV Tracking", &disableRTV))
+                        if (IlionTheme::Checkbox(TrL("Disable RTV Tracking"), &disableRTV))
                             config->FGHudfixDisableRTV = disableRTV;
                         ShowTooltip("Disable tracking of CreateRenderTargetView\n"
                                     "This might help filtering of wrong HUDless resources");
@@ -10660,13 +10710,13 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                         ImGui::SameLine(0.0f, 16.0f);
 
                         auto disableSRV = config->FGHudfixDisableSRV.value_or_default();
-                        if (IlionTheme::Checkbox("Disable SRV Tracking", &disableSRV))
+                        if (IlionTheme::Checkbox(TrL("Disable SRV Tracking"), &disableSRV))
                             config->FGHudfixDisableSRV = disableSRV;
                         ShowTooltip("Disable tracking of CreateShaderResourceView\n"
                                     "This might help filtering of wrong HUDless resources");
 
                         auto disableUAV = config->FGHudfixDisableUAV.value_or_default();
-                        if (IlionTheme::Checkbox("Disable UAV Tracking", &disableUAV))
+                        if (IlionTheme::Checkbox(TrL("Disable UAV Tracking"), &disableUAV))
                             config->FGHudfixDisableUAV = disableUAV;
                         ShowTooltip("Disable tracking of CreateUnorderedAccessView\n"
                                     "This might help filtering of wrong HUDless resources");
@@ -10674,13 +10724,13 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                         ImGui::SameLine(0.0f, 16.0f);
 
                         auto disableOM = config->FGHudfixDisableOM.value_or_default();
-                        if (IlionTheme::Checkbox("Disable OM Tracking", &disableOM))
+                        if (IlionTheme::Checkbox(TrL("Disable OM Tracking"), &disableOM))
                             config->FGHudfixDisableOM = disableOM;
                         ShowTooltip("Disable tracking of OMSetRenderTargets\n"
                                     "This might help filtering of wrong HUDless resources");
 
                         auto disableSCR = config->FGHudfixDisableSCR.value_or_default();
-                        if (IlionTheme::Checkbox("Disable SCR Tracking", &disableSCR))
+                        if (IlionTheme::Checkbox(TrL("Disable SCR Tracking"), &disableSCR))
                             config->FGHudfixDisableSCR = disableSCR;
                         ShowTooltip("Disable tracking of SetComputeRootDescriptorTable\n"
                                     "This might help filtering of wrong HUDless resources");
@@ -10688,7 +10738,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                         ImGui::SameLine(0.0f, 16.0f);
 
                         auto disableSGR = config->FGHudfixDisableSGR.value_or_default();
-                        if (IlionTheme::Checkbox("Disable SGR Tracking", &disableSGR))
+                        if (IlionTheme::Checkbox(TrL("Disable SGR Tracking"), &disableSGR))
                             config->FGHudfixDisableSGR = disableSGR;
                         ShowTooltip("Disable tracking of SetGraphicsRootDescriptorTable\n"
                                     "This might help filtering of wrong HUDless resources");
@@ -10696,7 +10746,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                         ImGui::Spacing();
 
                         auto disableDI = config->FGHudfixDisableDI.value_or_default();
-                        if (IlionTheme::Checkbox("Disable DI Tracking", &disableDI))
+                        if (IlionTheme::Checkbox(TrL("Disable DI Tracking"), &disableDI))
                             config->FGHudfixDisableDI = disableDI;
                         ShowTooltip("Disable tracking of DrawInstanced\n"
                                     "This might help filtering of wrong HUDless resources");
@@ -10704,13 +10754,13 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                         ImGui::SameLine(0.0f, 16.0f);
 
                         auto disableDII = config->FGHudfixDisableDII.value_or_default();
-                        if (IlionTheme::Checkbox("Disable DII Tracking", &disableDII))
+                        if (IlionTheme::Checkbox(TrL("Disable DII Tracking"), &disableDII))
                             config->FGHudfixDisableDII = disableDII;
                         ShowTooltip("Disable tracking of DrawIndexedInstanced\n"
                                     "This might help filtering of wrong HUDless resources");
 
                         auto disableDispatch = config->FGHudfixDisableDispatch.value_or_default();
-                        if (IlionTheme::Checkbox("Disable Dispatch Tracking", &disableDispatch))
+                        if (IlionTheme::Checkbox(TrL("Disable Dispatch Tracking"), &disableDispatch))
                             config->FGHudfixDisableDispatch = disableDispatch;
                         ShowTooltip("Disable tracking of Dispatch\n"
                                     "This might help filtering of wrong HUDless resources");
@@ -10720,23 +10770,23 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 }
 
                 ImGui::Spacing();
-                if (ImGui::TreeNode("Resource Settings"))
+                if (ImGui::TreeNode(TrL("Resource Settings")))
                 {
                     bool makeMVCopies = config->FGMakeMVCopy.value_or_default();
-                    if (IlionTheme::Checkbox("FG Make MV Copies", &makeMVCopies))
+                    if (IlionTheme::Checkbox(TrL("FG Make MV Copies"), &makeMVCopies))
                         config->FGMakeMVCopy = makeMVCopies;
                     ShowTooltip("Make a copy of motion vectors to use with OptiFG\n"
                                 "For preventing corruptions that might happen");
 
                     bool makeDepthCopies = config->FGMakeDepthCopy.value_or_default();
-                    if (IlionTheme::Checkbox("FG Make Depth Copies", &makeDepthCopies))
+                    if (IlionTheme::Checkbox(TrL("FG Make Depth Copies"), &makeDepthCopies))
                         config->FGMakeDepthCopy = makeDepthCopies;
                     ShowTooltip("Make a copy of depth to use with OptiFG\n"
                                 "For preventing corruptions that might happen");
 
                     ImGui::PushItemWidth(115.0f * menuResScale);
                     float depthScaleMax = config->FGDepthScaleMax.value_or_default();
-                    if (ImGui::InputFloat("FG Scale Depth Max", &depthScaleMax, 10.0f, 100.0f, "%.1f"))
+                    if (ImGui::InputFloat(TrL("FG Scale Depth Max"), &depthScaleMax, 10.0f, 100.0f, "%.1f"))
                         config->FGDepthScaleMax = depthScaleMax;
                     ShowTooltip("Depth values will be divided to this value");
                     ImGui::PopItemWidth();
@@ -10745,10 +10795,10 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 }
 
                 ImGui::Spacing();
-                if (ImGui::TreeNode("Syncing Settings"))
+                if (ImGui::TreeNode(TrL("Syncing Settings")))
                 {
                     bool useMutexForPresent = config->FGUseMutexForSwapchain.value_or_default();
-                    if (IlionTheme::Checkbox("FG Use Mutex for Present", &useMutexForPresent))
+                    if (IlionTheme::Checkbox(TrL("FG Use Mutex for Present"), &useMutexForPresent))
                         config->FGUseMutexForSwapchain = useMutexForPresent;
                     ShowTooltip("Use mutex to prevent desync of FG and crashes\n"
                                 "Disabling might improve the perf but decrease stability");
@@ -10762,17 +10812,17 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         }
         else if (currentFeature == nullptr || currentFeature->IsFrozen())
         {
-            ImGui::Text("Upscaler is not active"); // Probably never will be visible
+            ImGui::Text(Tr("Upscaler is not active")); // Probably never will be visible
         }
         else if (state.activeFgOutput == FGOutput::FSRFG && !FfxApiProxy::IsFGReady())
         {
             ImGui::TextColored(toneMapColor({ 1.0f, 0.0f, 0.0f, 1.0f }),
-                               "amd_fidelityfx_dx12.dll is missing!"); // Probably never will be visible
+                               Tr("amd_fidelityfx_dx12.dll is missing!")); // Probably never will be visible
         }
         else if (state.activeFgOutput == FGOutput::XeFG && XeFGProxy::Module() == nullptr)
         {
             ImGui::TextColored(toneMapColor({ 1.0f, 0.0f, 0.0f, 1.0f }),
-                               "libxess_fg.dll is missing!"); // Probably never will be visible
+                               Tr("libxess_fg.dll is missing!")); // Probably never will be visible
         }
     }
 
@@ -10789,7 +10839,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             if (!state.nukemsFgFileAvailable)
             {
                 ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)),
-                                   "Please put dlssg_to_fsr3_amd_is_better.dll into OptiScaler folder");
+                                   Tr("Please put dlssg_to_fsr3_amd_is_better.dll into OptiScaler folder"));
             }
         }
         else if (activeNvngxFg == FGNvngxReplacement::Arturs)
@@ -10800,11 +10850,11 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             if (!state.artursFgFileAvailable)
             {
                 ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)),
-                                   "Please put dlss-enabler-headless.dll into OptiScaler folder");
+                                   Tr("Please put dlss-enabler-headless.dll into OptiScaler folder"));
             }
 
             ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)),
-                               "Using a subset of features from DLSS Enabler");
+                               Tr("Using a subset of features from DLSS Enabler"));
         }
         else if (activeNvngxFg == FGNvngxReplacement::FFX)
         {
@@ -10824,18 +10874,18 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
             if (!ReflexHooks::isReflexHooked())
             {
-                ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), "Reflex not hooked");
-                ImGui::Text("If you are using an AMD/Intel GPU, then make sure you have Fakenvapi");
+                ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), Tr("Reflex not hooked"));
+                ImGui::Text(Tr("If you are using an AMD/Intel GPU, then make sure you have Fakenvapi"));
             }
             else if (ReflexHooks::dlssgFrameCountToGenerate() == 0 && !dmfgActive)
             {
-                ImGui::Text("Please select DLSS Frame Generation in the game options\n"
-                            "You might need to select DLSS first");
+                ImGui::Text(Tr("Please select DLSS Frame Generation in the game options\n"
+                            "You might need to select DLSS first"));
             }
 
             if (state.swapchainApi == DX12)
             {
-                ImGui::Text("Current DLSSG state:");
+                ImGui::Text(Tr("Current DLSSG state:"));
                 ImGui::SameLine();
                 if (auto count = state.dlssgDetectedInterpolationCount; count > 0)
                 {
@@ -10844,7 +10894,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 }
                 else
                 {
-                    ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), "OFF");
+                    ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), Tr("OFF"));
                 }
 
                 // Issue mostly shows up on AMD on Windows on pre-RDNA3 in some non-UE games
@@ -10857,7 +10907,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                     !primaryGpu.d3d12IsVkd3dProton && !isUnrealEngine)
                 {
                     if (bool makeDepthCopy = config->NvngxFGMakeDepthCopy.value_or_default();
-                        IlionTheme::Checkbox("Fix broken visuals", &makeDepthCopy))
+                        IlionTheme::Checkbox(TrL("Fix broken visuals"), &makeDepthCopy))
                     {
                         config->NvngxFGMakeDepthCopy = makeDepthCopy;
                     }
@@ -10868,7 +10918,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             else if (state.swapchainApi == Vulkan)
             {
                 ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)),
-                                   "DLSSG is purposefully disabled when this menu is visible");
+                                   Tr("DLSSG is purposefully disabled when this menu is visible"));
                 ImGui::Spacing();
             }
         }
@@ -10885,7 +10935,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             {
                 auto featureVer = Nvngx_FG::version();
                 auto antighostingVer = Nvngx_FG::extraVersion();
-                ImGui::Text("DE Ver: %d.%d.%d.%d   GB Ver: %d.%d", featureVer.major, featureVer.minor, featureVer.patch,
+                ImGui::Text(Tr("DE Ver: %d.%d.%d.%d   GB Ver: %d.%d"), featureVer.major, featureVer.minor, featureVer.patch,
                             featureVer.reserved, antighostingVer.major, antighostingVer.minor);
 
                 static std::vector<FlagDefinition> common_flags = {
@@ -10915,13 +10965,13 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 uint32_t temp_flags = config->NvngxFGDispatchFlags.value_or_default();
                 bool changed = false;
 
-                ImGui::Text("Raw DispatchFlags:");
+                ImGui::Text(Tr("Raw DispatchFlags:"));
                 changed |= ImGui::InputScalar("##RawFlags", ImGuiDataType_U32, &temp_flags, NULL, NULL, "%08X",
                                               ImGuiInputTextFlags_CharsHexadecimal);
 
                 ImGui::SameLine(0.0f, 20.0f * menuResScale);
                 if (bool showDebug = config->NvngxFGShowDebug.value_or_default();
-                    IlionTheme::Checkbox("Show Debug", &showDebug))
+                    IlionTheme::Checkbox(TrL("Show Debug"), &showDebug))
                 {
                     config->NvngxFGShowDebug = showDebug;
                 }
@@ -10929,7 +10979,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
                 ImGui::Spacing();
 
-                if (auto ch = ScopedCollapsingHeader("Active DispatchFlags"); ch.IsHeaderOpen())
+                if (auto ch = ScopedCollapsingHeader(TrL("Active DispatchFlags")); ch.IsHeaderOpen())
                 {
                     ScopedIndent indent {};
 
@@ -10946,17 +10996,17 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                         }
                     };
 
-                    ImGui::TextDisabled("Common");
+                    ImGui::TextDisabled(Tr("Common"));
                     render_flags(common_flags);
 
                     ImGui::Spacing();
-                    ImGui::TextDisabled("Uncommon");
+                    ImGui::TextDisabled(Tr("Uncommon"));
                     render_flags(uncommon_flags);
 
                     if (config->NvngxFGShowDebug.value_or_default())
                     {
                         ImGui::Spacing();
-                        ImGui::TextDisabled("Debug");
+                        ImGui::TextDisabled(Tr("Debug"));
                         render_flags(debug_flags);
                     }
                 }
@@ -10969,11 +11019,11 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
             if (activeNvngxFg == FGNvngxReplacement::Nukems)
             {
-                if (IlionTheme::Checkbox("Enable Debug View", &state.dlssgDebugView))
+                if (IlionTheme::Checkbox(TrL("Enable Debug View"), &state.dlssgDebugView))
                 {
                     Nvngx_FG::setDebugView(state.dlssgDebugView);
                 }
-                if (IlionTheme::Checkbox("Interpolated frames only", &state.dlssgInterpolatedOnly))
+                if (IlionTheme::Checkbox(TrL("Interpolated frames only"), &state.dlssgInterpolatedOnly))
                 {
                     Nvngx_FG::setInterpolatedOnly(state.dlssgInterpolatedOnly);
                 }
@@ -10989,7 +11039,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                     ImGui::PushItemWidth(135.0f * menuResScale);
 
                     auto currentName = StrFmt("FSR %s", state.ffxFGVersionNames[_ffxFGIndex]);
-                    if (IlionTheme::BeginCombo("FFX FG", currentName.c_str()))
+                    if (IlionTheme::BeginCombo(TrL("FFX FG"), currentName.c_str()))
                     {
                         for (int n = 0; n < state.ffxFGVersionIds.size(); n++)
                         {
@@ -11006,7 +11056,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
                     ImGui::SameLine(0.0f, 6.0f);
 
-                    if (IlionTheme::Button("Change FG") && _ffxFGIndex != config->FfxFGIndex.value_or_default())
+                    if (IlionTheme::Button(TrL("Change FG")) && _ffxFGIndex != config->FfxFGIndex.value_or_default())
                     {
                         config->FfxFGIndex = _ffxFGIndex;
                         state.fgChanged = true;
@@ -11014,7 +11064,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 }
 
                 bool fgAsync = config->FGAsync.value_or_default();
-                if (IlionTheme::Checkbox("Allow Async##2", &fgAsync))
+                if (IlionTheme::Checkbox(TrL("Allow Async##2"), &fgAsync))
                 {
                     config->FGAsync = fgAsync;
 
@@ -11028,7 +11078,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
                 ImGui::SameLine(0.0f, 20.0f * menuResScale);
                 bool fgDV = config->FGDebugView.value_or_default();
-                if (IlionTheme::Checkbox("Debug View##3", &fgDV))
+                if (IlionTheme::Checkbox(TrL("Debug View##3"), &fgDV))
                 {
                     config->FGDebugView = fgDV;
 
@@ -11051,7 +11101,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 {
                     ImGui::SameLine(0.0f, 20.0f * menuResScale);
                     if (bool fgwm = config->FSRFGEnableWatermark.value_or_default();
-                        IlionTheme::Checkbox("Enable Watermark", &fgwm))
+                        IlionTheme::Checkbox(TrL("Enable Watermark"), &fgwm))
                     {
                         LOG_DEBUG("FSRFGEnableWatermark set FGWatermark: {}", fgwm);
                         config->FSRFGEnableWatermark = fgwm;
@@ -11063,7 +11113,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             }
 
             if (bool disableHudless = config->NvngxFGDisableHudless.value_or_default();
-                IlionTheme::Checkbox("Disable HUDless", &disableHudless))
+                IlionTheme::Checkbox(TrL("Disable HUDless"), &disableHudless))
             {
                 config->NvngxFGDisableHudless = disableHudless;
             }
@@ -11082,25 +11132,25 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         auto fgOutput = reinterpret_cast<IFGFeature_Dx12*>(state.currentFG);
         if (fgOutput != nullptr)
         {
-            ImGui::Text("Current FSR-FG state:");
+            ImGui::Text(Tr("Current FSR-FG state:"));
             ImGui::SameLine();
             if (state.fsrfgInputActive)
             {
                 if (fgOutput->IsActive())
-                    ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.f, 1.f, 0.25f, 1.f), IlionTheme::Role::Good)), "ON");
+                    ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.f, 1.f, 0.25f, 1.f), IlionTheme::Role::Good)), Tr("ON"));
                 else
-                    ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.647f, 0.0f, 1.f)), "ACTIVATE FG");
+                    ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.647f, 0.0f, 1.f)), Tr("ACTIVATE FG"));
             }
             else
             {
-                ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), "OFF");
-                ImGui::Text("Please select FSR Frame Generation in the game options\n"
-                            "You might need to select FSR first");
+                ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), Tr("OFF"));
+                ImGui::Text(Tr("Please select FSR Frame Generation in the game options\n"
+                            "You might need to select FSR first"));
             }
         }
 
         bool skipConfig = config->FSRFGSkipConfigForHudless.value_or_default();
-        if (IlionTheme::Checkbox("Skip Config for HUDless", &skipConfig))
+        if (IlionTheme::Checkbox(TrL("Skip Config for HUDless"), &skipConfig))
             config->FSRFGSkipConfigForHudless = skipConfig;
 
         ShowTooltip("Do not use HUDless set at ffxConfig");
@@ -11108,7 +11158,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         ImGui::SameLine(0.0f, 6.0f);
 
         bool skipDispatch = config->FSRFGSkipDispatchForHudless.value_or_default();
-        if (IlionTheme::Checkbox("Skip Dispatch for HUDless", &skipDispatch))
+        if (IlionTheme::Checkbox(TrL("Skip Dispatch for HUDless"), &skipDispatch))
             config->FSRFGSkipDispatchForHudless = skipDispatch;
 
         ShowTooltip("Do not use HUDless set at ffxDispatch");
@@ -11126,25 +11176,25 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
         if (!ReflexHooks::isReflexHooked())
         {
-            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), "Reflex not hooked");
-            ImGui::Text("If you are using an AMD/Intel GPU, then make sure you have fakenvapi");
+            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), Tr("Reflex not hooked"));
+            ImGui::Text(Tr("If you are using an AMD/Intel GPU, then make sure you have fakenvapi"));
         }
         else if (fgOutput != nullptr)
         {
-            ImGui::Text("Current Streamline FG state:");
+            ImGui::Text(Tr("Current Streamline FG state:"));
             ImGui::SameLine();
             if ((state.fgLastFrame - state.dlssgLastFrame) < 3)
             {
                 if (fgOutput->IsActive())
-                    ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.f, 1.f, 0.25f, 1.f), IlionTheme::Role::Good)), "ON");
+                    ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.f, 1.f, 0.25f, 1.f), IlionTheme::Role::Good)), Tr("ON"));
                 else
-                    ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.647f, 0.0f, 1.f)), "ACTIVATE FG");
+                    ImGui::TextColored(toneMapColor(ImVec4(1.0f, 0.647f, 0.0f, 1.f)), Tr("ACTIVATE FG"));
             }
             else
             {
-                ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), "OFF");
-                ImGui::Text("Please select DLSS Frame Generation in the game options\n"
-                            "You might need to select DLSS first");
+                ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), Tr("OFF"));
+                ImGui::Text(Tr("Please select DLSS Frame Generation in the game options\n"
+                            "You might need to select DLSS first"));
             }
         }
     }
@@ -11165,11 +11215,11 @@ void MenuCommon::RenderFsrCommonSettings(RenderMenuContext& ctx)
             SeparatorWithHelpMarker("FSR Common Settings", "Affects both FSR-FG & Upscalers");
 
             bool useFsrVales = config->FsrUseFsrInputValues.value_or_default();
-            if (IlionTheme::Checkbox("Use FSR Input Values", &useFsrVales))
+            if (IlionTheme::Checkbox(TrL("Use FSR Input Values"), &useFsrVales))
                 config->FsrUseFsrInputValues = useFsrVales;
 
             ImGui::Spacing();
-            if (auto ch = ScopedCollapsingHeader("FoV & Camera Values"); ch.IsHeaderOpen())
+            if (auto ch = ScopedCollapsingHeader(TrL("FoV & Camera Values")); ch.IsHeaderOpen())
             {
                 ScopedIndent indent {};
                 ImGui::Spacing();
@@ -11184,7 +11234,7 @@ void MenuCommon::RenderFsrCommonSettings(RenderMenuContext& ctx)
                 else if (!useVFov && !config->FsrHorizontalFov.has_value())
                     config->FsrHorizontalFov = hfov;
 
-                if (IlionTheme::RadioButton("Use Vert. Fov", useVFov))
+                if (IlionTheme::RadioButton(TrL("Use Vert. Fov"), useVFov))
                 {
                     config->FsrHorizontalFov.reset();
                     config->FsrVerticalFov = vfov;
@@ -11193,7 +11243,7 @@ void MenuCommon::RenderFsrCommonSettings(RenderMenuContext& ctx)
 
                 ImGui::SameLine(0.0f, 6.0f);
 
-                if (IlionTheme::RadioButton("Use Horz. Fov", !useVFov))
+                if (IlionTheme::RadioButton(TrL("Use Horz. Fov"), !useVFov))
                 {
                     config->FsrVerticalFov.reset();
                     config->FsrHorizontalFov = hfov;
@@ -11202,14 +11252,14 @@ void MenuCommon::RenderFsrCommonSettings(RenderMenuContext& ctx)
 
                 if (useVFov)
                 {
-                    if (IlionTheme::SliderFloat("Vert. FOV", &vfov, 0.0f, 180.0f, "%.1f"))
+                    if (IlionTheme::SliderFloat(TrL("Vert. FOV"), &vfov, 0.0f, 180.0f, "%.1f"))
                         config->FsrVerticalFov = vfov;
 
                     ShowTooltip("Might help achieve better image quality");
                 }
                 else
                 {
-                    if (IlionTheme::SliderFloat("Horz. FOV", &hfov, 0.0f, 180.0f, "%.1f"))
+                    if (IlionTheme::SliderFloat(TrL("Horz. FOV"), &hfov, 0.0f, 180.0f, "%.1f"))
                         config->FsrHorizontalFov = hfov;
 
                     ShowTooltip("Might help achieve better image quality");
@@ -11221,17 +11271,17 @@ void MenuCommon::RenderFsrCommonSettings(RenderMenuContext& ctx)
                 cameraNear = config->FsrCameraNear.value_or_default();
                 cameraFar = config->FsrCameraFar.value_or_default();
 
-                if (IlionTheme::SliderFloat("Camera Near", &cameraNear, 0.1f, 500000.0f, "%.1f"))
+                if (IlionTheme::SliderFloat(TrL("Camera Near"), &cameraNear, 0.1f, 500000.0f, "%.1f"))
                     config->FsrCameraNear = cameraNear;
                 ShowTooltip("Might help achieve better image quality\n"
                             "And potentially less ghosting");
 
-                if (IlionTheme::SliderFloat("Camera Far", &cameraFar, 0.1f, 500000.0f, "%.1f"))
+                if (IlionTheme::SliderFloat(TrL("Camera Far"), &cameraFar, 0.1f, 500000.0f, "%.1f"))
                     config->FsrCameraFar = cameraFar;
                 ShowTooltip("Might help achieve better image quality\n"
                             "And potentially less ghosting");
 
-                if (IlionTheme::Button("Reset Camera Values"))
+                if (IlionTheme::Button(TrL("Reset Camera Values")))
                 {
                     config->FsrVerticalFov.reset();
                     config->FsrHorizontalFov.reset();
@@ -11240,7 +11290,7 @@ void MenuCommon::RenderFsrCommonSettings(RenderMenuContext& ctx)
                 }
 
                 ImGui::SameLine(0.0f, 6.0f);
-                ImGui::Text("Near: %.1f Far: %.1f",
+                ImGui::Text(Tr("Near: %.1f Far: %.1f"),
                             state.lastFsrCameraNear < 500000.0f ? state.lastFsrCameraNear : 500000.0f,
                             state.lastFsrCameraFar < 500000.0f ? state.lastFsrCameraFar : 500000.0f);
 
@@ -11499,11 +11549,11 @@ void MenuCommon::RenderLowLatencySettings(RenderMenuContext& ctx)
 
         ImGui::TableNextColumn();
 
-        ImGui::Text("Active input: %s", GetMenuOptionLabel(lowLatencyInput, activeInput).c_str());
+        ImGui::Text(Tr("Active input: %s"), GetMenuOptionLabel(lowLatencyInput, activeInput).c_str());
 
         ImGui::TableNextColumn();
 
-        ImGui::Text("Active output: %s", GetMenuOptionLabel(lowLatencyOutput, activeOutput).c_str());
+        ImGui::Text(Tr("Active output: %s"), GetMenuOptionLabel(lowLatencyOutput, activeOutput).c_str());
 
         ImGui::EndTable();
     }
@@ -11524,7 +11574,7 @@ void MenuCommon::RenderLowLatencySettings(RenderMenuContext& ctx)
         if (!config->LowLatencyInput.has_value())
             config->LowLatencyInput = config->LowLatencyInput.value_or_default();
 
-        PopulateCombo("Input", config->LowLatencyInput, lowLatencyInput);
+        PopulateCombo(TrL("Input"), config->LowLatencyInput, lowLatencyInput);
 
         ImGui::TableNextColumn();
 
@@ -11535,7 +11585,7 @@ void MenuCommon::RenderLowLatencySettings(RenderMenuContext& ctx)
         if (!config->LowLatencyOutput.has_value())
             config->LowLatencyOutput = config->LowLatencyOutput.value_or_default();
 
-        PopulateCombo("Output", config->LowLatencyOutput, lowLatencyOutput);
+        PopulateCombo(TrL("Output"), config->LowLatencyOutput, lowLatencyOutput);
 
         ImGui::EndTable();
     }
@@ -11551,7 +11601,7 @@ void MenuCommon::RenderLowLatencySettings(RenderMenuContext& ctx)
               "and will fallback to Aggressive" }
         };
 
-        PopulateCombo("LatencyFlex mode", config->FN_LatencyFlexMode, lfx_modes);
+        PopulateCombo(TrL("LatencyFlex mode"), config->FN_LatencyFlexMode, lfx_modes);
     }
 
     static std::vector<MenuOption<ForceReflex>> lowlatency_states = { { ForceReflex::InGame, "Follow in-game" },
@@ -11559,7 +11609,7 @@ void MenuCommon::RenderLowLatencySettings(RenderMenuContext& ctx)
                                                                       { ForceReflex::ForceEnable, "Force Enable" } };
 
     ImGui::SetNextItemWidth(150.0f * ctx.menuResScale);
-    PopulateCombo("Force State", config->FN_ForceReflex, lowlatency_states);
+    PopulateCombo(TrL("Force State"), config->FN_ForceReflex, lowlatency_states);
 }
 
 void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
@@ -11838,7 +11888,7 @@ void MenuCommon::RenderUpscaleRatioSettings(RenderMenuContext& ctx)
         ImGui::TableNextColumn();
 
         if (bool upOverride = config->UpscaleRatioOverrideEnabled.value_or_default();
-            IlionTheme::Checkbox("Override all", &upOverride))
+            IlionTheme::Checkbox(TrL("Override all"), &upOverride))
         {
             config->UpscaleRatioOverrideEnabled = upOverride;
 
@@ -11852,7 +11902,7 @@ void MenuCommon::RenderUpscaleRatioSettings(RenderMenuContext& ctx)
         ImGui::TableNextColumn();
 
         if (bool qOverride = config->QualityRatioOverrideEnabled.value_or_default();
-            IlionTheme::Checkbox("Override per quality preset", &qOverride))
+            IlionTheme::Checkbox(TrL("Override per quality preset"), &qOverride))
         {
             config->QualityRatioOverrideEnabled = qOverride;
 
@@ -11871,34 +11921,34 @@ void MenuCommon::RenderUpscaleRatioSettings(RenderMenuContext& ctx)
     if (config->UpscaleRatioOverrideEnabled.value_or_default())
     {
         float urOverride = config->UpscaleRatioOverrideValue.value_or_default();
-        IlionTheme::SliderFloat("All Ratios", &urOverride, minSliderLimit, maxSliderLimit, "%.3f");
+        IlionTheme::SliderFloat(TrL("All Ratios"), &urOverride, minSliderLimit, maxSliderLimit, "%.3f");
         config->UpscaleRatioOverrideValue = urOverride;
     }
 
     if (config->QualityRatioOverrideEnabled.value_or_default())
     {
         float qDlaa = config->QualityRatio_DLAA.value_or_default();
-        if (IlionTheme::SliderFloat("DLAA", &qDlaa, minSliderLimit, maxSliderLimit, "%.3f"))
+        if (IlionTheme::SliderFloat(TrL("DLAA"), &qDlaa, minSliderLimit, maxSliderLimit, "%.3f"))
             config->QualityRatio_DLAA = qDlaa;
 
         float qUq = config->QualityRatio_UltraQuality.value_or_default();
-        if (IlionTheme::SliderFloat("Ultra Quality", &qUq, minSliderLimit, maxSliderLimit, "%.3f"))
+        if (IlionTheme::SliderFloat(TrL("Ultra Quality"), &qUq, minSliderLimit, maxSliderLimit, "%.3f"))
             config->QualityRatio_UltraQuality = qUq;
 
         float qQ = config->QualityRatio_Quality.value_or_default();
-        if (IlionTheme::SliderFloat("Quality", &qQ, minSliderLimit, maxSliderLimit, "%.3f"))
+        if (IlionTheme::SliderFloat(TrL("Quality"), &qQ, minSliderLimit, maxSliderLimit, "%.3f"))
             config->QualityRatio_Quality = qQ;
 
         float qB = config->QualityRatio_Balanced.value_or_default();
-        if (IlionTheme::SliderFloat("Balanced", &qB, minSliderLimit, maxSliderLimit, "%.3f"))
+        if (IlionTheme::SliderFloat(TrL("Balanced"), &qB, minSliderLimit, maxSliderLimit, "%.3f"))
             config->QualityRatio_Balanced = qB;
 
         float qP = config->QualityRatio_Performance.value_or_default();
-        if (IlionTheme::SliderFloat("Performance", &qP, minSliderLimit, maxSliderLimit, "%.3f"))
+        if (IlionTheme::SliderFloat(TrL("Performance"), &qP, minSliderLimit, maxSliderLimit, "%.3f"))
             config->QualityRatio_Performance = qP;
 
         float qUp = config->QualityRatio_UltraPerformance.value_or_default();
-        if (IlionTheme::SliderFloat("Ultra Performance", &qUp, minSliderLimit, maxSliderLimit, "%.3f"))
+        if (IlionTheme::SliderFloat(TrL("Ultra Performance"), &qUp, minSliderLimit, maxSliderLimit, "%.3f"))
             config->QualityRatio_UltraPerformance = qUp;
     }
 }
@@ -11931,7 +11981,7 @@ void MenuCommon::RenderOutputScalingSettings(RenderMenuContext& ctx)
         ImGui::BeginDisabled((currentBackend == Upscaler::XeSS || currentBackend == Upscaler::DLSS ||
                               currentBackend == Upscaler::DLSS_on12) &&
                              currentFeature->RenderWidth() > currentFeature->DisplayWidth());
-        IlionTheme::Checkbox("Enable", &_ssEnabled);
+        IlionTheme::Checkbox(TrL("Enable"), &_ssEnabled);
         ImGui::EndDisabled();
 
         ShowTooltip("Upscales the image internally to a higher output resolution\n"
@@ -11969,7 +12019,7 @@ void MenuCommon::RenderOutputScalingSettings(RenderMenuContext& ctx)
             // clang-format on
 
             const bool isUpsampleRatio = _ssRatio < 1.0f;
-            const std::string disabledReason = "Only FSR1 and Bicubic are supported when Ratio is below 1.0.";
+            const std::string disabledReason = Tr("Only FSR1 and Bicubic are supported when Ratio is below 1.0.");
 
             for (auto& opt : ds_options)
             {
@@ -11980,7 +12030,7 @@ void MenuCommon::RenderOutputScalingSettings(RenderMenuContext& ctx)
             if (isUpsampleRatio && _ssDownsampler > Scaler::Bicubic)
                 _ssDownsampler = Scaler::FSR1;
 
-            PopulateCombo("Downscaler", _ssDownsampler, ds_options);
+            PopulateCombo(TrL("Downscaler"), _ssDownsampler, ds_options);
 
             ImGui::PopItemWidth();
         }
@@ -11991,7 +12041,7 @@ void MenuCommon::RenderOutputScalingSettings(RenderMenuContext& ctx)
                             _ssDownsampler != config->OutputScalingDownscaler.value_or_default();
 
         ImGui::BeginDisabled(!applyEnabled);
-        if (IlionTheme::Button("Apply Change"))
+        if (IlionTheme::Button(TrL("Apply Change")))
         {
             config->OutputScalingEnabled = _ssEnabled;
             config->OutputScalingMultiplier = _ssRatio;
@@ -12012,12 +12062,12 @@ void MenuCommon::RenderOutputScalingSettings(RenderMenuContext& ctx)
         ImGui::EndDisabled();
 
         ImGui::BeginDisabled(!_ssEnabled || currentFeature->RenderWidth() > currentFeature->DisplayWidth());
-        IlionTheme::SliderFloat("Ratio", &_ssRatio, 0.5f, 3.0f, "%.2f");
+        IlionTheme::SliderFloat(TrL("Ratio"), &_ssRatio, 0.5f, 3.0f, "%.2f");
         ImGui::EndDisabled();
 
         if (currentFeature != nullptr && !currentFeature->IsFrozen())
         {
-            ImGui::Text("Output Scaling is %s, Target Res: %dx%d (%.2f)\nJitter Count: %d",
+            ImGui::Text(Tr("Output Scaling is %s, Target Res: %dx%d (%.2f)\nJitter Count: %d"),
                         config->OutputScalingEnabled.value_or_default() ? "ENABLED" : "DISABLED",
                         (uint32_t) (currentFeature->DisplayWidth() * _ssRatio),
                         (uint32_t) (currentFeature->DisplayHeight() * _ssRatio),
@@ -12049,7 +12099,7 @@ void MenuCommon::RenderInitFlagsSettings(RenderMenuContext& ctx)
         bool autoExposureDisabled = state.api == API::DX11 && currentBackend == Upscaler::XeSS;
         ImGui::BeginDisabled(autoExposureDisabled);
 
-        if (bool autoExposure = currentFeature->AutoExposure(); IlionTheme::Checkbox("Auto Exposure", &autoExposure))
+        if (bool autoExposure = currentFeature->AutoExposure(); IlionTheme::Checkbox(TrL("Auto Exposure"), &autoExposure))
         {
             config->AutoExposure = autoExposure;
             ReInitUpscaler();
@@ -12062,7 +12112,7 @@ void MenuCommon::RenderInitFlagsSettings(RenderMenuContext& ctx)
         ImGui::EndDisabled();
 
         ImGui::TableNextColumn();
-        if (bool depth = currentFeature->DepthInverted(); IlionTheme::Checkbox("Depth Inverted", &depth))
+        if (bool depth = currentFeature->DepthInverted(); IlionTheme::Checkbox(TrL("Depth Inverted"), &depth))
         {
             config->DepthInverted = depth;
             ReInitUpscaler();
@@ -12071,7 +12121,7 @@ void MenuCommon::RenderInitFlagsSettings(RenderMenuContext& ctx)
         ShowResetButton(&config->DepthInverted, "R##2");
 
         ImGui::TableNextColumn();
-        if (bool hdr = currentFeature->IsHdr(); IlionTheme::Checkbox("HDR", &hdr))
+        if (bool hdr = currentFeature->IsHdr(); IlionTheme::Checkbox(TrL("HDR"), &hdr))
         {
             config->HDR = hdr;
             ReInitUpscaler();
@@ -12080,7 +12130,7 @@ void MenuCommon::RenderInitFlagsSettings(RenderMenuContext& ctx)
         ShowResetButton(&config->HDR, "R##1");
 
         ImGui::TableNextColumn();
-        if (bool jitter = currentFeature->JitteredMV(); IlionTheme::Checkbox("Jitter Cancellation", &jitter))
+        if (bool jitter = currentFeature->JitteredMV(); IlionTheme::Checkbox(TrL("Jitter Cancellation"), &jitter))
         {
             config->JitterCancellation = jitter;
             ReInitUpscaler();
@@ -12089,7 +12139,7 @@ void MenuCommon::RenderInitFlagsSettings(RenderMenuContext& ctx)
         ShowResetButton(&config->JitterCancellation, "R##3");
 
         ImGui::TableNextColumn();
-        if (bool mv = !currentFeature->LowResMV(); IlionTheme::Checkbox("Display Res. MV", &mv))
+        if (bool mv = !currentFeature->LowResMV(); IlionTheme::Checkbox(TrL("Display Res. MV"), &mv))
         {
             config->DisplayResolution = mv;
 
@@ -12117,7 +12167,7 @@ void MenuCommon::RenderInitFlagsSettings(RenderMenuContext& ctx)
 
         bool disableReactiveMask = config->DisableReactiveMask.value_or(!canUseReactiveMask);
 
-        if (IlionTheme::Checkbox("Disable Reactive Mask", &disableReactiveMask))
+        if (IlionTheme::Checkbox(TrL("Disable Reactive Mask"), &disableReactiveMask))
         {
             config->DisableReactiveMask = disableReactiveMask;
 
@@ -12145,7 +12195,7 @@ void MenuCommon::RenderInitFlagsSettings(RenderMenuContext& ctx)
         ImGui::BeginDisabled(config->DisableReactiveMask.value_or(false));
 
         auto useAsTransparency = config->FsrUseMaskForTransparency.value_or_default();
-        if (IlionTheme::Checkbox("Use Reactive Mask as Transparency Mask", &useAsTransparency))
+        if (IlionTheme::Checkbox(TrL("Use Reactive Mask as Transparency Mask"), &useAsTransparency))
             config->FsrUseMaskForTransparency = useAsTransparency;
 
         ImGui::EndDisabled();
@@ -12162,7 +12212,7 @@ void MenuCommon::RenderInitFlagsSettings(RenderMenuContext& ctx)
 
         if (!binaryMask)
         {
-            if (IlionTheme::SliderFloat("React. Mask Bias", &maskBias, 0.0f, 0.9f, "%.2f"))
+            if (IlionTheme::SliderFloat(TrL("React. Mask Bias"), &maskBias, 0.0f, 0.9f, "%.2f"))
                 config->DlssReactiveMaskBias = maskBias;
 
             ShowTooltip("Values above 0 activate usage of Reactive mask");
@@ -12170,7 +12220,7 @@ void MenuCommon::RenderInitFlagsSettings(RenderMenuContext& ctx)
         else
         {
             bool useRM = maskBias > 0.0f;
-            if (IlionTheme::Checkbox("Use Binary Reactive Mask", &useRM))
+            if (IlionTheme::Checkbox(TrL("Use Binary Reactive Mask"), &useRM))
             {
                 if (useRM)
                     config->DlssReactiveMaskBias = 0.45f;
@@ -12620,7 +12670,7 @@ void MenuCommon::RenderIntelligentLatency(RenderMenuContext& ctx)
                           : vendor == VendorId::Nvidia ? "NVIDIA"
                           : vendor == VendorId::Intel  ? "Intel"
                                                        : "?";
-        ImGui::Text("GPU: %s   API: %s", gpu, api);
+        ImGui::Text(Tr("GPU: %s   API: %s"), gpu, api);
         ImGui::Text(Tr("OptiScaler nvapi (fakenvapi): %s"), fakenvapiInUse ? yes : no);
         ImGui::Text(Tr("Low latency enabled: %s"), enabled ? yes : no);
         ImGui::Text(Tr("Reflex frame id: %llu (%s)"), (unsigned long long) state.reflexFrameId,
@@ -12905,30 +12955,30 @@ void MenuCommon::RenderLoggingSettings(RenderMenuContext& ctx)
     else
         spdlog::default_logger()->set_level(spdlog::level::off);
 
-    if (bool toFile = config->LogToFile.value_or_default(); IlionTheme::Checkbox("To File", &toFile))
+    if (bool toFile = config->LogToFile.value_or_default(); IlionTheme::Checkbox(TrL("To File"), &toFile))
     {
         config->LogToFile = toFile;
         PrepareLogger();
     }
 
     ImGui::SameLine(0.0f, 6.0f);
-    if (bool toConsole = config->LogToConsole.value_or_default(); IlionTheme::Checkbox("To Console", &toConsole))
+    if (bool toConsole = config->LogToConsole.value_or_default(); IlionTheme::Checkbox(TrL("To Console"), &toConsole))
     {
         config->LogToConsole = toConsole;
         PrepareLogger();
     }
 
     ImGui::SameLine(0.0f, 6.0f);
-    if (auto SingleFile = config->LogSingleFile.value_or_default(); IlionTheme::Checkbox("Single File", &SingleFile))
+    if (auto SingleFile = config->LogSingleFile.value_or_default(); IlionTheme::Checkbox(TrL("Single File"), &SingleFile))
     {
         config->LogSingleFile = SingleFile;
         PrepareLogger();
     }
 
-    const char* logLevels[] = { "Trace", "Debug", "Information", "Warning", "Error" };
+    const char* logLevels[] = { Tr("Trace"), Tr("Debug"), Tr("Information"), Tr("Warning"), Tr("Error") };
     const char* selectedLevel = logLevels[config->LogLevel.value_or_default()];
 
-    if (IlionTheme::BeginCombo("Log Level", selectedLevel))
+    if (IlionTheme::BeginCombo(TrL("Log Level"), selectedLevel))
     {
         for (int n = 0; n < 5; n++)
         {
@@ -12949,7 +12999,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
 
     // THEME -----------------------------
     ImGui::Spacing();
-    if (auto ch = ScopedCollapsingHeader("Menu Theme and Color"); ch.IsHeaderOpen())
+    if (auto ch = ScopedCollapsingHeader(TrL("Menu Theme and Color")); ch.IsHeaderOpen())
     {
         ScopedIndent indent {};
         ImGui::Spacing();
@@ -12990,8 +13040,9 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         ShowTooltip("ILION (original), Fallout, Light and Fallout 2: the instrument panel look of ILION in four styles.\n"
                     "Classic: the original look, with the colour settings below.");
 
-        // The colours below are the ones of the classic theme
-        ImGui::BeginDisabled(industrialTheme);
+        // The colours below are the ones of the classic theme: hidden with the ILION themes, they do nothing there
+        if (!industrialTheme)
+        {
 
         bool lightTheme = config->LightTheme.value_or_default();
 
@@ -13011,7 +13062,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         auto AccentStrong = [&](ImVec4 accent, float alpha = 1.0f)
         { return toneMapColor(ImVec4(accent.x, accent.y, accent.z, alpha)); };
 
-        if (IlionTheme::Checkbox("Light Theme", &lightTheme))
+        if (IlionTheme::Checkbox(TrL("Light Theme"), &lightTheme))
         {
             config->LightTheme = lightTheme;
             ApplyThemeStyle();
@@ -13019,7 +13070,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
 
         SectionTitle("Accent Colour");
 
-        ImGui::Text("Presets:");
+        ImGui::Text(Tr("Presets:"));
         ImGui::SameLine(0.0f, 6.0f);
 
         ImVec4 colorBlue = { 0.00f, 0.40f, 0.77f, 1.0f };
@@ -13038,7 +13089,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentMed(color));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentStrong(color));
 
-        if (IlionTheme::Button("Blue"))
+        if (IlionTheme::Button(TrL("Blue")))
         {
             ImGui::PopStyleColor(3);
 
@@ -13059,7 +13110,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentMed(color));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentStrong(color));
 
-        if (IlionTheme::Button("Teal"))
+        if (IlionTheme::Button(TrL("Teal")))
         {
             ImGui::PopStyleColor(3);
 
@@ -13080,7 +13131,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentMed(color));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentStrong(color));
 
-        if (IlionTheme::Button("Gray"))
+        if (IlionTheme::Button(TrL("Gray")))
         {
             ImGui::PopStyleColor(3);
 
@@ -13101,7 +13152,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentMed(color));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentStrong(color));
 
-        if (IlionTheme::Button("Yellow"))
+        if (IlionTheme::Button(TrL("Yellow")))
         {
             ImGui::PopStyleColor(3);
 
@@ -13122,7 +13173,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentMed(color));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentStrong(color));
 
-        if (IlionTheme::Button("Green"))
+        if (IlionTheme::Button(TrL("Green")))
         {
             ImGui::PopStyleColor(3);
 
@@ -13143,7 +13194,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentMed(color));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentStrong(color));
 
-        if (IlionTheme::Button("Red"))
+        if (IlionTheme::Button(TrL("Red")))
         {
             ImGui::PopStyleColor(3);
 
@@ -13164,7 +13215,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentMed(color));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentStrong(color));
 
-        if (IlionTheme::Button("Orange"))
+        if (IlionTheme::Button(TrL("Orange")))
         {
             ImGui::PopStyleColor(3);
 
@@ -13185,7 +13236,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentMed(color));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentStrong(color));
 
-        if (IlionTheme::Button("Purple"))
+        if (IlionTheme::Button(TrL("Purple")))
         {
             ImGui::PopStyleColor(3);
 
@@ -13213,7 +13264,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
 
         ImGui::Spacing();
 
-        if (IlionTheme::Button("Reset Accent Color"))
+        if (IlionTheme::Button(TrL("Reset Accent Color")))
         {
             config->MenuAccentColorR.reset();
             config->MenuAccentColorG.reset();
@@ -13225,7 +13276,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
 
         SectionTitle("Background Colour");
 
-        ImGui::Text("Presets:");
+        ImGui::Text(Tr("Presets:"));
         ImGui::SameLine(0.0f, 6.0f);
 
         color = colorBlue;
@@ -13233,7 +13284,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentMed(color));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentStrong(color));
 
-        if (IlionTheme::Button("Blue##2"))
+        if (IlionTheme::Button(TrL("Blue##2")))
         {
             ImGui::PopStyleColor(3);
 
@@ -13254,7 +13305,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentMed(color));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentStrong(color));
 
-        if (IlionTheme::Button("Teal##2"))
+        if (IlionTheme::Button(TrL("Teal##2")))
         {
             ImGui::PopStyleColor(3);
 
@@ -13275,7 +13326,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentMed(color));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentStrong(color));
 
-        if (IlionTheme::Button("Gray##2"))
+        if (IlionTheme::Button(TrL("Gray##2")))
         {
             ImGui::PopStyleColor(3);
 
@@ -13296,7 +13347,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentMed(color));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentStrong(color));
 
-        if (IlionTheme::Button("Yellow##2"))
+        if (IlionTheme::Button(TrL("Yellow##2")))
         {
             ImGui::PopStyleColor(3);
 
@@ -13317,7 +13368,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentMed(color));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentStrong(color));
 
-        if (IlionTheme::Button("Green##2"))
+        if (IlionTheme::Button(TrL("Green##2")))
         {
             ImGui::PopStyleColor(3);
 
@@ -13338,7 +13389,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentMed(color));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentStrong(color));
 
-        if (IlionTheme::Button("Red##2"))
+        if (IlionTheme::Button(TrL("Red##2")))
         {
             ImGui::PopStyleColor(3);
 
@@ -13359,7 +13410,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentMed(color));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentStrong(color));
 
-        if (IlionTheme::Button("Orange##2"))
+        if (IlionTheme::Button(TrL("Orange##2")))
         {
             ImGui::PopStyleColor(3);
 
@@ -13380,7 +13431,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentMed(color));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentStrong(color));
 
-        if (IlionTheme::Button("Purple##2"))
+        if (IlionTheme::Button(TrL("Purple##2")))
         {
             ImGui::PopStyleColor(3);
 
@@ -13405,12 +13456,12 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
             ApplyThemeStyle();
         }
 
-        ImGui::EndDisabled();
+        } // classic theme colours
 
         ImGui::Spacing();
 
         auto alpha = config->MenuBGColorA.value_or_default();
-        if (IlionTheme::SliderFloat("Background Alpha", &alpha, 0.0f, 1.0f))
+        if (IlionTheme::SliderFloat(TrL("Background Alpha"), &alpha, 0.0f, 1.0f))
         {
             config->MenuBGColorA = alpha;
             ApplyThemeStyle();
@@ -13424,7 +13475,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
             ImGui::BeginDisabled(!config->MenuBlur.value_or_default());
 
             auto blurStrength = config->MenuBlurStrength.value_or_default();
-            if (IlionTheme::SliderFloat("Blur Strength", &blurStrength, 0.0f, 4.0f, "%.2f"))
+            if (IlionTheme::SliderFloat(TrL("Blur Strength"), &blurStrength, 0.0f, 4.0f, "%.2f"))
                 config->MenuBlurStrength = blurStrength;
 
             ImGui::EndDisabled();
@@ -13432,7 +13483,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
 
         ImGui::Spacing();
 
-        if (IlionTheme::Button("Reset BG Colour"))
+        if (IlionTheme::Button(TrL("Reset BG Colour")))
         {
             config->MenuBGColorR.reset();
             config->MenuBGColorG.reset();
@@ -13455,19 +13506,19 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
         ScopedID sectionId { "FPS Overlay" };
 
         bool fpsEnabled = config->ShowFps.value_or_default();
-        if (IlionTheme::Checkbox("FPS Overlay Enabled", &fpsEnabled))
+        if (IlionTheme::Checkbox(TrL("FPS Overlay Enabled"), &fpsEnabled))
             config->ShowFps = fpsEnabled;
 
         ImGui::SameLine(0.0f, 6.0f);
 
         bool fpsHorizontal = config->FpsOverlayHorizontal.value_or_default();
-        if (IlionTheme::Checkbox("Horizontal", &fpsHorizontal))
+        if (IlionTheme::Checkbox(TrL("Horizontal"), &fpsHorizontal))
             config->FpsOverlayHorizontal = fpsHorizontal;
 
-        const char* fpsPosition[] = { "Top Left", "Top Right", "Bottom Left", "Bottom Right" };
+        const char* fpsPosition[] = { Tr("Top Left"), Tr("Top Right"), Tr("Bottom Left"), Tr("Bottom Right") };
         const char* selectedPosition = fpsPosition[config->FpsOverlayPosition.value_or_default()];
 
-        if (IlionTheme::BeginCombo("Overlay Position", selectedPosition))
+        if (IlionTheme::BeginCombo(TrL("Overlay Position"), selectedPosition))
         {
             for (int n = 0; n < std::size(fpsPosition); n++)
             {
@@ -13478,11 +13529,11 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
             ImGui::EndCombo();
         }
 
-        const char* fpsType[] = { "Just FPS", "Simple",       "Detailed",      "Detailed + Graph",
-                                  "Full",     "Full + Graph", "Reflex timings" };
+        const char* fpsType[] = { Tr("Just FPS"), Tr("Simple"),       Tr("Detailed"),      Tr("Detailed + Graph"),
+                                  Tr("Full"),     Tr("Full + Graph"), Tr("Reflex timings") };
         const char* selectedType = fpsType[config->FpsOverlayType.value_or_default()];
 
-        if (IlionTheme::BeginCombo("Overlay Type", selectedType))
+        if (IlionTheme::BeginCombo(TrL("Overlay Type"), selectedType))
         {
             for (int n = 0; n < std::size(fpsType); n++)
             {
@@ -13494,16 +13545,16 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
         }
 
         float fpsAlpha = config->FpsOverlayAlpha.value_or_default();
-        if (IlionTheme::SliderFloat("Background Alpha", &fpsAlpha, 0.0f, 1.0f, "%.2f"))
+        if (IlionTheme::SliderFloat(TrL("Background Alpha"), &fpsAlpha, 0.0f, 1.0f, "%.2f"))
             config->FpsOverlayAlpha = fpsAlpha;
 
-        const char* options[] = { "Same as menu", "0.5", "0.6", "0.7", "0.8", "0.9", "1.0", "1.1", "1.2",
+        const char* options[] = { Tr("Same as menu"), "0.5", "0.6", "0.7", "0.8", "0.9", "1.0", "1.1", "1.2",
                                   "1.3",          "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "2.0" };
         int currentIndex = std::max(((int) (config->FpsScale.value_or(0.0f) * 10.0f)) - 4, 0);
         float values[] = { 0.0f, 0.5f, 0.6f, 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f,
                            1.3f, 1.4f, 1.5f, 1.6f, 1.7f, 1.8f, 1.9f, 2.0f };
 
-        if (IlionTheme::SliderInt("Scale", &currentIndex, 0, IM_ARRAYSIZE(options) - 1, options[currentIndex],
+        if (IlionTheme::SliderInt(TrL("Scale"), &currentIndex, 0, IM_ARRAYSIZE(options) - 1, options[currentIndex],
                              ImGuiSliderFlags_ClampOnInput))
         {
             if (currentIndex == 0)
@@ -13513,7 +13564,7 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
         }
 
         bool useTheme = config->OverlaysUseTheme.value_or_default();
-        if (IlionTheme::Checkbox("Use Theme Colors", &useTheme))
+        if (IlionTheme::Checkbox(TrL("Use Theme Colors"), &useTheme))
             config->OverlaysUseTheme = useTheme;
 
         ConfigCheckbox("1% low (last 300 frames)", config->FpsOverlayLow1,
@@ -13536,7 +13587,7 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
         if (ImGui::BeginTable("hwMetrics", 2, ImGuiTableFlags_SizingStretchSame))
         {
             ImGui::TableNextColumn();
-            ImGui::TextDisabled("GPU");
+            ImGui::TextDisabled(Tr("GPU"));
             ConfigCheckbox("GPU usage", config->HwGpuUsage, nullptr);
             ConfigCheckbox("GPU temperature", config->HwGpuTemp, nullptr);
             ConfigCheckbox("GPU hotspot", config->HwGpuHotspot, nullptr);
@@ -13544,7 +13595,7 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
             ConfigCheckbox("GPU power", config->HwGpuPower, nullptr);
 
             ImGui::TableNextColumn();
-            ImGui::TextDisabled("CPU");
+            ImGui::TextDisabled(Tr("CPU"));
             ConfigCheckbox("CPU usage", config->HwCpuUsage, nullptr);
             ConfigCheckbox("CPU temperature", config->HwCpuTemp, nullptr);
             ConfigCheckbox("CPU power", config->HwCpuPower, nullptr);
@@ -13569,7 +13620,10 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
 
         const auto hwSnapshot = HwTelemetry::Get();
 
-        ImGui::TextDisabled("HWiNFO: %s  |  MSI Afterburner: %s",
+        // ILION: where every reading comes from, folded; the readings above don't depend on it being open
+        if (auto sources = ScopedCollapsingHeader(TrL("Sensor sources and diagnostics")); sources.IsHeaderOpen())
+        {
+        ImGui::TextDisabled(Tr("HWiNFO: %s  |  MSI Afterburner: %s"),
                             Tr(hwSnapshot.hwinfoAvailable ? "detected" : "not detected"),
                             Tr(hwSnapshot.afterburnerAvailable ? "detected" : "not detected"));
 
@@ -13594,6 +13648,7 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
         hwSourceRow("GPU power", HwTelemetry::GpuPower);
         hwSourceRow("CPU power", HwTelemetry::CpuPower);
         hwSourceRow("RAM used", HwTelemetry::RamUsed);
+        } // sensor sources
         }
     }
 }
@@ -13675,7 +13730,7 @@ void MenuCommon::RenderUpscalerInputsSettings(RenderMenuContext& ctx)
         if (restartNeeded)
         {
             ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)));
-            ImGui::TextWrapped("Save Settings and restart the game for Enable and Pattern changes to apply");
+            ImGui::TextWrapped(Tr("Save Settings and restart the game for Enable and Pattern changes to apply"));
             ImGui::PopStyleColor();
         }
     }
@@ -13698,7 +13753,7 @@ void MenuCommon::RenderVsyncSettings(RenderMenuContext& ctx)
 
             auto OverrideVsync = config->OverrideVsync.value_or_default();
             {
-                if (IlionTheme::Checkbox("Override Vsync", &OverrideVsync))
+                if (IlionTheme::Checkbox(TrL("Override Vsync"), &OverrideVsync))
                 {
                     config->OverrideVsync = OverrideVsync;
                     LOG_DEBUG("Enabled OverrideVsync: {}", OverrideVsync);
@@ -13713,7 +13768,7 @@ void MenuCommon::RenderVsyncSettings(RenderMenuContext& ctx)
             auto forceVsyncOff = config->ForceVsync.has_value() && !config->ForceVsync.value();
             bool vsyncChanged = false;
 
-            if (IlionTheme::Checkbox("V-Sync On", &forceVsyncOn))
+            if (IlionTheme::Checkbox(TrL("V-Sync On"), &forceVsyncOn))
             {
                 if (forceVsyncOn)
                 {
@@ -13728,7 +13783,7 @@ void MenuCommon::RenderVsyncSettings(RenderMenuContext& ctx)
             }
             ImGui::SameLine(0.0f, 16.0f);
 
-            if (IlionTheme::Checkbox("V-Sync Off", &forceVsyncOff))
+            if (IlionTheme::Checkbox(TrL("V-Sync Off"), &forceVsyncOff))
             {
                 if (forceVsyncOff)
                 {
@@ -13748,7 +13803,7 @@ void MenuCommon::RenderVsyncSettings(RenderMenuContext& ctx)
             ImGui::PushItemWidth(50.0f * menuResScale);
 
             auto vsyncBuf = StrFmt("%d", config->VsyncInterval.value_or_default());
-            if (IlionTheme::BeginCombo("Sync Int.", vsyncBuf.c_str()))
+            if (IlionTheme::BeginCombo(TrL("Sync Int."), vsyncBuf.c_str()))
             {
                 if (ImGui::Selectable("0", config->VsyncInterval.value_or_default() == 0))
                 {
@@ -13789,7 +13844,7 @@ void MenuCommon::RenderVsyncSettings(RenderMenuContext& ctx)
             ImGui::EndDisabled();
             ImGui::SameLine(0.0f, 16.0f);
 
-            if (IlionTheme::Button("Reset##10"))
+            if (IlionTheme::Button(TrL("Reset##10")))
             {
                 config->ForceVsync.reset();
                 vsyncChanged = true;
@@ -13943,7 +13998,7 @@ void MenuCommon::RenderApiAndTextureSettings(RenderMenuContext& ctx)
                 config->AnisotropyOverride.has_value() ? std::to_string(config->AnisotropyOverride.value()) : "Auto";
             if (IlionTheme::BeginCombo(TrL("Force Anisotropic Filtering"), selectedAF.c_str()))
             {
-                if (ImGui::Selectable("Auto", !config->AnisotropyOverride.has_value()))
+                if (ImGui::Selectable(TrL("Auto"), !config->AnisotropyOverride.has_value()))
                     config->AnisotropyOverride.reset();
 
                 if (ImGui::Selectable("1", config->AnisotropyOverride.value_or(0) == 1))
@@ -13999,8 +14054,8 @@ void MenuCommon::RenderKeybindSettings(RenderMenuContext& ctx)
     {
         ScopedID sectionId { "Keybinds" };
 
-        ImGui::Text("Key combinations are currently NOT supported!");
-        ImGui::Text("Escape to cancel, Backspace to unbind");
+        ImGui::Text(Tr("Key combinations are currently NOT supported!"));
+        ImGui::Text(Tr("Escape to cancel, Backspace to unbind"));
         ImGui::Spacing();
 
         static auto menu = Keybind("Menu", 10);
@@ -14032,7 +14087,7 @@ void MenuCommon::RenderMenuScaleSettings(RenderMenuContext& ctx)
 
     const char* selectedScaleName = uiScales[_selectedScale];
 
-    if (IlionTheme::BeginCombo("Menu Scale", selectedScaleName))
+    if (IlionTheme::BeginCombo(TrL("Menu Scale"), selectedScaleName))
     {
         for (int n = 0; n < std::size(uiScales); n++)
         {
@@ -14090,9 +14145,9 @@ static void StatusFlag(const char* label, bool on, bool warnWhenOn = false)
     ImGui::SameLine(0.0f, 0.0f);
 
     if (on)
-        ImGui::TextUnformatted(label);
+        ImGui::TextUnformatted(Tr(label));
     else
-        ImGui::TextDisabled("%s", label);
+        ImGui::TextDisabled("%s", Tr(label));
 }
 
 // Which libraries and GPU features were found. Used by the Status tab and when no upscaler is available
@@ -14127,7 +14182,7 @@ void MenuCommon::RenderDetectedInfo(RenderMenuContext& ctx)
 
     // Frame ids that used to be in the performance overlay
     const auto statusFg = state.currentFG;
-    ImGui::TextDisabled("FGId: %llu, RfxId: %llu", statusFg != nullptr ? (UINT64) statusFg->FrameCount() : 0ull,
+    ImGui::TextDisabled(Tr("FGId: %llu, RfxId: %llu"), statusFg != nullptr ? (UINT64) statusFg->FrameCount() : 0ull,
                         (UINT64) state.reflexFrameId);
 
     ImGui::TextDisabled("%s", Tr("Unofficial modified build, not an OptiScaler release"));
@@ -14146,6 +14201,54 @@ void MenuCommon::RenderDetectedCard(RenderMenuContext& ctx)
     RenderDetectedInfo(ctx);
 
     ImGui::PopStyleVar(2);
+}
+
+// ILION: the five things most asked for, only from what OptiScaler reports now; nothing when it doesn't know
+void MenuCommon::RenderStatusSummary(RenderMenuContext& ctx)
+{
+    auto& state = ctx.state;
+    auto& currentFeature = ctx.currentFeature;
+
+    SectionTitle("Summary");
+
+    if (!ImGui::BeginTable("##statusSummary", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings))
+        return;
+
+    ImGui::TableSetupColumn("##label");
+    ImGui::TableSetupColumn("##value", ImGuiTableColumnFlags_WidthStretch);
+
+    auto row = [](const char* label, const std::string& value)
+    {
+        ImGui::TableNextColumn();
+        ImGui::TextDisabled("%s", Tr(label));
+        ImGui::TableNextColumn();
+        ImGui::TextWrapped("%s", value.c_str());
+    };
+
+    if (!state.gameExe.empty())
+        row("Game", state.gameExe + (state.gameName.empty() ? "" : " (" + state.gameName + ")"));
+
+    const char* api = state.swapchainApi == DX11 ? "DirectX 11" : state.swapchainApi == DX12 ? "DirectX 12"
+                      : state.swapchainApi == Vulkan                                     ? "Vulkan"
+                                                                                         : nullptr;
+    if (api != nullptr)
+        row("API", api);
+
+    const bool upscaling = currentFeature != nullptr && currentFeature->IsInited() && !currentFeature->IsFrozen();
+    row("Upscaler", upscaling ? UpscalerLabel(currentFeature) : std::string(Tr("None")));
+
+    auto fg = state.currentFG;
+    if (fg != nullptr && fg->IsActive() && !fg->IsPaused())
+        row("Frame Gen", StrFmt("%s %ux", fg->Name().c_str(), fg->GetInterpolatedFrameCount() + 1));
+    else
+        row("Frame Gen", Tr("Off"));
+
+    const LowLatencyMode tech = fakenvapi::isUsingAsMainNvapi() ? fakenvapi::getCurrentMode() : LowLatencyMode::None;
+    const char* techName = IlionLatency::TechName(tech);
+    row("Latency", techName != nullptr ? std::string(techName) + (fakenvapi::isLowLatencyActive() ? "" : Tr(" (not enabled)"))
+                                       : std::string(Tr("None")));
+
+    ImGui::EndTable();
 }
 
 void MenuCommon::RenderStatusInfo(RenderMenuContext& ctx)
@@ -14167,7 +14270,7 @@ void MenuCommon::RenderStatusInfo(RenderMenuContext& ctx)
     auto pair = [&](const char* label, const std::string& value, bool dim = false)
     {
         ImGui::TableNextColumn();
-        ImGui::TextDisabled("%s", label);
+        ImGui::TextDisabled("%s", Tr(label));
 
         ImGui::TableNextColumn();
         if (dim)
@@ -14200,7 +14303,7 @@ void MenuCommon::RenderStatusInfo(RenderMenuContext& ctx)
             auto row = [&](const char* label, const std::string& value)
             {
                 ImGui::TableNextColumn();
-                ImGui::TextDisabled("%s", label);
+                ImGui::TextDisabled("%s", Tr(label));
                 ImGui::TableNextColumn();
                 ImGui::TextUnformatted(value.c_str());
             };
@@ -14215,7 +14318,7 @@ void MenuCommon::RenderStatusInfo(RenderMenuContext& ctx)
                     quirks += quirks.empty() ? quirk : ", " + quirk;
 
                 ImGui::TableNextColumn();
-                ImGui::TextDisabled("Quirks");
+                ImGui::TextDisabled(Tr("Quirks"));
                 ImGui::TableNextColumn();
                 ImGui::TextWrapped("%s", quirks.c_str());
             }
@@ -14345,7 +14448,7 @@ void MenuCommon::RenderStatusInfo(RenderMenuContext& ctx)
 
         if (!barriers.empty())
         {
-            ImGui::TextDisabled("Barriers overridden");
+            ImGui::TextDisabled(Tr("Barriers overridden"));
             ImGui::SameLine();
             ImGui::TextUnformatted(barriers.c_str());
         }
@@ -14407,11 +14510,11 @@ const MenuCommon::MenuBox* MenuCommon::GetMenuBoxes(size_t& count)
         { "upscaler", "Upscaling", "Upscalers",
           [](RenderMenuContext& c) { if (IsUpscalerActive(c.currentFeature)) RenderCard(c, RenderActiveUpscalerSettings); } },
         { "upscale_ratio", "Upscaling", "Upscale Ratio Override",
-          [](RenderMenuContext& c) { if (IsUpscalerActive(c.currentFeature)) RenderCard(c, RenderUpscaleRatioSettings); } },
+          [](RenderMenuContext& c) { if (IsUpscalerActive(c.currentFeature)) RenderFoldedCard(c, "Advanced: Upscale Ratio Override", "Upscale Ratio Override", RenderUpscaleRatioSettings); } },
         { "output_scaling", "Upscaling", "Output Scaling",
-          [](RenderMenuContext& c) { if (IsUpscalerActive(c.currentFeature)) RenderCard(c, RenderOutputScalingSettings); } },
+          [](RenderMenuContext& c) { if (IsUpscalerActive(c.currentFeature)) RenderFoldedCard(c, "Advanced: Output Scaling (FSR1)", "Output Scaling", RenderOutputScalingSettings); } },
         { "shader_times", "Upscaling", "Per shader GPU times",
-          [](RenderMenuContext& c) { if (IsUpscalerActive(c.currentFeature)) RenderCard(c, RenderShaderTimes); } },
+          [](RenderMenuContext& c) { if (IsUpscalerActive(c.currentFeature) && !c.state.detailedGpuTimes.empty()) RenderFoldedCard(c, "Diagnostics: Per shader GPU times", "Per shader GPU times", RenderShaderTimes); } },
 
         { "gfx_color", "Graphics", "Colour and image", [](RenderMenuContext& c) { RenderCard(c, RenderGraphicsColorSettings); } },
         { "sharpness", "Graphics", "Sharpness",
@@ -14467,6 +14570,7 @@ const MenuCommon::MenuBox* MenuCommon::GetMenuBoxes(size_t& count)
         { "keybinds", "Menu", "Keybinds", [](RenderMenuContext& c) { RenderCard(c, RenderKeybindSettings); } },
         { "custom_tab", "Menu", "Custom Tab", [](RenderMenuContext& c) { RenderCard(c, RenderCustomTabSettings); }, nullptr, false },
 
+        { "status_summary", "Help / Status", "Summary", [](RenderMenuContext& c) { RenderCard(c, RenderStatusSummary); } },
         { "status_system", "Help / Status", "System", nullptr, RenderStatusInfo },
         { "status_detected", "Help / Status", "Detected", nullptr, RenderStatusInfo },
         { "status_hooks", "Help / Status", "Hooks / Config", nullptr, RenderStatusInfo },
@@ -14520,6 +14624,17 @@ void MenuCommon::RenderCustomTab(RenderMenuContext& ctx)
     const MenuBox* boxes = GetMenuBoxes(count);
 
     bool anyPinned = false;
+
+    // ILION: the key of the Customise panel, at the right above the boxes
+    {
+        const char* key = personalPanelOpen ? "Close customisation" : "Customise";
+        const float width = ImGui::CalcTextSize(Tr(key)).x + ImGui::GetStyle().FramePadding.x * 2.0f + 4.0f;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImMax(0.0f, ImGui::GetContentRegionAvail().x - width));
+        if (IlionTheme::Button(TrL(key)))
+            personalPanelOpen = !personalPanelOpen;
+        ShowTooltip("Choose the boxes of this tab; the changes show at once");
+    }
+
     const float startY = ImGui::GetCursorPosY();
 
     for (size_t i = 0; i < count; i++)
@@ -14545,24 +14660,9 @@ void MenuCommon::RenderCustomTab(RenderMenuContext& ctx)
 
     // Boxes only show up when their feature is in use
     if (!anyPinned)
-        ImGui::TextDisabled("Nothing picked yet, choose the boxes in Menu > Custom Tab");
+        ImGui::TextDisabled("%s", Tr("Nothing picked yet: press Customise to choose the boxes"));
     else if (ImGui::GetCursorPosY() == startY)
-        ImGui::TextDisabled("None of the picked boxes are available right now");
-
-    // Hint pinned to the bottom of the tab
-    const float hintHeight = ImGui::GetFrameHeight();
-    const float gap = ImGui::GetContentRegionAvail().y - hintHeight - ImGui::GetStyle().ItemSpacing.y;
-    if (gap > 0.0f)
-        ImGui::Dummy(ImVec2(0.0f, gap));
-    else
-        ImGui::Spacing();
-
-    ImGui::AlignTextToFramePadding();
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-    if (ImGui::SmallButton("Customise this tab"))
-        requestedMenuTab = "Menu";
-    ImGui::PopStyleColor(2);
+        ImGui::TextDisabled("%s", Tr("None of the picked boxes are available right now"));
 }
 
 void MenuCommon::RenderCustomTabSettings(RenderMenuContext& ctx)
@@ -14571,69 +14671,73 @@ void MenuCommon::RenderCustomTabSettings(RenderMenuContext& ctx)
 
     SectionTitle("Custom Tab");
 
-    ConfigCheckbox("Show Custom tab", config->CustomTabEnabled,
-                   "Adds a tab on top of the list that shows only the picked boxes");
+    // Only the switch stays here, so a hidden Personal tab can always come back; its boxes are chosen in it
+    ConfigCheckbox("Show Personal tab", config->CustomTabEnabled, "The boxes it shows are chosen in Personal > Customise");
+}
 
-    if (!config->CustomTabEnabled.value_or_default())
-        return;
+// ILION: Customise panel of Personal, at the right of its boxes. The same list of boxes the Menu tab had, the same
+// setting (CustomTabCards); every change shows at once on the left.
+void MenuCommon::RenderPersonalPanel(RenderMenuContext& ctx)
+{
+    auto config = ctx.config;
+
+    SectionTitle("Customise");
+
+    if (IlionTheme::Button(TrL("Close##personal")))
+        personalPanelOpen = false;
+    IlionTheme::SameLineIfFits(TrL("Restore default layout"));
+    if (IlionTheme::Button(TrL("Restore default layout")))
+        config->CustomTabCards.reset();
+    ShowTooltip("Back to the boxes Personal shows by default");
 
     ImGui::Spacing();
 
-    if (auto ch = ScopedCollapsingHeader("Boxes to show"); ch.IsHeaderOpen())
+    // Its own scroll: the panel never grows past the window
+    ImGui::BeginChild("##PersonalBoxes", ImVec2(0.0f, 0.0f));
+
+    const std::string pinned = config->CustomTabCards.value_or_default();
+    std::string newPinned;
+    bool changed = false;
+
+    size_t count = 0;
+    const MenuBox* boxes = GetMenuBoxes(count);
+    const char* lastTab = nullptr;
+
+    for (size_t i = 0; i < count; i++)
     {
-        const std::string pinned = config->CustomTabCards.value_or_default();
-        std::string newPinned;
-        bool changed = false;
+        const MenuBox& box = boxes[i];
 
-        size_t count = 0;
-        const MenuBox* boxes = GetMenuBoxes(count);
+        if (!box.pinnable)
+            continue;
 
-        const char* lastTab = nullptr;
-        bool tableOpen = false;
-
-        for (size_t i = 0; i < count; i++)
+        if (lastTab == nullptr || strcmp(lastTab, box.tab) != 0)
         {
-            const MenuBox& box = boxes[i];
+            if (lastTab != nullptr)
+                ImGui::Spacing();
 
-            if (!box.pinnable)
-                continue;
-
-            if (lastTab == nullptr || strcmp(lastTab, box.tab) != 0)
-            {
-                if (tableOpen)
-                    ImGui::EndTable();
-
-                ImGui::TextDisabled("%s", box.tab);
-                tableOpen = ImGui::BeginTable(box.tab, 2, ImGuiTableFlags_SizingStretchSame);
-                lastTab = box.tab;
-            }
-
-            bool on = IsBoxPinned(pinned, box.id);
-
-            if (tableOpen)
-            {
-                ImGui::TableNextColumn();
-
-                ImGui::PushID(box.id);
-                changed |= IlionTheme::Checkbox(box.name, &on);
-                ImGui::PopID();
-            }
-
-            if (on)
-            {
-                if (!newPinned.empty())
-                    newPinned += ',';
-
-                newPinned += box.id;
-            }
+            ImGui::TextDisabled("%s", Tr(box.tab));
+            lastTab = box.tab;
         }
 
-        if (tableOpen)
-            ImGui::EndTable();
+        bool on = IsBoxPinned(pinned, box.id);
 
-        if (changed)
-            config->CustomTabCards = newPinned;
+        ImGui::PushID(box.id);
+        changed |= IlionTheme::Checkbox(TrL(box.name), &on);
+        ImGui::PopID();
+
+        if (on)
+        {
+            if (!newPinned.empty())
+                newPinned += ',';
+
+            newPinned += box.id;
+        }
     }
+
+    ImGui::EndChild();
+
+    if (changed)
+        config->CustomTabCards = newPinned;
 }
 
 void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
@@ -14803,7 +14907,7 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
         ImGui::Separator();
         ImGui::Spacing();
 
-        ImGui::TextDisabled("SR");
+        ImGui::TextDisabled(Tr("SR"));
         ImGui::SameLine(0.0f, 8.0f * menuResScale);
         if (currentFeature == nullptr || !currentFeature->IsInited())
             ImGui::TextDisabled("%s", Tr("None"));
@@ -14818,7 +14922,7 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
                                UpscalerLabel(currentFeature).c_str(), upscaleRatio);
         }
 
-        ImGui::TextDisabled("FG");
+        ImGui::TextDisabled(Tr("FG"));
         ImGui::SameLine(0.0f, 8.0f * menuResScale);
         auto fg = state.currentFG;
         if (fg != nullptr && fg->IsActive() && !fg->IsPaused())
@@ -14849,18 +14953,18 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
         }
 
         const bool spoofing = config->DxgiSpoofing.value_or_default();
-        ImGui::TextDisabled("Spoof");
+        ImGui::TextDisabled(Tr("Spoof"));
         ImGui::SameLine(0.0f, 8.0f * menuResScale);
         if (spoofing)
-            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.35f, 0.85f, 0.45f, 1.f), IlionTheme::Role::Good)), "Yes");
+            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.35f, 0.85f, 0.45f, 1.f), IlionTheme::Role::Good)), Tr("Yes"));
         else
-            ImGui::TextDisabled("No");
+            ImGui::TextDisabled(Tr("No"));
 
         if (optiPatcher)
         {
-            ImGui::TextDisabled("OP");
+            ImGui::TextDisabled(Tr("OP"));
             ImGui::SameLine(0.0f, 8.0f * menuResScale);
-            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.35f, 0.85f, 0.45f, 1.f), IlionTheme::Role::Good)), "Yes");
+            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.35f, 0.85f, 0.45f, 1.f), IlionTheme::Role::Good)), Tr("Yes"));
         }
     }
 
@@ -14892,8 +14996,13 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
         // ImGui::Separator();
 
         // Own ID per tab, so every tab remembers its scroll position
+        // ILION: Personal with its Customise panel open, the boxes at the left and the panel at the right
+        const bool personalPanel = selectedMenuTab == customTab && personalPanelOpen;
+        const float panelWidth =
+            personalPanel ? ImMin(ImFloor(ImGui::GetContentRegionAvail().x * 0.38f), 320.0f * menuResScale) : 0.0f;
+
         ImGui::PushID(selectedMenuTab);
-        ImGui::BeginChild("##MenuTabBody", ImVec2(0.0f, 0.0f));
+        ImGui::BeginChild("##MenuTabBody", ImVec2(personalPanel ? -(panelWidth + style.ItemSpacing.x) : 0.0f, 0.0f));
 
         if (tab.draw != nullptr)
             tab.draw(ctx);
@@ -14923,6 +15032,14 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
 
         ImGui::EndChild();
         ImGui::PopID();
+
+        if (personalPanel)
+        {
+            ImGui::SameLine();
+            ImGui::BeginChild("##PersonalPanel", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
+            RenderPersonalPanel(ctx);
+            ImGui::EndChild();
+        }
     }
     ImGui::EndChild();
     ImGui::PopStyleColor();
@@ -14947,7 +15064,7 @@ void MenuCommon::PlotLinesWithRange(const char* label, float (*values_getter)(vo
                   v_max, graph_size);
 
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-        ImGui::SetTooltip("Range: %.2f ms - %.2f ms", v_min, v_max);
+        ImGui::SetTooltip(Tr("Range: %.2f ms - %.2f ms"), v_min, v_max);
 }
 
 void MenuCommon::RenderFrameTimeGraph(RenderMenuContext& ctx)
@@ -14957,7 +15074,7 @@ void MenuCommon::RenderFrameTimeGraph(RenderMenuContext& ctx)
     auto& menuResScale = ctx.menuResScale;
     auto& averageFrameTime = ctx.averageFrameTime;
 
-    ImGui::Text("Frametime: %.2fms / %.1ffps (avg: %.1ffps)", frameTime, frameRate, 1000.f / averageFrameTime);
+    ImGui::Text(Tr("Frametime: %.2fms / %.1ffps (avg: %.1ffps)"), frameTime, frameRate, 1000.f / averageFrameTime);
 
     PlotLinesWithRange(
         "##FrameTime",
@@ -14975,7 +15092,7 @@ void MenuCommon::RenderUpscalerTimeGraph(RenderMenuContext& ctx)
     if (!IsUpscalerActive(currentFeature))
         return;
 
-    ImGui::Text("Upscaler GPU time: %.2fms (avg: %.2fms)", state.upscaleTimes.back(), averageUpscalerFT);
+    ImGui::Text(Tr("Upscaler GPU time: %.2fms (avg: %.2fms)"), state.upscaleTimes.back(), averageUpscalerFT);
 
     PlotLinesWithRange(
         "##UpscalerTime",
@@ -15048,7 +15165,7 @@ void MenuCommon::RenderShaderTimes(RenderMenuContext& ctx)
             ImGui::TableNextRow();
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::TextDisabled("Extra shaders:");
+            ImGui::TextDisabled(Tr("Extra shaders:"));
             ImGui::TableNextColumn();
             ImGui::TextDisabled("");
             for (auto& [name, time, includedInUpscalerTime] : state.detailedGpuTimes)
@@ -15179,7 +15296,7 @@ void MenuCommon::RenderMipmapBiasWindow(RenderMenuContext& ctx, ImGuiWindowFlags
                 _mipBiasCalculated = log2((float) _renderWidth / (float) _displayWidth);
             }
 
-            const char* q[] = { "Ultra Performance", "Performance", "Balanced", "Quality", "Ultra Quality", "DLAA" };
+            const char* q[] = { Tr("Ultra Performance"), Tr("Performance"), Tr("Balanced"), Tr("Quality"), Tr("Ultra Quality"), Tr("DLAA") };
             float fr[] = { 3.0f, 2.0f, 1.7f, 1.5f, 1.3f, 1.0f };
             auto configQ = _mipmapUpscalerQuality;
 
@@ -15187,7 +15304,7 @@ void MenuCommon::RenderMipmapBiasWindow(RenderMenuContext& ctx, ImGuiWindowFlags
 
             ImGui::BeginDisabled(config->UpscaleRatioOverrideEnabled.value_or_default());
 
-            if (IlionTheme::BeginCombo("Upscaler Quality", selectedQ))
+            if (IlionTheme::BeginCombo(TrL("Upscaler Quality"), selectedQ))
             {
                 for (int n = 0; n < 6; n++)
                 {
@@ -15240,7 +15357,7 @@ void MenuCommon::RenderMipmapBiasWindow(RenderMenuContext& ctx, ImGuiWindowFlags
 
             auto minLimit = config->ExtendedLimits.value_or_default() ? 0.1f : 1.0f;
             auto maxLimit = config->ExtendedLimits.value_or_default() ? 6.0f : 3.0f;
-            if (IlionTheme::SliderFloat("Upscaler Ratio", &_mipmapUpscalerRatio, minLimit, maxLimit, "%.2f"))
+            if (IlionTheme::SliderFloat(TrL("Upscaler Ratio"), &_mipmapUpscalerRatio, minLimit, maxLimit, "%.2f"))
             {
                 _renderWidth = static_cast<uint32_t>(_displayWidth / _mipmapUpscalerRatio);
                 _mipBiasCalculated = log2((float) _renderWidth / (float) _displayWidth);
@@ -15249,7 +15366,7 @@ void MenuCommon::RenderMipmapBiasWindow(RenderMenuContext& ctx, ImGuiWindowFlags
             if (ImGui::InputScalar("Render Width", ImGuiDataType_U32, &_renderWidth, NULL, NULL, "%u"))
                 _mipBiasCalculated = log2((float) _renderWidth / (float) _displayWidth);
 
-            IlionTheme::SliderFloat("Mipmap Bias", &_mipBiasCalculated, -15.0f, 0.0f, "%.6f");
+            IlionTheme::SliderFloat(TrL("Mipmap Bias"), &_mipBiasCalculated, -15.0f, 0.0f, "%.6f");
 
             // BOTTOM LINE
             ImGui::Spacing();
@@ -15267,7 +15384,7 @@ void MenuCommon::RenderMipmapBiasWindow(RenderMenuContext& ctx, ImGuiWindowFlags
             float avail = ImGui::GetContentRegionAvail().x;
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail - textSize.x);
 
-            if (IlionTheme::Button("Use Value"))
+            if (IlionTheme::Button(TrL("Use Value")))
             {
                 _mipBias = _mipBiasCalculated;
                 _showMipmapCalcWindow = false;
@@ -15275,7 +15392,7 @@ void MenuCommon::RenderMipmapBiasWindow(RenderMenuContext& ctx, ImGuiWindowFlags
 
             ImGui::SameLine(0.0f, spacing);
 
-            if (IlionTheme::Button("Close"))
+            if (IlionTheme::Button(TrL("Close")))
                 _showMipmapCalcWindow = false;
 
             ImGui::Spacing();
@@ -15321,7 +15438,7 @@ void MenuCommon::RenderHudlessResourcesWindow(RenderMenuContext& ctx, ImGuiWindo
 
                     ImGui::TableSetColumnIndex(0);
 
-                    ImGui::Text("%08x, %s->%s, Count: %llu, %s", (size_t) it->first,
+                    ImGui::Text(Tr("%08x, %s->%s, Count: %llu, %s"), (size_t) it->first,
                                 GetSourceString(it->second.captureInfo & 0xFF).c_str(),
                                 GetDispatchString(it->second.captureInfo & 0xFF00).c_str(), it->second.usageCount,
                                 it->second.enabled ? "Active" : "Passive");
@@ -15347,7 +15464,7 @@ void MenuCommon::RenderHudlessResourcesWindow(RenderMenuContext& ctx, ImGuiWindo
                 ImGui::EndTable();
             }
 
-            if (IlionTheme::Button("Clear##4"))
+            if (IlionTheme::Button(TrL("Clear##4")))
             {
                 LOG_DEBUG("Clearing captured HUDless resources");
                 state.clearCapturedHudlesses = true;
@@ -15355,7 +15472,7 @@ void MenuCommon::RenderHudlessResourcesWindow(RenderMenuContext& ctx, ImGuiWindo
 
             ImGui::SameLine(0.0f, 8.0f);
 
-            if (IlionTheme::Button("Close##4"))
+            if (IlionTheme::Button(TrL("Close##4")))
                 _showHudlessWindow = false;
 
             ImGui::End();
@@ -15925,8 +16042,8 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
     if (IlionTheme::Checkbox(TrL("Performance overlay"), &fpsEnabled))
         config->ShowFps = fpsEnabled;
 
-    if (IlionTheme::Button(TrL("Overlay and hardware settings")))
-        requestedMenuTab = "Menu";
+    if (IlionTheme::Button(TrL("Configure overlay")))
+        requestedMenuTab = "Overlay";
 }
 
 // BASIC MODE -----------------------------
@@ -16403,7 +16520,42 @@ void MenuCommon::Init(HWND InHwnd, bool isUWP)
 
         IlionTheme::terminalFont = systemFont({ L"lucon.ttf", L"consola.ttf" });
         IlionTheme::modernFont = systemFont({ L"bahnschrift.ttf", L"segoeui.ttf", L"arial.ttf" });
-        IlionTheme::crtFont = systemFont({ L"consola.ttf", L"lucon.ttf" });
+        // Fallout 2: its own two fonts (SIL OFL, in the dll), Consolas merged into each for the signs they lack
+        const auto withFallback = [&](ImFont* font) -> ImFont*
+        {
+            wchar_t windows[MAX_PATH] = {};
+
+            if (font != nullptr && GetWindowsDirectoryW(windows, MAX_PATH) != 0)
+            {
+                const auto path = std::filesystem::path(windows) / L"Fonts" / L"consola.ttf";
+                std::error_code ec;
+
+                if (std::filesystem::exists(path, ec))
+                {
+                    ImFontConfig merge;
+                    merge.MergeMode = true;
+                    atlas->AddFontFromFileTTF(wstring_to_string(path.wstring()).c_str(), fontSize, &merge);
+                }
+            }
+
+            return font;
+        };
+
+        {
+            ImFontConfig textConfig;
+            textConfig.RasterizerMultiply = 1.25f; // a thin face, a little brighter reads better on the glass
+            IlionTheme::crtFont = withFallback(
+                atlas->AddFontFromMemoryCompressedBase85TTF(sharetechmono_compressed_compressed_data_base85, fontSize, &textConfig));
+        }
+        {
+            ImFontConfig titleConfig;
+            IlionTheme::crtTitleFont = withFallback(
+                atlas->AddFontFromMemoryCompressedBase85TTF(russoone_compressed_compressed_data_base85, fontSize, &titleConfig));
+        }
+
+        // Without them the system faces, as before
+        if (IlionTheme::crtFont == nullptr)
+            IlionTheme::crtFont = systemFont({ L"consola.ttf", L"lucon.ttf" });
     }
 
     if (!Config::Instance()->OverlayMenu.value_or_default())

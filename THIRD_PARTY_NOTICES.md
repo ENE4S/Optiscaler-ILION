@@ -4,7 +4,8 @@ OptiScaler, and ILION through it, uses the components below. They belong to thei
 licences; the GPL-3.0 of this repository does not replace them. Every copyright notice inside those files is kept
 as it came.
 
-ILION itself adds no third-party code and no binary: everything listed here comes from OptiScaler at commit
+ILION itself adds no third-party code and no binary, except two fonts of its Fallout 2 theme (Russo One and Share Tech
+Mono, SIL Open Font License 1.1, listed in section 2); everything else listed here comes from OptiScaler at commit
 `f6f75ddf0118ac45f447e2babbe18dbda3451edd`. Eighteen files of that commit are left out of this repository; section 4
 lists them and says where to get the ones that are still needed.
 
@@ -43,6 +44,7 @@ of them carry (AMD FidelityFX, Intel XeSS, NVAPI), are downloaded from their own
 | `external/nlohmann` | JSON for Modern C++ | MIT (Niels Lohmann) |
 | `external/freetype` | FreeType 2.13.3 headers | FreeType Licence (FTL) or GPLv2, at the choice of the user; `LICENSE.TXT`, `docs/FTL.TXT` and `docs/GPLv2.TXT` in the folder |
 | `OptiScaler/menu/font` | Hack typeface by Source Foundry, <https://github.com/source-foundry/Hack>, as a font file and as data in two headers | MIT for the work of the Hack project and Bitstream Vera Licence for Bitstream Vera Sans Mono, on which it is based; `LICENSE.md` in the folder |
+| `OptiScaler/menu/font` (ILION) | Russo One by Jovanny Lemonad and Share Tech Mono by Carrois Type Design, from Google Fonts <https://github.com/google/fonts>, as data in `RussoOne_Compressed.h` and `ShareTechMono_Compressed.h`, embedded unchanged | SIL Open Font License 1.1, Reserved Font Names "Russo" and "Share"; `OFL-RussoOne.txt` and `OFL-ShareTechMono.txt` in the folder |
 | `OptiScaler/include/flag-set-cpp` | flag-set-cpp by Mart Somermaa, <https://github.com/mrts/flag-set-cpp> | MIT, `LICENCE` in the folder |
 | `OptiScaler/include/sha1` | SHA-1 by Steve Reid and others | Public domain, as the file states |
 | `OptiScaler/include/spdlog_sink` | Log sink by OptiScaler, adapted from spdlog | MIT (Gabi Melman); the `LICENSE` of spdlog is in the folder |

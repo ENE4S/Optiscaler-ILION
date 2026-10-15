@@ -219,6 +219,10 @@ class MenuCommon
                                    int values_count, int values_offset, const char* overlay_text, ImVec2 graph_size,
                                    float padding);
     static void RenderCard(RenderMenuContext& ctx, void (*render)(RenderMenuContext&));
+    static void RenderFoldedCard(RenderMenuContext& ctx, const char* key, const char* title,
+                                 void (*render)(RenderMenuContext&));
+    static void RenderPersonalPanel(RenderMenuContext& ctx);
+    static void RenderStatusSummary(RenderMenuContext& ctx);
 
     // Custom tab
     struct MenuBox;

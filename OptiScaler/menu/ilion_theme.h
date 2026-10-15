@@ -28,10 +28,12 @@ inline Skin skin = Skin::Industrial;
 // Fallout and Fallout 2 share the terminal way of drawing; Fallout 2 adds the glass of the screen
 inline bool TerminalLike() { return skin == Skin::Terminal || skin == Skin::Crt; }
 
-// Fonts of the themes, taken from the fonts Windows already has (nothing is shipped). Null: the menu's font.
+// Fonts of the themes. Fallout and Light take fonts Windows already has; Fallout 2 carries two OFL fonts in the
+// dll (Share Tech Mono for text, Russo One for names), Consolas merged in for the signs they lack. Null: the menu's.
 inline ImFont* terminalFont = nullptr;
 inline ImFont* modernFont = nullptr;
 inline ImFont* crtFont = nullptr;
+inline ImFont* crtTitleFont = nullptr;
 
 inline ImFont* SkinFont()
 {
@@ -39,6 +41,26 @@ inline ImFont* SkinFont()
         return nullptr;
 
     return skin == Skin::Terminal ? terminalFont : skin == Skin::Crt ? crtFont : skin == Skin::Flat ? modernFont : nullptr;
+}
+
+// Font of names (plates, card heads, tabs, the title bar). Only Fallout 2 has one; null keeps the current font.
+inline ImFont* TitleFont() { return industrial && skin == Skin::Crt ? crtTitleFont : nullptr; }
+
+// Text drawn with the title font when there is one, at the size in use
+inline void AddTitleText(ImDrawList* draw, const ImVec2& pos, ImU32 colour, const char* text, const char* end = nullptr)
+{
+    if (ImFont* font = TitleFont())
+        draw->AddText(font, ImGui::GetFontSize(), pos, colour, text, end);
+    else
+        draw->AddText(pos, colour, text, end);
+}
+
+inline ImVec2 TitleTextSize(const char* text, const char* end = nullptr)
+{
+    if (ImFont* font = TitleFont())
+        return font->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, 0.0f, text, end);
+
+    return ImGui::CalcTextSize(text, end);
 }
 
 // Colours of states written in the menu (fine, warning, error). The ILION and classic themes keep the exact colour
@@ -54,6 +76,12 @@ inline ImVec4 Themed(const ImVec4& original, Role role)
 {
     if (!industrial || skin == Skin::Industrial)
         return original;
+
+    // Fallout 2: aged phosphor and amber, softer than the other terminal
+    if (skin == Skin::Crt)
+        return role == Role::Good ? ImVec4(0.52f, 0.88f, 0.46f, 1.0f)
+               : role == Role::Warn ? ImVec4(0.88f, 0.65f, 0.28f, 1.0f)
+                                    : ImVec4(0.92f, 0.40f, 0.28f, 1.0f);
 
     if (TerminalLike())
         return role == Role::Good ? ImVec4(0.30f, 1.00f, 0.50f, 1.0f)
@@ -153,15 +181,16 @@ inline void SetPalette(int palette)
           { 0.900f, 0.780f, 0.770f, 1 }, { 0.860f, 0.640f, 0.620f, 1 }, { 0.090f, 0.200f, 0.360f, 1 },
           { 0.070f, 0.400f, 0.700f, 1 }, { 0.640f, 0.665f, 0.700f, 1 }, { 0.770f, 0.785f, 0.805f, 1 },
           { 0.070f, 0.400f, 0.700f, 1 }, 0.0f },
-        { { 0.010f, 0.035f, 0.015f, 1 }, { 0.020f, 0.062f, 0.028f, 1 }, { 0.028f, 0.085f, 0.038f, 1 },
-          { 0.055f, 0.080f, 0.030f, 1 }, { 0.160f, 0.120f, 0.030f, 1 }, { 0.320f, 0.230f, 0.040f, 1 },
-          { 0.400f, 0.290f, 0.045f, 1 }, { 0.080f, 0.220f, 0.100f, 1 }, { 0.160f, 0.430f, 0.200f, 1 },
-          { 0.300f, 0.680f, 0.360f, 1 }, { 0.000f, 0.000f, 0.000f, 1 }, { 0.560f, 0.930f, 0.470f, 1 },
-          { 0.330f, 0.640f, 0.300f, 1 }, { 1.000f, 0.740f, 0.200f, 1 }, { 1.000f, 0.700f, 0.100f, 1 },
-          { 0.560f, 0.380f, 0.050f, 1 }, { 1.000f, 0.860f, 0.380f, 1 }, { 1.000f, 0.330f, 0.220f, 1 },
-          { 0.300f, 0.070f, 0.040f, 1 }, { 0.500f, 0.110f, 0.070f, 1 }, { 1.000f, 0.740f, 0.200f, 1 },
-          { 1.000f, 0.700f, 0.100f, 1 }, { 0.260f, 0.620f, 0.300f, 1 }, { 0.150f, 0.400f, 0.190f, 1 },
-          { 1.000f, 0.700f, 0.100f, 1 }, 0.0f },
+        // 3 Fallout 2: faded phosphor on a dark green tube, keys in dim phosphor, aged amber for names and edges
+        { { 0.016f, 0.026f, 0.018f, 1 }, { 0.026f, 0.040f, 0.028f, 1 }, { 0.034f, 0.052f, 0.036f, 1 },
+          { 0.075f, 0.115f, 0.072f, 1 }, { 0.115f, 0.175f, 0.105f, 1 }, { 0.170f, 0.260f, 0.150f, 1 },
+          { 0.055f, 0.085f, 0.052f, 1 }, { 0.140f, 0.220f, 0.140f, 1 }, { 0.260f, 0.400f, 0.250f, 1 },
+          { 0.420f, 0.620f, 0.400f, 1 }, { 0.000f, 0.000f, 0.000f, 1 }, { 0.580f, 0.820f, 0.520f, 1 },
+          { 0.340f, 0.520f, 0.320f, 1 }, { 0.850f, 0.640f, 0.300f, 1 }, { 0.480f, 0.860f, 0.420f, 1 },
+          { 0.220f, 0.400f, 0.200f, 1 }, { 0.850f, 0.620f, 0.260f, 1 }, { 0.900f, 0.360f, 0.240f, 1 },
+          { 0.280f, 0.080f, 0.050f, 1 }, { 0.460f, 0.120f, 0.070f, 1 }, { 0.850f, 0.640f, 0.300f, 1 },
+          { 0.850f, 0.620f, 0.260f, 1 }, { 0.360f, 0.560f, 0.340f, 1 }, { 0.220f, 0.340f, 0.210f, 1 },
+          { 0.850f, 0.620f, 0.260f, 1 }, 0.0f },
     };
 
     const auto& p = palettes[palette >= 0 && palette < (int) std::size(palettes) ? palette : 0];
@@ -306,10 +335,7 @@ inline void ApplyStyle(ImGuiStyle& style, float backgroundAlpha)
 
         // Fallout 2: the glass of the screen is rounded, its parts a little softer
         if (skin == Skin::Crt)
-        {
             style.WindowRounding = 12.0f;
-            style.FrameRounding = style.GrabRounding = 2.0f;
-        }
 
         c[ImGuiCol_Border] = Alpha(TrimGold, 0.90f);
         c[ImGuiCol_BorderShadow] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
@@ -429,6 +455,25 @@ inline void DrawLamp(ImDrawList* draw, const ImVec2& center, float radius, bool 
 {
     const ImVec4 color = LampColor(kind);
 
+    // Fallout 2: a round phosphor dot; lit it glows on the glass, out it is a dim ring
+    if (skin == Skin::Crt)
+    {
+        const float dot = ImFloor(radius * 0.50f);
+
+        if (lit)
+        {
+            draw->AddCircleFilled(center, dot * 2.1f, ImGui::GetColorU32(Alpha(color, 0.10f)));
+            draw->AddCircleFilled(center, dot * 1.5f, ImGui::GetColorU32(Alpha(color, 0.18f)));
+            draw->AddCircleFilled(center, dot, ImGui::GetColorU32(Alpha(color, held ? 0.70f : 1.0f)));
+        }
+        else
+        {
+            draw->AddCircle(center, dot, ImGui::GetColorU32(Alpha(color, hovered ? 0.95f : 0.50f)), 0, 1.2f);
+        }
+
+        return;
+    }
+
     // Terminal: a square indicator, lit filled, out only its outline
     if (TerminalLike())
     {
@@ -510,8 +555,19 @@ inline void DrawScrew(ImDrawList* draw, const ImVec2& center, float radius)
 }
 
 // The edge of a main panel: a metal frame with a dark seam, and a screw in every corner
+inline void DrawChamferFrame(ImDrawList* draw, const ImVec2& min, const ImVec2& max, float cut, ImU32 color, float thickness);
+
 inline void DrawPanelFrame(ImDrawList* draw, const ImVec2& min, const ImVec2& max, bool screws, float scale = 1.0f)
 {
+    // Fallout 2: a double line with cut corners
+    if (skin == Skin::Crt)
+    {
+        DrawChamferFrame(draw, min, max, 6.0f, ImGui::GetColorU32(Alpha(TrimGold, 0.90f)), 1.0f);
+        DrawChamferFrame(draw, ImVec2(min.x + 3.0f, min.y + 3.0f), ImVec2(max.x - 3.0f, max.y - 3.0f), 4.0f,
+                         ImGui::GetColorU32(Alpha(TrimTitanium, 0.70f)), 1.0f);
+        return;
+    }
+
     if (TerminalLike())
     {
         draw->AddRect(min, max, ImGui::GetColorU32(Alpha(TrimGold, 0.90f)));
@@ -568,8 +624,23 @@ inline void DrawWindowScrews(float scale = 1.0f)
 
 // A key: a cap seated in a dark metal frame, lit from above. Raised, its lower edge shows its thickness; under
 // the pointer the cap brightens; held, it sinks into the frame with the shade of the frame falling on it.
+inline void ChamferPoints(ImVec2 points[8], const ImVec2& min, const ImVec2& max, float cut);
+
 inline void DrawKey(ImDrawList* draw, const ImRect& bounds, const ImVec4& face, bool hovered, bool down)
 {
+    // Fallout 2: a key with cut corners, dim phosphor fill, its edge turns amber under the pointer
+    if (skin == Skin::Crt)
+    {
+        ImVec2 points[8];
+        const float cut = ImMin(4.0f, ImFloor((bounds.Max.y - bounds.Min.y) * 0.25f));
+
+        ChamferPoints(points, bounds.Min, bounds.Max, cut);
+        draw->AddConvexPolyFilled(points, 8, ImGui::GetColorU32(down ? Shade(face, 1.50f) : hovered ? Shade(face, 1.22f) : face));
+        draw->AddPolyline(points, 8, ImGui::GetColorU32(hovered || down ? LampAmber : Alpha(TrimGold, 0.85f)), ImDrawFlags_Closed,
+                          hovered ? 1.5f : 1.0f);
+        return;
+    }
+
     // Terminal: a dark box with an amber line, filled more under the pointer and when held
     if (TerminalLike())
     {
@@ -627,6 +698,22 @@ inline void DrawKey(ImDrawList* draw, const ImRect& bounds, const ImVec4& face, 
 // A recess in the panel: dark, with the shade at the top and the light at the bottom
 inline void DrawWell(ImDrawList* draw, const ImVec2& min, const ImVec2& max, bool hovered = false)
 {
+    // Fallout 2: a dark field between two brackets
+    if (skin == Skin::Crt)
+    {
+        const ImU32 edge = ImGui::GetColorU32(Alpha(hovered ? LampAmber : TrimGold, hovered ? 0.95f : 0.80f));
+        const float arm = ImMin(5.0f, (max.x - min.x) * 0.2f);
+
+        draw->AddRectFilled(min, max, ImGui::GetColorU32(Alpha(GraphiteDeep, 0.95f)));
+        draw->AddLine(ImVec2(min.x, min.y), ImVec2(min.x, max.y), edge);
+        draw->AddLine(ImVec2(min.x, min.y), ImVec2(min.x + arm, min.y), edge);
+        draw->AddLine(ImVec2(min.x, max.y - 1.0f), ImVec2(min.x + arm, max.y - 1.0f), edge);
+        draw->AddLine(ImVec2(max.x - 1.0f, min.y), ImVec2(max.x - 1.0f, max.y), edge);
+        draw->AddLine(ImVec2(max.x - arm, min.y), ImVec2(max.x, min.y), edge);
+        draw->AddLine(ImVec2(max.x - arm, max.y - 1.0f), ImVec2(max.x, max.y - 1.0f), edge);
+        return;
+    }
+
     // Terminal: an input line, dark with an amber underline
     if (TerminalLike())
     {
@@ -1239,6 +1326,27 @@ inline void SectionPlate(const char* text)
 
     ImDrawList* draw = window->DrawList;
 
+    // Fallout 2: the name in inverse video (dark letters on a phosphor block) and a double rule to the edge
+    if (skin == Skin::Crt)
+    {
+        const std::string name = Upper(text);
+        const ImVec2 nameSize = TitleTextSize(name.c_str());
+        const ImVec2 blockMax(pos.x + nameSize.x + pad * 2.0f, pos.y + height);
+        const float y = ImFloor(pos.y + height * 0.5f);
+
+        draw->AddRectFilled(pos, blockMax, ImGui::GetColorU32(Alpha(LampGreen, 0.88f)));
+        AddTitleText(draw, ImVec2(pos.x + pad, pos.y + 3.0f), ImGui::GetColorU32(GraphiteDeep), name.c_str());
+
+        if (right > blockMax.x + 6.0f)
+        {
+            draw->AddLine(ImVec2(blockMax.x + 6.0f, y - 1.0f), ImVec2(right, y - 1.0f), ImGui::GetColorU32(Alpha(TrimGold, 0.85f)));
+            draw->AddLine(ImVec2(blockMax.x + 6.0f, y + 2.0f), ImVec2(right, y + 2.0f), ImGui::GetColorU32(Alpha(TrimTitanium, 0.75f)));
+        }
+
+        ImGui::Dummy(ImVec2(ImMax(1.0f, right - pos.x), height));
+        return;
+    }
+
     // Terminal: "> NAME" in amber and a dashed line; Flat: the name in the title colour over a thin line
     if (skin != Skin::Industrial)
     {
@@ -1562,7 +1670,22 @@ inline void DrawChassis()
 
             const ImVec2 namePos(ImFloor(min.x + style.WindowPadding.x), ImFloor(min.y + (title - nameSize.y) * 0.5f));
 
-            if (terminal)
+            if (skin == Skin::Crt)
+            {
+                // Fallout 2: the name on an amber plate, dark letters, and a double phosphor rule under the bar
+                const std::string name = Upper(window->Name);
+                const ImVec2 size = TitleTextSize(name.c_str());
+                const float pad = style.FramePadding.x + 2.0f;
+
+                draw->AddRectFilled(ImVec2(namePos.x - pad, namePos.y - 2.0f), ImVec2(namePos.x + size.x + pad, namePos.y + size.y + 2.0f),
+                                    ImGui::GetColorU32(Alpha(TitleAmber, 0.90f)));
+                AddTitleText(draw, namePos, ImGui::GetColorU32(GraphiteDeep), name.c_str());
+                draw->AddLine(ImVec2(min.x + 8.0f, min.y + title - 3.0f), ImVec2(max.x - 8.0f, min.y + title - 3.0f),
+                              ImGui::GetColorU32(Alpha(LampGreen, 0.70f)));
+                draw->AddLine(ImVec2(min.x + 8.0f, min.y + title - 1.0f), ImVec2(max.x - 8.0f, min.y + title - 1.0f),
+                              ImGui::GetColorU32(Alpha(LampGreen, 0.35f)));
+            }
+            else if (terminal)
             {
                 const std::string name = Upper(window->Name);
                 draw->AddText(namePos, ImGui::GetColorU32(TitleAmber), name.c_str());
@@ -1599,6 +1722,12 @@ inline void DrawChassis()
 
             if (skin == Skin::Crt)
             {
+                // The bezel of the set: a band of aged amber plastic round the glass
+                draw->AddRect(ImVec2(min.x + 1.5f, min.y + 1.5f), ImVec2(max.x - 1.5f, max.y - 1.5f),
+                              ImGui::GetColorU32(Alpha(Shade(TitleAmber, 0.45f), 0.95f)), rounding, 0, 3.0f);
+                draw->AddRect(ImVec2(min.x + 0.5f, min.y + 0.5f), ImVec2(max.x - 0.5f, max.y - 0.5f),
+                              ImGui::GetColorU32(Alpha(TitleAmber, 0.55f)), rounding, 0, 1.0f);
+
                 const float width = max.x - min.x, height = max.y - min.y;
                 const float band = ImMin(width, height) * 0.12f;
                 const ImU32 dark = ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, 0.42f));
@@ -1780,6 +1909,24 @@ inline float CardCut() { return ImFloor(ImGui::GetStyle().WindowPadding.x * 0.75
 // corner.
 inline void DrawCardBody(ImDrawList* draw, const ImVec2& min, const ImVec2& max)
 {
+    // Fallout 2: a plate with cut corners framed by a double line, an amber notch at two corners
+    if (skin == Skin::Crt)
+    {
+        const float cut = ImMin(8.0f, ImMin(max.x - min.x, max.y - min.y) * 0.2f);
+        ImVec2 points[8];
+
+        ChamferPoints(points, min, max, cut);
+        draw->AddConvexPolyFilled(points, 8, ImGui::GetColorU32(Alpha(Panel, 0.88f)));
+        DrawChamferFrame(draw, min, max, cut, ImGui::GetColorU32(Alpha(TrimGold, 0.85f)), 1.0f);
+        DrawChamferFrame(draw, ImVec2(min.x + 3.0f, min.y + 3.0f), ImVec2(max.x - 3.0f, max.y - 3.0f), ImMax(1.0f, cut - 1.5f),
+                         ImGui::GetColorU32(Alpha(TrimTitanium, 0.55f)), 1.0f);
+
+        const ImU32 amber = ImGui::GetColorU32(Alpha(LampAmber, 0.85f));
+        draw->AddLine(ImVec2(min.x, min.y + cut), ImVec2(min.x + cut, min.y), amber, 2.0f);
+        draw->AddLine(ImVec2(max.x - cut, max.y), ImVec2(max.x, max.y - cut), amber, 2.0f);
+        return;
+    }
+
     // Terminal: a box in the dim green line with amber corner ticks
     if (TerminalLike())
     {
@@ -1854,6 +2001,17 @@ inline void DrawCardBand(ImDrawList* draw, float left, float top, float right, f
         return;
     }
 
+    // Fallout 2: the head of the card in inverse video, following its cut corner
+    if (skin == Skin::Crt)
+    {
+        const float cut = ImMin(8.0f, (bottom - top) * 0.6f);
+        const ImVec2 points[5] = { ImVec2(left + cut, top), ImVec2(right - 1.0f, top), ImVec2(right - 1.0f, bottom),
+                                   ImVec2(left, bottom), ImVec2(left, top + cut) };
+
+        draw->AddConvexPolyFilled(points, 5, ImGui::GetColorU32(Alpha(LampGreen, 0.80f)));
+        return;
+    }
+
     // Terminal: an amber rule under the name
     if (skin != Skin::Industrial)
     {
@@ -1891,6 +2049,24 @@ inline void GroupPlate(const char* text)
 {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
 
+    if (skin == Skin::Crt)
+    {
+        // Fallout 2: the group name in amber over a double rule
+        const std::string name = Upper(text);
+        const ImVec2 pos = window->DC.CursorPos;
+        const ImVec2 size = TitleTextSize(name.c_str());
+
+        ImGui::Dummy(size);
+        AddTitleText(window->DrawList, pos, ImGui::GetColorU32(TitleAmber), name.c_str());
+
+        const float y = ImGui::GetItemRectMax().y + 1.0f;
+        window->DrawList->AddLine(ImVec2(pos.x, y), ImVec2(window->WorkRect.Max.x, y), ImGui::GetColorU32(Alpha(TrimGold, 0.85f)));
+        window->DrawList->AddLine(ImVec2(pos.x, y + 2.0f), ImVec2(window->WorkRect.Max.x, y + 2.0f),
+                                  ImGui::GetColorU32(Alpha(TrimTitanium, 0.70f)));
+        ImGui::Dummy(ImVec2(0.0f, 4.0f));
+        return;
+    }
+
     if (TerminalLike())
     {
         ImGui::TextColored(TitleAmber, "%s", ("> " + Upper(text)).c_str());
@@ -1921,6 +2097,28 @@ inline void DrawTabPlate(ImDrawList* draw, const ImVec2& min, const ImVec2& max,
 {
     const ImRect bounds(min, max);
     const float textY = min.y + (max.y - min.y - ImGui::GetTextLineHeight()) * 0.5f;
+
+    // Fallout 2: the open tab as a phosphor block with cut corners and an amber bar, the others plain names
+    if (skin == Skin::Crt)
+    {
+        ImVec2 points[8];
+        const float cut = ImMin(5.0f, ImFloor((max.y - min.y) * 0.25f));
+        ChamferPoints(points, min, max, cut);
+
+        if (selected)
+        {
+            draw->AddConvexPolyFilled(points, 8, ImGui::GetColorU32(Alpha(LampGreen, held ? 0.70f : 0.85f)));
+            draw->AddRectFilled(ImVec2(min.x + 1.0f, min.y + cut), ImVec2(min.x + 4.0f * scale, max.y - cut), ImGui::GetColorU32(LampAmber));
+        }
+        else if (hovered)
+        {
+            draw->AddPolyline(points, 8, ImGui::GetColorU32(Alpha(LampAmber, 0.85f)), ImDrawFlags_Closed, 1.0f);
+        }
+
+        AddTitleText(draw, ImVec2(min.x + 10.0f * scale, textY), ImGui::GetColorU32(selected ? GraphiteDeep : hovered ? Text : TextDim),
+                     Upper(text).c_str());
+        return;
+    }
 
     // Terminal: the open tab is the line shown in reverse (amber with dark letters), "> " before the others
     if (TerminalLike())

@@ -14239,7 +14239,7 @@ void MenuCommon::RenderStatusSummary(RenderMenuContext& ctx)
 
     auto fg = state.currentFG;
     if (fg != nullptr && fg->IsActive() && !fg->IsPaused())
-        row("Frame Gen", StrFmt("%s %ux", fg->Name().c_str(), fg->GetInterpolatedFrameCount() + 1));
+        row("Frame Gen", StrFmt("%s %ux", fg->Name(), fg->GetInterpolatedFrameCount() + 1));
     else
         row("Frame Gen", Tr("Off"));
 

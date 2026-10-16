@@ -438,8 +438,14 @@ inline void BeforePresent(ID3D12CommandQueue* queue, bool interpolated, bool tea
     }
     presentingFrame = 0;
 
+    // GPU objects first (a queue change may wait for the old ones), then the time of the Present, then the timestamp.
+    // The time is taken before the timestamp is submitted: an idle GPU can execute it at once, and a Present time
+    // taken afterwards would come after the end of the GPU work and drop the frame.
+    const bool gpuReady = SetupGpu(queue);
+    frame.present = Qpc();
+
     // End of the GPU work: a timestamp after everything already on the present queue
-    if (SetupGpu(queue))
+    if (gpuReady)
     {
         const int slot = gpu.next;
 
@@ -466,7 +472,6 @@ inline void BeforePresent(ID3D12CommandQueue* queue, bool interpolated, bool tea
         }
     }
 
-    frame.present = Qpc();
     current = index;
 }
 

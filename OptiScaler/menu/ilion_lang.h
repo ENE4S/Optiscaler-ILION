@@ -46,6 +46,10 @@ struct Translation
 inline constexpr Translation kSpanish[] = {
     // Universal upscaler selector (v1.2-dev.5)
     { "Upscaler##IlionUpscaler", "Escalador" },
+    // ILION v1.2-dev.19
+    { "Present to GPU end", "Present a fin de GPU" },
+    { "With FG: generator latency not included", "Con FG: no incluye la latencia del generador" },
+    { "ILION's latency, DirectX 12: simulation start to the refresh that shows the frame, or to the end of the GPU work when the refresh can't be known. CPU: simulation start to Present. Present to GPU end: includes frames waiting in the queue. With frame generation the generator's own delay is not included", "Latencia de ILION, DirectX 12: del inicio de la simulación al refresco que muestra el fotograma, o al fin del trabajo de GPU cuando el refresco no puede conocerse. CPU: del inicio de la simulación al Present. Present a fin de GPU: incluye los fotogramas que esperan en la cola. Con generación de fotogramas no incluye el retardo propio del generador" },
     // ILION v1.2-dev.18
     { "More options##Essential", "Más opciones" },
     // ILION v1.2-dev.17
@@ -127,7 +131,6 @@ inline constexpr Translation kSpanish[] = {
     { "Upscaler time graph", "Gráfica del escalador" },
     { "Graph of the last upscaler times", "Gráfica de los últimos tiempos del escalador" },
     { "ILION estimated latency##element", "Latencia estimada ILION" },
-    { "ILION's latency, DirectX 12: simulation start to the refresh that shows the frame, from the frame's own times (Reflex markers, Present, GPU timestamp, DXGI frame statistics)", "Latencia de ILION, DirectX 12: del inicio de la simulación al refresco que muestra el fotograma, con los tiempos del propio fotograma (marcadores Reflex, Present, marca de tiempo de GPU, estadísticas DXGI)" },
     // dev.14: latency
     { "Displayed FPS", "FPS mostrados" },
     { "Input to screen", "Entrada a pantalla" },

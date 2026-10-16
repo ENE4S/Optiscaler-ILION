@@ -339,6 +339,13 @@ inline std::string StrFmt(const char* fmt, ...)
 using Ilion::Tr;
 using Ilion::TrL;
 
+// ILION Essential mode is on (Basic wins over it): technical and debug controls are left to Advanced
+static bool EssentialView()
+{
+    auto config = Config::Instance();
+    return !config->MenuBasicMode.value_or_default() && config->MenuEssentialMode.value_or_default();
+}
+
 // --- ILION's upscalers ----------------------------------------------------------------------------------------
 // Everything that says which upscaler is selected, loaded or running takes it from here: the selector of the
 // Upscaling tab and of Benchmark, the Benchmark labels, the overlay and the status rows. The list comes from
@@ -8321,7 +8328,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                     rows.push_back({ "CPU", ms(latency.cpu) });
 
                     if (latency.gpu >= 0.0)
-                        rows.push_back({ "GPU", ms(latency.gpu) });
+                        rows.push_back({ Tr("Present to GPU end"), ms(latency.gpu) }); // includes frames waiting in the queue
 
                     if (latency.display >= 0.0)
                         rows.push_back({ Tr("Screen"), ms(latency.display) });
@@ -8335,6 +8342,10 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                         rows.push_back({ Tr("Presentation"), Tr("composed") });
                     else if (latency.presentation == 1 || latency.presentation == 2)
                         rows.push_back({ Tr("Presentation"), Tr("independent flip") });
+
+                    // Frame generation holds the real frame and paces the shown ones after this point: not in the figure
+                    if ((fg != nullptr && fg->IsActive() && !fg->IsPaused()) || state.dlssgDetectedInterpolationCount > 0)
+                        rows.push_back({ Tr("With FG: generator latency not included"), "" });
 
                     if (why != nullptr)
                         rows.push_back({ why, "" });
@@ -8961,7 +8972,8 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             }
 
             // Path and hash of the dll that's loaded, closed unless the user opens it
-            if (ImGui::TreeNode(TrL("Loaded DLL path")))
+            // Path and the hot-swap diagnostics: Advanced only
+            if (!EssentialView() && ImGui::TreeNode(TrL("Loaded DLL path")))
             {
                 ImGui::TextWrapped("%s", wstring_to_string(activeSrPath).c_str());
                 ImGui::TextDisabled(Tr("SHA-256: %s"), activeSrHash.empty() ? Tr("calculating...") : activeSrHash.c_str());
@@ -8970,7 +8982,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             }
 
             // Read-only, everything comes from the dispatch calls that were actually made
-            if (ImGui::TreeNode(TrL("UPSCALER HOT-SWAP DIAGNOSTICS")))
+            if (!EssentialView() && ImGui::TreeNode(TrL("UPSCALER HOT-SWAP DIAGNOSTICS")))
             {
                 const auto diag = FfxApiProxy::SrDiagGetSnapshot();
 
@@ -9190,38 +9202,45 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
         {
             ImGui::Spacing();
 
-            bool debugView = config->FsrDebugView.value_or_default();
-            if (IlionTheme::Checkbox(TrL("Upscaler Debug View"), &debugView))
-            {
-                config->FsrDebugView = debugView;
+            // The debug view is for Advanced; Essential keeps the watermark, the visible check of what runs
+            const bool showDebugView = !EssentialView();
 
-                // FSR 4's debug view requires backend reinit
+            if (showDebugView)
+            {
+                bool debugView = config->FsrDebugView.value_or_default();
+                if (IlionTheme::Checkbox(TrL("Upscaler Debug View"), &debugView))
+                {
+                    config->FsrDebugView = debugView;
+
+                    // FSR 4's debug view requires backend reinit
+                    if (majorFsrVersion > 3)
+                    {
+                        state.newBackend = currentBackend;
+                        MARK_ALL_BACKENDS_CHANGED();
+                    }
+                }
+
                 if (majorFsrVersion > 3)
                 {
-                    state.newBackend = currentBackend;
-                    MARK_ALL_BACKENDS_CHANGED();
+                    ShowTooltip("Top left: Dilated Motion Vectors\n"
+                                "Top right: Predicted Blend Factor");
+                }
+                else
+                {
+                    ShowTooltip("Top left: Dilated Motion Vectors\n"
+                                "Top middle: Protected Areas\n"
+                                "Top right: Dilated Depth\n"
+                                "Middle: Upscaled frame\n"
+                                "Bottom left: Disocclusion mask\n"
+                                "Bottom middle: Reactiveness\n"
+                                "Bottom right: Detail Protection Takedown");
                 }
             }
 
             if (majorFsrVersion > 3)
             {
-                ShowTooltip("Top left: Dilated Motion Vectors\n"
-                            "Top right: Predicted Blend Factor");
-            }
-            else
-            {
-                ShowTooltip("Top left: Dilated Motion Vectors\n"
-                            "Top middle: Protected Areas\n"
-                            "Top right: Dilated Depth\n"
-                            "Middle: Upscaled frame\n"
-                            "Bottom left: Disocclusion mask\n"
-                            "Bottom middle: Reactiveness\n"
-                            "Bottom right: Detail Protection Takedown");
-            }
-
-            if (majorFsrVersion > 3)
-            {
-                SameLineIfRoom(CheckboxWidth(TrL("Watermark")), 20.0f * menuResScale);
+                if (showDebugView)
+                    SameLineIfRoom(CheckboxWidth(TrL("Watermark")), 20.0f * menuResScale);
                 bool fsr4wm = config->Fsr4EnableWatermark.value_or_default();
                 if (IlionTheme::Checkbox(TrL("Watermark"), &fsr4wm))
                 {
@@ -9898,10 +9917,11 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             ImGui::EndDisabled();
         }
 
+        // The detected UI view and the UI drawing options are for Advanced
         auto fgOutput = reinterpret_cast<IFGFeature_Dx12*>(state.currentFG);
         if ((state.activeFgOutput != FGOutput::Reprojection && state.activeFgOutput != FGOutput::NoFG &&
              state.activeFgInput != FGInput::NoFG && state.activeFgInput != FGInput::NvngxFG) &&
-            fgOutput)
+            fgOutput && !EssentialView())
         {
             IlionTheme::Checkbox(TrL("Show Detected UI"), &state.fgHudlessCompare);
             ShowTooltip("Needs HUDless texture to compare with final image.\n"
@@ -10240,6 +10260,8 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             ShowTooltip("Enable Async for better FG performance\nMight cause crashes, especially with HUD Fix!");
 
             // ILION: debug view and watermark under one folded key
+            // Display, debug and extended settings: Advanced only
+            if (!EssentialView())
             if (auto display = ScopedCollapsingHeader(TrL("Display and debug##fsrfg")); display.IsHeaderOpen())
             {
             bool fgDV = config->FGDebugView.value_or_default();
@@ -10280,6 +10302,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
             ImGui::Spacing();
 
+            if (!EssentialView())
             if (auto ch = ScopedCollapsingHeader(TrL("Extended FSR FG Settings")); ch.IsHeaderOpen())
             {
                 ScopedIndent indent {};
@@ -10505,6 +10528,8 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         ImGui::EndDisabled();
 
         // ILION: UI composition, debug view and borderless of XeFG under one folded key, same controls and states
+        // Display, debug and extended settings: Advanced only
+        if (!EssentialView())
         if (auto display = ScopedCollapsingHeader(TrL("Display and debug##xefg")); display.IsHeaderOpen())
         {
         ImGui::BeginDisabled(!correctMVs || cantActivate);
@@ -10550,6 +10575,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         // ShowTooltip("Display only XeFG generated frames");
 
         ImGui::Spacing();
+        if (!EssentialView())
         if (auto ch = ScopedCollapsingHeader(TrL("Extended XeFG Settings")); ch.IsHeaderOpen())
         {
             ImGui::Spacing();
@@ -12918,6 +12944,8 @@ void MenuCommon::RenderIntelligentLatency(RenderMenuContext& ctx)
     if (running)
         WrappedText(IlionTheme::TextDim, Tr("Latency not measured here"));
 
+    // The technical diagnosis is for Advanced; mode, state and reason stay above
+    if (!EssentialView())
     if (auto ch = ScopedCollapsingHeader(TrL("Diagnostics")); ch.IsHeaderOpen())
     {
         ScopedIndent indent {};
@@ -13827,8 +13855,9 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
                   "are real: Whole frame ends at the last marker of the frame, not on screen",
                   IlionOverlay::ReflexTimings },
                 { "ILION estimated latency##element",
-                  "ILION's latency, DirectX 12: simulation start to the refresh that shows the frame, from the frame's "
-                  "own times (Reflex markers, Present, GPU timestamp, DXGI frame statistics)",
+                  "ILION's latency, DirectX 12: simulation start to the refresh that shows the frame, or to the end of the GPU "
+                  "work when the refresh can't be known. CPU: simulation start to Present. Present to GPU end: includes "
+                  "frames waiting in the queue. With frame generation the generator's own delay is not included",
                   IlionOverlay::IlionLatency },
             };
 
@@ -13938,6 +13967,7 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
         const auto hwSnapshot = HwTelemetry::Get();
 
         // ILION: where every reading comes from, folded; the readings above don't depend on it being open
+        if (!EssentialView())
         if (auto sources = ScopedCollapsingHeader(TrL("Sensor sources and diagnostics")); sources.IsHeaderOpen())
         {
         ImGui::TextDisabled(Tr("HWiNFO: %s  |  MSI Afterburner: %s"),
@@ -14618,7 +14648,15 @@ void MenuCommon::RenderEssentialStrip(RenderMenuContext& ctx)
 
     auto fg = state.currentFG;
     if (fg != nullptr && fg->IsActive() && !fg->IsPaused())
-        screens[1] = { "FRAME GEN", StrFmt("%s %ux", fg->Name(), fg->GetInterpolatedFrameCount() + 1) };
+    {
+        // Some names already end with the multiplier ("XeFG 2x"): written once, as in the sidebar
+        const unsigned multiplier = (unsigned) fg->GetInterpolatedFrameCount() + 1;
+        std::string fgName = fg->Name();
+        const std::string suffix = StrFmt(" %ux", multiplier);
+        if (fgName.ends_with(suffix))
+            fgName.erase(fgName.size() - suffix.size());
+        screens[1] = { "FRAME GEN", StrFmt("%s %ux", fgName.c_str(), multiplier) };
+    }
     else if (state.dlssgDetectedInterpolationCount > 0)
         screens[1] = { "FRAME GEN", StrFmt("DLSSG %dx", state.dlssgDetectedInterpolationCount + 1) };
     else
@@ -15260,11 +15298,11 @@ enum class EssentialRole
 
 static EssentialRole EssentialRoleOf(const char* id)
 {
-    static constexpr const char* main[] = { "upscaler",    "gfx_color", "sharpness",    "fg_selection", "fg_fsrfg",
-                                            "fg_xefg",     "fg_dlssg",  "fg_optifg",    "framerate",    "ilion_latency",
-                                            "vsync",       "fps_overlay", "benchmark",  "menu_scale",   "theme" };
-    static constexpr const char* secondary[] = { "upscale_ratio", "output_scaling", "mipmap",   "anisotropy", "gfx_advanced",
-                                                 "fg_reprojection", "fg_nvngx",    "low_latency", "keybinds" };
+    static constexpr const char* main[] = { "upscaler",  "gfx_color",   "sharpness", "fg_selection", "fg_fsrfg",
+                                            "fg_xefg",   "fg_dlssg",    "fg_optifg", "fg_reprojection", "fg_nvngx",
+                                            "framerate", "ilion_latency", "vsync",   "fps_overlay",  "menu_scale",
+                                            "theme" };
+    static constexpr const char* secondary[] = { "mipmap", "anisotropy", "gfx_advanced", "low_latency", "keybinds" };
 
     for (const char* name : main)
     {
@@ -15284,7 +15322,7 @@ static EssentialRole EssentialRoleOf(const char* id)
 static bool EssentialHidesTab(const char* label)
 {
     return strcmp(label, "Custom") == 0 || strcmp(label, "Compatibility") == 0 || strcmp(label, "Quirks") == 0 ||
-           strcmp(label, "Help / Status") == 0;
+           strcmp(label, "Help / Status") == 0 || strcmp(label, "Benchmark") == 0;
 }
 
 // ILION: the options that act on ghosting and trails, from the boxes they already live in. Nothing is copied: each

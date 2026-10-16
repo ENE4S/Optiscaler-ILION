@@ -16,6 +16,7 @@
 #include <misc/IlionBenchmark.h>
 #include <misc/IlionCompare.h>
 #include <misc/IlionCapture.h>
+#include <misc/IlionD4rGuard.h>
 #include <misc/IlionLatency.h>
 #include <misc/IlionOverlay.h>
 #include <misc/IlionVisual.h>
@@ -589,6 +590,14 @@ static void SelectUpscaler(const IlionUpscalers::Entry* entry)
         return;
     }
 
+    // DLSS 4 through d4r: for now only on AMD RDNA 3, whatever asks for it
+    const auto& gpu = IdentifyGpu::getPrimaryGpu();
+    if (gpu.vendorId != VendorId::AMD || !IlionD4rGuard::IsRdna3(gpu.amdHwGeneration))
+    {
+        LOG_WARN("DLSS 4 through d4r is only available on AMD RDNA 3, not selected");
+        return;
+    }
+
     const bool loaded = state.dlssExternalBackend && IlionUpscalers::SamePath(config->NvngxPath.value_or(L""), entry->path);
 
     config->DLSSAllowExternalBackend = true;
@@ -834,15 +843,17 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
         {
             if (api != DX12)
                 return std::string(Tr("API not compatible")) + ": " + Tr("d4r only works in DirectX 12");
-            if (vendor != VendorId::AMD)
-                return std::string(Tr("Hardware not compatible")) + ": " + Tr("d4r runs DLSS on AMD GPUs");
+            // ILION's DLSS 4 through d4r: for now only AMD RDNA 3 (also enforced where it loads, misc/IlionD4rGuard.h)
+            if (vendor != VendorId::AMD || !IlionD4rGuard::IsRdna3(IdentifyGpu::getPrimaryGpu().amdHwGeneration))
+                return Tr("Currently available only on AMD RDNA 3");
             if (!entry.valid)
                 return std::string(Tr("Dependency not available")) + ": " + Tr(entry.problem.c_str());
             return "";
         }
 
-        if (entry.family == IlionUpscalers::Family::Fsr4 && vendor != VendorId::AMD)
-            return std::string(Tr("Hardware not compatible")) + ": " + Tr("FSR 4 needs an AMD GPU");
+        // Only AMD's own FSR 4 dll keeps AMD's hardware rule; community builds decide by themselves whether they run
+        if (entry.family == IlionUpscalers::Family::Fsr4 && entry.amdOfficial && vendor != VendorId::AMD)
+            return std::string(Tr("Hardware not compatible")) + ": " + Tr("AMD's official FSR 4 needs an AMD GPU");
 
         if (!entry.valid)
             return std::string(Tr("DLL not available")) + ": " + Tr(entry.problem.c_str());
@@ -854,13 +865,8 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
 
     if (family == FamFsr4 && showDefault)
     {
+        // Usable on any GPU: it also provides FSR 3.1, and FSR 4 runs only where the dll itself allows it
         Variant variant { nullptr, Upscaler::Reset, true, Tr("FSR (default dll)"), StatusOf(nullptr, feature) };
-
-        if (vendor != VendorId::AMD)
-        {
-            variant.usable = false;
-            variant.reason = std::string(Tr("Hardware not compatible")) + ": " + Tr("FSR 4 needs an AMD GPU");
-        }
 
         variants.push_back(variant);
     }

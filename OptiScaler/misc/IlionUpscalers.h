@@ -5,6 +5,9 @@
 #include "Logger.h"
 #include <fsr4/FSR4Versions.h>
 
+#include <Softpub.h>
+#include <WinTrust.h>
+
 #include <algorithm>
 #include <cstring>
 #include <cwctype>
@@ -64,6 +67,8 @@ struct Entry
     std::string problem;
     // Next to a HelixSR dll: AMD's FSR that HelixSR lists after itself (its "forwarding")
     bool forwardsToAmd = false;
+    // FSR 4: AMD's own dll (its AMD signature verifies), which keeps AMD's hardware rules. Community builds don't
+    bool amdOfficial = false;
     // Found in a folder of an older install
     bool legacy = false;
 };
@@ -141,6 +146,73 @@ inline std::string FileVersionOf(const std::wstring& path)
     return std::format("{}.{}.{}.{}", version.major, version.minor, version.patch, version.reserved);
 }
 
+// AMD's own FSR 4 dll: AMD as the company in its version resource and an Authenticode signature that verifies.
+// A community build is a modified file, so its signature no longer verifies. wintrust is loaded only for the check.
+inline bool IsAmdSignedDll(const std::wstring& path)
+{
+    DWORD handle = 0;
+    const DWORD size = GetFileVersionInfoSizeW(path.c_str(), &handle);
+    if (size == 0)
+        return false;
+
+    std::vector<BYTE> data(size);
+    if (!GetFileVersionInfoW(path.c_str(), 0, size, data.data()))
+        return false;
+
+    struct Translation
+    {
+        WORD language;
+        WORD codePage;
+    }* translations = nullptr;
+    UINT bytes = 0;
+
+    if (!VerQueryValueW(data.data(), L"\\VarFileInfo\\Translation", (LPVOID*) &translations, &bytes) ||
+        bytes < sizeof(Translation))
+        return false;
+
+    wchar_t key[64] {};
+    swprintf_s(key, L"\\StringFileInfo\\%04x%04x\\CompanyName", translations[0].language, translations[0].codePage);
+
+    wchar_t* company = nullptr;
+    UINT length = 0;
+    if (!VerQueryValueW(data.data(), key, (LPVOID*) &company, &length) || company == nullptr ||
+        std::wstring(company).find(L"Advanced Micro Devices") == std::wstring::npos)
+        return false;
+
+    HMODULE wintrust = LoadLibraryW(L"wintrust.dll");
+    if (wintrust == nullptr)
+        return false;
+
+    using VerifyTrust = LONG(WINAPI*)(HWND, GUID*, LPVOID);
+    const auto verify = reinterpret_cast<VerifyTrust>(GetProcAddress(wintrust, "WinVerifyTrust"));
+    LONG result = TRUST_E_NOSIGNATURE;
+
+    if (verify != nullptr)
+    {
+        WINTRUST_FILE_INFO file {};
+        file.cbStruct = sizeof(file);
+        file.pcwszFilePath = path.c_str();
+
+        WINTRUST_DATA trust {};
+        trust.cbStruct = sizeof(trust);
+        trust.dwUIChoice = WTD_UI_NONE;
+        trust.fdwRevocationChecks = WTD_REVOKE_NONE;
+        trust.dwUnionChoice = WTD_CHOICE_FILE;
+        trust.pFile = &file;
+        trust.dwStateAction = WTD_STATEACTION_VERIFY;
+        trust.dwProvFlags = WTD_CACHE_ONLY_URL_RETRIEVAL;
+
+        GUID action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+        result = verify(nullptr, &action, &trust);
+
+        trust.dwStateAction = WTD_STATEACTION_CLOSE;
+        verify(nullptr, &action, &trust);
+    }
+
+    FreeLibrary(wintrust);
+    return result == ERROR_SUCCESS;
+}
+
 // Name of a build of FSR 4 from the folder the user put it in. Only the name: what it is comes from the file.
 inline void NameFsr4(Entry& entry, const std::wstring& folder)
 {
@@ -184,6 +256,7 @@ inline Entry FfxEntry(const std::wstring& key, const std::filesystem::path& dll,
     {
         entry.family = Family::Fsr4;
         NameFsr4(entry, folderName);
+        entry.amdOfficial = IsAmdSignedDll(entry.path);
 
         // Short names from the file itself: the lossy Lite build names its provider "4.1.1-r3-lossy-cyboman", AMD's
         // official dll carries its version in its version resource

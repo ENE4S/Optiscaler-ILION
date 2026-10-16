@@ -493,7 +493,7 @@ bool Config::Reload(std::filesystem::path iniPath)
             IndustrialTheme.set_from_config(readBool("Menu", "IndustrialTheme"));
 
             if (auto setting = readInt("Menu", "IlionPalette"); setting.has_value() && setting >= 0 && setting <= 3)
-                IlionPalette.set_from_config(setting);
+                IlionPalette.set_from_config(setting == 1 ? 3 : setting); // the first Fallout is retired: its CRT successor
             OverlaysUseTheme.set_from_config(readBool("Menu", "OverlaysUseTheme"));
             MenuAccentColorR.set_from_config(readFloat("Menu", "AccentColorR"));
             MenuAccentColorG.set_from_config(readFloat("Menu", "AccentColorG"));
@@ -509,6 +509,8 @@ bool Config::Reload(std::filesystem::path iniPath)
             CustomTabEnabled.set_from_config(readBool("Menu", "CustomTabEnabled"));
             MenuLanguage.set_from_config(readString("Menu", "Language"));
             MenuBasicMode.set_from_config(readBool("Menu", "BasicMode"));
+            MenuEssentialMode.set_from_config(readBool("Menu", "EssentialMode"));
+            IlionInfoLine.set_from_config(readBool("Menu", "IlionInfoLine"));
             CustomTabCards.set_from_config(readString("Menu", "CustomTabCards"));
         }
 
@@ -1409,6 +1411,8 @@ bool Config::SaveIni()
         ini.SetValue("Menu", "CustomTabEnabled", GetBoolValue(Instance()->CustomTabEnabled.value_for_config()).c_str());
         ini.SetValue("Menu", "Language", Instance()->MenuLanguage.value_for_config_or("auto").c_str());
         ini.SetValue("Menu", "BasicMode", GetBoolValue(Instance()->MenuBasicMode.value_for_config()).c_str());
+        ini.SetValue("Menu", "EssentialMode", GetBoolValue(Instance()->MenuEssentialMode.value_for_config()).c_str());
+        ini.SetValue("Menu", "IlionInfoLine", GetBoolValue(Instance()->IlionInfoLine.value_for_config()).c_str());
         ini.SetValue("Menu", "CustomTabCards", Instance()->CustomTabCards.value_for_config_or("auto").c_str());
     }
 
@@ -1735,6 +1739,8 @@ bool Config::SaveMenuPreferences()
 {
     const std::string language = Instance()->MenuLanguage.value_for_config_or("auto");
     const std::string basicMode = GetBoolValue(Instance()->MenuBasicMode.value_for_config());
+    const std::string essentialMode = GetBoolValue(Instance()->MenuEssentialMode.value_for_config());
+    const std::string infoLine = GetBoolValue(Instance()->IlionInfoLine.value_for_config());
 
     // The copy in memory too, so a later Save Settings writes the same
     const std::string industrial = GetBoolValue(Instance()->IndustrialTheme.value_for_config());
@@ -1742,6 +1748,8 @@ bool Config::SaveMenuPreferences()
 
     ini.SetValue("Menu", "Language", language.c_str());
     ini.SetValue("Menu", "BasicMode", basicMode.c_str());
+    ini.SetValue("Menu", "EssentialMode", essentialMode.c_str());
+    ini.SetValue("Menu", "IlionInfoLine", infoLine.c_str());
     ini.SetValue("Menu", "IndustrialTheme", industrial.c_str());
     ini.SetValue("Menu", "IlionPalette", palette.c_str());
 
@@ -1751,6 +1759,8 @@ bool Config::SaveMenuPreferences()
     file.LoadFile(absoluteFileName.c_str());
     file.SetValue("Menu", "Language", language.c_str());
     file.SetValue("Menu", "BasicMode", basicMode.c_str());
+    file.SetValue("Menu", "EssentialMode", essentialMode.c_str());
+    file.SetValue("Menu", "IlionInfoLine", infoLine.c_str());
     file.SetValue("Menu", "IndustrialTheme", industrial.c_str());
     file.SetValue("Menu", "IlionPalette", palette.c_str());
 

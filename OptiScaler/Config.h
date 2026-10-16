@@ -403,7 +403,7 @@ class Config
     CustomOptional<int> FGShortcutKey { VK_END };
     CustomOptional<bool> LightTheme { false };
     CustomOptional<bool> IndustrialTheme { true };
-    CustomOptional<int> IlionPalette { 0 }; // ILION theme colours: 0 = original, 1 = Fallout, 2 = light, 3 = Fallout 2, 3 = Fallout 2
+    CustomOptional<int> IlionPalette { 0 }; // ILION theme colours: 0 = original, 2 = light, 3 = Fallout (1, the first Fallout, is read as 3)
     CustomOptional<bool> OverlaysUseTheme { false };
     CustomOptional<float> MenuAccentColorR { 0.00f };
     CustomOptional<float> MenuAccentColorG { 0.40f };
@@ -417,6 +417,8 @@ class Config
     CustomOptional<bool> CustomTabEnabled { true };
     CustomOptional<std::string> MenuLanguage { "es" };
     CustomOptional<bool> MenuBasicMode { false };
+    CustomOptional<bool> MenuEssentialMode { false }; // ILION: Essential mode, the full tabs under a strip of status screens. BasicMode wins
+    CustomOptional<bool> IlionInfoLine { true };      // ILION: INFO line at the bottom of the menu
     CustomOptional<std::string> CustomTabCards { "upscaler,sharpness,fg_selection,fg_fsrfg,fg_xefg,fg_dlssg,fg_"
                                                  "reprojection,fg_optifg,fg_nvngx,fg_fsrfg_inputs,fg_sl_"
                                                  "inputs,framerate" }; // Comma separated ids of the boxes

@@ -35,6 +35,7 @@
 #include <imgui/imgui_internal.h>
 #include "ilion_visual_panel.h"
 #include "ilion_theme.h"
+#include "ilion_info.h"
 #include "ilion_d4r_panel.h"
 #include <shaders/image_adjust/ImageAdjust_Common.h>
 #include <imgui/ImGuiNotify.hpp>
@@ -436,6 +437,20 @@ static std::string UpscalerLabel(IFeature* feature)
 
         if (!entry.has_value() && IlionUpscalers::SamePath(FfxApiProxy::Dx12Module_SR_Path(), SharedDefaultSrDll()))
             entry = IlionUpscalers::FindByKey(SharedDefaultTwin());
+
+        // HelixSR: "DLSS 3.7" is what its author says it runs. Shown only when the dll identified as HelixSR by its
+        // file is the one the last upscale really executed (SR-DIAG); the version itself can't be checked from here
+        if (entry.has_value() && entry->family == IlionUpscalers::Family::HelixSR)
+        {
+            const auto active = FfxApiProxy::SrDiagGetActive();
+            std::wstring activePath;
+
+            if (active.module != nullptr)
+                FfxApiProxy::SrDiagDescribeModule(active.module, &activePath);
+
+            if (IlionUpscalers::SamePath(activePath, entry->path))
+                return EntryName(*entry) + " (DLSS 3.7)";
+        }
 
         // The default dll, or the game's own: AMD's FSR
         return entry.has_value() ? EntryName(*entry) : "FSR " + version;
@@ -957,6 +972,12 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
             if (entry.forwardsToAmd)
                 tip += std::string("\n") + Tr("AMD's FSR is next to it: HelixSR lists it after itself. ILION always "
                                               "starts HelixSR's own provider.");
+
+            // What is checked and what is only stated, kept apart
+            if (entry.family == IlionUpscalers::Family::HelixSR)
+                tip += std::string("\n") + Tr("Identified as HelixSR by its file. While upscaling, ILION also checks "
+                                              "that this dll is the one running.\nDLSS 3.7: the version its author "
+                                              "states, it can't be verified from ILION.");
 
             ImGui::SetTooltip("%s", tip.c_str());
         }
@@ -8412,16 +8433,20 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
     }
 }
 
-// Basic | Full, only changes what is drawn. Written to the ini right away, on its own
+// Basic | Essential | Advanced, only changes what is drawn. Written to the ini right away, on its own.
+// Advanced is the former Full; Essential is Advanced with a strip of status screens above the tabs.
 static void RenderModeSelector(decltype(Config::Instance()) config)
 {
     const bool basic = config->MenuBasicMode.value_or_default();
+    const bool essential = !basic && config->MenuEssentialMode.value_or_default();
 
     // Industrial theme: two keys of the same size with room around their word, the word in the middle.
     // Classic theme: the bare words, as always.
     const bool keys = IlionTheme::industrial;
     const ImVec2 keySize = IlionTheme::SelectorKeySize(
-        (std::max)(ImGui::CalcTextSize(Tr("Basic")).x, ImGui::CalcTextSize(Tr("Full")).x), false);
+        (std::max)({ ImGui::CalcTextSize(Tr("Basic")).x, ImGui::CalcTextSize(Tr("Essential")).x,
+                    ImGui::CalcTextSize(Tr("Advanced")).x }),
+        false);
 
     const auto modeButton = [&](const char* label, const char* id, bool selected)
     {
@@ -8455,9 +8480,21 @@ static void RenderModeSelector(decltype(Config::Instance()) config)
     IlionTheme::SelectorBar(keys ? keySize.y : 0.0f);
     ImGui::SameLine();
 
-    if (modeButton(Tr("Full"), "##ModeFull", !basic))
+    if (modeButton(Tr("Essential"), "##ModeEssential", essential))
     {
         config->MenuBasicMode = false;
+        config->MenuEssentialMode = true;
+        config->SaveMenuPreferences();
+    }
+
+    ImGui::SameLine();
+    IlionTheme::SelectorBar(keys ? keySize.y : 0.0f);
+    ImGui::SameLine();
+
+    if (modeButton(Tr("Advanced"), "##ModeFull", !basic && !essential))
+    {
+        config->MenuBasicMode = false;
+        config->MenuEssentialMode = false;
         config->SaveMenuPreferences();
     }
 }
@@ -11189,7 +11226,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 changed |= ImGui::InputScalar("##RawFlags", ImGuiDataType_U32, &temp_flags, NULL, NULL, "%08X",
                                               ImGuiInputTextFlags_CharsHexadecimal);
 
-                ImGui::SameLine(0.0f, 20.0f * menuResScale);
+                SameLineIfRoom(CheckboxWidth(TrL("Show Debug")), 20.0f * menuResScale);
                 if (bool showDebug = config->NvngxFGShowDebug.value_or_default();
                     IlionTheme::Checkbox(TrL("Show Debug"), &showDebug))
                 {
@@ -11207,11 +11244,11 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                     {
                         for (const auto& flag : flags)
                         {
-                            changed |= ImGui::CheckboxFlags(flag.name.c_str(), &temp_flags, flag.mask);
+                            changed |= ImGui::CheckboxFlags(TrL(flag.name.c_str()), &temp_flags, flag.mask);
 
                             if (ImGui::IsItemHovered() && !flag.description.empty())
                             {
-                                ImGui::SetTooltip("%s", flag.description.c_str());
+                                ImGui::SetTooltip("%s", Tr(flag.description.c_str()));
                             }
                         }
                     };
@@ -11319,7 +11356,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
                 if (Nvngx_FG::version().major > 3)
                 {
-                    ImGui::SameLine(0.0f, 20.0f * menuResScale);
+                    SameLineIfRoom(CheckboxWidth(TrL("Enable Watermark")), 20.0f * menuResScale);
                     if (bool fgwm = config->FSRFGEnableWatermark.value_or_default();
                         IlionTheme::Checkbox(TrL("Enable Watermark"), &fgwm))
                     {
@@ -11581,7 +11618,7 @@ void MenuCommon::RenderFramerateSettings(RenderMenuContext& ctx)
         ImGui::Text(Tr("Current method: %s"), currentMethod.c_str());
 
         if (fakenvapiMode == LowLatencyMode::AntiLag2)
-            ShowTooltip("FSR Anti-Lag 2.0 is the new name for AntiLag 2\nDon't ask me why");
+            ShowTooltip("FSR Anti-Lag 2.0 is AMD's current name for Anti-Lag 2");
 
         if (state.reflexShowWarning)
         {
@@ -11667,8 +11704,8 @@ void MenuCommon::RenderFakenvapiSettings(RenderMenuContext& ctx)
         {
             config->FN_ForceLatencyFlex = forceLFX;
         }
-        ShowTooltip("By default, FSR Anti-Lag 2.0/XeLL is used when available.\n"
-                    "This setting lets you force LatencyFlex instead");
+        ShowTooltip("By default FSR Anti-Lag 2.0, or else XeLL, is used when available; neither is used with Multi Frame "
+                    "Generation or dynamic DLSS-G.\nThis forces LatencyFleX instead, without restarting the game");
         ImGui::EndDisabled();
     }
 
@@ -13227,15 +13264,21 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         // The three ILION themes share every control and the layout, only their palette changes.
         // Classic: everything below works as it always did. The choice is saved at once.
         const bool industrialTheme = config->IndustrialTheme.value_or_default();
+        // Palette 1 (the first Fallout) is retired: Config reads it as 3, the CRT one, now simply called Fallout
         const int palette = std::clamp(config->IlionPalette.value_or_default(), 0, 3);
-        static const char* paletteNames[] = { "ILION (original)", "Fallout", "Light", "Fallout 2" };
+        static const char* paletteNames[] = { "ILION (original)", nullptr, "Light", "Fallout" };
 
         ImGui::SetNextItemWidth(180.0f * ctx.menuResScale);
 
-        if (IlionTheme::BeginCombo(TrL("Theme"), Tr(industrialTheme ? paletteNames[palette] : "Classic")))
+        const char* paletteName = paletteNames[palette] != nullptr ? paletteNames[palette] : paletteNames[3];
+
+        if (IlionTheme::BeginCombo(TrL("Theme"), Tr(industrialTheme ? paletteName : "Classic")))
         {
             for (int n = 0; n < (int) std::size(paletteNames); n++)
             {
+                if (paletteNames[n] == nullptr)
+                    continue;
+
                 const bool chosen = industrialTheme && palette == n;
 
                 if (ImGui::Selectable(Tr(paletteNames[n]), chosen) && !chosen)
@@ -13257,7 +13300,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
             ImGui::EndCombo();
         }
 
-        ShowTooltip("ILION (original), Fallout, Light and Fallout 2: the instrument panel look of ILION in four styles.\n"
+        ShowTooltip("ILION (original), Light and Fallout: the instrument panel look of ILION in three styles.\n"
                     "Classic: the original look, with the colour settings below.");
 
         // The colours below are the ones of the classic theme: hidden with the ILION themes, they do nothing there
@@ -13780,7 +13823,8 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
                 { "Frame time graph", "Graph of the last frame times", IlionOverlay::FrameGraph },
                 { "Upscaler time", "GPU time of the upscaler and its average", IlionOverlay::UpscalerTime },
                 { "Upscaler time graph", "Graph of the last upscaler times", IlionOverlay::UpscalerGraph },
-                { "Reflex timings##element", "OptiScaler's Reflex timings: the frame report of Reflex or fakenvapi",
+                { "Reflex timings##element", "OptiScaler's Reflex timings: the frame report of Reflex or fakenvapi. With fakenvapi only its CPU times "
+                  "are real: Whole frame ends at the last marker of the frame, not on screen",
                   IlionOverlay::ReflexTimings },
                 { "ILION estimated latency##element",
                   "ILION's latency, DirectX 12: simulation start to the refresh that shows the frame, from the frame's "
@@ -14550,6 +14594,132 @@ void MenuCommon::RenderStatusSummary(RenderMenuContext& ctx)
     ImGui::EndTable();
 }
 
+// ILION Essential mode: four small CRT screens above the tabs with what ILION already knows. Nothing is measured
+// here; a value without evidence shows a "-".
+//   Upscaler   the name of what runs (the dll that executed the last upscale for FFX, d4r for DLSS 4), as everywhere
+//   Frame Gen  OptiScaler's FG and its real multiplier, or the multiplier DLSSG reports
+//   Latency    the reducer fakenvapi has created, dimmed while it is not enabled
+//   API        the API of the swapchain
+void MenuCommon::RenderEssentialStrip(RenderMenuContext& ctx)
+{
+    auto& state = ctx.state;
+    auto& currentFeature = ctx.currentFeature;
+
+    struct Screen
+    {
+        const char* label;
+        std::string value;
+        bool lit = true; // false: the value is known but the thing is off
+    };
+
+    Screen screens[4];
+
+    screens[0] = { "UPSCALER", currentFeature != nullptr && !currentFeature->IsFrozen() ? UpscalerLabel(currentFeature) : std::string("-") };
+
+    auto fg = state.currentFG;
+    if (fg != nullptr && fg->IsActive() && !fg->IsPaused())
+        screens[1] = { "FRAME GEN", StrFmt("%s %ux", fg->Name(), fg->GetInterpolatedFrameCount() + 1) };
+    else if (state.dlssgDetectedInterpolationCount > 0)
+        screens[1] = { "FRAME GEN", StrFmt("DLSSG %dx", state.dlssgDetectedInterpolationCount + 1) };
+    else
+        screens[1] = { "FRAME GEN", Tr("Off"), false };
+
+    const bool fakenvapiInUse = fakenvapi::isUsingAsMainNvapi();
+    const char* tech = fakenvapiInUse ? IlionLatency::TechName(fakenvapi::getCurrentMode()) : nullptr;
+    if (tech != nullptr)
+        screens[2] = { "LATENCY", tech, fakenvapi::isLowLatencyActive() };
+    else
+        screens[2] = { "LATENCY", "-", false };
+
+    const char* api = IlionLatency::SwapchainApiName(state.swapchainApi);
+    screens[3] = { "API", strcmp(api, "?") == 0 ? std::string("-") : std::string(api) };
+
+    const auto& style = ImGui::GetStyle();
+    ImFont* font = IlionTheme::crtFont != nullptr ? IlionTheme::crtFont : ImGui::GetFont();
+    const float fontSize = ImGui::GetFontSize();
+    const float labelSize = std::floor(fontSize * 0.78f);
+    const float pad = std::floor(fontSize * 0.45f);
+    const float height = std::floor(labelSize + fontSize + pad * 2.5f);
+    const float width = std::floor((ImGui::GetContentRegionAvail().x - style.ItemSpacing.x * 3.0f) / 4.0f);
+
+    // Amber of old digital readouts on a dark, slightly warm glass
+    const ImVec4 amber = toneMapColor(ImVec4(1.00f, 0.68f, 0.16f, 1.0f));
+    const ImVec4 amberDim = toneMapColor(ImVec4(0.62f, 0.42f, 0.12f, 1.0f));
+    const ImU32 glass = ImGui::GetColorU32(ImVec4(0.045f, 0.032f, 0.014f, 1.0f));
+    const ImU32 rim = ImGui::GetColorU32(ImVec4(0.32f, 0.31f, 0.28f, 1.0f));
+    const ImU32 rimDark = ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, 0.55f));
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+
+    for (int i = 0; i < 4; i++)
+    {
+        if (i > 0)
+            ImGui::SameLine();
+
+        ImGui::PushID(i);
+        const ImVec2 min = ImGui::GetCursorScreenPos();
+        const ImVec2 max(min.x + width, min.y + height);
+        ImGui::InvisibleButton("##screen", ImVec2(width, height));
+        const bool hovered = ImGui::IsItemHovered();
+        ImGui::PopID();
+
+        const float rounding = std::floor(fontSize * 0.35f);
+
+        // Bezel, the glass, the curve of the glass catching the light, a soft shadow at the bottom edge
+        draw->AddRectFilled(ImVec2(min.x - 1.0f, min.y - 1.0f), ImVec2(max.x + 1.0f, max.y + 1.0f), rimDark, rounding + 1.0f);
+        draw->AddRectFilled(min, max, glass, rounding);
+        draw->AddRectFilledMultiColor(ImVec2(min.x + 2.0f, min.y + 2.0f), ImVec2(max.x - 2.0f, min.y + height * 0.42f),
+                                      ImGui::GetColorU32(ImVec4(1.0f, 0.95f, 0.85f, 0.07f)),
+                                      ImGui::GetColorU32(ImVec4(1.0f, 0.95f, 0.85f, 0.07f)),
+                                      ImGui::GetColorU32(ImVec4(1.0f, 0.95f, 0.85f, 0.0f)),
+                                      ImGui::GetColorU32(ImVec4(1.0f, 0.95f, 0.85f, 0.0f)));
+        draw->AddRectFilledMultiColor(ImVec2(min.x + 2.0f, max.y - height * 0.25f), ImVec2(max.x - 2.0f, max.y - 2.0f),
+                                      ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, 0.0f)),
+                                      ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, 0.0f)),
+                                      ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, 0.30f)),
+                                      ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, 0.30f)));
+        draw->AddRect(min, max, rim, rounding);
+
+        // Label and value, cut with dots when the value doesn't fit; the whole value in the tooltip
+        const Screen& screen = screens[i];
+        const char* label = Tr(screen.label);
+        const float inner = width - pad * 2.0f;
+
+        std::string value = screen.value;
+        const auto measure = [&](const std::string& text) { return font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, text.c_str()).x; };
+        const bool cut = measure(value) > inner;
+
+        if (cut)
+        {
+            // One whole character at a time: its continuation bytes, then its first byte
+            while (!value.empty() && measure(value + "...") > inner)
+            {
+                while (!value.empty() && ((unsigned char) value.back() & 0xC0) == 0x80)
+                    value.pop_back();
+                if (!value.empty())
+                    value.pop_back();
+            }
+
+            value += "...";
+        }
+
+        draw->PushClipRect(min, max, true);
+        draw->AddText(font, labelSize, ImVec2(std::floor(min.x + pad), std::floor(min.y + pad * 0.8f)),
+                      ImGui::GetColorU32(amberDim), label);
+
+        const ImVec4 colour = screen.lit ? amber : amberDim;
+        const ImVec2 valuePos(std::floor(min.x + pad), std::floor(max.y - pad - fontSize));
+        draw->AddText(font, fontSize, ImVec2(valuePos.x, valuePos.y + 0.5f),
+                      ImGui::GetColorU32(ImVec4(colour.x, colour.y, colour.z, 0.28f)), value.c_str());
+        draw->AddText(font, fontSize, valuePos, ImGui::GetColorU32(colour), value.c_str());
+        draw->PopClipRect();
+
+        if (hovered && (cut || !screen.lit))
+            ImGui::SetTooltip("%s%s", screen.value.c_str(), screen.lit ? "" : Tr(" (not enabled)"));
+    }
+
+    ImGui::Spacing();
+}
+
 void MenuCommon::RenderStatusInfo(RenderMenuContext& ctx)
 {
     auto& state = ctx.state;
@@ -14778,8 +14948,9 @@ static float FooterHeight()
 {
     const auto& style = ImGui::GetStyle();
 
-    return 1.0f + style.ItemSpacing.y * 5.0f + ImGui::GetTextLineHeight() + FooterPlotHeight() +
-           ImGui::GetFrameHeight();
+    // The last frame height and item spacing are the INFO line
+    return 1.0f + style.ItemSpacing.y * 6.0f + ImGui::GetTextLineHeight() + FooterPlotHeight() +
+           ImGui::GetFrameHeight() * 2.0f;
 }
 
 // CUSTOM TAB -----------------------------
@@ -15040,6 +15211,58 @@ void MenuCommon::RenderPersonalPanel(RenderMenuContext& ctx)
         config->CustomTabCards = newPinned;
 }
 
+// ILION: the options that act on ghosting and trails, from the boxes they already live in. Nothing is copied: each
+// box is drawn by its own code, so a change here is the same change in its own tab. Each group says what it works with.
+void MenuCommon::RenderAntiGhostingTab(RenderMenuContext& ctx)
+{
+    size_t count = 0;
+    const MenuBox* boxes = GetMenuBoxes(count);
+
+    // Draws a box by its id; false when it drew nothing (its feature isn't in use)
+    const auto drawBox = [&](const char* id)
+    {
+        for (size_t i = 0; i < count; i++)
+        {
+            if (strcmp(boxes[i].id, id) != 0)
+                continue;
+
+            const float before = ImGui::GetCursorPosY();
+            ImGui::PushID(id);
+            RenderMenuBox(ctx, boxes[i]);
+            ImGui::PopID();
+            return ImGui::GetCursorPosY() != before;
+        }
+
+        return false;
+    };
+
+    TextWrappedDisabled("%s", Tr("Each group works only with the technology it names. These are the same controls as in "
+                                 "their own tabs."));
+
+    // 1. HUD with frame generation
+    SectionTitle("HUD with Frame Generation");
+    TextWrappedDisabled("%s", Tr("HUDFix: only with OptiFG as the frame generation input, with FSR FG, XeFG, DLSSG or "
+                                 "Reprojection as output. It may cause crashes."));
+    if (!drawBox("fg_optifg"))
+        TextWrappedDisabled("%s", Tr("Shown while OptiFG is the frame generation input."));
+
+    // 2. DLSS Enabler's frame generation
+    SectionTitle("DLSS Enabler Frame Generation");
+    TextWrappedDisabled("%s", Tr("Dispatch Flags, Antighosting (GB) among them: only with DLSS Enabler's DLSSG "
+                                 "replacement. They do nothing with FSR FG, XeFG or the game's own DLSSG."));
+    if (!drawBox("fg_nvngx"))
+        TextWrappedDisabled("%s", Tr("Shown while DLSS Enabler's frame generation is in use."));
+
+    // 3. The upscaler
+    SectionTitle("Upscaler");
+    TextWrappedDisabled("%s", Tr("Trails behind moving objects usually come from the upscaler: DLSS render presets "
+                                 "and the FSR settings are in Upscaling, the reactive mask in Init Flags."));
+    drawBox("init_flags");
+
+    if (IlionTheme::Button(TrL("Open Upscaling##AntiGhosting")))
+        requestedMenuTab = "Upscaling";
+}
+
 void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
 {
     auto& state = ctx.state;
@@ -15065,6 +15288,8 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
         { "MAIN", "Custom", "Boxes picked in Menu > Custom Tab.", RenderCustomTab },
         { "MAIN", "Upscaling", "Backend and output scaling.", RenderUpscalerStateMessage },
         { "MAIN", "Frame Gen", "Frame generation source, output and pacing." },
+        { "MAIN", "Anti-Ghosting", "Options against ghosting and trails, grouped by the technology they work with.",
+          RenderAntiGhostingTab },
         { "MAIN", "Latency & FPS", "Frame limiter, low latency and V-Sync." },
         { "MAIN", "Graphics", "Colour, sharpness, textures and detail of the picture." },
         { "MAIN", "Overlay", "Real-time metrics over the game: FPS, frame times and hardware sensors." },
@@ -15421,6 +15646,36 @@ void MenuCommon::RenderUpscalerTimeGraph(RenderMenuContext& ctx)
         &gUpscalerTimes, plotWidth, 0, nullptr, ImVec2(0.0f, FooterPlotHeight()), 4.0f * menuResScale);
 }
 
+// INFO ILION: its ON/OFF key and the line of the old green screen (menu/ilion_info.h). Off: the glass stays empty and
+// nothing is updated or animated.
+static void RenderInfoLine(decltype(Config::Instance()) config)
+{
+    const bool on = config->IlionInfoLine.value_or_default();
+
+    if (IlionTheme::Button(on ? "INFO ON##IlionInfo" : "INFO OFF##IlionInfo"))
+    {
+        config->IlionInfoLine = !on;
+        config->SaveMenuPreferences();
+    }
+
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("%s", Tr("INFO ILION: short tips about the technologies ILION uses.\nOFF stops the line and its animation."));
+
+    ImGui::SameLine();
+
+    const ImVec2 min = ImGui::GetCursorScreenPos();
+    const ImVec2 size(std::max(1.0f, ImGui::GetContentRegionAvail().x), ImGui::GetFrameHeight());
+    ImGui::Dummy(size);
+
+    ImFont* font = IlionTheme::crtFont != nullptr ? IlionTheme::crtFont : ImGui::GetFont();
+
+    // Aged phosphor and radioactive amber on a dark tube, the same in every theme: it is a screen, not a panel
+    IlionInfo::Draw(ImGui::GetWindowDrawList(), min, ImVec2(min.x + size.x, min.y + size.y), on, font,
+                    ImGui::GetFontSize(), &Ilion::Tr, toneMapColor(ImVec4(0.42f, 0.86f, 0.40f, 1.0f)),
+                    toneMapColor(ImVec4(1.0f, 0.66f, 0.14f, 1.0f)), ImVec4(0.020f, 0.045f, 0.025f, 1.0f),
+                    ImVec4(0.30f, 0.34f, 0.30f, 1.0f));
+}
+
 void MenuCommon::RenderMainMenuFooter(RenderMenuContext& ctx)
 {
     ImGui::Separator();
@@ -15446,6 +15701,8 @@ void MenuCommon::RenderMainMenuFooter(RenderMenuContext& ctx)
     ImGui::PopItemWidth();
 
     ImGui::SetCursorPosY(endY);
+
+    RenderInfoLine(ctx.config);
 
     RenderMainMenuBottomBar(ctx);
 }
@@ -16612,6 +16869,10 @@ void MenuCommon::RenderMainMenuWindow(RenderMenuContext& ctx)
         }
         else
         {
+            // Essential: the same tabs as Advanced, under a strip of status screens
+            if (config->MenuEssentialMode.value_or_default())
+                RenderEssentialStrip(ctx);
+
             // Tabs on the left, tab content on the right.
             RenderMainMenuTabs(ctx);
 

@@ -179,7 +179,7 @@ inline ImVec4 StripeYellow { 0.800f, 0.670f, 0.110f, 1.0f };
 // The three ILION palettes. Controls, layout and drawn parts are the same for all of them, only colours change.
 //   0 ILION: 70s Soviet industrial, aged metal, steel trims (no brown frames), radioactive green lamps and tabs
 //   1 Fallout: retro-futuristic phosphor green terminal
-//   2 Light: bright and plain, dark text
+//   2 Light: light grey and plain, dark text
 inline void SetPalette(int palette)
 {
     struct Palette
@@ -211,9 +211,10 @@ inline void SetPalette(int palette)
           { 0.300f, 0.060f, 0.040f, 1 }, { 0.500f, 0.100f, 0.060f, 1 }, { 1.000f, 0.720f, 0.150f, 1 },
           { 1.000f, 0.690f, 0.080f, 1 }, { 0.180f, 0.500f, 0.260f, 1 }, { 0.120f, 0.340f, 0.180f, 1 },
           { 1.000f, 0.690f, 0.080f, 1 }, 0.0f },
-        { { 0.800f, 0.815f, 0.832f, 1 }, { 0.858f, 0.870f, 0.884f, 1 }, { 0.930f, 0.937f, 0.946f, 1 },
-          { 0.880f, 0.890f, 0.905f, 1 }, { 0.835f, 0.850f, 0.872f, 1 }, { 0.760f, 0.800f, 0.860f, 1 },
-          { 0.720f, 0.750f, 0.800f, 1 }, { 0.770f, 0.785f, 0.805f, 1 }, { 0.640f, 0.665f, 0.700f, 1 },
+        // 2 Light: greys toned down so the window doesn't glare, the text keeps its contrast
+        { { 0.700f, 0.714f, 0.730f, 1 }, { 0.752f, 0.763f, 0.776f, 1 }, { 0.815f, 0.822f, 0.831f, 1 },
+          { 0.772f, 0.781f, 0.795f, 1 }, { 0.733f, 0.746f, 0.766f, 1 }, { 0.668f, 0.703f, 0.756f, 1 },
+          { 0.632f, 0.659f, 0.703f, 1 }, { 0.676f, 0.690f, 0.708f, 1 }, { 0.640f, 0.665f, 0.700f, 1 },
           { 0.470f, 0.500f, 0.545f, 1 }, { 0.300f, 0.320f, 0.360f, 1 }, { 0.070f, 0.080f, 0.100f, 1 },
           { 0.270f, 0.295f, 0.335f, 1 }, { 0.090f, 0.200f, 0.360f, 1 }, { 0.070f, 0.400f, 0.700f, 1 },
           { 0.420f, 0.580f, 0.780f, 1 }, { 0.700f, 0.390f, 0.000f, 1 }, { 0.720f, 0.120f, 0.090f, 1 },

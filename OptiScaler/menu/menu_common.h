@@ -229,6 +229,8 @@ class MenuCommon
     static const MenuBox* GetMenuBoxes(size_t& count);
     static void RenderMenuBox(RenderMenuContext& ctx, const MenuBox& box);
     static void RenderCustomTab(RenderMenuContext& ctx);
+    static void RenderAntiGhostingTab(RenderMenuContext& ctx); // ILION: existing ghosting options, grouped
+    static void RenderEssentialStrip(RenderMenuContext& ctx);  // ILION: status screens of the Essential mode
     static void RenderCustomTabSettings(RenderMenuContext& ctx);
     static void RenderStatusInfo(RenderMenuContext& ctx);
     static void RenderDetectedInfo(RenderMenuContext& ctx);

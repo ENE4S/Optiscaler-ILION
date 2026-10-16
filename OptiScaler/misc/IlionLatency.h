@@ -160,8 +160,6 @@ inline UINT statsCount = 0;
 inline uint64_t statsAt = 0;
 inline double displayedFps = -1.0;
 inline int presentation = -1;
-inline IDXGISwapChain* mediaOf = nullptr;
-inline IDXGISwapChainMedia* media = nullptr;
 
 inline void Note(Missing why) { missingCount[(size_t) why]++; }
 
@@ -176,6 +174,40 @@ inline bool SetupGpu(ID3D12CommandQueue* queue)
 {
     if (gpu.queue == queue)
         return gpu.ok;
+
+    // Objects of the previous queue: released once the GPU is done with them (a short wait at most), else kept
+    if (gpu.fence != nullptr)
+    {
+        bool idle = gpu.fence->GetCompletedValue() >= gpu.nextFence;
+
+        if (!idle)
+        {
+            if (HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr); event != nullptr)
+            {
+                if (gpu.fence->SetEventOnCompletion(gpu.nextFence, event) == S_OK)
+                    idle = WaitForSingleObject(event, 100) == WAIT_OBJECT_0;
+
+                CloseHandle(event);
+            }
+        }
+
+        if (idle)
+        {
+            for (int i = 0; i < kSlots; i++)
+            {
+                if (gpu.lists[i] != nullptr)
+                    gpu.lists[i]->Release();
+                if (gpu.allocators[i] != nullptr)
+                    gpu.allocators[i]->Release();
+            }
+
+            if (gpu.readback != nullptr)
+                gpu.readback->Release();
+            if (gpu.heap != nullptr)
+                gpu.heap->Release();
+            gpu.fence->Release();
+        }
+    }
 
     gpu = Gpu {};
     gpu.queue = queue;
@@ -475,22 +507,20 @@ inline void AfterPresent(IDXGISwapChain* swapChain, HRESULT result)
         }
     }
 
-    // The refresh the last shown Present reached. The media statistics also say whether Windows composed it.
-    if (mediaOf != swapChain)
-    {
-        if (media != nullptr)
-            media->Release();
-
-        media = nullptr;
-        mediaOf = swapChain;
-        swapChain->QueryInterface(IID_PPV_ARGS(&media));
-    }
-
+    // The refresh the last shown Present reached. The media statistics also say whether Windows composed it. The
+    // interface is released at once: holding it would keep the game's swapchain alive after the game drops it.
     DXGI_FRAME_STATISTICS stats {};
     DXGI_FRAME_STATISTICS_MEDIA mediaStats {};
     bool haveStats = false;
+    bool haveMedia = false;
 
-    if (media != nullptr && media->GetFrameStatisticsMedia(&mediaStats) == S_OK && mediaStats.PresentCount != 0)
+    if (IDXGISwapChainMedia* media = nullptr; swapChain->QueryInterface(IID_PPV_ARGS(&media)) == S_OK && media != nullptr)
+    {
+        haveMedia = media->GetFrameStatisticsMedia(&mediaStats) == S_OK && mediaStats.PresentCount != 0;
+        media->Release();
+    }
+
+    if (haveMedia)
     {
         haveStats = true;
         stats.PresentCount = mediaStats.PresentCount;

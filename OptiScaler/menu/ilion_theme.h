@@ -108,12 +108,24 @@ enum class Role
     Good,
     Warn,
     Bad,
+    Active, // the name of a technology that is running (upscaler in use, FG and its multiplier)
 };
 
 inline ImVec4 Themed(const ImVec4& original, Role role)
 {
     if (!industrial || skin == Skin::Industrial)
         return original;
+
+    // Running technologies: radioactive orange in Light and Fallout, the colour of "good" in the other terminal
+    if (role == Role::Active)
+    {
+        if (skin == Skin::Flat)
+            return ImVec4(0.82f, 0.34f, 0.00f, 1.0f);
+        if (skin != Skin::Crt)
+            role = Role::Good;
+        else
+            return ImVec4(1.00f, 0.62f, 0.18f, 1.0f);
+    }
 
     // Fallout 2: aged phosphor and amber, softer than the other terminal
     // Active, running: a bright retro orange (FG multipliers, the upscaler in use); warnings in aged yellow
@@ -127,7 +139,8 @@ inline ImVec4 Themed(const ImVec4& original, Role role)
                : role == Role::Warn ? ImVec4(1.00f, 0.72f, 0.15f, 1.0f)
                                     : ImVec4(1.00f, 0.32f, 0.22f, 1.0f);
 
-    return role == Role::Good ? ImVec4(0.10f, 0.50f, 0.22f, 1.0f)
+    // Light: a livelier phosphor green, still dark enough to read on the grey
+    return role == Role::Good ? ImVec4(0.02f, 0.56f, 0.18f, 1.0f)
            : role == Role::Warn ? ImVec4(0.70f, 0.40f, 0.00f, 1.0f)
                                 : ImVec4(0.76f, 0.12f, 0.10f, 1.0f);
 }
@@ -199,7 +212,7 @@ inline void SetPalette(int palette)
           { 0.640f, 0.660f, 0.610f, 1 }, { 0.020f, 0.022f, 0.020f, 1 }, { 0.870f, 0.885f, 0.810f, 1 },
           { 0.560f, 0.590f, 0.490f, 1 }, { 0.760f, 0.800f, 0.620f, 1 }, { 0.224f, 1.000f, 0.078f, 1 },
           { 0.150f, 0.520f, 0.090f, 1 }, { 1.000f, 0.690f, 0.000f, 1 }, { 0.800f, 0.000f, 0.000f, 1 },
-          { 0.400f, 0.060f, 0.050f, 1 }, { 0.580f, 0.080f, 0.060f, 1 }, { 0.800f, 0.690f, 0.400f, 1 },
+          { 0.400f, 0.060f, 0.050f, 1 }, { 0.580f, 0.080f, 0.060f, 1 }, { 0.950f, 0.820f, 0.220f, 1 },
           { 0.224f, 1.000f, 0.078f, 1 }, { 0.560f, 0.575f, 0.590f, 1 }, { 0.560f, 0.575f, 0.590f, 1 },
           { 0.800f, 0.670f, 0.110f, 1 }, 1.0f },
         { { 0.012f, 0.020f, 0.012f, 1 }, { 0.020f, 0.035f, 0.022f, 1 }, { 0.030f, 0.050f, 0.032f, 1 },
@@ -219,18 +232,18 @@ inline void SetPalette(int palette)
           { 0.270f, 0.295f, 0.335f, 1 }, { 0.090f, 0.200f, 0.360f, 1 }, { 0.070f, 0.400f, 0.700f, 1 },
           { 0.420f, 0.580f, 0.780f, 1 }, { 0.700f, 0.390f, 0.000f, 1 }, { 0.720f, 0.120f, 0.090f, 1 },
           { 0.900f, 0.780f, 0.770f, 1 }, { 0.860f, 0.640f, 0.620f, 1 }, { 0.090f, 0.200f, 0.360f, 1 },
-          { 0.070f, 0.400f, 0.700f, 1 }, { 0.640f, 0.665f, 0.700f, 1 }, { 0.770f, 0.785f, 0.805f, 1 },
+          { 0.850f, 0.400f, 0.000f, 1 }, { 0.640f, 0.665f, 0.700f, 1 }, { 0.770f, 0.785f, 0.805f, 1 },
           { 0.070f, 0.400f, 0.700f, 1 }, 0.0f },
-        // 3 Fallout 2: faded phosphor on a dark green tube, keys in dim phosphor, aged amber for names and edges
+        // 3 Fallout: faded phosphor on a dark green tube, keys in dim phosphor, radioactive orange for names and edges
         { { 0.016f, 0.026f, 0.018f, 1 }, { 0.026f, 0.040f, 0.028f, 1 }, { 0.034f, 0.052f, 0.036f, 1 },
           { 0.075f, 0.115f, 0.072f, 1 }, { 0.115f, 0.175f, 0.105f, 1 }, { 0.170f, 0.260f, 0.150f, 1 },
           { 0.055f, 0.085f, 0.052f, 1 }, { 0.140f, 0.220f, 0.140f, 1 }, { 0.260f, 0.400f, 0.250f, 1 },
           { 0.420f, 0.620f, 0.400f, 1 }, { 0.000f, 0.000f, 0.000f, 1 }, { 0.580f, 0.820f, 0.520f, 1 },
-          { 0.340f, 0.520f, 0.320f, 1 }, { 0.850f, 0.640f, 0.300f, 1 }, { 0.480f, 0.860f, 0.420f, 1 },
-          { 0.220f, 0.400f, 0.200f, 1 }, { 0.850f, 0.620f, 0.260f, 1 }, { 0.900f, 0.360f, 0.240f, 1 },
-          { 0.280f, 0.080f, 0.050f, 1 }, { 0.460f, 0.120f, 0.070f, 1 }, { 0.850f, 0.640f, 0.300f, 1 },
-          { 0.850f, 0.620f, 0.260f, 1 }, { 0.360f, 0.560f, 0.340f, 1 }, { 0.220f, 0.340f, 0.210f, 1 },
-          { 0.850f, 0.620f, 0.260f, 1 }, 0.0f },
+          { 0.340f, 0.520f, 0.320f, 1 }, { 1.000f, 0.640f, 0.200f, 1 }, { 0.480f, 0.860f, 0.420f, 1 },
+          { 0.220f, 0.400f, 0.200f, 1 }, { 1.000f, 0.820f, 0.200f, 1 }, { 0.900f, 0.360f, 0.240f, 1 },
+          { 0.280f, 0.080f, 0.050f, 1 }, { 0.460f, 0.120f, 0.070f, 1 }, { 1.000f, 0.640f, 0.200f, 1 },
+          { 1.000f, 0.600f, 0.160f, 1 }, { 0.360f, 0.560f, 0.340f, 1 }, { 0.220f, 0.340f, 0.210f, 1 },
+          { 1.000f, 0.600f, 0.160f, 1 }, 0.0f },
     };
 
     const auto& p = palettes[palette >= 0 && palette < (int) std::size(palettes) ? palette : 0];
@@ -434,6 +447,11 @@ inline void ApplyStyle(ImGuiStyle& style, float backgroundAlpha)
         c[ImGuiCol_TableRowBgAlt] = ImVec4(0.0f, 0.0f, 0.0f, 0.03f);
         c[ImGuiCol_TextSelectedBg] = Alpha(LampGreen, 0.25f);
         c[ImGuiCol_ModalWindowDimBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.25f);
+
+        // A few accents: the selected tab marked in radioactive orange, the graphs in a lively phosphor green
+        c[ImGuiCol_TabSelectedOverline] = ImVec4(0.90f, 0.40f, 0.00f, 1.0f);
+        c[ImGuiCol_PlotLines] = ImVec4(0.00f, 0.62f, 0.20f, 1.0f);
+        c[ImGuiCol_PlotLinesHovered] = ImVec4(0.90f, 0.40f, 0.00f, 1.0f);
     }
 }
 

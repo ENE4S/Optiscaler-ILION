@@ -46,6 +46,8 @@ struct Translation
 inline constexpr Translation kSpanish[] = {
     // Universal upscaler selector (v1.2-dev.5)
     { "Upscaler##IlionUpscaler", "Escalador" },
+    // ILION v1.2-dev.18
+    { "More options##Essential", "Más opciones" },
     // ILION v1.2-dev.17
     { "Advanced", "Avanzado" },
     { "Essential", "Esencial" },

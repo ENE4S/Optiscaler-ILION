@@ -14642,11 +14642,22 @@ void MenuCommon::RenderEssentialStrip(RenderMenuContext& ctx)
     const float height = std::floor(labelSize + fontSize + pad * 2.5f);
     const float width = std::floor((ImGui::GetContentRegionAvail().x - style.ItemSpacing.x * 3.0f) / 4.0f);
 
-    // Amber of old digital readouts on a dark, slightly warm glass
-    const ImVec4 amber = toneMapColor(ImVec4(1.00f, 0.68f, 0.16f, 1.0f));
-    const ImVec4 amberDim = toneMapColor(ImVec4(0.62f, 0.42f, 0.12f, 1.0f));
-    const ImU32 glass = ImGui::GetColorU32(ImVec4(0.045f, 0.032f, 0.014f, 1.0f));
-    const ImU32 rim = ImGui::GetColorU32(ImVec4(0.32f, 0.31f, 0.28f, 1.0f));
+    // Seen through the curved glass the characters look a little bigger: about 7 % for the value, 5 % for the label.
+    // The screen keeps its size; the bigger text still fits in it (the slack of the padding is larger than the gain).
+    constexpr float valueLens = 1.07f;
+    constexpr float labelLens = 1.05f;
+    const float valueSize = fontSize * valueLens;
+    const float labelShown = labelSize * labelLens;
+
+    // Lit phosphor on a dark green-black tube: radioactive yellow values, phosphor green labels, radioactive orange
+    // for something known but switched off
+    const ImVec4 yellow = toneMapColor(ImVec4(1.00f, 0.88f, 0.14f, 1.0f));
+    const ImVec4 orange = toneMapColor(ImVec4(1.00f, 0.52f, 0.10f, 1.0f));
+    const ImVec4 green = toneMapColor(ImVec4(0.40f, 0.88f, 0.42f, 1.0f));
+    const ImU32 tube = ImGui::GetColorU32(ImVec4(0.016f, 0.028f, 0.022f, 1.0f));
+    const ImU32 tubeDeep = ImGui::GetColorU32(ImVec4(0.000f, 0.006f, 0.004f, 0.55f));
+    const ImU32 clear = ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    const ImU32 rim = ImGui::GetColorU32(ImVec4(0.32f, 0.34f, 0.31f, 1.0f));
     const ImU32 rimDark = ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, 0.55f));
     ImDrawList* draw = ImGui::GetWindowDrawList();
 
@@ -14663,20 +14674,38 @@ void MenuCommon::RenderEssentialStrip(RenderMenuContext& ctx)
         ImGui::PopID();
 
         const float rounding = std::floor(fontSize * 0.35f);
+        const ImVec2 center((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
 
-        // Bezel, the glass, the curve of the glass catching the light, a soft shadow at the bottom edge
+        // The same bezel line as before, and the tube behind the glass
         draw->AddRectFilled(ImVec2(min.x - 1.0f, min.y - 1.0f), ImVec2(max.x + 1.0f, max.y + 1.0f), rimDark, rounding + 1.0f);
-        draw->AddRectFilled(min, max, glass, rounding);
-        draw->AddRectFilledMultiColor(ImVec2(min.x + 2.0f, min.y + 2.0f), ImVec2(max.x - 2.0f, min.y + height * 0.42f),
-                                      ImGui::GetColorU32(ImVec4(1.0f, 0.95f, 0.85f, 0.07f)),
-                                      ImGui::GetColorU32(ImVec4(1.0f, 0.95f, 0.85f, 0.07f)),
-                                      ImGui::GetColorU32(ImVec4(1.0f, 0.95f, 0.85f, 0.0f)),
-                                      ImGui::GetColorU32(ImVec4(1.0f, 0.95f, 0.85f, 0.0f)));
-        draw->AddRectFilledMultiColor(ImVec2(min.x + 2.0f, max.y - height * 0.25f), ImVec2(max.x - 2.0f, max.y - 2.0f),
-                                      ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, 0.0f)),
-                                      ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, 0.0f)),
-                                      ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, 0.30f)),
-                                      ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, 0.30f)));
+        draw->AddRectFilled(min, max, tube, rounding);
+
+        draw->PushClipRect(ImVec2(min.x + 1.0f, min.y + 1.0f), ImVec2(max.x - 1.0f, max.y - 1.0f), true);
+
+        // Concave glass: the surface sinks towards the middle, so the edges catch the light and the centre is deeper.
+        // Left and right edges lighter, fading to the middle; the centre darkened a little more.
+        const ImU32 edgeLight = ImGui::GetColorU32(ImVec4(0.75f, 1.0f, 0.80f, 0.060f));
+        draw->AddRectFilledMultiColor(min, ImVec2(center.x, max.y), edgeLight, clear, clear, edgeLight);
+        draw->AddRectFilledMultiColor(ImVec2(center.x, min.y), max, clear, edgeLight, edgeLight, clear);
+        draw->AddRectFilledMultiColor(ImVec2(min.x + width * 0.18f, min.y), ImVec2(center.x, max.y), clear, tubeDeep, tubeDeep, clear);
+        draw->AddRectFilledMultiColor(ImVec2(center.x, min.y), ImVec2(max.x - width * 0.18f, max.y), tubeDeep, clear, clear, tubeDeep);
+
+        // The lower lip of the hollow catches the light from above; the top edge stays in the shadow of the bezel
+        draw->AddRectFilledMultiColor(ImVec2(min.x, max.y - height * 0.22f), max, clear, clear, edgeLight, edgeLight);
+        draw->AddRectFilledMultiColor(min, ImVec2(max.x, min.y + height * 0.20f), rimDark, rimDark, clear, clear);
+
+        // A window reflected on the curved surface: a thin arc that bows towards the centre
+        draw->AddBezierQuadratic(ImVec2(min.x + width * 0.10f, min.y + height * 0.16f),
+                                 ImVec2(center.x, min.y + height * 0.36f),
+                                 ImVec2(max.x - width * 0.10f, min.y + height * 0.16f),
+                                 ImGui::GetColorU32(ImVec4(0.85f, 1.0f, 0.90f, 0.07f)), 1.0f);
+
+        // Fine scan lines of the old tube
+        const ImU32 scan = ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, 0.20f));
+        for (float y = min.y + 2.0f; y < max.y - 1.0f; y += 3.0f)
+            draw->AddLine(ImVec2(min.x + 1.0f, y), ImVec2(max.x - 1.0f, y), scan);
+
+        draw->PopClipRect();
         draw->AddRect(min, max, rim, rounding);
 
         // Label and value, cut with dots when the value doesn't fit; the whole value in the tooltip
@@ -14685,7 +14714,7 @@ void MenuCommon::RenderEssentialStrip(RenderMenuContext& ctx)
         const float inner = width - pad * 2.0f;
 
         std::string value = screen.value;
-        const auto measure = [&](const std::string& text) { return font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, text.c_str()).x; };
+        const auto measure = [&](const std::string& text) { return font->CalcTextSizeA(valueSize, FLT_MAX, 0.0f, text.c_str()).x; };
         const bool cut = measure(value) > inner;
 
         if (cut)
@@ -14703,14 +14732,23 @@ void MenuCommon::RenderEssentialStrip(RenderMenuContext& ctx)
         }
 
         draw->PushClipRect(min, max, true);
-        draw->AddText(font, labelSize, ImVec2(std::floor(min.x + pad), std::floor(min.y + pad * 0.8f)),
-                      ImGui::GetColorU32(amberDim), label);
 
-        const ImVec4 colour = screen.lit ? amber : amberDim;
-        const ImVec2 valuePos(std::floor(min.x + pad), std::floor(max.y - pad - fontSize));
-        draw->AddText(font, fontSize, ImVec2(valuePos.x, valuePos.y + 0.5f),
-                      ImGui::GetColorU32(ImVec4(colour.x, colour.y, colour.z, 0.28f)), value.c_str());
-        draw->AddText(font, fontSize, valuePos, ImGui::GetColorU32(colour), value.c_str());
+        // Phosphor glow: the letters spread a little light around them, then the letters
+        const auto glowText = [&](float size, const ImVec2& pos, const ImVec4& colour, const char* text)
+        {
+            const ImU32 glow = ImGui::GetColorU32(ImVec4(colour.x, colour.y, colour.z, 0.18f));
+            draw->AddText(font, size, ImVec2(pos.x - 0.6f, pos.y), glow, text);
+            draw->AddText(font, size, ImVec2(pos.x + 0.6f, pos.y), glow, text);
+            draw->AddText(font, size, ImVec2(pos.x, pos.y + 0.6f), glow, text);
+            draw->AddText(font, size, pos, ImGui::GetColorU32(colour), text);
+        };
+
+        glowText(labelShown, ImVec2(std::floor(min.x + pad), std::floor(min.y + pad * 0.75f)),
+                 ImVec4(green.x, green.y, green.z, 0.85f), label);
+
+        const ImVec2 valuePos(std::floor(min.x + pad), std::floor(max.y - pad * 0.9f - valueSize));
+        glowText(valueSize, valuePos, screen.lit ? yellow : orange, value.c_str());
+
         draw->PopClipRect();
 
         if (hovered && (cut || !screen.lit))
@@ -15211,6 +15249,44 @@ void MenuCommon::RenderPersonalPanel(RenderMenuContext& ctx)
         config->CustomTabCards = newPinned;
 }
 
+// ILION Essential mode: which boxes it shows. Main: in the tab as always. Secondary: folded under "More options".
+// Anything else (diagnostics, comparison and debug tools, the Custom tab settings) stays in Advanced only.
+enum class EssentialRole
+{
+    Main,
+    Secondary,
+    AdvancedOnly,
+};
+
+static EssentialRole EssentialRoleOf(const char* id)
+{
+    static constexpr const char* main[] = { "upscaler",    "gfx_color", "sharpness",    "fg_selection", "fg_fsrfg",
+                                            "fg_xefg",     "fg_dlssg",  "fg_optifg",    "framerate",    "ilion_latency",
+                                            "vsync",       "fps_overlay", "benchmark",  "menu_scale",   "theme" };
+    static constexpr const char* secondary[] = { "upscale_ratio", "output_scaling", "mipmap",   "anisotropy", "gfx_advanced",
+                                                 "fg_reprojection", "fg_nvngx",    "low_latency", "keybinds" };
+
+    for (const char* name : main)
+    {
+        if (strcmp(name, id) == 0)
+            return EssentialRole::Main;
+    }
+
+    for (const char* name : secondary)
+    {
+        if (strcmp(name, id) == 0)
+            return EssentialRole::Secondary;
+    }
+
+    return EssentialRole::AdvancedOnly;
+}
+
+static bool EssentialHidesTab(const char* label)
+{
+    return strcmp(label, "Custom") == 0 || strcmp(label, "Compatibility") == 0 || strcmp(label, "Quirks") == 0 ||
+           strcmp(label, "Help / Status") == 0;
+}
+
 // ILION: the options that act on ghosting and trails, from the boxes they already live in. Nothing is copied: each
 // box is drawn by its own code, so a change here is the same change in its own tab. Each group says what it works with.
 void MenuCommon::RenderAntiGhostingTab(RenderMenuContext& ctx)
@@ -15307,8 +15383,13 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
     constexpr int customTab = 0;
     const bool customTabEnabled = config->CustomTabEnabled.value_or_default();
 
+    // ILION Essential mode: the everyday tabs only; Custom, Compatibility, Quirks and Help / Status stay in Advanced
+    const bool essential = !config->MenuBasicMode.value_or_default() && config->MenuEssentialMode.value_or_default();
+
     auto isTabVisible = [&](int i)
     {
+        if (essential && EssentialHidesTab(tabs[i].label))
+            return false;
         if (i == customTab)
             return customTabEnabled;
         return tabs[i].visible == nullptr || tabs[i].visible(ctx);
@@ -15443,7 +15524,7 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
             const float renderWidth = (float) currentFeature->RenderWidth();
             const float upscaleRatio = renderWidth > 0.0f ? (float) currentFeature->TargetWidth() / renderWidth : 0.0f;
 
-            TextWrappedColored(toneMapColor(IlionTheme::Themed(ImVec4(0.35f, 0.85f, 0.45f, 1.f), IlionTheme::Role::Good)), "%s (%.2f)",
+            TextWrappedColored(toneMapColor(IlionTheme::Themed(ImVec4(0.35f, 0.85f, 0.45f, 1.f), IlionTheme::Role::Active)), "%s (%.2f)",
                                UpscalerLabel(currentFeature).c_str(), upscaleRatio);
         }
 
@@ -15460,7 +15541,7 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
             if (fgName.ends_with(multiplierSuffix))
                 fgName.erase(fgName.size() - multiplierSuffix.size());
 
-            TextWrappedColored(toneMapColor(IlionTheme::Themed(ImVec4(0.35f, 0.85f, 0.45f, 1.f), IlionTheme::Role::Good)), "%s %ux", fgName.c_str(), multiplier);
+            TextWrappedColored(toneMapColor(IlionTheme::Themed(ImVec4(0.35f, 0.85f, 0.45f, 1.f), IlionTheme::Role::Active)), "%s %ux", fgName.c_str(), multiplier);
         }
         else
         {
@@ -15470,7 +15551,7 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
                                                       state.swapchainApi == DX12);
 
             if (external.kind == ExternalFgStatus::Kind::Active)
-                TextWrappedColored(toneMapColor(IlionTheme::Themed(ImVec4(0.35f, 0.85f, 0.45f, 1.f), IlionTheme::Role::Good)), "%s", external.text.c_str());
+                TextWrappedColored(toneMapColor(IlionTheme::Themed(ImVec4(0.35f, 0.85f, 0.45f, 1.f), IlionTheme::Role::Active)), "%s", external.text.c_str());
             else if (external.kind == ExternalFgStatus::Kind::Unknown)
                 TextWrappedColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), "%s", external.text.c_str());
             else
@@ -15555,10 +15636,32 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
         const MenuBox* boxes = GetMenuBoxes(boxCount);
         DrawFn lastSource = nullptr;
 
+        // Essential: the everyday boxes of the tab, the secondary ones folded under "More options", the diagnostic and
+        // very specialised ones left to Advanced. Each box is drawn by its own code, nothing changes in what it does.
+        std::vector<const MenuBox*> secondary;
+
         for (size_t i = 0; i < boxCount; i++)
         {
             if (strcmp(boxes[i].tab, tab.label) != 0)
                 continue;
+
+            if (essential)
+            {
+                const EssentialRole role = EssentialRoleOf(boxes[i].id);
+
+                if (role == EssentialRole::Main)
+                {
+                    ImGui::PushID(boxes[i].id);
+                    RenderMenuBox(ctx, boxes[i]);
+                    ImGui::PopID();
+                }
+                else if (role == EssentialRole::Secondary)
+                {
+                    secondary.push_back(&boxes[i]);
+                }
+
+                continue;
+            }
 
             // A function with several boxes is drawn once for all of them
             if (boxes[i].draw == nullptr)
@@ -15572,6 +15675,23 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
             }
 
             lastSource = boxes[i].source;
+        }
+
+        if (!secondary.empty())
+        {
+            ImGui::Spacing();
+
+            if (auto ch = ScopedCollapsingHeader(TrL("More options##Essential")); ch.IsHeaderOpen())
+            {
+                ScopedIndent indent {};
+
+                for (const MenuBox* box : secondary)
+                {
+                    ImGui::PushID(box->id);
+                    RenderMenuBox(ctx, *box);
+                    ImGui::PopID();
+                }
+            }
         }
 
         ImGui::EndChild();

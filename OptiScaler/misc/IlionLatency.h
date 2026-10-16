@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <initializer_list>
 #include <mutex>
 
 #include <Config.h>
@@ -153,6 +154,7 @@ inline std::array<Sample, kSamples> samples {};
 inline size_t sampleNext = 0;
 inline std::array<uint32_t, 9> missingCount {}; // per Missing, frames of the current second
 inline Missing lastMissing = Missing::NoFrames;
+inline std::array<uint32_t, 9> lastCounts {}; // missingCount of the last whole second
 inline uint64_t missingSince = 0;
 inline uint64_t settleUntil = 0; // frames presented before this are dropped (reducer change)
 inline int reducer = -1;
@@ -365,6 +367,7 @@ inline void RollMissing(uint64_t now)
         }
     }
 
+    lastCounts = missingCount;
     missingCount = {};
     missingSince = now;
 }
@@ -709,8 +712,32 @@ inline Result Get(int reducerId)
     if (set != ToGpu && inputs * 2 >= n)
         result.inputToScreen = input / inputs;
 
-    if (set == Split)
-        result.missing = Missing::None;
+    // With a figure shown, the reason only explains the part it lacks; frames dropped for other reasons (a Present
+    // without its own simulation marker, for example) don't contradict the figure and aren't named
+    if (now >= settleUntil)
+    {
+        const auto mostOf = [](std::initializer_list<Missing> reasons)
+        {
+            Missing most = Missing::None;
+            uint32_t count = 0;
+            for (const Missing reason : reasons)
+            {
+                if (lastCounts[(size_t) reason] > count)
+                {
+                    count = lastCounts[(size_t) reason];
+                    most = reason;
+                }
+            }
+            return most;
+        };
+
+        if (set == ToGpu)
+            result.missing = mostOf({ Missing::Tearing, Missing::RefreshNotSeen, Missing::RefreshBeforeGpu, Missing::Composed });
+        else if (set == ScreenOnly)
+            result.missing = mostOf({ Missing::NoGpuTime });
+        else
+            result.missing = Missing::None;
+    }
 
     return result;
 }

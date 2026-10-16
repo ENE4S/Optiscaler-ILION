@@ -339,6 +339,23 @@ inline std::string StrFmt(const char* fmt, ...)
 using Ilion::Tr;
 using Ilion::TrL;
 
+// ILION: every tooltip of the menu as a compact box: at most about 32 characters of the menu font wide, the text
+// wrapped inside it, so long explanations grow in height instead of crossing the screen. Padding, border, background
+// and font are the ones of the theme in use; ImGui keeps the box inside the screen. Line breaks of a text stay.
+static float TooltipWrapWidth() { return ImGui::GetFontSize() * 32.0f; }
+
+static void WrappedTooltip(const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    ImGui::BeginTooltip();
+    ImGui::PushTextWrapPos(TooltipWrapWidth());
+    ImGui::TextV(fmt, args);
+    ImGui::PopTextWrapPos();
+    ImGui::EndTooltip();
+    va_end(args);
+}
+
 // ILION Essential mode is on (Basic wins over it): technical and debug controls are left to Advanced
 static bool EssentialView()
 {
@@ -597,7 +614,7 @@ static void SelectUpscaler(const IlionUpscalers::Entry* entry)
 static void UpscalerTip(const char* tip)
 {
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-        ImGui::SetTooltip("%s", Tr(tip));
+        WrappedTooltip("%s", Tr(tip));
 }
 
 // Picks an upscaler OptiScaler has built in (FSR 2.2.1, FSR 2.1.2, XeSS): its own backend switch, as the backend
@@ -946,19 +963,19 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
 
             if (!variant.usable)
             {
-                ImGui::SetTooltip("%s", variant.reason.c_str());
+                WrappedTooltip("%s", variant.reason.c_str());
                 continue;
             }
 
             if (variant.backend != Upscaler::Reset || variant.ffxIndex >= 0)
             {
-                ImGui::SetTooltip("%s", Tr("Built into OptiScaler, switches while the game runs."));
+                WrappedTooltip("%s", Tr("Built into OptiScaler, switches while the game runs."));
                 continue;
             }
 
             if (variant.entry == nullptr)
             {
-                ImGui::SetTooltip("%s", Tr("AMD's FSR dll next to OptiScaler, or the game's own."));
+                WrappedTooltip("%s", Tr("AMD's FSR dll next to OptiScaler, or the game's own."));
                 continue;
             }
 
@@ -986,7 +1003,7 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
                                               "that this dll is the one running.\nDLSS 3.7: the version its author "
                                               "states, it can't be verified from ILION.");
 
-            ImGui::SetTooltip("%s", tip.c_str());
+            WrappedTooltip("%s", tip.c_str());
         }
 
         ImGui::EndCombo();
@@ -1392,7 +1409,9 @@ void MenuCommon::ShowTooltip(const char* tip)
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
     {
         ImGui::BeginTooltip();
+        ImGui::PushTextWrapPos(TooltipWrapWidth());
         ImGui::Text(Tr(tip));
+        ImGui::PopTextWrapPos();
         ImGui::EndTooltip();
     }
 }
@@ -2116,7 +2135,7 @@ void MenuCommon::PopulateCombo(const std::string& name, TStorage& currentValue,
 
             // Show tooltip for the individual item if it exists
             if (!opt.tooltip.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("%s", Tr(opt.tooltip.c_str()));
+                WrappedTooltip("%s", Tr(opt.tooltip.c_str()));
 
             if (opt.disabled)
                 ImGui::EndDisabled();
@@ -3739,7 +3758,7 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
 
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
     {
-        ImGui::SetTooltip("%s", Tr("Deletes the selected captures for good: their PNG, their data and their saved "
+        WrappedTooltip("%s", Tr("Deletes the selected captures for good: their PNG, their data and their saved "
                                    "measurements.\nClear selection only unticks them."));
     }
 
@@ -3841,7 +3860,7 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
             ImGui::TextUnformatted(VisualCaptureName(capture).c_str());
 
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("%s", capture.path.filename().string().c_str());
+                WrappedTooltip("%s", capture.path.filename().string().c_str());
 
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(capture.dateTime.empty() ? "-" : capture.dateTime.c_str());
@@ -4037,7 +4056,7 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
 
     if (ImGui::IsItemHovered())
     {
-        ImGui::SetTooltip("%s", Tr("The right picture shows where the two captures differ: black is equal,\n"
+        WrappedTooltip("%s", Tr("The right picture shows where the two captures differ: black is equal,\n"
                                    "brighter is more different. The amplification makes small differences visible."));
     }
 
@@ -4099,7 +4118,7 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
 
     if (ImGui::IsItemHovered())
     {
-        ImGui::SetTooltip("%s", Tr("Shows the same small area of both pictures enlarged, every pixel as a square,\n"
+        WrappedTooltip("%s", Tr("Shows the same small area of both pictures enlarged, every pixel as a square,\n"
                                    "nothing smoothed. The captures themselves are not changed."));
     }
 
@@ -4644,7 +4663,7 @@ static void DrawVisualCompareWindow(float scale, ImGuiIO& io)
             ImGui::TextUnformatted(Tr(label));
 
             if (tooltip != nullptr && ImGui::IsItemHovered())
-                ImGui::SetTooltip("%s", Tr(tooltip));
+                WrappedTooltip("%s", Tr(tooltip));
 
             for (const auto& entry : entries)
             {
@@ -5137,7 +5156,7 @@ static void DrawBenchmarkCompareWindow(float scale, ImGuiIO& io)
 
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
     {
-        ImGui::SetTooltip("%s", Tr("Deletes the selected tests for good: their saved result and their frame times.\n"
+        WrappedTooltip("%s", Tr("Deletes the selected tests for good: their saved result and their frame times.\n"
                                    "Clear selection only unticks them."));
     }
 
@@ -5963,7 +5982,7 @@ static void DrawFinalReportWindow(float scale, ImGuiIO& io)
 
     if (ImGui::IsItemHovered())
     {
-        ImGui::SetTooltip("%s", Tr("Game, render and output resolution, upscaler and frame generation.\n"
+        WrappedTooltip("%s", Tr("Game, render and output resolution, upscaler and frame generation.\n"
                                    "Only tests made under the same configuration are compared."));
     }
 
@@ -6051,7 +6070,7 @@ static void DrawFinalReportWindow(float scale, ImGuiIO& io)
 
         if (ImGui::IsItemHovered())
         {
-            ImGui::SetTooltip("%s", Tr("Capture of the game at native resolution without upscaler.\n"
+            WrappedTooltip("%s", Tr("Capture of the game at native resolution without upscaler.\n"
                                        "The captures of every DLL are measured against it. Use the one of the same spot."));
         }
     }
@@ -10082,7 +10101,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                                 }
 
                                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                                    ImGui::SetTooltip(ftSourceInfos[i]);
+                                    WrappedTooltip(ftSourceInfos[i]);
                             }
 
                             ImGui::EndCombo();
@@ -10804,67 +10823,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 !Config::Instance()->FGDisableHUDFix.value_or_default() &&
                 (state.swapchainInteropApi == SwapchainInteropApi::None || dx11HudfixTracking);
 
-            if (hudfixTrackingSupported)
-            {
-                bool fgHudfix = config->FGHUDFix.value_or_default();
-
-                if (IlionTheme::Checkbox(TrL("HUDFix"), &fgHudfix))
-                {
-                    config->FGHUDFix = fgHudfix;
-                    LOG_DEBUG("Enabled set FGHUDFix: {}", fgHudfix);
-                    state.clearCapturedHudlesses = true;
-                    state.fgChanged = true;
-                }
-
-                ShowTooltip("Enable HUD stability fix, might cause crashes!");
-
-                ImGui::BeginDisabled(!config->FGHUDFix.value_or_default());
-
-                ImGui::SameLine(0.0f, 16.0f);
-                ImGui::PushItemWidth(95.0f * menuResScale);
-                int hudFixLimit = config->FGHUDLimit.value_or_default();
-                if (ImGui::InputInt(TrL("Limit"), &hudFixLimit))
-                {
-                    if (hudFixLimit < 1)
-                        hudFixLimit = 1;
-                    else if (hudFixLimit > 999)
-                        hudFixLimit = 999;
-
-                    config->FGHUDLimit = hudFixLimit;
-                    LOG_DEBUG("Enabled set FGHUDLimit: {}", hudFixLimit);
-                }
-                ShowTooltip("Delay HUDless capture, high values might cause crash!");
-
-                SameLineIfRoom(ButtonWidth(TrL("Res##2")), 16.0f);
-                if (IlionTheme::Button(TrL("Res##2")))
-                    _showHudlessWindow = !_showHudlessWindow;
-
-                ImGui::EndDisabled();
-
-                auto hudExtended = config->FGHUDFixExtended.value_or_default();
-                if (IlionTheme::Checkbox(TrL("Extended"), &hudExtended))
-                {
-                    LOG_DEBUG("Enabled set FGHUDFixExtended: {}", hudExtended);
-                    config->FGHUDFixExtended = hudExtended;
-                }
-                ShowTooltip("Extended format checks for possible HUDless\nMight cause crashes and slowdowns!");
-                SameLineIfRoom(CheckboxWidth(TrL("Immediate Capture")), 16.0f);
-
-                ImGui::BeginDisabled(!config->FGHUDFix.value_or_default());
-
-                auto immediate = config->FGImmediateCapture.value_or_default();
-                if (IlionTheme::Checkbox(TrL("Immediate Capture"), &immediate))
-                {
-                    LOG_DEBUG("Enabled set FGImmediateCapture: {}", immediate);
-                    config->FGImmediateCapture = immediate;
-                }
-                ShowTooltip("Enables capturing of resources before shader execution.\nIncrease HUDless "
-                            "capture chances, but might cause capturing of unnecessary resources.");
-
-                ImGui::PopItemWidth();
-
-                ImGui::EndDisabled();
-            }
+            // HUDFix is drawn in the Anti-Ghosting tab (RenderOptiFgHudFix)
 
             bool depthScale = config->FGEnableDepthScale.value_or_default();
             if (IlionTheme::Checkbox(TrL("Scale Depth to fix DLSS RR"), &depthScale))
@@ -11214,91 +11173,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
         if (isLoaded)
         {
-            if (activeNvngxFg == FGNvngxReplacement::Arturs || activeNvngxFg == FGNvngxReplacement::Combo)
-            {
-                auto featureVer = Nvngx_FG::version();
-                auto antighostingVer = Nvngx_FG::extraVersion();
-                ImGui::Text(Tr("DE Ver: %d.%d.%d.%d   GB Ver: %d.%d"), featureVer.major, featureVer.minor, featureVer.patch,
-                            featureVer.reserved, antighostingVer.major, antighostingVer.minor);
-
-                static std::vector<FlagDefinition> common_flags = {
-                    { "Antighosting (GB)", 0x00100000, "Enable anti-ghosting correction" },
-                    { "Temporal HUD pin", 0x04000000, "Enable temporal HUD pinning (present-backbuffer stability)" }
-                };
-
-                static std::vector<FlagDefinition> uncommon_flags = {
-                    //{ "Hudless UI mask", 0x02000000, "Use HUD-less as UI mask (DL2 inverted semantics)" },
-                    { "HUD interpolation", 0x08000000, "HUD OF interpolation (0=legacy pin-present, 1=OF warp)" },
-                    { "Ignore UI texture", 0x10000000, "Ignore dedicated DLSSG.UI texture (force legacy HUD path)" },
-                    //{ "Dp4a active", 0x20000000, "OF pipeline using dp4a-accelerated SSD (SM 6.4+)" },
-                    { "Pin backbuffer", 0x40000000, "Pin DLSSG.Backbuffer to subframe-1 snapshot across MFG frame" }
-                };
-
-                static std::vector<FlagDefinition> debug_flags = {
-                    { "Antighosting red tint", 0x00200000, "Debug: red tint on corrected pixels" },
-                    { "Antighosting split screen", 0x00400000, "Debug: split screen comparison" },
-                    { "Frame index line", 0x00010000, "" },
-                    { "HUD detection", 0x00020000, "" },
-                    { "Disocclusion tint", 0x00040000, "" },
-                    { "Artifacts detection", 0x00080000, "" },
-                    { "Camera MV debug", 0x00800000, "Debug: blue tint where camera MV fallback is used" },
-                    { "Generic visualization", 0x01000000, "Debug: trapezoid zone visualization" }
-                };
-
-                uint32_t temp_flags = config->NvngxFGDispatchFlags.value_or_default();
-                bool changed = false;
-
-                ImGui::Text(Tr("Raw DispatchFlags:"));
-                changed |= ImGui::InputScalar("##RawFlags", ImGuiDataType_U32, &temp_flags, NULL, NULL, "%08X",
-                                              ImGuiInputTextFlags_CharsHexadecimal);
-
-                SameLineIfRoom(CheckboxWidth(TrL("Show Debug")), 20.0f * menuResScale);
-                if (bool showDebug = config->NvngxFGShowDebug.value_or_default();
-                    IlionTheme::Checkbox(TrL("Show Debug"), &showDebug))
-                {
-                    config->NvngxFGShowDebug = showDebug;
-                }
-                ShowTooltip("Required for Debug flags to work correctly");
-
-                ImGui::Spacing();
-
-                if (auto ch = ScopedCollapsingHeader(TrL("Active DispatchFlags")); ch.IsHeaderOpen())
-                {
-                    ScopedIndent indent {};
-
-                    auto render_flags = [&](const std::vector<FlagDefinition>& flags)
-                    {
-                        for (const auto& flag : flags)
-                        {
-                            changed |= ImGui::CheckboxFlags(TrL(flag.name.c_str()), &temp_flags, flag.mask);
-
-                            if (ImGui::IsItemHovered() && !flag.description.empty())
-                            {
-                                ImGui::SetTooltip("%s", Tr(flag.description.c_str()));
-                            }
-                        }
-                    };
-
-                    ImGui::TextDisabled(Tr("Common"));
-                    render_flags(common_flags);
-
-                    ImGui::Spacing();
-                    ImGui::TextDisabled(Tr("Uncommon"));
-                    render_flags(uncommon_flags);
-
-                    if (config->NvngxFGShowDebug.value_or_default())
-                    {
-                        ImGui::Spacing();
-                        ImGui::TextDisabled(Tr("Debug"));
-                        render_flags(debug_flags);
-                    }
-                }
-
-                if (changed)
-                {
-                    config->NvngxFGDispatchFlags = temp_flags;
-                }
-            }
+            // Dispatch Flags are drawn in the Anti-Ghosting tab (RenderDispatchFlags)
 
             if (activeNvngxFg == FGNvngxReplacement::Nukems)
             {
@@ -12569,7 +12444,7 @@ static void GfxTable(const char* id, const GfxRow* rows, int count)
         if (IlionTheme::Checkbox("##on", &on))
             *row.enabled = on;
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("%s", Tr("Switches this adjustment on or off, its value is kept"));
+            WrappedTooltip("%s", Tr("Switches this adjustment on or off, its value is kept"));
 
         ImGui::BeginDisabled(!on);
 
@@ -12577,7 +12452,7 @@ static void GfxTable(const char* id, const GfxRow* rows, int count)
         ImGui::AlignTextToFramePadding();
         ImGui::TextWrapped("%s", Tr(row.label));
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("%s", Tr(row.tip));
+            WrappedTooltip("%s", Tr(row.tip));
 
         ImGui::TableNextColumn();
         float v = row.value->value_or_default();
@@ -12585,7 +12460,7 @@ static void GfxTable(const char* id, const GfxRow* rows, int count)
         if (IlionTheme::SliderFloat("##slider", &v, row.min, row.max, valueColumn ? "" : "%+.2f"))
             *row.value = v;
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("%s", Tr(row.tip));
+            WrappedTooltip("%s", Tr(row.tip));
 
         if (valueColumn)
         {
@@ -13302,11 +13177,11 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
 
         if (IlionTheme::BeginCombo(TrL("Theme"), Tr(industrialTheme ? paletteName : "Classic")))
         {
-            for (int n = 0; n < (int) std::size(paletteNames); n++)
-            {
-                if (paletteNames[n] == nullptr)
-                    continue;
+            // Shown in this order: ILION (original), Fallout, Light; Classic after them. The saved numbers don't change.
+            static constexpr int shownOrder[] = { 0, 3, 2 };
 
+            for (const int n : shownOrder)
+            {
                 const bool chosen = industrialTheme && palette == n;
 
                 if (ImGui::Selectable(Tr(paletteNames[n]), chosen) && !chosen)
@@ -13328,7 +13203,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
             ImGui::EndCombo();
         }
 
-        ShowTooltip("ILION (original), Light and Fallout: the instrument panel look of ILION in three styles.\n"
+        ShowTooltip("ILION (original), Fallout and Light: the instrument panel look of ILION in three styles.\n"
                     "Classic: the original look, with the colour settings below.");
 
         // The colours below are the ones of the classic theme: hidden with the ILION themes, they do nothing there
@@ -14790,7 +14665,7 @@ void MenuCommon::RenderEssentialStrip(RenderMenuContext& ctx)
         draw->PopClipRect();
 
         if (hovered && (cut || !screen.lit))
-            ImGui::SetTooltip("%s%s", screen.value.c_str(), screen.lit ? "" : Tr(" (not enabled)"));
+            WrappedTooltip("%s%s", screen.value.c_str(), screen.lit ? "" : Tr(" (not enabled)"));
     }
 
     ImGui::Spacing();
@@ -15287,6 +15162,209 @@ void MenuCommon::RenderPersonalPanel(RenderMenuContext& ctx)
         config->CustomTabCards = newPinned;
 }
 
+// ILION: OptiFG's HUDFix controls, drawn in the Anti-Ghosting tab only. The same controls, settings and conditions
+// they had in the OptiFG card (OptiFG input, a ready FG output, HUDless tracking available). False: they don't apply.
+bool MenuCommon::RenderOptiFgHudFix(RenderMenuContext& ctx)
+{
+    auto& state = ctx.state;
+    auto config = ctx.config;
+    auto& currentFeature = ctx.currentFeature;
+    auto& menuResScale = ctx.menuResScale;
+
+    if (state.api == API::Vulkan || state.currentFGSwapchain == nullptr || state.activeFgInput != FGInput::Upscaler)
+        return false;
+
+    if (currentFeature == nullptr || currentFeature->IsFrozen() ||
+        !((state.activeFgOutput == FGOutput::FSRFG && FfxApiProxy::IsFGReady()) ||
+          (state.activeFgOutput == FGOutput::XeFG && XeFGProxy::Module() != nullptr) ||
+          (state.activeFgOutput == FGOutput::DLSSG && StreamlineProxy::Module() != nullptr) ||
+          state.activeFgOutput == FGOutput::Reprojection))
+        return false;
+
+    const bool dx11HudfixTracking = state.swapchainInteropApi == SwapchainInteropApi::Dx11wDx12;
+    const bool hudfixTrackingSupported = !Config::Instance()->FGDisableHUDFix.value_or_default() &&
+                                         (state.swapchainInteropApi == SwapchainInteropApi::None || dx11HudfixTracking);
+
+    if (!hudfixTrackingSupported)
+        return false;
+
+    ScopedCard card { "HUDFix" };
+
+    {
+        bool fgHudfix = config->FGHUDFix.value_or_default();
+
+        if (IlionTheme::Checkbox(TrL("HUDFix"), &fgHudfix))
+        {
+            config->FGHUDFix = fgHudfix;
+            LOG_DEBUG("Enabled set FGHUDFix: {}", fgHudfix);
+            state.clearCapturedHudlesses = true;
+            state.fgChanged = true;
+        }
+
+        ShowTooltip("Enable HUD stability fix, might cause crashes!");
+
+        ImGui::BeginDisabled(!config->FGHUDFix.value_or_default());
+
+        ImGui::SameLine(0.0f, 16.0f);
+        ImGui::PushItemWidth(95.0f * menuResScale);
+        int hudFixLimit = config->FGHUDLimit.value_or_default();
+        if (ImGui::InputInt(TrL("Limit"), &hudFixLimit))
+        {
+            if (hudFixLimit < 1)
+                hudFixLimit = 1;
+            else if (hudFixLimit > 999)
+                hudFixLimit = 999;
+
+            config->FGHUDLimit = hudFixLimit;
+            LOG_DEBUG("Enabled set FGHUDLimit: {}", hudFixLimit);
+        }
+        ShowTooltip("Delay HUDless capture, high values might cause crash!");
+
+        SameLineIfRoom(ButtonWidth(TrL("Res##2")), 16.0f);
+        if (IlionTheme::Button(TrL("Res##2")))
+            _showHudlessWindow = !_showHudlessWindow;
+
+        ImGui::EndDisabled();
+
+        auto hudExtended = config->FGHUDFixExtended.value_or_default();
+        if (IlionTheme::Checkbox(TrL("Extended"), &hudExtended))
+        {
+            LOG_DEBUG("Enabled set FGHUDFixExtended: {}", hudExtended);
+            config->FGHUDFixExtended = hudExtended;
+        }
+        ShowTooltip("Extended format checks for possible HUDless\nMight cause crashes and slowdowns!");
+        SameLineIfRoom(CheckboxWidth(TrL("Immediate Capture")), 16.0f);
+
+        ImGui::BeginDisabled(!config->FGHUDFix.value_or_default());
+
+        auto immediate = config->FGImmediateCapture.value_or_default();
+        if (IlionTheme::Checkbox(TrL("Immediate Capture"), &immediate))
+        {
+            LOG_DEBUG("Enabled set FGImmediateCapture: {}", immediate);
+            config->FGImmediateCapture = immediate;
+        }
+        ShowTooltip("Enables capturing of resources before shader execution.\nIncrease HUDless "
+                    "capture chances, but might cause capturing of unnecessary resources.");
+
+        ImGui::PopItemWidth();
+
+        ImGui::EndDisabled();
+    }
+
+    return true;
+}
+
+// ILION: the Dispatch Flags of DLSS Enabler's frame generation (Arturs or Combo replacement), drawn in the
+// Anti-Ghosting tab only. The same controls and setting they had in the Nvngx FG card. False: they don't apply.
+bool MenuCommon::RenderDispatchFlags(RenderMenuContext& ctx)
+{
+    auto& state = ctx.state;
+    auto config = ctx.config;
+    auto& menuResScale = ctx.menuResScale;
+
+    const FGNvngxReplacement activeNvngxFg = state.activeFgNvngx;
+    if (activeNvngxFg != FGNvngxReplacement::Arturs && activeNvngxFg != FGNvngxReplacement::Combo)
+        return false;
+
+    bool isLoaded = false;
+    if (state.swapchainApi == Vulkan)
+        isLoaded = Nvngx_FG::isVulkanAvailable();
+    if (state.swapchainApi == DX12)
+        isLoaded = Nvngx_FG::isDx12Available();
+
+    if (!isLoaded)
+        return false;
+
+    ScopedCard card { "Dispatch Flags" };
+
+    {
+        auto featureVer = Nvngx_FG::version();
+        auto antighostingVer = Nvngx_FG::extraVersion();
+        ImGui::Text(Tr("DE Ver: %d.%d.%d.%d   GB Ver: %d.%d"), featureVer.major, featureVer.minor, featureVer.patch,
+                    featureVer.reserved, antighostingVer.major, antighostingVer.minor);
+
+        static std::vector<FlagDefinition> common_flags = {
+            { "Antighosting (GB)", 0x00100000, "Enable anti-ghosting correction" },
+            { "Temporal HUD pin", 0x04000000, "Enable temporal HUD pinning (present-backbuffer stability)" }
+        };
+
+        static std::vector<FlagDefinition> uncommon_flags = {
+            //{ "Hudless UI mask", 0x02000000, "Use HUD-less as UI mask (DL2 inverted semantics)" },
+            { "HUD interpolation", 0x08000000, "HUD OF interpolation (0=legacy pin-present, 1=OF warp)" },
+            { "Ignore UI texture", 0x10000000, "Ignore dedicated DLSSG.UI texture (force legacy HUD path)" },
+            //{ "Dp4a active", 0x20000000, "OF pipeline using dp4a-accelerated SSD (SM 6.4+)" },
+            { "Pin backbuffer", 0x40000000, "Pin DLSSG.Backbuffer to subframe-1 snapshot across MFG frame" }
+        };
+
+        static std::vector<FlagDefinition> debug_flags = {
+            { "Antighosting red tint", 0x00200000, "Debug: red tint on corrected pixels" },
+            { "Antighosting split screen", 0x00400000, "Debug: split screen comparison" },
+            { "Frame index line", 0x00010000, "" },
+            { "HUD detection", 0x00020000, "" },
+            { "Disocclusion tint", 0x00040000, "" },
+            { "Artifacts detection", 0x00080000, "" },
+            { "Camera MV debug", 0x00800000, "Debug: blue tint where camera MV fallback is used" },
+            { "Generic visualization", 0x01000000, "Debug: trapezoid zone visualization" }
+        };
+
+        uint32_t temp_flags = config->NvngxFGDispatchFlags.value_or_default();
+        bool changed = false;
+
+        ImGui::Text(Tr("Raw DispatchFlags:"));
+        changed |= ImGui::InputScalar("##RawFlags", ImGuiDataType_U32, &temp_flags, NULL, NULL, "%08X",
+                                      ImGuiInputTextFlags_CharsHexadecimal);
+
+        SameLineIfRoom(CheckboxWidth(TrL("Show Debug")), 20.0f * menuResScale);
+        if (bool showDebug = config->NvngxFGShowDebug.value_or_default();
+            IlionTheme::Checkbox(TrL("Show Debug"), &showDebug))
+        {
+            config->NvngxFGShowDebug = showDebug;
+        }
+        ShowTooltip("Required for Debug flags to work correctly");
+
+        ImGui::Spacing();
+
+        if (auto ch = ScopedCollapsingHeader(TrL("Active DispatchFlags")); ch.IsHeaderOpen())
+        {
+            ScopedIndent indent {};
+
+            auto render_flags = [&](const std::vector<FlagDefinition>& flags)
+            {
+                for (const auto& flag : flags)
+                {
+                    changed |= ImGui::CheckboxFlags(TrL(flag.name.c_str()), &temp_flags, flag.mask);
+
+                    if (ImGui::IsItemHovered() && !flag.description.empty())
+                    {
+                        WrappedTooltip("%s", Tr(flag.description.c_str()));
+                    }
+                }
+            };
+
+            ImGui::TextDisabled(Tr("Common"));
+            render_flags(common_flags);
+
+            ImGui::Spacing();
+            ImGui::TextDisabled(Tr("Uncommon"));
+            render_flags(uncommon_flags);
+
+            if (config->NvngxFGShowDebug.value_or_default())
+            {
+                ImGui::Spacing();
+                ImGui::TextDisabled(Tr("Debug"));
+                render_flags(debug_flags);
+            }
+        }
+
+        if (changed)
+        {
+            config->NvngxFGDispatchFlags = temp_flags;
+        }
+    }
+
+    return true;
+}
+
 // ILION Essential mode: which boxes it shows. Main: in the tab as always. Secondary: folded under "More options".
 // Anything else (diagnostics, comparison and debug tools, the Custom tab settings) stays in Advanced only.
 enum class EssentialRole
@@ -15357,14 +15435,14 @@ void MenuCommon::RenderAntiGhostingTab(RenderMenuContext& ctx)
     SectionTitle("HUD with Frame Generation");
     TextWrappedDisabled("%s", Tr("HUDFix: only with OptiFG as the frame generation input, with FSR FG, XeFG, DLSSG or "
                                  "Reprojection as output. It may cause crashes."));
-    if (!drawBox("fg_optifg"))
+    if (!RenderOptiFgHudFix(ctx))
         TextWrappedDisabled("%s", Tr("Shown while OptiFG is the frame generation input."));
 
     // 2. DLSS Enabler's frame generation
     SectionTitle("DLSS Enabler Frame Generation");
     TextWrappedDisabled("%s", Tr("Dispatch Flags, Antighosting (GB) among them: only with DLSS Enabler's DLSSG "
                                  "replacement. They do nothing with FSR FG, XeFG or the game's own DLSSG."));
-    if (!drawBox("fg_nvngx"))
+    if (!RenderDispatchFlags(ctx))
         TextWrappedDisabled("%s", Tr("Shown while DLSS Enabler's frame generation is in use."));
 
     // 3. The upscaler
@@ -15766,7 +15844,7 @@ void MenuCommon::PlotLinesWithRange(const char* label, float (*values_getter)(vo
                   v_max, graph_size);
 
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-        ImGui::SetTooltip(Tr("Range: %.2f ms - %.2f ms"), v_min, v_max);
+        WrappedTooltip(Tr("Range: %.2f ms - %.2f ms"), v_min, v_max);
 }
 
 void MenuCommon::RenderFrameTimeGraph(RenderMenuContext& ctx)
@@ -15817,7 +15895,7 @@ static void RenderInfoLine(decltype(Config::Instance()) config)
     }
 
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("%s", Tr("INFO ILION: short tips about the technologies ILION uses.\nOFF stops the line and its animation."));
+        WrappedTooltip("%s", Tr("INFO ILION: short tips about the technologies ILION uses.\nOFF stops the line and its animation."));
 
     ImGui::SameLine();
 

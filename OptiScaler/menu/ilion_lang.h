@@ -46,6 +46,8 @@ struct Translation
 inline constexpr Translation kSpanish[] = {
     // Universal upscaler selector (v1.2-dev.5)
     { "Upscaler##IlionUpscaler", "Escalador" },
+    // ILION v1.2-dev.20
+    { "ILION (original), Fallout and Light: the instrument panel look of ILION in three styles.\nClassic: the original look, with the colour settings below.", "ILION (original), Fallout y Claro: el aspecto de panel de instrumentos de ILION en tres estilos.\nClásico: el aspecto original, con los ajustes de color de abajo." },
     // ILION v1.2-dev.19
     { "Present to GPU end", "Present a fin de GPU" },
     { "With FG: generator latency not included", "Con FG: no incluye la latencia del generador" },
@@ -71,7 +73,6 @@ inline constexpr Translation kSpanish[] = {
     { "FSR Anti-Lag 2.0 is AMD's current name for Anti-Lag 2", "FSR Anti-Lag 2.0 es el nombre actual de AMD para Anti-Lag 2" },
     { "By default FSR Anti-Lag 2.0, or else XeLL, is used when available; neither is used with Multi Frame Generation or dynamic DLSS-G.\nThis forces LatencyFleX instead, without restarting the game", "De forma predeterminada se usa FSR Anti-Lag 2.0, o si no XeLL, cuando están disponibles; ninguno se usa con Multi Frame Generation ni con DLSS-G dinámico.\nEsto fuerza LatencyFleX en su lugar, sin reiniciar el juego" },
     { "OptiScaler's Reflex timings: the frame report of Reflex or fakenvapi. With fakenvapi only its CPU times are real: Whole frame ends at the last marker of the frame, not on screen", "Reflex timings de OptiScaler: el informe de fotograma de Reflex o de fakenvapi. Con fakenvapi solo sus tiempos de CPU son reales: Fotograma completo termina en el último marcador del fotograma, no en pantalla" },
-    { "ILION (original), Light and Fallout: the instrument panel look of ILION in three styles.\nClassic: the original look, with the colour settings below.", "ILION (original), Claro y Fallout: el aspecto de panel de instrumentos de ILION en tres estilos.\nClásico: el aspecto original, con los ajustes de color de abajo." },
     { "INFO ILION: short tips about the technologies ILION uses.\nOFF stops the line and its animation.", "INFO ILION: consejos breves sobre las tecnologías que usa ILION.\nOFF detiene la línea y su animación." },
     { "Identified as HelixSR by its file. While upscaling, ILION also checks that this dll is the one running.\nDLSS 3.7: the version its author states, it can't be verified from ILION.", "Identificado como HelixSR por su archivo. Mientras escala, ILION comprueba además que esta dll es la que se ejecuta.\nDLSS 3.7: la versión que indica su autor, no se puede verificar desde ILION." },
     { "Antighosting (GB)", "Antighosting (GB)" },

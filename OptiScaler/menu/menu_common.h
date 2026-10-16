@@ -230,6 +230,8 @@ class MenuCommon
     static void RenderMenuBox(RenderMenuContext& ctx, const MenuBox& box);
     static void RenderCustomTab(RenderMenuContext& ctx);
     static void RenderAntiGhostingTab(RenderMenuContext& ctx); // ILION: existing ghosting options, grouped
+    static bool RenderOptiFgHudFix(RenderMenuContext& ctx);    // ILION: HUDFix of OptiFG, Anti-Ghosting tab only
+    static bool RenderDispatchFlags(RenderMenuContext& ctx);   // ILION: DLSS Enabler Dispatch Flags, Anti-Ghosting tab only
     static void RenderEssentialStrip(RenderMenuContext& ctx);  // ILION: status screens of the Essential mode
     static void RenderCustomTabSettings(RenderMenuContext& ctx);
     static void RenderStatusInfo(RenderMenuContext& ctx);

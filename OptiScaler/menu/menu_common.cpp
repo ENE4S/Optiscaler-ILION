@@ -16,7 +16,6 @@
 #include <misc/IlionBenchmark.h>
 #include <misc/IlionCompare.h>
 #include <misc/IlionCapture.h>
-#include <misc/IlionD4rGuard.h>
 #include <misc/IlionLatency.h>
 #include <misc/IlionOverlay.h>
 #include <misc/IlionVisual.h>
@@ -558,6 +557,17 @@ static const char* StatusWord(const UpscalerStatus& status)
 // proxy's hot swap. DLSS 4 through d4r switches while the game runs only when OptiScaler loaded d4r at start;
 // otherwise it is saved and loaded at the next start, which is what the d4r backend needs (it hooks the D3D12 device
 // when the game creates it). The choice is written to the ini at once.
+// DLSS 4 through d4r on a GPU that isn't (or can't be told to be) AMD RDNA 3: asked once before it is chosen.
+// Continue chooses it as usual, Cancel leaves the upscaler as it is. Nothing is blocked.
+static std::wstring d4rWarningKey;
+static bool d4rWarningOpen = false;
+
+static bool GameGpuIsRdna3()
+{
+    const auto& gpu = IdentifyGpu::getPrimaryGpu();
+    return gpu.vendorId == VendorId::AMD && gpu.amdHwGeneration == device_info::HwGeneration::kGfx11;
+}
+
 static void SelectUpscaler(const IlionUpscalers::Entry* entry)
 {
     auto config = Config::Instance();
@@ -587,14 +597,6 @@ static void SelectUpscaler(const IlionUpscalers::Entry* entry)
         state.newBackend = FfxBackendForApi();
         MARK_ALL_BACKENDS_CHANGED();
         config->SaveUpscalerChoice();
-        return;
-    }
-
-    // DLSS 4 through d4r: for now only on AMD RDNA 3, whatever asks for it
-    const auto& gpu = IdentifyGpu::getPrimaryGpu();
-    if (gpu.vendorId != VendorId::AMD || !IlionD4rGuard::IsRdna3(gpu.amdHwGeneration))
-    {
-        LOG_WARN("DLSS 4 through d4r is only available on AMD RDNA 3, not selected");
         return;
     }
 
@@ -843,9 +845,6 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
         {
             if (api != DX12)
                 return std::string(Tr("API not compatible")) + ": " + Tr("d4r only works in DirectX 12");
-            // ILION's DLSS 4 through d4r: for now only AMD RDNA 3 (also enforced where it loads, misc/IlionD4rGuard.h)
-            if (vendor != VendorId::AMD || !IlionD4rGuard::IsRdna3(IdentifyGpu::getPrimaryGpu().amdHwGeneration))
-                return Tr("Currently available only on AMD RDNA 3");
             if (!entry.valid)
                 return std::string(Tr("Dependency not available")) + ": " + Tr(entry.problem.c_str());
             return "";
@@ -958,6 +957,11 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
                     SelectFfxProvider(variant.ffxIndex);
                 else if (variant.backend != Upscaler::Reset)
                     SelectBackend(variant.backend);
+                else if (variant.entry != nullptr && variant.entry->kind == IlionUpscalers::Kind::D4r && !GameGpuIsRdna3())
+                {
+                    d4rWarningKey = variant.entry->key;
+                    d4rWarningOpen = true;
+                }
                 else
                     SelectUpscaler(variant.isDefault ? nullptr : variant.entry);
             }
@@ -1017,6 +1021,40 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
 
     ImGui::PopItemWidth();
     ImGui::EndDisabled();
+
+    // The warning before DLSS 4 through d4r on a GPU other than AMD RDNA 3
+    if (d4rWarningOpen)
+    {
+        ImGui::OpenPopup("DLSS 4 (d4r)###d4rWarning");
+        d4rWarningOpen = false;
+    }
+
+    if (ImGui::BeginPopupModal("DLSS 4 (d4r)###d4rWarning", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
+        ImGui::TextUnformatted(Tr("Currently only available on AMD RDNA 3. Enabling it on other architectures may cause crashes"));
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+
+        if (IlionTheme::Button(TrL("Continue##d4rWarning")))
+        {
+            if (const auto entry = IlionUpscalers::FindByKey(d4rWarningKey); entry.has_value())
+                SelectUpscaler(&*entry);
+
+            d4rWarningKey.clear();
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::SameLine();
+
+        if (IlionTheme::Button(TrL("Cancel##d4rWarning")))
+        {
+            d4rWarningKey.clear();
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
 
     UpscalerTip("Upscalers ILION found in ILION\\Escaladores (next to the game exe):\n"
                 "  FSR4\\<name>\\amd_fidelityfx_upscaler_dx12.dll   FSR 4 builds, switch while playing\n"

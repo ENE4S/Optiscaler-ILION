@@ -37,7 +37,6 @@
 #include <hooks/Kernel_Hooks.h>
 #include <hooks/Gdi32_Hooks.h>
 #include <hooks/Wintrust_Hooks.h>
-#include <misc/IlionD4rGuard.h>
 #include <hooks/Crypt32_Hooks.h>
 #include <hooks/Advapi32_Hooks.h>
 #include <hooks/Streamline_Hooks.h>
@@ -1651,10 +1650,9 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
         // Opt in only to a configured, versioned Windows d4r backend. The
         // marker performs no HIP/NGX initialization under DLL_PROCESS_ATTACH.
         // GPU support is still checked by its public NGX requirements API.
-        // ILION: and only on AMD RDNA 3 (Config already ignores a saved d4r choice elsewhere; checked again here)
         if (Config::Instance()->DLSSEnabled.value_or_default() &&
             Config::Instance()->DLSSAllowExternalBackend.value_or_default() &&
-            Config::Instance()->NvngxPath.has_value() && IlionD4rGuard::SystemHasRdna3())
+            Config::Instance()->NvngxPath.has_value())
         {
             auto backendPath = std::filesystem::path(Config::Instance()->NvngxPath.value()) / L"_nvngx.dll";
             if (backendPath.is_absolute())

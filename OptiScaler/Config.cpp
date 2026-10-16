@@ -7,7 +7,6 @@
 #include "nvapi/fakenvapi.h"
 #include <misc/IdentifyGpu.h>
 #include <misc/IlionUpscalers.h>
-#include <misc/IlionD4rGuard.h>
 
 #include <SimpleIni.h>
 
@@ -857,30 +856,6 @@ bool Config::Reload(std::filesystem::path iniPath)
 
                     if (!DLSSFeaturePath.has_value())
                         DLSSFeaturePath.set_volatile_value(d4r);
-                }
-            }
-
-            // ILION: DLSS 4 through d4r is, for now, only for AMD RDNA 3. Elsewhere a saved d4r choice (the external
-            // backend, or library paths that lead to a d4r folder) is ignored for this run and left as it is in the ini,
-            // so NVIDIA's own NGX and any other upscaler load as usual
-            if (!IlionD4rGuard::SystemHasRdna3())
-            {
-                const auto d4rFolder = NvngxPath.has_value() && IlionD4rGuard::IsD4rFolder(NvngxPath.value())
-                                           ? NvngxPath.value()
-                                           : std::wstring();
-
-                if (DLSSAllowExternalBackend.value_or_default())
-                    DLSSAllowExternalBackend.set_volatile_value(false);
-
-                if (!d4rFolder.empty())
-                {
-                    NvngxPath.set_volatile_none();
-
-                    if (NVNGX_DLSS_Library.has_value() && NVNGX_DLSS_Library.value().starts_with(d4rFolder))
-                        NVNGX_DLSS_Library.set_volatile_none();
-
-                    if (DLSSFeaturePath.has_value() && DLSSFeaturePath.value().starts_with(d4rFolder))
-                        DLSSFeaturePath.set_volatile_none();
                 }
             }
             NvapiDllPath.set_from_config(readWString("Libraries", "NvapiPath"));

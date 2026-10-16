@@ -46,8 +46,11 @@ struct Translation
 inline constexpr Translation kSpanish[] = {
     // Universal upscaler selector (v1.2-dev.5)
     { "Upscaler##IlionUpscaler", "Escalador" },
+    // ILION v1.2-dev.22
+    { "Currently only available on AMD RDNA 3. Enabling it on other architectures may cause crashes", "Por ahora, solo disponible en AMD RDNA 3. Activarlo en otras arquitecturas puede ocasionar fallos" },
+    { "Continue##d4rWarning", "Continuar" },
+    { "Cancel##d4rWarning", "Cancelar" },
     // ILION v1.2-dev.21
-    { "Currently available only on AMD RDNA 3", "Por ahora, solo disponible en AMD RDNA 3" },
     { "AMD's official FSR 4 needs an AMD GPU", "El FSR 4 oficial de AMD necesita una GPU AMD" },
     // ILION v1.2-dev.20
     { "ILION (original), Fallout and Light: the instrument panel look of ILION in three styles.\nClassic: the original look, with the colour settings below.", "ILION (original), Fallout y Claro: el aspecto de panel de instrumentos de ILION en tres estilos.\nClásico: el aspecto original, con los ajustes de color de abajo." },

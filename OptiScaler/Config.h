@@ -46,17 +46,6 @@ template <class T, HasDefaultValue defaultState = WithDefault> class CustomOptio
         std::optional<T>::operator=(value);
     }
 
-    // Hides the value for this run without changing what is saved to ini (ILION: a saved d4r choice on a GPU it
-    // isn't for)
-    constexpr void set_volatile_none()
-    {
-        if (!_volatile)
-            _configIni = this->has_value() ? std::optional<T>(this->value()) : std::nullopt;
-
-        _volatile = true;
-        std::optional<T>::reset();
-    }
-
     // Use this when first setting a CustomOptional
     constexpr void set_from_config(const std::optional<T>& opt)
     {

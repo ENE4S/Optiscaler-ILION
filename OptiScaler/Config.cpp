@@ -806,6 +806,7 @@ bool Config::Reload(std::filesystem::path iniPath)
         // Plugins
         {
             PluginPath.set_from_config(readWString("Plugins", "Path"));
+            XeMfgVariant.set_from_config(readWString("Plugins", "XeMfgVariant"));
             LoadSpecialK.set_from_config(readBool("Plugins", "LoadSpecialK"));
             LoadReShade.set_from_config(readBool("Plugins", "LoadReShade"));
             LoadCustomAmdxc64OnRdna2.set_from_config(readBool("Plugins", "LoadCustomAmdxc64OnRdna2"));
@@ -1610,6 +1611,7 @@ bool Config::SaveIni()
     {
 
         ini.SetValue("Plugins", "Path", wstring_to_string(Instance()->PluginPath.value_for_config_or(L"auto")).c_str());
+        ini.SetValue("Plugins", "XeMfgVariant", wstring_to_string(Instance()->XeMfgVariant.value_for_config_or(L"auto")).c_str());
         ini.SetValue("Plugins", "LoadSpecialK", GetBoolValue(Instance()->LoadSpecialK.value_for_config()).c_str());
         ini.SetValue("Plugins", "LoadReShade", GetBoolValue(Instance()->LoadReShade.value_for_config()).c_str());
         ini.SetValue("Plugins", "LoadCustomAmdxc64OnRdna2",
@@ -1767,6 +1769,20 @@ bool Config::SaveMenuPreferences()
     LOG_INFO("Saving menu language ({}) and basic mode ({}) to: {}", language, basicMode,
              wstring_to_string(absoluteFileName.wstring()));
 
+    return file.SaveFile(absoluteFileName.wstring().c_str()) >= 0;
+}
+
+// ILION: the XeMFG variant, written to the ini at once and on its own (it is loaded at the next start)
+bool Config::SaveXeMfgVariant()
+{
+    const std::string variant = wstring_to_string(Instance()->XeMfgVariant.value_for_config_or(L"auto"));
+    ini.SetValue("Plugins", "XeMfgVariant", variant.c_str());
+
+    CSimpleIniA file;
+    file.LoadFile(absoluteFileName.c_str());
+    file.SetValue("Plugins", "XeMfgVariant", variant.c_str());
+
+    LOG_INFO("Saving XeMFG variant: {}", variant);
     return file.SaveFile(absoluteFileName.wstring().c_str()) >= 0;
 }
 

@@ -46,11 +46,20 @@ struct Translation
 inline constexpr Translation kSpanish[] = {
     // Universal upscaler selector (v1.2-dev.5)
     { "Upscaler##IlionUpscaler", "Escalador" },
+    // ILION v1.2-dev.25
+    { "CLASSIC", "CLÁSICA" },
+    { "Engine", "Motor" },
+    { "File", "Archivo" },
+    { "Plugins folder as it is", "Carpeta plugins tal cual" },
+    { "Restart the game to load the chosen XeMFG variant", "Reinicia el juego para cargar la variante de XeMFG elegida" },
+    { "The variant is read from the plugin's file. Which route it really runs (WMMA or its fallback) can't be confirmed from ILION: not confirmed.", "La variante se lee del archivo del plugin. Qué ruta ejecuta realmente (WMMA o su alternativa) no se puede confirmar desde ILION: sin confirmar." },
+    { "Variant", "Variante" },
+    { "XeMFG variant", "Variante de XeMFG" },
+    { "XeMFG variants in plugins\\XeMFG\\<name>\\. Only the chosen one is loaded at the next start, and a plugin with the same file name in the plugins folder is then left out. Needs ASI plugins loading (Compatibility).", "Variantes de XeMFG en plugins\\XeMFG\\<nombre>\\. Solo se carga la elegida en el siguiente arranque, y entonces se omite un plugin con el mismo nombre de archivo en la carpeta plugins. Requiere la carga de plugins ASI (Compatibilidad)." },
+    { "classic", "clásica" },
     // ILION v1.2-dev.24
-    { "A loaded ASI plugin is in the game's process; that alone doesn't confirm which engine it runs (WMMA, for example).", "Un plugin ASI cargado está en el proceso del juego; eso solo no confirma qué motor ejecuta (por ejemplo, WMMA)." },
     { "ASI plugin loaded", "Plugin ASI cargado" },
     { "Frame Generation diagnosis: data ILION observes, without starting any provider.", "Diagnóstico de Frame Generation: datos que observa ILION, sin iniciar ningún proveedor." },
-    { "Module", "Módulo" },
     { "Multiplier", "Multiplicador" },
     { "Version", "Versión" },
     { "active, generating frames", "activo, generando fotogramas" },

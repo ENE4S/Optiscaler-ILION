@@ -220,7 +220,58 @@ void LoadAsiPlugins()
     if (!std::filesystem::exists(pluginPath))
         return;
 
+    // ILION: XeMFG variants live in plugins/XeMFG/<variant>/. Only the chosen one is loaded, after the plugins of the
+    // folder itself, and a plugin of the same file name in the folder itself is then left out: never two copies
+    const auto lowerName = [](std::wstring name)
+    {
+        std::transform(name.begin(), name.end(), name.begin(), [](wchar_t c) { return std::towlower(c); });
+        return name;
+    };
+
+    std::vector<std::filesystem::directory_entry> variantEntries;
+    std::vector<std::wstring> variantNames;
+
+    if (const auto variant = Config::Instance()->XeMfgVariant.value_or(L""); !variant.empty())
+    {
+        const auto variantFolder = pluginPath / L"XeMFG" / variant;
+        std::error_code ec;
+
+        if (std::filesystem::is_directory(variantFolder, ec))
+        {
+            for (const auto& entry : std::filesystem::directory_iterator(variantFolder, ec))
+            {
+                if (entry.is_regular_file() && lowerName(entry.path().extension().wstring()) == L".asi")
+                {
+                    variantEntries.push_back(entry);
+                    variantNames.push_back(lowerName(entry.path().filename().wstring()));
+                }
+            }
+
+            LOG_INFO(L"XeMFG variant {}: {} plugin(s)", variant, variantEntries.size());
+        }
+        else
+        {
+            LOG_WARN(L"XeMFG variant folder not found: {}", variantFolder.wstring());
+        }
+    }
+
+    std::vector<std::filesystem::directory_entry> entries;
+
     for (const auto& entry : std::filesystem::directory_iterator(folderPath))
+    {
+        if (entry.is_regular_file() &&
+            std::find(variantNames.begin(), variantNames.end(), lowerName(entry.path().filename().wstring())) != variantNames.end())
+        {
+            LOG_INFO(L"Left out for the XeMFG variant: {}", entry.path().wstring());
+            continue;
+        }
+
+        entries.push_back(entry);
+    }
+
+    entries.insert(entries.end(), variantEntries.begin(), variantEntries.end());
+
+    for (const auto& entry : entries)
     {
         if (!entry.is_regular_file())
             continue;

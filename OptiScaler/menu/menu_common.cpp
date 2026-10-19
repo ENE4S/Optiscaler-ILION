@@ -46,6 +46,7 @@
 #include <atomic>
 #include <functional>
 #include <map>
+#include <fstream>
 #include <thread>
 #include <cstdarg>
 
@@ -9597,18 +9598,20 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
     }
 }
 
-// ILION: the Frame Generation screen, a small CRT next to the FG input and output. It only shows what ILION
-// observes; nothing is started or asked to any provider. Three levels are kept apart: the module is loaded,
-// frame generation is set up, frame generation is generating frames. A loaded .asi only says the plugin is in
-// the process, not which engine it runs.
+// ILION: the Frame Generation screen, a small CRT next to the FG input and output. It names the implementation that
+// generates the frames (engine, variant, dll or asi, version) and its state. Everything comes from what ILION
+// observes; nothing is started or asked to any provider. Each generator shows only its own data: a loaded .asi is
+// shown only when it belongs to the generator in use (XeMFG plugins with XeFG), and a loaded .asi or a variant read
+// from a file never counts as a confirmation of what runs inside it.
 struct FgCrtData
 {
-    std::string input = "-";      // FG input in use
-    std::string output = "-";     // FG output (or the DLSSG replacement) in use
-    std::string module = "-";     // the module that answers for it: the loaded .asi, else the FG implementation
-    bool moduleIsAsi = false;
-    std::string version = "-";    // version of that module, when it is known
+    std::string engine = "-";     // the generator: XeFG, XeMFG, FSR FG, DLSS Enabler, ...
+    std::string variant = "-";    // its variant when it can be told from its file (XeMFG: WMMA or classic)
+    std::string file = "-";       // the dll or asi of that generator
+    std::string version = "-";    // the version of that file or the version the generator reports
     std::string multiplier = "-"; // real multiplier while frames are generated
+    bool fromAsi = false;
+    bool variantFromFile = false; // the variant comes from the file; what runs at the moment isn't confirmed
     int status = 0;               // 0 off, 1 not loaded, 2 loaded, 3 paused, 4 active
 };
 
@@ -9620,69 +9623,82 @@ static std::string FgVersionText(const feature_version& version)
     return StrFmt("%u.%u.%u", (unsigned) version.major, (unsigned) version.minor, (unsigned) version.patch);
 }
 
+static std::string FileVersionText(const std::wstring& path)
+{
+    version_t version;
+    if (path.empty() || !Util::GetFileVersion(path, &version))
+        return "-";
+
+    return StrFmt("%u.%u.%u.%u", (unsigned) version.major, (unsigned) version.minor, (unsigned) version.patch,
+                  (unsigned) version.reserved);
+}
+
+static std::wstring ModulePath(HMODULE module)
+{
+    if (module == nullptr)
+        return L"";
+
+    wchar_t path[MAX_PATH] {};
+    return GetModuleFileNameW(module, path, MAX_PATH) > 0 ? std::wstring(path) : std::wstring();
+}
+
+// An .asi read once: whether it is an XeMFG plugin and which variant its file is. MFG Unlocker builds with the
+// WMMA route carry it by name ("XeFG WMMA route"); a build without those strings is the classic one.
+struct XeMfgFile
+{
+    bool xemfg = false;
+    std::string variant; // "WMMA", "classic" or empty
+    std::string product;
+    std::string version;
+};
+
+static XeMfgFile ReadXeMfgFile(const std::wstring& path)
+{
+    static std::mutex cacheLock;
+    static std::map<std::wstring, XeMfgFile> cache;
+
+    std::scoped_lock lock(cacheLock);
+
+    if (const auto found = cache.find(path); found != cache.end())
+        return found->second;
+
+    XeMfgFile info;
+    info.version = FileVersionText(path);
+
+    std::string name = wstring_to_string(std::filesystem::path(path).filename().wstring());
+    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+
+    std::ifstream file(path, std::ios::binary);
+    const std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+
+    const bool mfgUnlocker = content.find("MFG Unlocker") != std::string::npos || name.find("mfgunlocker") != std::string::npos;
+    info.xemfg = mfgUnlocker && content.find("libxess_fg") != std::string::npos;
+
+    if (info.xemfg)
+    {
+        info.product = "MFG Unlocker";
+        info.variant = content.find("XeFG WMMA route") != std::string::npos || content.find("WMMA-port") != std::string::npos
+                           ? "WMMA"
+                           : "classic";
+    }
+
+    cache[path] = info;
+    return info;
+}
+
 static FgCrtData GatherFgCrt(State& state)
 {
     FgCrtData d;
+    auto fg = state.currentFG;
 
-    switch (state.activeFgInput)
-    {
-    case FGInput::Upscaler:
-        d.input = "OptiFG";
-        break;
-    case FGInput::DLSSG:
-        d.input = "DLSSG/SL";
-        break;
-    case FGInput::NvngxFG:
-        d.input = "DLSSG/Nvngx";
-        break;
-    case FGInput::FSRFG:
-        d.input = "FSR 3.1 FG";
-        break;
-    case FGInput::FSRFG30:
-        d.input = "FSR 3.0 FG";
-        break;
-    default:
-        break;
-    }
-
-    // The DLSSG replacement is the output when the game's DLSSG is redirected
+    // The DLSSG replacement is the generator when the game's DLSSG is redirected
     const auto nvngx = state.activeFgNvngx;
     const bool nvngxOutput = nvngx != FGNvngxReplacement::None &&
                              (state.activeFgInput == FGInput::NvngxFG || state.activeFgOutput == FGOutput::DLSSG);
-
-    if (nvngxOutput)
-    {
-        d.output = nvngx == FGNvngxReplacement::Arturs ? "DLSS Enabler"
-                   : nvngx == FGNvngxReplacement::Nukems ? "Nukem's FSR3"
-                   : nvngx == FGNvngxReplacement::FFX    ? "FFX FG"
-                                                         : "FFX+Enabler";
-    }
-    else
-    {
-        switch (state.activeFgOutput)
-        {
-        case FGOutput::FSRFG:
-            d.output = "FSR FG";
-            break;
-        case FGOutput::XeFG:
-            d.output = "XeFG";
-            break;
-        case FGOutput::DLSSG:
-            d.output = "DLSSG";
-            break;
-        case FGOutput::Reprojection:
-            d.output = "Reprojection";
-            break;
-        default:
-            break;
-        }
-    }
-
-    // State and multiplier
-    auto fg = state.currentFG;
     const bool nvngxLoaded = nvngxOutput && (state.swapchainApi == Vulkan ? Nvngx_FG::isVulkanAvailable()
                                                                           : Nvngx_FG::isDx12Available());
 
+    // State and real multiplier
     if (fg != nullptr && fg->IsActive() && !fg->IsPaused())
     {
         d.status = 4;
@@ -9706,48 +9722,86 @@ static FgCrtData GatherFgCrt(State& state)
         d.status = 1;
     }
 
-    // Module: a loaded .asi plugin first (the first one, with how many more), else the FG implementation
+    if (nvngxOutput)
     {
-        std::scoped_lock lock(state.loadedAsiMutex);
+        // DLSS Enabler and the other DLSSG replacements: their own dll and the version they report, never an .asi
+        const wchar_t* dll = nvngx == FGNvngxReplacement::Arturs   ? L"dlss-enabler-headless.dll"
+                             : nvngx == FGNvngxReplacement::Nukems ? L"dlssg_to_fsr3_amd_is_better.dll"
+                                                                   : nullptr;
 
-        if (!state.loadedAsiPlugins.empty())
-        {
-            const std::filesystem::path path(state.loadedAsiPlugins.front());
-            d.module = wstring_to_string(path.stem().wstring());
-            d.moduleIsAsi = true;
+        d.engine = nvngx == FGNvngxReplacement::Arturs   ? "DLSS Enabler"
+                   : nvngx == FGNvngxReplacement::Nukems ? "Nukem's FSR3"
+                   : nvngx == FGNvngxReplacement::FFX    ? "FFX FG"
+                                                         : "FFX + Enabler";
 
-            if (state.loadedAsiPlugins.size() > 1)
-                d.module += StrFmt(" +%zu", state.loadedAsiPlugins.size() - 1);
+        if (dll != nullptr)
+            d.file = wstring_to_string(dll);
+        else if (const auto path = FfxApiProxy::Dx12Module_FG_Path(); !path.empty())
+            d.file = wstring_to_string(std::filesystem::path(path).filename().wstring());
 
-            version_t version;
-            if (Util::GetFileVersion(path.wstring(), &version))
-                d.version = StrFmt("%u.%u.%u.%u", (unsigned) version.major, (unsigned) version.minor,
-                                   (unsigned) version.patch, (unsigned) version.reserved);
-        }
+        if (nvngxLoaded)
+            d.version = FgVersionText(Nvngx_FG::version());
+
+        return d;
     }
 
-    if (!d.moduleIsAsi)
+    switch (state.activeFgOutput)
     {
-        if (fg != nullptr)
-        {
-            // Some names end with the multiplier ("XeFG 2x"): the module is the name without it
-            std::string name = fg->Name();
-            if (const auto space = name.rfind(' '); space != std::string::npos && name.ends_with("x"))
-                name.erase(space);
+    case FGOutput::XeFG:
+    {
+        d.engine = "XeFG";
+        const auto path = ModulePath(XeFGProxy::Module());
 
-            d.module = name;
+        if (!path.empty())
+        {
+            d.file = wstring_to_string(std::filesystem::path(path).filename().wstring());
+            d.version = FileVersionText(path);
+        }
+
+        // An XeMFG plugin the loader loaded takes over XeFG's frame count: it is the implementation shown
+        std::vector<std::wstring> asis;
+        {
+            std::scoped_lock lock(state.loadedAsiMutex);
+            asis = state.loadedAsiPlugins;
+        }
+
+        for (const auto& asi : asis)
+        {
+            const auto info = ReadXeMfgFile(asi);
+            if (!info.xemfg)
+                continue;
+
+            d.engine = "XeMFG";
+            d.file = wstring_to_string(std::filesystem::path(asi).filename().wstring());
+            d.version = info.version;
+            d.variant = info.variant;
+            d.fromAsi = true;
+            d.variantFromFile = true;
+            break;
+        }
+
+        break;
+    }
+    case FGOutput::FSRFG:
+    {
+        d.engine = "FSR FG";
+        if (const auto path = FfxApiProxy::Dx12Module_FG_Path(); !path.empty())
+            d.file = wstring_to_string(std::filesystem::path(path).filename().wstring());
+        if (fg != nullptr)
             d.version = FgVersionText(fg->Version());
-        }
-        else if (nvngxLoaded)
-        {
-            d.module = d.output;
-            d.version = FgVersionText(Nvngx_FG::version());
-        }
-        else if (state.activeFgOutput == FGOutput::DLSSG || state.activeFgInput == FGInput::DLSSG)
-        {
-            d.module = "Streamline";
-            d.version = FgVersionText(state.streamlineVersion);
-        }
+        break;
+    }
+    case FGOutput::DLSSG:
+        d.engine = "DLSSG";
+        d.file = "Streamline";
+        d.version = FgVersionText(state.streamlineVersion);
+        break;
+    case FGOutput::Reprojection:
+        d.engine = "Reprojection";
+        d.file = "OptiScaler";
+        break;
+    default:
+        break;
     }
 
     return d;
@@ -9789,39 +9843,42 @@ static void DrawFgCrt(const ImVec2& min, const ImVec2& size, const FgCrtData& d)
                       col(0.15f, 0.15f, 0.14f), 1.0f);
     }
 
-    // Recess and glass
+    // Recess, then the glass set a little into it
     const ImVec2 rMin(min.x + bezel, min.y + bezel), rMax(max.x - bezel, max.y - bezel);
     draw->AddRectFilled(rMin, rMax, col(0.0f, 0.0f, 0.0f), rounding * 1.6f);
 
     const ImVec2 gMin(rMin.x + 2.0f, rMin.y + 2.0f), gMax(rMax.x - 2.0f, rMax.y - 2.0f);
     const float glassRound = rounding * 1.5f;
     const float gw = gMax.x - gMin.x, gh = gMax.y - gMin.y;
-    draw->AddRectFilled(gMin, gMax, col(0.020f, 0.085f, 0.045f), glassRound);
+    draw->AddRectFilled(gMin, gMax, col(0.016f, 0.070f, 0.036f), glassRound);
 
     draw->PushClipRect(ImVec2(gMin.x + 1.0f, gMin.y + 1.0f), ImVec2(gMax.x - 1.0f, gMax.y - 1.0f), true);
 
-    // Convex tube: brighter in the middle, darker towards every edge
-    const ImU32 clear = col(0, 0, 0, 0), edge = col(0, 0, 0, 0.55f), glow = col(0.10f, 0.30f, 0.15f, 0.35f);
-    draw->AddRectFilledMultiColor(ImVec2(gMin.x + gw * 0.2f, gMin.y + gh * 0.2f), ImVec2(gMax.x - gw * 0.2f, gMax.y - gh * 0.2f),
-                                  glow, glow, glow, glow);
-    draw->AddRectFilledMultiColor(gMin, ImVec2(gMin.x + gw * 0.18f, gMax.y), edge, clear, clear, edge);
-    draw->AddRectFilledMultiColor(ImVec2(gMax.x - gw * 0.18f, gMin.y), gMax, clear, edge, edge, clear);
-    draw->AddRectFilledMultiColor(gMin, ImVec2(gMax.x, gMin.y + gh * 0.16f), edge, edge, clear, clear);
-    draw->AddRectFilledMultiColor(ImVec2(gMin.x, gMax.y - gh * 0.16f), gMax, clear, clear, edge, edge);
+    // Depth: the tube darkens towards every edge (no lit block behind the text), the recess casts a soft shadow
+    // on the top of the glass
+    const ImU32 clear = col(0, 0, 0, 0), edge = col(0, 0, 0, 0.50f), shadow = col(0, 0, 0, 0.45f);
+    draw->AddRectFilledMultiColor(gMin, ImVec2(gMin.x + gw * 0.22f, gMax.y), edge, clear, clear, edge);
+    draw->AddRectFilledMultiColor(ImVec2(gMax.x - gw * 0.22f, gMin.y), gMax, clear, edge, edge, clear);
+    draw->AddRectFilledMultiColor(gMin, ImVec2(gMax.x, gMin.y + gh * 0.14f), shadow, shadow, clear, clear);
+    draw->AddRectFilledMultiColor(ImVec2(gMin.x, gMax.y - gh * 0.18f), gMax, clear, clear, edge, edge);
 
-    // Scan lines and the window reflected on the curved glass
+    // Fine scan lines
     for (float y = gMin.y + 2.0f; y < gMax.y; y += 3.0f)
-        draw->AddLine(ImVec2(gMin.x, y), ImVec2(gMax.x, y), col(0, 0, 0, 0.16f));
+        draw->AddLine(ImVec2(gMin.x, y), ImVec2(gMax.x, y), col(0, 0, 0, 0.14f));
 
-    draw->AddBezierQuadratic(ImVec2(gMin.x + gw * 0.08f, gMin.y + gh * 0.30f), ImVec2(gMin.x + gw * 0.12f, gMin.y + gh * 0.06f),
-                             ImVec2(gMin.x + gw * 0.42f, gMin.y + gh * 0.05f), col(0.85f, 1.0f, 0.90f, 0.10f), 2.0f);
+    // Reflections, very faint: a curved highlight at the top left and a thin sheen along the bottom
+    draw->AddBezierQuadratic(ImVec2(gMin.x + gw * 0.07f, gMin.y + gh * 0.28f), ImVec2(gMin.x + gw * 0.10f, gMin.y + gh * 0.07f),
+                             ImVec2(gMin.x + gw * 0.38f, gMin.y + gh * 0.06f), col(0.85f, 1.0f, 0.90f, 0.07f), 1.5f);
+    draw->AddLine(ImVec2(gMin.x + gw * 0.15f, gMax.y - 2.5f), ImVec2(gMax.x - gw * 0.15f, gMax.y - 2.5f),
+                  col(0.70f, 0.95f, 0.75f, 0.06f), 1.0f);
 
-    // Text: amber labels, fluorescent yellow values with a little phosphor glow
-    const ImVec4 amber(1.00f, 0.66f, 0.16f, 1.0f), yellow(1.00f, 0.93f, 0.25f, 1.0f), dim(0.55f, 0.62f, 0.45f, 1.0f);
+    // Text: amber labels, intense yellow values, ACTIVE in bright phosphor green; a faint glow only
+    const ImVec4 amber(1.00f, 0.68f, 0.16f, 1.0f), yellow(1.00f, 0.96f, 0.10f, 1.0f), dim(0.50f, 0.58f, 0.42f, 1.0f);
+    const ImVec4 phosphor(0.35f, 1.00f, 0.35f, 1.0f);
     const auto text = [&](float sizePx, const ImVec2& at, const ImVec4& c, const char* s, ImFont* f)
     {
-        draw->AddText(f, sizePx, ImVec2(at.x + 0.6f, at.y), col(c.x, c.y, c.z, 0.22f), s);
-        draw->AddText(f, sizePx, ImVec2(at.x - 0.6f, at.y), col(c.x, c.y, c.z, 0.22f), s);
+        draw->AddText(f, sizePx, ImVec2(at.x + 0.5f, at.y), col(c.x, c.y, c.z, 0.18f), s);
+        draw->AddText(f, sizePx, ImVec2(at.x - 0.5f, at.y), col(c.x, c.y, c.z, 0.18f), s);
         draw->AddText(f, sizePx, at, ImGui::GetColorU32(c), s);
     };
 
@@ -9836,16 +9893,16 @@ static void DrawFgCrt(const ImVec2& min, const ImVec2& size, const FgCrtData& d)
                              : d.status == 2 ? FgCrtWord("LOADED", "CARGADO")
                              : d.status == 1 ? FgCrtWord("NOT LOADED", "SIN CARGAR")
                                              : FgCrtWord("OFF", "APAGADO");
-    const ImVec4 statusColour = d.status == 4 ? ImVec4(0.72f, 1.00f, 0.30f, 1.0f) : d.status >= 2 ? amber : dim;
+    const ImVec4 statusColour = d.status == 4 ? phosphor : d.status >= 2 ? amber : dim;
     const float titleSize = std::floor(fs * 1.15f);
     text(titleSize, ImVec2(x, y), amber, "FG", bigFont);
     const float statusWidth = bigFont->CalcTextSizeA(titleSize, FLT_MAX, 0.0f, statusText).x;
     text(titleSize, ImVec2(right - statusWidth, y), statusColour, statusText, bigFont);
     y += titleSize + std::floor(fs * 0.25f);
-    draw->AddLine(ImVec2(x, y), ImVec2(right, y), col(amber.x, amber.y, amber.z, 0.55f), 1.0f);
+    draw->AddLine(ImVec2(x, y), ImVec2(right, y), col(amber.x, amber.y, amber.z, 0.50f), 1.0f);
     y += std::floor(fs * 0.3f);
 
-    // Rows: label, colon, value cut with dots when it doesn't fit
+    // Rows: label, colon, value cut with a dot when it doesn't fit
     const float labelWidth = font->CalcTextSizeA(fs, FLT_MAX, 0.0f, "MULT ").x;
     const auto row = [&](const char* label, const std::string& value)
     {
@@ -9868,13 +9925,14 @@ static void DrawFgCrt(const ImVec2& min, const ImVec2& size, const FgCrtData& d)
         y += std::floor(fs * 1.15f);
     };
 
-    row(FgCrtWord("IN", "ENT"), d.input);
-    row(FgCrtWord("OUT", "SAL"), d.output);
-    row(d.moduleIsAsi ? "ASI" : FgCrtWord("MOD", "MOD"), d.module);
+    const std::string variant = d.variant == "classic" ? std::string(Tr("CLASSIC")) : d.variant;
+    row(FgCrtWord("ENG", "MOT"), d.engine);
+    row("VAR", variant);
+    row(d.fromAsi ? "ASI" : "DLL", d.file);
     row("VER", d.version);
 
     y += std::floor(fs * 0.1f);
-    draw->AddLine(ImVec2(x, y), ImVec2(right, y), col(amber.x, amber.y, amber.z, 0.55f), 1.0f);
+    draw->AddLine(ImVec2(x, y), ImVec2(right, y), col(amber.x, amber.y, amber.z, 0.50f), 1.0f);
     y += std::floor(fs * 0.3f);
 
     // Multiplier, the largest figure of the screen
@@ -9887,7 +9945,7 @@ static void DrawFgCrt(const ImVec2& min, const ImVec2& size, const FgCrtData& d)
     draw->PopClipRect();
 
     // Thin rim of the glass where it meets the recess
-    draw->AddRect(gMin, gMax, col(0.30f, 0.55f, 0.35f, 0.35f), glassRound, 0, 1.0f);
+    draw->AddRect(gMin, gMax, col(0.30f, 0.55f, 0.35f, 0.30f), glassRound, 0, 1.0f);
 }
 
 // The size the screen needs at the menu's font size (rows above, plus the bezel)
@@ -9897,7 +9955,7 @@ static ImVec2 FgCrtSize()
     return ImVec2(std::floor(fs * 14.5f), std::floor(fs * 11.2f));
 }
 
-// The tooltip: the same data written out, plus what a loaded .asi does and doesn't prove
+// The tooltip: the same data written out, plus what a variant read from a file does and doesn't prove
 static void FgCrtTooltip(const FgCrtData& d)
 {
     const char* state = d.status == 4   ? Tr("active, generating frames")
@@ -9906,16 +9964,121 @@ static void FgCrtTooltip(const FgCrtData& d)
                         : d.status == 1 ? Tr("selected, not loaded")
                                         : Tr("off");
 
-    std::string tip = Tr("Frame Generation diagnosis: data ILION observes, without starting any provider.");
-    tip += StrFmt("\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s", Tr("Input"), d.input.c_str(), Tr("Output"),
-                  d.output.c_str(), d.moduleIsAsi ? Tr("ASI plugin loaded") : Tr("Module"), d.module.c_str(),
-                  Tr("Version"), d.version.c_str(), Tr("State"), state, Tr("Multiplier"), d.multiplier.c_str());
+    const std::string variant = d.variant == "classic" ? std::string(Tr("classic")) : d.variant;
 
-    if (d.moduleIsAsi)
-        tip += std::string("\n\n") + Tr("A loaded ASI plugin is in the game's process; that alone doesn't confirm which "
-                                        "engine it runs (WMMA, for example).");
+    std::string tip = Tr("Frame Generation diagnosis: data ILION observes, without starting any provider.");
+    tip += StrFmt("\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s", Tr("Engine"), d.engine.c_str(), Tr("Variant"),
+                  variant.c_str(), d.fromAsi ? Tr("ASI plugin loaded") : Tr("File"), d.file.c_str(), Tr("Version"),
+                  d.version.c_str(), Tr("State"), state, Tr("Multiplier"), d.multiplier.c_str());
+
+    if (d.variantFromFile)
+        tip += std::string("\n\n") + Tr("The variant is read from the plugin's file. Which route it really runs (WMMA or its "
+                                        "fallback) can't be confirmed from ILION: not confirmed.");
 
     WrappedTooltip("%s", tip.c_str());
+}
+
+// ILION: XeMFG variants, each one in its own folder of plugins/XeMFG. The plugin loader loads only the chosen one (at
+// the next start), so two copies never run together. Shown only when that folder has variants.
+static void RenderXeMfgVariantSelector(decltype(Config::Instance()) config)
+{
+    const std::filesystem::path root = std::filesystem::path(config->PluginPath.value_or(L"plugins")) / L"XeMFG";
+
+    struct Variant
+    {
+        std::wstring folder;
+        std::string label;
+    };
+
+    // The folders are looked at again every few seconds, not every frame
+    static std::vector<Variant> variants;
+    static double lastScan = -100.0;
+
+    if (ImGui::GetTime() - lastScan > 3.0)
+    {
+        lastScan = ImGui::GetTime();
+        variants.clear();
+
+        std::error_code ec;
+        if (std::filesystem::is_directory(root, ec))
+        {
+            for (const auto& folder : std::filesystem::directory_iterator(root, ec))
+            {
+                if (!folder.is_directory())
+                    continue;
+
+                for (const auto& file : std::filesystem::directory_iterator(folder.path(), ec))
+                {
+                    std::wstring ext = file.path().extension().wstring();
+                    std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c) { return std::towlower(c); });
+
+                    if (!file.is_regular_file() || ext != L".asi")
+                        continue;
+
+                    const auto info = ReadXeMfgFile(file.path().wstring());
+                    std::string label = wstring_to_string(folder.path().filename().wstring());
+
+                    if (info.xemfg)
+                        label += StrFmt("  (%s %s)", info.variant == "classic" ? Tr("classic") : info.variant.c_str(),
+                                        info.version.c_str());
+
+                    variants.push_back({ folder.path().filename().wstring(), label });
+                    break;
+                }
+            }
+        }
+    }
+
+    if (variants.empty())
+        return;
+
+    const std::wstring chosen = config->XeMfgVariant.value_or(L"");
+    std::string preview = Tr("Plugins folder as it is");
+
+    for (const auto& variant : variants)
+    {
+        if (_wcsicmp(variant.folder.c_str(), chosen.c_str()) == 0)
+            preview = variant.label;
+    }
+
+    ImGui::Spacing();
+    ImGui::BeginDisabled(!config->LoadAsiPlugins.value_or_default());
+    ImGui::SetNextItemWidth(std::min(ImGui::GetFontSize() * 18.0f, ImGui::GetContentRegionAvail().x * 0.6f));
+
+    static std::wstring startVariant = chosen;
+
+    if (IlionTheme::BeginCombo(TrL("XeMFG variant"), preview.c_str()))
+    {
+        if (ImGui::Selectable(Tr("Plugins folder as it is"), chosen.empty()) && !chosen.empty())
+        {
+            config->XeMfgVariant = std::wstring();
+            config->SaveXeMfgVariant();
+        }
+
+        for (const auto& variant : variants)
+        {
+            const bool selected = _wcsicmp(variant.folder.c_str(), chosen.c_str()) == 0;
+
+            if (ImGui::Selectable(variant.label.c_str(), selected) && !selected)
+            {
+                config->XeMfgVariant = variant.folder;
+                config->SaveXeMfgVariant();
+            }
+        }
+
+        ImGui::EndCombo();
+    }
+
+    ImGui::EndDisabled();
+
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        WrappedTooltip("%s", Tr("XeMFG variants in plugins\\XeMFG\\<name>\\. Only the chosen one is loaded at the next start, "
+                                "and a plugin with the same file name in the plugins folder is then left out. Needs ASI "
+                                "plugins loading (Compatibility)."));
+
+    if (_wcsicmp(config->XeMfgVariant.value_or(L"").c_str(), startVariant.c_str()) != 0)
+        TextWrappedColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), "%s",
+                           Tr("Restart the game to load the chosen XeMFG variant"));
 }
 
 void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
@@ -10205,6 +10368,9 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             ImGui::SetCursorScreenPos(ImVec2(selectionStart.x, std::max(selectionBottom, crtPos.y + crtSize.y + ImGui::GetStyle().ItemSpacing.y)));
             ImGui::Dummy(ImVec2(0.0f, 0.0f));
         }
+
+        // ILION: the XeMFG variant to load at the next start, when plugins/XeMFG holds variants
+        RenderXeMfgVariantSelector(config);
 
         // Try to avoid having None selected when the gpu doesn't support DLSSG + some fallbacks
         if (!maySupportDlssg && (replaceFgOutputWithNvngx || showNvngxFgDowndown) &&

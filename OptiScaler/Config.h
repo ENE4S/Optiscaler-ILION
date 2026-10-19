@@ -572,6 +572,7 @@ class Config
 
     // Plugins
     CustomOptional<std::wstring, NoDefault> PluginPath;
+    CustomOptional<std::wstring, NoDefault> XeMfgVariant; // ILION: folder of plugins/XeMFG loaded as the XeMFG variant, empty = none
     CustomOptional<bool> LoadSpecialK { false };
     CustomOptional<bool> LoadReShade { false };
     CustomOptional<bool> LoadCustomAmdxc64OnRdna2 { false };
@@ -741,6 +742,7 @@ class Config
 
     // Writes only the settings of the upscaler chosen in ILION's selector, at once, like SaveMenuPreferences
     bool SaveUpscalerChoice();
+    bool SaveXeMfgVariant();
 
     void CheckUpscalerFiles();
 

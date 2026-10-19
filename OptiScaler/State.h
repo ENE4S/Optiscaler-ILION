@@ -267,6 +267,11 @@ class State
     bool reflexLimitsFps = false;
     bool reflexShowWarning = false;
     bool rtssReflexInjection = false;
+
+    // ILION: the .asi plugins OptiScaler loaded from its plugins folder (full paths), for the FG diagnosis screen.
+    // Late loading writes from another thread: read and write under loadedAsiMutex
+    std::mutex loadedAsiMutex;
+    std::vector<std::wstring> loadedAsiPlugins;
     bool fakenvapiReloadLowLatency = false;
     UINT64 reflexFrameId = 0;
     UINT64 frameCount = 0;

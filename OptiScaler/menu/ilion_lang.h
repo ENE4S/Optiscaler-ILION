@@ -46,6 +46,18 @@ struct Translation
 inline constexpr Translation kSpanish[] = {
     // Universal upscaler selector (v1.2-dev.5)
     { "Upscaler##IlionUpscaler", "Escalador" },
+    // ILION v1.2-dev.24
+    { "A loaded ASI plugin is in the game's process; that alone doesn't confirm which engine it runs (WMMA, for example).", "Un plugin ASI cargado está en el proceso del juego; eso solo no confirma qué motor ejecuta (por ejemplo, WMMA)." },
+    { "ASI plugin loaded", "Plugin ASI cargado" },
+    { "Frame Generation diagnosis: data ILION observes, without starting any provider.", "Diagnóstico de Frame Generation: datos que observa ILION, sin iniciar ningún proveedor." },
+    { "Module", "Módulo" },
+    { "Multiplier", "Multiplicador" },
+    { "Version", "Versión" },
+    { "active, generating frames", "activo, generando fotogramas" },
+    { "loaded, not generating", "cargado, sin generar" },
+    { "off", "apagado" },
+    { "selected, not loaded", "seleccionado, sin cargar" },
+    { "set up, paused", "preparado, en pausa" },
     // ILION v1.2-dev.22
     { "Currently only available on AMD RDNA 3. Enabling it on other architectures may cause crashes", "Por ahora, solo disponible en AMD RDNA 3. Activarlo en otras arquitecturas puede ocasionar fallos" },
     { "Continue##d4rWarning", "Continuar" },

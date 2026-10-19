@@ -9597,6 +9597,327 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
     }
 }
 
+// ILION: the Frame Generation screen, a small CRT next to the FG input and output. It only shows what ILION
+// observes; nothing is started or asked to any provider. Three levels are kept apart: the module is loaded,
+// frame generation is set up, frame generation is generating frames. A loaded .asi only says the plugin is in
+// the process, not which engine it runs.
+struct FgCrtData
+{
+    std::string input = "-";      // FG input in use
+    std::string output = "-";     // FG output (or the DLSSG replacement) in use
+    std::string module = "-";     // the module that answers for it: the loaded .asi, else the FG implementation
+    bool moduleIsAsi = false;
+    std::string version = "-";    // version of that module, when it is known
+    std::string multiplier = "-"; // real multiplier while frames are generated
+    int status = 0;               // 0 off, 1 not loaded, 2 loaded, 3 paused, 4 active
+};
+
+static std::string FgVersionText(const feature_version& version)
+{
+    if (version.major == 0 && version.minor == 0 && version.patch == 0)
+        return "-";
+
+    return StrFmt("%u.%u.%u", (unsigned) version.major, (unsigned) version.minor, (unsigned) version.patch);
+}
+
+static FgCrtData GatherFgCrt(State& state)
+{
+    FgCrtData d;
+
+    switch (state.activeFgInput)
+    {
+    case FGInput::Upscaler:
+        d.input = "OptiFG";
+        break;
+    case FGInput::DLSSG:
+        d.input = "DLSSG/SL";
+        break;
+    case FGInput::NvngxFG:
+        d.input = "DLSSG/Nvngx";
+        break;
+    case FGInput::FSRFG:
+        d.input = "FSR 3.1 FG";
+        break;
+    case FGInput::FSRFG30:
+        d.input = "FSR 3.0 FG";
+        break;
+    default:
+        break;
+    }
+
+    // The DLSSG replacement is the output when the game's DLSSG is redirected
+    const auto nvngx = state.activeFgNvngx;
+    const bool nvngxOutput = nvngx != FGNvngxReplacement::None &&
+                             (state.activeFgInput == FGInput::NvngxFG || state.activeFgOutput == FGOutput::DLSSG);
+
+    if (nvngxOutput)
+    {
+        d.output = nvngx == FGNvngxReplacement::Arturs ? "DLSS Enabler"
+                   : nvngx == FGNvngxReplacement::Nukems ? "Nukem's FSR3"
+                   : nvngx == FGNvngxReplacement::FFX    ? "FFX FG"
+                                                         : "FFX+Enabler";
+    }
+    else
+    {
+        switch (state.activeFgOutput)
+        {
+        case FGOutput::FSRFG:
+            d.output = "FSR FG";
+            break;
+        case FGOutput::XeFG:
+            d.output = "XeFG";
+            break;
+        case FGOutput::DLSSG:
+            d.output = "DLSSG";
+            break;
+        case FGOutput::Reprojection:
+            d.output = "Reprojection";
+            break;
+        default:
+            break;
+        }
+    }
+
+    // State and multiplier
+    auto fg = state.currentFG;
+    const bool nvngxLoaded = nvngxOutput && (state.swapchainApi == Vulkan ? Nvngx_FG::isVulkanAvailable()
+                                                                          : Nvngx_FG::isDx12Available());
+
+    if (fg != nullptr && fg->IsActive() && !fg->IsPaused())
+    {
+        d.status = 4;
+        d.multiplier = StrFmt("%ux", (unsigned) fg->GetInterpolatedFrameCount() + 1);
+    }
+    else if (state.dlssgDetectedInterpolationCount > 0)
+    {
+        d.status = 4;
+        d.multiplier = StrFmt("%dx", state.dlssgDetectedInterpolationCount + 1);
+    }
+    else if (fg != nullptr && fg->IsActive())
+    {
+        d.status = 3;
+    }
+    else if (fg != nullptr || nvngxLoaded)
+    {
+        d.status = 2;
+    }
+    else if (state.activeFgInput != FGInput::NoFG || state.activeFgOutput != FGOutput::NoFG || nvngxOutput)
+    {
+        d.status = 1;
+    }
+
+    // Module: a loaded .asi plugin first (the first one, with how many more), else the FG implementation
+    {
+        std::scoped_lock lock(state.loadedAsiMutex);
+
+        if (!state.loadedAsiPlugins.empty())
+        {
+            const std::filesystem::path path(state.loadedAsiPlugins.front());
+            d.module = wstring_to_string(path.stem().wstring());
+            d.moduleIsAsi = true;
+
+            if (state.loadedAsiPlugins.size() > 1)
+                d.module += StrFmt(" +%zu", state.loadedAsiPlugins.size() - 1);
+
+            version_t version;
+            if (Util::GetFileVersion(path.wstring(), &version))
+                d.version = StrFmt("%u.%u.%u.%u", (unsigned) version.major, (unsigned) version.minor,
+                                   (unsigned) version.patch, (unsigned) version.reserved);
+        }
+    }
+
+    if (!d.moduleIsAsi)
+    {
+        if (fg != nullptr)
+        {
+            // Some names end with the multiplier ("XeFG 2x"): the module is the name without it
+            std::string name = fg->Name();
+            if (const auto space = name.rfind(' '); space != std::string::npos && name.ends_with("x"))
+                name.erase(space);
+
+            d.module = name;
+            d.version = FgVersionText(fg->Version());
+        }
+        else if (nvngxLoaded)
+        {
+            d.module = d.output;
+            d.version = FgVersionText(Nvngx_FG::version());
+        }
+        else if (state.activeFgOutput == FGOutput::DLSSG || state.activeFgInput == FGInput::DLSSG)
+        {
+            d.module = "Streamline";
+            d.version = FgVersionText(state.streamlineVersion);
+        }
+    }
+
+    return d;
+}
+
+// Short words of the screen in the language of the menu
+static const char* FgCrtWord(const char* english, const char* spanish)
+{
+    return Ilion::CurrentLang() == Ilion::Lang::EN ? english : spanish;
+}
+
+// Draws the CRT: a thin metal bezel with four screws, the dark recess, the deep green curved glass, then the text
+static void DrawFgCrt(const ImVec2& min, const ImVec2& size, const FgCrtData& d)
+{
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    ImFont* font = IlionTheme::crtFont != nullptr ? IlionTheme::crtFont : ImGui::GetFont();
+    ImFont* bigFont = IlionTheme::crtTitleFont != nullptr ? IlionTheme::crtTitleFont : font;
+    const float fs = ImGui::GetFontSize();
+    const ImVec2 max(min.x + size.x, min.y + size.y);
+    const auto col = [](float r, float g, float b, float a = 1.0f) { return ImGui::GetColorU32(ImVec4(r, g, b, a)); };
+
+    // Bezel: brushed metal, lighter at the top, a fine highlight and a dark outline
+    const float bezel = std::floor(fs * 0.55f);
+    const float rounding = std::floor(fs * 0.45f);
+    draw->AddRectFilled(ImVec2(min.x + 2.0f, min.y + 3.0f), ImVec2(max.x + 2.0f, max.y + 3.0f), col(0, 0, 0, 0.45f), rounding);
+    draw->AddRectFilledMultiColor(min, max, col(0.40f, 0.41f, 0.38f), col(0.40f, 0.41f, 0.38f), col(0.17f, 0.18f, 0.16f),
+                                  col(0.17f, 0.18f, 0.16f));
+    draw->AddRect(min, max, col(0.05f, 0.05f, 0.05f), rounding, 0, 1.5f);
+    draw->AddLine(ImVec2(min.x + rounding, min.y + 1.0f), ImVec2(max.x - rounding, min.y + 1.0f), col(0.75f, 0.76f, 0.72f, 0.55f));
+
+    // Screws in the corners of the bezel
+    const float screw = std::max(2.0f, std::floor(fs * 0.17f));
+    for (const ImVec2 at : { ImVec2(min.x + bezel * 0.5f, min.y + bezel * 0.5f), ImVec2(max.x - bezel * 0.5f, min.y + bezel * 0.5f),
+                             ImVec2(min.x + bezel * 0.5f, max.y - bezel * 0.5f), ImVec2(max.x - bezel * 0.5f, max.y - bezel * 0.5f) })
+    {
+        draw->AddCircleFilled(at, screw, col(0.55f, 0.56f, 0.52f));
+        draw->AddCircle(at, screw, col(0.08f, 0.08f, 0.08f), 0, 1.0f);
+        draw->AddLine(ImVec2(at.x - screw * 0.6f, at.y + screw * 0.6f), ImVec2(at.x + screw * 0.6f, at.y - screw * 0.6f),
+                      col(0.15f, 0.15f, 0.14f), 1.0f);
+    }
+
+    // Recess and glass
+    const ImVec2 rMin(min.x + bezel, min.y + bezel), rMax(max.x - bezel, max.y - bezel);
+    draw->AddRectFilled(rMin, rMax, col(0.0f, 0.0f, 0.0f), rounding * 1.6f);
+
+    const ImVec2 gMin(rMin.x + 2.0f, rMin.y + 2.0f), gMax(rMax.x - 2.0f, rMax.y - 2.0f);
+    const float glassRound = rounding * 1.5f;
+    const float gw = gMax.x - gMin.x, gh = gMax.y - gMin.y;
+    draw->AddRectFilled(gMin, gMax, col(0.020f, 0.085f, 0.045f), glassRound);
+
+    draw->PushClipRect(ImVec2(gMin.x + 1.0f, gMin.y + 1.0f), ImVec2(gMax.x - 1.0f, gMax.y - 1.0f), true);
+
+    // Convex tube: brighter in the middle, darker towards every edge
+    const ImU32 clear = col(0, 0, 0, 0), edge = col(0, 0, 0, 0.55f), glow = col(0.10f, 0.30f, 0.15f, 0.35f);
+    draw->AddRectFilledMultiColor(ImVec2(gMin.x + gw * 0.2f, gMin.y + gh * 0.2f), ImVec2(gMax.x - gw * 0.2f, gMax.y - gh * 0.2f),
+                                  glow, glow, glow, glow);
+    draw->AddRectFilledMultiColor(gMin, ImVec2(gMin.x + gw * 0.18f, gMax.y), edge, clear, clear, edge);
+    draw->AddRectFilledMultiColor(ImVec2(gMax.x - gw * 0.18f, gMin.y), gMax, clear, edge, edge, clear);
+    draw->AddRectFilledMultiColor(gMin, ImVec2(gMax.x, gMin.y + gh * 0.16f), edge, edge, clear, clear);
+    draw->AddRectFilledMultiColor(ImVec2(gMin.x, gMax.y - gh * 0.16f), gMax, clear, clear, edge, edge);
+
+    // Scan lines and the window reflected on the curved glass
+    for (float y = gMin.y + 2.0f; y < gMax.y; y += 3.0f)
+        draw->AddLine(ImVec2(gMin.x, y), ImVec2(gMax.x, y), col(0, 0, 0, 0.16f));
+
+    draw->AddBezierQuadratic(ImVec2(gMin.x + gw * 0.08f, gMin.y + gh * 0.30f), ImVec2(gMin.x + gw * 0.12f, gMin.y + gh * 0.06f),
+                             ImVec2(gMin.x + gw * 0.42f, gMin.y + gh * 0.05f), col(0.85f, 1.0f, 0.90f, 0.10f), 2.0f);
+
+    // Text: amber labels, fluorescent yellow values with a little phosphor glow
+    const ImVec4 amber(1.00f, 0.66f, 0.16f, 1.0f), yellow(1.00f, 0.93f, 0.25f, 1.0f), dim(0.55f, 0.62f, 0.45f, 1.0f);
+    const auto text = [&](float sizePx, const ImVec2& at, const ImVec4& c, const char* s, ImFont* f)
+    {
+        draw->AddText(f, sizePx, ImVec2(at.x + 0.6f, at.y), col(c.x, c.y, c.z, 0.22f), s);
+        draw->AddText(f, sizePx, ImVec2(at.x - 0.6f, at.y), col(c.x, c.y, c.z, 0.22f), s);
+        draw->AddText(f, sizePx, at, ImGui::GetColorU32(c), s);
+    };
+
+    const float pad = std::floor(fs * 0.55f);
+    const float x = gMin.x + pad;
+    const float right = gMax.x - pad;
+    float y = gMin.y + std::floor(pad * 0.7f);
+
+    // Title line: FG and its state
+    const char* statusText = d.status == 4   ? FgCrtWord("ACTIVE", "ACTIVO")
+                             : d.status == 3 ? FgCrtWord("PAUSED", "PAUSA")
+                             : d.status == 2 ? FgCrtWord("LOADED", "CARGADO")
+                             : d.status == 1 ? FgCrtWord("NOT LOADED", "SIN CARGAR")
+                                             : FgCrtWord("OFF", "APAGADO");
+    const ImVec4 statusColour = d.status == 4 ? ImVec4(0.72f, 1.00f, 0.30f, 1.0f) : d.status >= 2 ? amber : dim;
+    const float titleSize = std::floor(fs * 1.15f);
+    text(titleSize, ImVec2(x, y), amber, "FG", bigFont);
+    const float statusWidth = bigFont->CalcTextSizeA(titleSize, FLT_MAX, 0.0f, statusText).x;
+    text(titleSize, ImVec2(right - statusWidth, y), statusColour, statusText, bigFont);
+    y += titleSize + std::floor(fs * 0.25f);
+    draw->AddLine(ImVec2(x, y), ImVec2(right, y), col(amber.x, amber.y, amber.z, 0.55f), 1.0f);
+    y += std::floor(fs * 0.3f);
+
+    // Rows: label, colon, value cut with dots when it doesn't fit
+    const float labelWidth = font->CalcTextSizeA(fs, FLT_MAX, 0.0f, "MULT ").x;
+    const auto row = [&](const char* label, const std::string& value)
+    {
+        text(fs, ImVec2(x, y), amber, label, font);
+        text(fs, ImVec2(x + labelWidth, y), amber, ":", font);
+
+        const float valueX = x + labelWidth + font->CalcTextSizeA(fs, FLT_MAX, 0.0f, ": ").x;
+        std::string shown = value;
+        while (shown.size() > 1 && font->CalcTextSizeA(fs, FLT_MAX, 0.0f, shown.c_str()).x > right - valueX)
+        {
+            shown.pop_back();
+            while (!shown.empty() && ((unsigned char) shown.back() & 0xC0) == 0x80)
+                shown.pop_back();
+            if (!shown.empty())
+                shown.pop_back();
+            shown += ".";
+        }
+
+        text(fs, ImVec2(valueX, y), shown == "-" ? dim : yellow, shown.c_str(), font);
+        y += std::floor(fs * 1.15f);
+    };
+
+    row(FgCrtWord("IN", "ENT"), d.input);
+    row(FgCrtWord("OUT", "SAL"), d.output);
+    row(d.moduleIsAsi ? "ASI" : FgCrtWord("MOD", "MOD"), d.module);
+    row("VER", d.version);
+
+    y += std::floor(fs * 0.1f);
+    draw->AddLine(ImVec2(x, y), ImVec2(right, y), col(amber.x, amber.y, amber.z, 0.55f), 1.0f);
+    y += std::floor(fs * 0.3f);
+
+    // Multiplier, the largest figure of the screen
+    const float bigSize = std::floor(fs * 1.6f);
+    text(fs, ImVec2(x, y + (bigSize - fs) * 0.5f), amber, "MULT", font);
+    text(fs, ImVec2(x + labelWidth, y + (bigSize - fs) * 0.5f), amber, ":", font);
+    text(bigSize, ImVec2(x + labelWidth + font->CalcTextSizeA(fs, FLT_MAX, 0.0f, ": ").x, y), d.multiplier == "-" ? dim : yellow,
+         d.multiplier.c_str(), bigFont);
+
+    draw->PopClipRect();
+
+    // Thin rim of the glass where it meets the recess
+    draw->AddRect(gMin, gMax, col(0.30f, 0.55f, 0.35f, 0.35f), glassRound, 0, 1.0f);
+}
+
+// The size the screen needs at the menu's font size (rows above, plus the bezel)
+static ImVec2 FgCrtSize()
+{
+    const float fs = ImGui::GetFontSize();
+    return ImVec2(std::floor(fs * 14.5f), std::floor(fs * 11.2f));
+}
+
+// The tooltip: the same data written out, plus what a loaded .asi does and doesn't prove
+static void FgCrtTooltip(const FgCrtData& d)
+{
+    const char* state = d.status == 4   ? Tr("active, generating frames")
+                        : d.status == 3 ? Tr("set up, paused")
+                        : d.status == 2 ? Tr("loaded, not generating")
+                        : d.status == 1 ? Tr("selected, not loaded")
+                                        : Tr("off");
+
+    std::string tip = Tr("Frame Generation diagnosis: data ILION observes, without starting any provider.");
+    tip += StrFmt("\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s", Tr("Input"), d.input.c_str(), Tr("Output"),
+                  d.output.c_str(), d.moduleIsAsi ? Tr("ASI plugin loaded") : Tr("Module"), d.module.c_str(),
+                  Tr("Version"), d.version.c_str(), Tr("State"), state, Tr("Multiplier"), d.multiplier.c_str());
+
+    if (d.moduleIsAsi)
+        tip += std::string("\n\n") + Tr("A loaded ASI plugin is in the game's process; that alone doesn't confirm which "
+                                        "engine it runs (WMMA, for example).");
+
+    WrappedTooltip("%s", tip.c_str());
+}
+
 void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 {
     auto& state = ctx.state;
@@ -9814,7 +10135,15 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
         SectionTitle("Frame Generation");
         ShowTooltip("Which copium do you choose?");
 
-        if (ImGui::BeginTable("fgSelection", 1, ImGuiTableFlags_SizingStretchSame))
+        // ILION: the FG screen next to the input and output (to their right when there is room, else centred below)
+        const ImVec2 crtSize = FgCrtSize();
+        const float crtGap = ImGui::GetStyle().ItemSpacing.x * 2.0f;
+        const float selectionAvail = ImGui::GetContentRegionAvail().x;
+        const bool crtBeside = selectionAvail >= crtSize.x + crtGap + ImGui::GetFontSize() * 16.0f;
+        const ImVec2 selectionStart = ImGui::GetCursorScreenPos();
+        const float selectionWidth = crtBeside ? selectionAvail - crtSize.x - crtGap : 0.0f;
+
+        if (ImGui::BeginTable("fgSelection", 1, ImGuiTableFlags_SizingStretchSame, ImVec2(selectionWidth, 0.0f)))
         {
             ImGui::TableNextColumn();
 
@@ -9845,6 +10174,36 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             }
 
             ImGui::EndTable();
+        }
+
+        {
+            const FgCrtData crt = GatherFgCrt(state);
+            const float selectionBottom = ImGui::GetCursorScreenPos().y;
+            ImVec2 crtPos;
+
+            if (crtBeside)
+            {
+                // In the space right of the selectors, level with them (centred on them when they are taller)
+                const float selectionHeight = selectionBottom - selectionStart.y;
+                crtPos = ImVec2(std::floor(selectionStart.x + selectionWidth + crtGap),
+                                std::floor(selectionStart.y + std::max(0.0f, (selectionHeight - crtSize.y) * 0.5f)));
+            }
+            else
+            {
+                crtPos = ImVec2(std::floor(selectionStart.x + (selectionAvail - crtSize.x) * 0.5f),
+                                selectionBottom + ImGui::GetStyle().ItemSpacing.y);
+            }
+
+            DrawFgCrt(crtPos, crtSize, crt);
+
+            // The screen takes its place in the layout and shows the tooltip
+            ImGui::SetCursorScreenPos(crtPos);
+            ImGui::InvisibleButton("##fgCrt", crtSize);
+            if (ImGui::IsItemHovered())
+                FgCrtTooltip(crt);
+
+            ImGui::SetCursorScreenPos(ImVec2(selectionStart.x, std::max(selectionBottom, crtPos.y + crtSize.y + ImGui::GetStyle().ItemSpacing.y)));
+            ImGui::Dummy(ImVec2(0.0f, 0.0f));
         }
 
         // Try to avoid having None selected when the gpu doesn't support DLSSG + some fallbacks

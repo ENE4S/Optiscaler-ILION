@@ -245,6 +245,10 @@ void LoadAsiPlugins()
             {
                 LOG_INFO(L"Loaded: {}", entry.path().wstring());
                 _asiHandles.push_back(hMod);
+                {
+                    std::scoped_lock lock(State::Instance().loadedAsiMutex);
+                    State::Instance().loadedAsiPlugins.push_back(entry.path().wstring());
+                }
 
                 auto init = (PFN_InitializeASI) KernelBaseProxy::GetProcAddress_()(hMod, "InitializeASI");
                 auto patchResult = (PFN_PatchResult) KernelBaseProxy::GetProcAddress_()(hMod, "PatchResult");
@@ -303,6 +307,10 @@ void LoadAsiPlugins()
                                 {
                                     LOG_INFO(L"Loaded late: {}", entry.path().wstring());
                                     _asiHandles.push_back(hMod);
+                                    {
+                                        std::scoped_lock lock(State::Instance().loadedAsiMutex);
+                                        State::Instance().loadedAsiPlugins.push_back(entry.path().wstring());
+                                    }
 
                                     auto init =
                                         (PFN_InitializeASI) KernelBaseProxy::GetProcAddress_()(hMod, "InitializeASI");

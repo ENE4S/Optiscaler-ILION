@@ -809,6 +809,7 @@ bool Config::Reload(std::filesystem::path iniPath)
             XeMfgVariant.set_from_config(readWString("Plugins", "XeMfgVariant"));
             LoadSpecialK.set_from_config(readBool("Plugins", "LoadSpecialK"));
             LoadReShade.set_from_config(readBool("Plugins", "LoadReShade"));
+            ReShadeAddedEffects.set_from_config(readString("ReShade", "AddedEffects"));
             LoadCustomAmdxc64OnRdna2.set_from_config(readBool("Plugins", "LoadCustomAmdxc64OnRdna2"));
             LoadAsiPlugins.set_from_config(readBool("Plugins", "LoadAsiPlugins"));
             LateAsiPluginsDelay.set_from_config(readInt("Plugins", "LateAsiPluginsDelay"));
@@ -1614,6 +1615,7 @@ bool Config::SaveIni()
         ini.SetValue("Plugins", "XeMfgVariant", wstring_to_string(Instance()->XeMfgVariant.value_for_config_or(L"auto")).c_str());
         ini.SetValue("Plugins", "LoadSpecialK", GetBoolValue(Instance()->LoadSpecialK.value_for_config()).c_str());
         ini.SetValue("Plugins", "LoadReShade", GetBoolValue(Instance()->LoadReShade.value_for_config()).c_str());
+        ini.SetValue("ReShade", "AddedEffects", Instance()->ReShadeAddedEffects.value_for_config_or("auto").c_str());
         ini.SetValue("Plugins", "LoadCustomAmdxc64OnRdna2",
                      GetBoolValue(Instance()->LoadCustomAmdxc64OnRdna2.value_for_config()).c_str());
         ini.SetValue("Plugins", "LoadAsiPlugins", GetBoolValue(Instance()->LoadAsiPlugins.value_for_config()).c_str());
@@ -1743,6 +1745,7 @@ bool Config::SaveMenuPreferences()
     const std::string basicMode = GetBoolValue(Instance()->MenuBasicMode.value_for_config());
     const std::string essentialMode = GetBoolValue(Instance()->MenuEssentialMode.value_for_config());
     const std::string infoLine = GetBoolValue(Instance()->IlionInfoLine.value_for_config());
+    const std::string reshadeAdded = Instance()->ReShadeAddedEffects.value_for_config_or("auto");
 
     // The copy in memory too, so a later Save Settings writes the same
     const std::string industrial = GetBoolValue(Instance()->IndustrialTheme.value_for_config());
@@ -1752,6 +1755,7 @@ bool Config::SaveMenuPreferences()
     ini.SetValue("Menu", "BasicMode", basicMode.c_str());
     ini.SetValue("Menu", "EssentialMode", essentialMode.c_str());
     ini.SetValue("Menu", "IlionInfoLine", infoLine.c_str());
+    ini.SetValue("ReShade", "AddedEffects", reshadeAdded.c_str());
     ini.SetValue("Menu", "IndustrialTheme", industrial.c_str());
     ini.SetValue("Menu", "IlionPalette", palette.c_str());
 
@@ -1763,6 +1767,7 @@ bool Config::SaveMenuPreferences()
     file.SetValue("Menu", "BasicMode", basicMode.c_str());
     file.SetValue("Menu", "EssentialMode", essentialMode.c_str());
     file.SetValue("Menu", "IlionInfoLine", infoLine.c_str());
+    file.SetValue("ReShade", "AddedEffects", reshadeAdded.c_str());
     file.SetValue("Menu", "IndustrialTheme", industrial.c_str());
     file.SetValue("Menu", "IlionPalette", palette.c_str());
 

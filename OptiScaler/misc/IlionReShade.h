@@ -14,8 +14,20 @@
 
 namespace IlionReShade
 {
-// The effects of the panel: the files of ReShade's official shader repository the installer brings
-inline constexpr const char* kEffects[] = { "FakeHDR.fx", "Levels.fx", "Tonemap.fx", "Vibrance.fx", "LUT.fx", "Layer.fx" };
+// The default catalogue: useful image effects of the official repositories Instalar_ReShade.bat brings
+//   SweetFX (CeeJayDK, MIT): FakeHDR, Levels, Tonemap, Curves, CAS, LumaSharpen, LiftGammaGain
+//   crosire/reshade-shaders: AdaptiveSharpen (legacy, bacondither), Deband (slim)
+//   qUINT (Marty McFly): qUINT_lightroom, downloaded from its author on the user's machine
+inline constexpr const char* kCatalogue[] = { "FakeHDR.fx",         "Levels.fx", "Tonemap.fx",     "Curves.fx",
+                                              "LiftGammaGain.fx",   "qUINT_lightroom.fx", "CAS.fx", "LumaSharpen.fx",
+                                              "AdaptiveSharpen.fx", "Deband.fx" };
+
+// An entry of the panel: an effect file and, for effects added by the user, the technique they picked
+struct EffectRef
+{
+    std::string file;
+    std::string technique; // empty: the first technique of the file
+};
 
 struct Uniform
 {
@@ -30,11 +42,19 @@ struct Uniform
 
 struct Effect
 {
-    std::string file;
-    std::string technique;
-    bool loaded = false; // ReShade has it compiled and listed
+    EffectRef ref;
+    std::string technique; // the technique found in ReShade
+    bool loaded = false;   // ReShade has it compiled and listed
     bool enabled = false;
+    int skipped = 0;       // parameters the panel can't offer (matrices, arrays)
     std::vector<Uniform> uniforms;
+};
+
+// A technique ReShade has loaded, for "Add effect"
+struct Technique
+{
+    std::string file;
+    std::string name;
 };
 
 struct Snapshot
@@ -45,7 +65,8 @@ struct Snapshot
     std::string error;         // why not, in English (translated by the menu)
     bool runtime = false;      // an effect runtime presented a frame recently
     bool effectsOn = false;    // ReShade's own effects on/off state
-    std::vector<Effect> effects;
+    std::vector<Effect> effects;        // the panel's entries, in their order
+    std::vector<Technique> available;   // every technique ReShade has loaded
     uint64_t revision = 0;     // grows with every read back
     size_t pending = 0;        // requests not applied yet
 };
@@ -56,8 +77,11 @@ void Poll();
 
 Snapshot Get();
 
+// The entries of the panel (catalogue first, then the ones the user added); read back at the next present
+void SetPanelEffects(const std::vector<EffectRef>& effects);
+
 void SetEffectsState(bool enabled);
-void SetTechnique(const std::string& file, bool enabled);
+void SetTechnique(const EffectRef& effect, bool enabled);
 void SetUniform(const std::string& file, const std::string& name, const float* values, int count);
 void ResetUniform(const std::string& file, const std::string& name);
 void ResetEffect(const std::string& file);

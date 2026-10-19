@@ -9878,13 +9878,19 @@ static void DrawFgCrt(const ImVec2& min, const ImVec2& size, const FgCrtData& d)
     draw->AddLine(ImVec2(gMin.x + gw * 0.15f, gMax.y - 2.5f), ImVec2(gMax.x - gw * 0.15f, gMax.y - 2.5f),
                   col(0.70f, 0.95f, 0.75f, 0.06f), 1.0f);
 
+    // The bulge of the tube: a faint sheen across the upper third and a second, shorter arc at the lower right
+    draw->AddRectFilledMultiColor(ImVec2(gMin.x + gw * 0.06f, gMin.y + gh * 0.04f), ImVec2(gMax.x - gw * 0.06f, gMin.y + gh * 0.32f),
+                                  col(0.80f, 1.0f, 0.85f, 0.035f), col(0.80f, 1.0f, 0.85f, 0.035f), clear, clear);
+    draw->AddBezierQuadratic(ImVec2(gMax.x - gw * 0.30f, gMax.y - gh * 0.06f), ImVec2(gMax.x - gw * 0.08f, gMax.y - gh * 0.08f),
+                             ImVec2(gMax.x - gw * 0.06f, gMax.y - gh * 0.30f), col(0.85f, 1.0f, 0.90f, 0.05f), 1.2f);
+
     // Text: amber labels, intense yellow values, ACTIVE in bright phosphor green; a faint glow only
-    const ImVec4 amber(1.00f, 0.68f, 0.16f, 1.0f), yellow(1.00f, 0.96f, 0.10f, 1.0f), dim(0.50f, 0.58f, 0.42f, 1.0f);
+    const ImVec4 amber(1.00f, 0.74f, 0.12f, 1.0f), yellow(1.00f, 0.95f, 0.12f, 1.0f), dim(0.50f, 0.58f, 0.42f, 1.0f);
     const ImVec4 phosphor(0.35f, 1.00f, 0.35f, 1.0f);
     const auto text = [&](float sizePx, const ImVec2& at, const ImVec4& c, const char* s, ImFont* f)
     {
-        draw->AddText(f, sizePx, ImVec2(at.x + 0.5f, at.y), col(c.x, c.y, c.z, 0.18f), s);
-        draw->AddText(f, sizePx, ImVec2(at.x - 0.5f, at.y), col(c.x, c.y, c.z, 0.18f), s);
+        // Crisp letters: one faint phosphor bleed just below each glyph, no blur around it
+        draw->AddText(f, sizePx, ImVec2(at.x, at.y + 1.0f), col(c.x, c.y, c.z, 0.12f), s);
         draw->AddText(f, sizePx, at, ImGui::GetColorU32(c), s);
     };
 
@@ -10314,7 +10320,10 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             selectorLabel = std::max(selectorLabel, ImGui::CalcTextSize(Tr(label)).x);
         selectorLabel += ImGui::GetStyle().ItemInnerSpacing.x * 2.0f;
 
-        const bool crtBeside = selectionAvail >= crtSize.x + crtGap + selectorLabel + ImGui::GetFontSize() * 14.0f;
+        // Basic keeps it beside the selectors when there is room; Essential and Advanced put it below them, its left
+        // edge on the selectors' left edge (Frame Gen, Personal and any tab that shows this box)
+        const bool crtBeside = config->MenuBasicMode.value_or_default() &&
+                               selectionAvail >= crtSize.x + crtGap + selectorLabel + ImGui::GetFontSize() * 14.0f;
         const ImVec2 selectionStart = ImGui::GetCursorScreenPos();
         const float selectionWidth = crtBeside ? selectionAvail - crtSize.x - crtGap : 0.0f;
 
@@ -10373,7 +10382,8 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             }
             else
             {
-                crtPos = ImVec2(std::floor(selectionStart.x + (selectionAvail - crtSize.x) * 0.5f),
+                crtPos = ImVec2(config->MenuBasicMode.value_or_default() ? std::floor(selectionStart.x + (selectionAvail - crtSize.x) * 0.5f)
+                                                                         : selectionStart.x,
                                 selectionBottom + ImGui::GetStyle().ItemSpacing.y);
             }
 
@@ -15498,19 +15508,119 @@ static float FooterHeight()
 // reports back; controls appear only for effects ReShade has loaded.
 static float ReShadePanelWidth(float scale) { return std::floor(440.0f * scale); }
 
+// How far the panel is open, 0..1: it slides open and closed in about a sixth of a second, only while it moves
+static float reshadePanelAmount = 0.0f;
+
+static void AdvanceReShadePanel()
+{
+    const float target = reshadePanelOpen ? 1.0f : 0.0f;
+    if (reshadePanelAmount == target)
+        return;
+
+    const float step = std::min(ImGui::GetIO().DeltaTime, 0.05f) * 6.0f;
+    reshadePanelAmount = target > reshadePanelAmount ? std::min(target, reshadePanelAmount + step)
+                                                     : std::max(target, reshadePanelAmount - step);
+}
+
+// The user's added effects, saved as "file|technique;file|technique"
+static std::vector<IlionReShade::EffectRef> ReShadeAdded()
+{
+    std::vector<IlionReShade::EffectRef> list;
+    const std::string saved = Config::Instance()->ReShadeAddedEffects.value_or("");
+    size_t start = 0;
+
+    while (start < saved.size())
+    {
+        const size_t end = std::min(saved.find(';', start), saved.size());
+        const std::string item = saved.substr(start, end - start);
+        const size_t bar = item.find('|');
+
+        if (!item.empty())
+            list.push_back({ item.substr(0, bar), bar == std::string::npos ? std::string() : item.substr(bar + 1) });
+
+        start = end + 1;
+    }
+
+    return list;
+}
+
+static void SaveReShadeAdded(const std::vector<IlionReShade::EffectRef>& list)
+{
+    std::string saved;
+    for (const auto& ref : list)
+        saved += (saved.empty() ? "" : ";") + ref.file + "|" + ref.technique;
+
+    Config::Instance()->ReShadeAddedEffects = saved;
+    Config::Instance()->SaveMenuPreferences();
+}
+
+// The panel's entries for the bridge: the catalogue, then the added ones (no duplicates); sent only when they change
+static void SyncReShadeEffects()
+{
+    static std::string sent = "-";
+    const std::string saved = Config::Instance()->ReShadeAddedEffects.value_or("");
+
+    if (saved == sent)
+        return;
+
+    sent = saved;
+    std::vector<IlionReShade::EffectRef> list;
+    for (const char* file : IlionReShade::kCatalogue)
+        list.push_back({ file, "" });
+    for (const auto& ref : ReShadeAdded())
+        list.push_back(ref);
+
+    IlionReShade::SetPanelEffects(list);
+}
+
 static const char* ReShadeEffectName(const std::string& file)
 {
+    static const std::pair<const char*, const char*> names[] = {
+        { "FakeHDR.fx", "Fake HDR (SDR simulation)" },
+        { "Levels.fx", "Levels" },
+        { "Tonemap.fx", "Tonemap" },
+        { "Curves.fx", "Curves" },
+        { "LiftGammaGain.fx", "Lift Gamma Gain" },
+        { "qUINT_lightroom.fx", "Lightroom" },
+        { "CAS.fx", "CAS (contrast adaptive sharpening)" },
+        { "LumaSharpen.fx", "LumaSharpen" },
+        { "AdaptiveSharpen.fx", "AdaptiveSharpen" },
+        { "Deband.fx", "Deband" },
+    };
+
+    for (const auto& [f, name] : names)
+    {
+        if (file == f)
+            return name;
+    }
+
+    return nullptr;
+}
+
+// What each catalogue effect is for, in one line; the sharpening ones say how they differ from ILION's own RCAS
+static const char* ReShadeEffectNote(const std::string& file)
+{
     if (file == "FakeHDR.fx")
-        return "Fake HDR (SDR simulation)";
+        return "A visual simulation on the SDR image, not real HDR.";
     if (file == "Levels.fx")
-        return "Levels";
+        return "Black and white points of the image.";
     if (file == "Tonemap.fx")
-        return "Tonemap";
-    if (file == "Vibrance.fx")
-        return "Vibrance";
-    if (file == "LUT.fx")
-        return "LUT / Color Grading";
-    return "Layers";
+        return "Gamma, exposure and tonal response.";
+    if (file == "Curves.fx")
+        return "Contrast through a tone curve.";
+    if (file == "LiftGammaGain.fx")
+        return "Colour correction of shadows, midtones and highlights.";
+    if (file == "qUINT_lightroom.fx")
+        return "Advanced colour and tone adjustments in one effect.";
+    if (file == "CAS.fx")
+        return "AMD's contrast adaptive sharpening as a ReShade effect, on the final image, HUD included. ILION's own sharpness works inside the upscaler instead.";
+    if (file == "LumaSharpen.fx")
+        return "Sharpens brightness only, without colour fringes. Applies on the final image, HUD included.";
+    if (file == "AdaptiveSharpen.fx")
+        return "Sharpens edges more than flat areas. Applies on the final image, HUD included.";
+    if (file == "Deband.fx")
+        return "Reduces colour banding in gradients (skies, fog).";
+    return nullptr;
 }
 
 void MenuCommon::RenderReShadeCard(RenderMenuContext& ctx)
@@ -15536,14 +15646,113 @@ void MenuCommon::RenderReShadeCard(RenderMenuContext& ctx)
         WrappedTooltip("%s", Tr("ReShade's effects controlled from ILION, in a panel next to this window. ReShade's own menu isn't needed."));
 }
 
+// The controls of one effect: on/off, reset, its parameters as ReShade defines them; added effects get a remove key
+static void RenderReShadeEffect(const IlionReShade::Effect& effect, bool added)
+{
+    const std::string id = effect.ref.file + "|" + effect.ref.technique;
+    ImGui::PushID(id.c_str());
+
+    const char* known = ReShadeEffectName(effect.ref.file);
+    std::string title = known != nullptr ? std::string(Tr(known)) : effect.ref.file;
+    if (added && !effect.ref.technique.empty())
+        title += "  (" + effect.ref.technique + ")";
+
+    if (auto ch = ScopedCollapsingHeader((title + "###" + id).c_str()); ch.IsHeaderOpen())
+    {
+        ScopedIndent indent {};
+
+        if (const char* note = ReShadeEffectNote(effect.ref.file); note != nullptr && !added)
+            TextWrappedDisabled("%s", Tr(note));
+
+        if (!effect.loaded)
+        {
+            TextWrappedDisabled("%s %s", effect.ref.file.c_str(),
+                                Tr("isn't loaded: it isn't installed, it failed to compile or a file it includes is missing (see ReShade.log)."));
+        }
+        else
+        {
+            bool enabled = effect.enabled;
+            if (IlionTheme::Checkbox(TrL("On##effect"), &enabled))
+                IlionReShade::SetTechnique(effect.ref, enabled);
+
+            SameLineIfRoom(ButtonWidth(TrL("Reset values")), 16.0f);
+            if (IlionTheme::Button(TrL("Reset values")))
+                IlionReShade::ResetEffect(effect.ref.file);
+
+            const float width = std::min(ImGui::GetFontSize() * 14.0f, ImGui::GetContentRegionAvail().x * 0.55f);
+
+            for (const auto& u : effect.uniforms)
+            {
+                ImGui::PushID(u.name.c_str());
+                float values[4] = { u.values[0], u.values[1], u.values[2], u.values[3] };
+                bool changed = false;
+
+                ImGui::SetNextItemWidth(width);
+
+                if (u.type == 2)
+                {
+                    bool on = values[0] != 0.0f;
+                    if (IlionTheme::Checkbox(u.label.c_str(), &on))
+                    {
+                        values[0] = on ? 1.0f : 0.0f;
+                        changed = true;
+                    }
+                }
+                else if (u.type == 1)
+                {
+                    int ints[4] = { (int) values[0], (int) values[1], (int) values[2], (int) values[3] };
+                    const int lo = (int) u.min, hi = (int) u.max;
+                    changed = u.hasRange ? ImGui::SliderScalarN(u.label.c_str(), ImGuiDataType_S32, ints, u.count, &lo, &hi)
+                                         : ImGui::DragScalarN(u.label.c_str(), ImGuiDataType_S32, ints, u.count, 1.0f);
+
+                    for (int i = 0; i < 4; i++)
+                        values[i] = (float) ints[i];
+                }
+                else
+                {
+                    changed = u.hasRange ? ImGui::SliderScalarN(u.label.c_str(), ImGuiDataType_Float, values, u.count, &u.min, &u.max, "%.3f")
+                                         : ImGui::DragScalarN(u.label.c_str(), ImGuiDataType_Float, values, u.count, 0.01f, nullptr, nullptr, "%.3f");
+                }
+
+                if (changed)
+                    IlionReShade::SetUniform(effect.ref.file, u.name, values, u.count);
+
+                ImGui::PopID();
+            }
+
+            if (effect.skipped > 0)
+                TextWrappedDisabled(Tr("%d parameter(s) of this effect can't be shown here (matrices or arrays)."), effect.skipped);
+        }
+
+        if (added)
+        {
+            if (IlionTheme::Button(TrL("Remove from the panel")))
+            {
+                auto list = ReShadeAdded();
+                list.erase(std::remove_if(list.begin(), list.end(),
+                                          [&](const IlionReShade::EffectRef& r) { return r.file == effect.ref.file && r.technique == effect.ref.technique; }),
+                           list.end());
+                SaveReShadeAdded(list);
+            }
+
+            if (ImGui::IsItemHovered())
+                WrappedTooltip("%s", Tr("Only takes the effect out of ILION's panel: its file stays installed."));
+        }
+    }
+
+    ImGui::PopID();
+}
+
 void MenuCommon::RenderReShadePanel(RenderMenuContext& ctx)
 {
     IlionReShade::Poll();
+    SyncReShadeEffects();
     const auto rs = IlionReShade::Get();
     const ImVec4 good = toneMapColor(IlionTheme::Themed(ImVec4(0.35f, 0.85f, 0.45f, 1.f), IlionTheme::Role::Good));
     const ImVec4 warn = toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn));
 
     SectionTitle("ReShade");
+
     // The close key against the right edge of the panel
     ImGui::SameLine();
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - ButtonWidth(TrL("Close##reshade"))));
@@ -15597,81 +15806,83 @@ void MenuCommon::RenderReShadePanel(RenderMenuContext& ctx)
         ImGui::TextDisabled("%s", Tr("applying..."));
     }
 
+    TextWrappedDisabled("%s", Tr("Each active effect costs GPU time; switched off, an effect costs nothing."));
+
+    // Default catalogue, then the effects the user added
+    const size_t catalogue = std::size(IlionReShade::kCatalogue);
+
     ImGui::Spacing();
-    SectionTitle("Effects");
+    SectionTitle("Default effects");
+    for (size_t i = 0; i < rs.effects.size() && i < catalogue; i++)
+        RenderReShadeEffect(rs.effects[i], false);
 
-    for (const auto& effect : rs.effects)
+    ImGui::Spacing();
+    SectionTitle("Added effects");
+
+    if (rs.effects.size() <= catalogue)
+        TextWrappedDisabled("%s", Tr("None yet: pick an installed effect below."));
+
+    for (size_t i = catalogue; i < rs.effects.size(); i++)
+        RenderReShadeEffect(rs.effects[i], true);
+
+    // Add effect: the techniques ReShade has loaded that aren't in the panel yet
+    ImGui::Spacing();
+    SectionTitle("Add effect");
+
+    std::vector<IlionReShade::Technique> choices;
+    for (const auto& t : rs.available)
     {
-        ImGui::PushID(effect.file.c_str());
-
-        const std::string header = std::string(Tr(ReShadeEffectName(effect.file))) + "###" + effect.file;
-
-        if (auto ch = ScopedCollapsingHeader(header.c_str()); ch.IsHeaderOpen())
+        bool shown = false;
+        for (const auto& e : rs.effects)
         {
-            ScopedIndent indent {};
+            if (e.ref.file == t.file && (e.ref.technique.empty() ? e.technique == t.name : e.ref.technique == t.name))
+                shown = true;
+        }
 
-            if (!effect.loaded)
+        if (!shown)
+            choices.push_back(t);
+    }
+
+    static std::string picked;
+    std::string preview = picked.empty() ? std::string(Tr("Choose an installed effect")) : picked;
+
+    ImGui::SetNextItemWidth(std::min(ImGui::GetFontSize() * 16.0f, ImGui::GetContentRegionAvail().x - ButtonWidth(TrL("Add##reshade")) - 8.0f));
+
+    if (IlionTheme::BeginCombo("##reshadeAdd", preview.c_str()))
+    {
+        for (const auto& t : choices)
+        {
+            const std::string label = t.name + "  (" + t.file + ")";
+            if (ImGui::Selectable(label.c_str(), label == picked))
+                picked = label;
+        }
+
+        ImGui::EndCombo();
+    }
+
+    ImGui::SameLine();
+    ImGui::BeginDisabled(picked.empty());
+
+    if (IlionTheme::Button(TrL("Add##reshade")))
+    {
+        for (const auto& t : choices)
+        {
+            if (t.name + "  (" + t.file + ")" == picked)
             {
-                TextWrappedDisabled("%s %s", effect.file.c_str(), Tr("is not installed or ReShade hasn't loaded it."));
-            }
-            else
-            {
-                if (effect.file == "FakeHDR.fx")
-                    TextWrappedDisabled("%s", Tr("A visual simulation on the SDR image, not real HDR."));
-
-                bool enabled = effect.enabled;
-                if (IlionTheme::Checkbox(TrL("On##effect"), &enabled))
-                    IlionReShade::SetTechnique(effect.file, enabled);
-
-                SameLineIfRoom(ButtonWidth(TrL("Reset values")), 16.0f);
-                if (IlionTheme::Button(TrL("Reset values")))
-                    IlionReShade::ResetEffect(effect.file);
-
-                const float width = std::min(ImGui::GetFontSize() * 14.0f, ImGui::GetContentRegionAvail().x * 0.55f);
-
-                for (const auto& u : effect.uniforms)
-                {
-                    ImGui::PushID(u.name.c_str());
-                    float values[4] = { u.values[0], u.values[1], u.values[2], u.values[3] };
-                    bool changed = false;
-
-                    ImGui::SetNextItemWidth(width);
-
-                    if (u.type == 2)
-                    {
-                        bool on = values[0] != 0.0f;
-                        if (IlionTheme::Checkbox(u.label.c_str(), &on))
-                        {
-                            values[0] = on ? 1.0f : 0.0f;
-                            changed = true;
-                        }
-                    }
-                    else if (u.type == 1)
-                    {
-                        int ints[4] = { (int) values[0], (int) values[1], (int) values[2], (int) values[3] };
-                        const int lo = (int) u.min, hi = (int) u.max;
-                        changed = u.hasRange ? ImGui::SliderScalarN(u.label.c_str(), ImGuiDataType_S32, ints, u.count, &lo, &hi)
-                                             : ImGui::DragScalarN(u.label.c_str(), ImGuiDataType_S32, ints, u.count, 1.0f);
-
-                        for (int i = 0; i < 4; i++)
-                            values[i] = (float) ints[i];
-                    }
-                    else
-                    {
-                        changed = u.hasRange ? ImGui::SliderScalarN(u.label.c_str(), ImGuiDataType_Float, values, u.count, &u.min, &u.max, "%.3f")
-                                             : ImGui::DragScalarN(u.label.c_str(), ImGuiDataType_Float, values, u.count, 0.01f, nullptr, nullptr, "%.3f");
-                    }
-
-                    if (changed)
-                        IlionReShade::SetUniform(effect.file, u.name, values, u.count);
-
-                    ImGui::PopID();
-                }
+                auto list = ReShadeAdded();
+                list.push_back({ t.file, t.name });
+                SaveReShadeAdded(list);
+                break;
             }
         }
 
-        ImGui::PopID();
+        picked.clear();
     }
+
+    ImGui::EndDisabled();
+
+    if (choices.empty())
+        TextWrappedDisabled("%s", Tr("Every effect ReShade has loaded is already in the panel."));
 }
 
 // CUSTOM TAB -----------------------------
@@ -16491,10 +16702,13 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
         // Own ID per tab, so every tab remembers its scroll position
         // ILION: Personal with its Customise panel open, the boxes at the left and the panel at the right
         // ILION: the ReShade panel only beside Graphics; leaving the tab closes it
-        if (reshadePanelOpen && strcmp(tab.label, "Graphics") != 0)
+        if (strcmp(tab.label, "Graphics") != 0)
+        {
             reshadePanelOpen = false;
+            reshadePanelAmount = 0.0f;
+        }
 
-        const bool reshadePanel = reshadePanelOpen;
+        const bool reshadePanel = reshadePanelAmount > 0.0f;
         const bool personalPanel = selectedMenuTab == customTab && personalPanelOpen;
         float panelWidth = 0.0f;
 
@@ -16520,7 +16734,8 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
         else if (reshadePanel)
         {
             // The window grew by this width (see the main window), so the tab keeps its own
-            panelWidth = ReShadePanelWidth(menuResScale);
+            // The same amount the window grows by (width and gap), so the tab keeps its width while the panel slides
+            panelWidth = std::max(1.0f, std::floor((ReShadePanelWidth(menuResScale) + style.ItemSpacing.x) * reshadePanelAmount) - style.ItemSpacing.x);
         }
 
         ImGui::PushID(selectedMenuTab);
@@ -16605,7 +16820,9 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
         {
             ImGui::SameLine();
             ImGui::BeginChild("##ReShadePanel", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
-            RenderReShadePanel(ctx);
+            // The controls only once it is fully open: nothing is drawn cut while it slides
+            if (reshadePanelAmount >= 1.0f)
+                RenderReShadePanel(ctx);
             ImGui::EndChild();
         }
     }
@@ -17843,9 +18060,13 @@ void MenuCommon::RenderMainMenuWindow(RenderMenuContext& ctx)
 
     // ILION: with the ReShade panel open the window grows by the panel to its right (Basic has no tabs, no panel)
     if (config->MenuBasicMode.value_or_default())
+    {
         reshadePanelOpen = false;
+        reshadePanelAmount = 0.0f;
+    }
 
-    const float panelExtra = reshadePanelOpen ? ReShadePanelWidth(menuResScale) + ImGui::GetStyle().ItemSpacing.x : 0.0f;
+    AdvanceReShadePanel();
+    const float panelExtra = std::floor((ReShadePanelWidth(menuResScale) + ImGui::GetStyle().ItemSpacing.x) * reshadePanelAmount);
     const float menuWidth = std::min(680.0f * menuResScale + panelExtra, io.DisplaySize.x - 20.0f);
     const float maxMenuHeight = io.DisplaySize.y - 20.0f;
     const float minMenuHeight = std::min(300.0f * menuResScale, maxMenuHeight);

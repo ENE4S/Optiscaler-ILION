@@ -42,11 +42,13 @@ struct Request
     float values[4] {};
     int count = 0;
     bool flag = false;
+    std::string technique; // Technique: the one picked, empty for the first of the file
 };
 
 std::mutex lock;                    // guards everything below except the atomics
 Snapshot snapshot;
 std::vector<Request> requests;
+std::vector<EffectRef> panelEffects = [] { std::vector<EffectRef> list; for (const char* file : kCatalogue) list.push_back({ file, "" }); return list; }();
 bool dirty = true;                  // read the effects back at the next present
 uint64_t lastRead = 0;              // also read back once a second: the first load of the effects is asynchronous
 uint64_t lastPoll = 0;
@@ -96,6 +98,14 @@ std::string ModuleVersion(HMODULE module)
     return std::format("{}.{}.{}.{}", version.major, version.minor, version.patch, version.reserved);
 }
 
+// The technique of a panel entry: the one picked by name, or the first of its file
+reshade::api::effect_technique FirstTechnique(reshade::api::effect_runtime* rt, const char* file);
+
+reshade::api::effect_technique FindTechnique(reshade::api::effect_runtime* rt, const EffectRef& ref)
+{
+    return ref.technique.empty() ? FirstTechnique(rt, ref.file.c_str()) : rt->find_technique(ref.file.c_str(), ref.technique.c_str());
+}
+
 // The first technique of an effect file
 reshade::api::effect_technique FirstTechnique(reshade::api::effect_runtime* rt, const char* file)
 {
@@ -138,16 +148,17 @@ void ReadUniform(reshade::api::effect_runtime* rt, reshade::api::effect_uniform_
 
 // Reads every effect of the panel back from ReShade: loaded or not, its technique state and its user uniforms
 // (the ones ReShade itself feeds, with a "source" annotation, are left out)
-std::vector<Effect> ReadEffects(reshade::api::effect_runtime* rt)
+std::vector<Effect> ReadEffects(reshade::api::effect_runtime* rt, const std::vector<EffectRef>& list)
 {
     std::vector<Effect> effects;
 
-    for (const char* file : kEffects)
+    for (const auto& ref : list)
     {
         Effect effect;
-        effect.file = file;
+        effect.ref = ref;
+        const char* file = ref.file.c_str();
 
-        const auto technique = FirstTechnique(rt, file);
+        const auto technique = FindTechnique(rt, ref);
 
         if (technique.handle != 0)
         {
@@ -163,7 +174,8 @@ std::vector<Effect> ReadEffects(reshade::api::effect_runtime* rt)
             {
                 reshade::api::effect_runtime* rt;
                 std::vector<Uniform>* out;
-            } context { rt, &effect.uniforms };
+                int* skipped;
+            } context { rt, &effect.uniforms, &effect.skipped };
 
             rt->enumerate_uniform_variables(
                 file,
@@ -182,7 +194,10 @@ std::vector<Effect> ReadEffects(reshade::api::effect_runtime* rt)
 
                     // Scalars and vectors only; matrices and arrays aren't offered
                     if (columns > 1 || arrayLength > 1 || rows < 1 || rows > 4)
+                    {
+                        (*ctx->skipped)++;
                         return;
+                    }
 
                     Uniform u;
                     u.count = (int) rows;
@@ -222,6 +237,26 @@ std::vector<Effect> ReadEffects(reshade::api::effect_runtime* rt)
     return effects;
 }
 
+// Every technique ReShade has loaded, with its effect file, for "Add effect"
+std::vector<Technique> ReadAvailable(reshade::api::effect_runtime* rt)
+{
+    std::vector<Technique> list;
+
+    rt->enumerate_techniques(
+        nullptr,
+        [](reshade::api::effect_runtime* runtime, reshade::api::effect_technique technique, void* user)
+        {
+            char file[256] {}, name[128] {};
+            size_t fileSize = sizeof(file), nameSize = sizeof(name);
+            runtime->get_technique_effect_name(technique, file, &fileSize);
+            runtime->get_technique_name(technique, name, &nameSize);
+            static_cast<std::vector<Technique>*>(user)->push_back({ file, name });
+        },
+        &list);
+
+    return list;
+}
+
 void ApplyRequest(reshade::api::effect_runtime* rt, const Request& r)
 {
     switch (r.kind)
@@ -231,7 +266,7 @@ void ApplyRequest(reshade::api::effect_runtime* rt, const Request& r)
         break;
 
     case Request::Technique:
-        if (const auto technique = FirstTechnique(rt, r.file.c_str()); technique.handle != 0)
+        if (const auto technique = FindTechnique(rt, { r.file, r.technique }); technique.handle != 0)
             rt->set_technique_state(technique, r.flag);
         break;
 
@@ -309,11 +344,19 @@ void OnPresent(reshade::api::effect_runtime* rt)
     for (const auto& r : todo)
         ApplyRequest(rt, r);
 
-    auto effects = ReadEffects(rt);
+    std::vector<EffectRef> list;
+    {
+        std::scoped_lock guard(lock);
+        list = panelEffects;
+    }
+
+    auto effects = ReadEffects(rt, list);
+    auto available = ReadAvailable(rt);
     const bool effectsOn = rt->get_effects_state();
 
     std::scoped_lock guard(lock);
     snapshot.effects = std::move(effects);
+    snapshot.available = std::move(available);
     snapshot.effectsOn = effectsOn;
     snapshot.revision++;
 }
@@ -426,7 +469,20 @@ Snapshot Get()
 
 void SetEffectsState(bool enabled) { Queue({ Request::EffectsState, "", "", {}, 0, enabled }); }
 
-void SetTechnique(const std::string& file, bool enabled) { Queue({ Request::Technique, file, "", {}, 0, enabled }); }
+void SetTechnique(const EffectRef& effect, bool enabled)
+{
+    Request r { Request::Technique, effect.file };
+    r.flag = enabled;
+    r.technique = effect.technique;
+    Queue(std::move(r));
+}
+
+void SetPanelEffects(const std::vector<EffectRef>& effects)
+{
+    std::scoped_lock guard(lock);
+    panelEffects = effects;
+    dirty = true;
+}
 
 void SetUniform(const std::string& file, const std::string& name, const float* values, int count)
 {

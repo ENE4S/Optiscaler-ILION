@@ -575,6 +575,7 @@ class Config
     CustomOptional<std::wstring, NoDefault> XeMfgVariant; // ILION: folder of plugins/XeMFG loaded as the XeMFG variant, empty = none
     CustomOptional<bool> LoadSpecialK { false };
     CustomOptional<bool> LoadReShade { false };
+    CustomOptional<std::string, NoDefault> ReShadeAddedEffects; // ILION: effects added to the ReShade panel, "file|technique;..."
     CustomOptional<bool> LoadCustomAmdxc64OnRdna2 { false };
     CustomOptional<bool> LoadAsiPlugins { false };
     CustomOptional<int> LateAsiPluginsDelay { 30 };

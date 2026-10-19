@@ -37,6 +37,7 @@
 #include <hooks/Kernel_Hooks.h>
 #include <hooks/Gdi32_Hooks.h>
 #include <hooks/Wintrust_Hooks.h>
+#include <misc/IlionReShade.h>
 #include <hooks/Crypt32_Hooks.h>
 #include <hooks/Advapi32_Hooks.h>
 #include <hooks/Streamline_Hooks.h>
@@ -1969,6 +1970,9 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 
         if (skModule != nullptr)
             NtdllProxy::FreeLibrary_Ldr(skModule);
+
+        // ILION: the ReShade bridge leaves ReShade before ReShade is unloaded
+        IlionReShade::Shutdown();
 
         if (reshadeModule != nullptr)
             NtdllProxy::FreeLibrary_Ldr(reshadeModule);

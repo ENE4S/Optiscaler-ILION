@@ -16,6 +16,7 @@
 #include <misc/IlionBenchmark.h>
 #include <misc/IlionCompare.h>
 #include <misc/IlionCapture.h>
+#include <misc/IlionReShade.h>
 #include <misc/IlionLatency.h>
 #include <misc/IlionOverlay.h>
 #include <misc/IlionVisual.h>
@@ -192,6 +193,7 @@ static bool capturingKey = false;
 static int selectedMenuTab = 0;
 static const char* requestedMenuTab = nullptr; // Label of a tab to switch to on the next frame
 static bool personalPanelOpen = false;          // ILION: Customise panel of Personal, at the right of its boxes
+static bool reshadePanelOpen = false;           // ILION: ReShade panel, joined to the right of the window (Graphics)
 
 // The FSR upscaler dlls that can be selected. One list and one way of selecting for the Upscaling tab and for
 // Benchmark, both show the same state.
@@ -9866,6 +9868,10 @@ static void DrawFgCrt(const ImVec2& min, const ImVec2& size, const FgCrtData& d)
     for (float y = gMin.y + 2.0f; y < gMax.y; y += 3.0f)
         draw->AddLine(ImVec2(gMin.x, y), ImVec2(gMax.x, y), col(0, 0, 0, 0.14f));
 
+    // Inner depth: the glass sits behind the bezel, a soft dark band follows its rounded edge
+    draw->AddRect(ImVec2(gMin.x + 1.5f, gMin.y + 1.5f), ImVec2(gMax.x - 1.5f, gMax.y - 1.5f), col(0, 0, 0, 0.35f), glassRound, 0, 3.0f);
+    draw->AddRect(ImVec2(gMin.x + 4.0f, gMin.y + 4.0f), ImVec2(gMax.x - 4.0f, gMax.y - 4.0f), col(0, 0, 0, 0.15f), glassRound, 0, 3.0f);
+
     // Reflections, very faint: a curved highlight at the top left and a thin sheen along the bottom
     draw->AddBezierQuadratic(ImVec2(gMin.x + gw * 0.07f, gMin.y + gh * 0.28f), ImVec2(gMin.x + gw * 0.10f, gMin.y + gh * 0.07f),
                              ImVec2(gMin.x + gw * 0.38f, gMin.y + gh * 0.06f), col(0.85f, 1.0f, 0.90f, 0.07f), 1.5f);
@@ -10077,7 +10083,7 @@ static void RenderXeMfgVariantSelector(decltype(Config::Instance()) config)
                                 "plugins loading (Compatibility)."));
 
     if (_wcsicmp(config->XeMfgVariant.value_or(L"").c_str(), startVariant.c_str()) != 0)
-        TextWrappedColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), "%s",
+        TextWrappedColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.15f, 0.1f, 1.f), IlionTheme::Role::Bad)), "%s",
                            Tr("Restart the game to load the chosen XeMFG variant"));
 }
 
@@ -10302,7 +10308,13 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
         const ImVec2 crtSize = FgCrtSize();
         const float crtGap = ImGui::GetStyle().ItemSpacing.x * 2.0f;
         const float selectionAvail = ImGui::GetContentRegionAvail().x;
-        const bool crtBeside = selectionAvail >= crtSize.x + crtGap + ImGui::GetFontSize() * 16.0f;
+        // The selectors keep room for their widest label and a combo long enough for the names of the technologies
+        float selectorLabel = 0.0f;
+        for (const char* label : { "FG Input", "FG Output", "FG Nvngx", "FG Nvngx Replacement" })
+            selectorLabel = std::max(selectorLabel, ImGui::CalcTextSize(Tr(label)).x);
+        selectorLabel += ImGui::GetStyle().ItemInnerSpacing.x * 2.0f;
+
+        const bool crtBeside = selectionAvail >= crtSize.x + crtGap + selectorLabel + ImGui::GetFontSize() * 14.0f;
         const ImVec2 selectionStart = ImGui::GetCursorScreenPos();
         const float selectionWidth = crtBeside ? selectionAvail - crtSize.x - crtGap : 0.0f;
 
@@ -10310,6 +10322,8 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
         {
             ImGui::TableNextColumn();
 
+            // The combo fills its column minus its label: neither the names nor the label are cut
+            ImGui::SetNextItemWidth(std::max(ImGui::GetFontSize() * 8.0f, ImGui::GetContentRegionAvail().x - selectorLabel));
             PopulateCombo(TrL("FG Input"), config->FGInput, inputOptions);
             ShowTooltip("The data source to be used for FG\n"
                         "The native FG which the game supports");
@@ -10319,11 +10333,15 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             if (replaceFgOutputWithNvngx)
             {
                 // Disable None?
+                // The combo fills its column minus its label: neither the names nor the label are cut
+                ImGui::SetNextItemWidth(std::max(ImGui::GetFontSize() * 8.0f, ImGui::GetContentRegionAvail().x - selectorLabel));
                 PopulateCombo(TrL("FG Nvngx"), config->FGNvngxReplacement, nvngxOptions);
                 ShowTooltip("What backend to use instead of the real DLSSG");
             }
             else
             {
+                // The combo fills its column minus its label: neither the names nor the label are cut
+                ImGui::SetNextItemWidth(std::max(ImGui::GetFontSize() * 8.0f, ImGui::GetContentRegionAvail().x - selectorLabel));
                 PopulateCombo(TrL("FG Output"), config->FGOutput, outputOptions);
                 ShowTooltip("The FG that you will actually be using");
             }
@@ -10332,6 +10350,8 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             {
                 ImGui::TableNextColumn();
 
+                // The combo fills its column minus its label: neither the names nor the label are cut
+                ImGui::SetNextItemWidth(std::max(ImGui::GetFontSize() * 8.0f, ImGui::GetContentRegionAvail().x - selectorLabel));
                 PopulateCombo(TrL("FG Nvngx Replacement"), config->FGNvngxReplacement, nvngxOptions);
                 ShowTooltip("What backend to use instead of the real DLSSG");
             }
@@ -15473,6 +15493,187 @@ static float FooterHeight()
            ImGui::GetFrameHeight() * 2.0f;
 }
 
+// ILION: ReShade inside ILION (misc/IlionReShade.h). A card in Graphics and a wide side panel joined to the main
+// window: the window grows by the panel's width, the tabs keep theirs. Everything shown comes from what ReShade
+// reports back; controls appear only for effects ReShade has loaded.
+static float ReShadePanelWidth(float scale) { return std::floor(440.0f * scale); }
+
+static const char* ReShadeEffectName(const std::string& file)
+{
+    if (file == "FakeHDR.fx")
+        return "Fake HDR (SDR simulation)";
+    if (file == "Levels.fx")
+        return "Levels";
+    if (file == "Tonemap.fx")
+        return "Tonemap";
+    if (file == "Vibrance.fx")
+        return "Vibrance";
+    if (file == "LUT.fx")
+        return "LUT / Color Grading";
+    return "Layers";
+}
+
+void MenuCommon::RenderReShadeCard(RenderMenuContext& ctx)
+{
+    IlionReShade::Poll();
+    const auto rs = IlionReShade::Get();
+
+    SectionTitle("ReShade");
+
+    if (!rs.moduleFound)
+        TextWrappedDisabled("%s", Tr("ReShade not detected. Install it with Instalar_ReShade.bat (it enables LoadReShade in OptiScaler.ini) and restart the game."));
+    else if (!rs.registered)
+        TextWrappedColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), "%s", Tr(rs.error.c_str()));
+    else
+        ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.35f, 0.85f, 0.45f, 1.f), IlionTheme::Role::Good)), "%s %s",
+                           Tr("ReShade connected"), rs.version.c_str());
+
+    const char* key = reshadePanelOpen ? "Close ReShade panel" : "Open ReShade panel";
+    if (IlionTheme::Button(TrL(key)))
+        reshadePanelOpen = !reshadePanelOpen;
+
+    if (ImGui::IsItemHovered())
+        WrappedTooltip("%s", Tr("ReShade's effects controlled from ILION, in a panel next to this window. ReShade's own menu isn't needed."));
+}
+
+void MenuCommon::RenderReShadePanel(RenderMenuContext& ctx)
+{
+    IlionReShade::Poll();
+    const auto rs = IlionReShade::Get();
+    const ImVec4 good = toneMapColor(IlionTheme::Themed(ImVec4(0.35f, 0.85f, 0.45f, 1.f), IlionTheme::Role::Good));
+    const ImVec4 warn = toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn));
+
+    SectionTitle("ReShade");
+    // The close key against the right edge of the panel
+    ImGui::SameLine();
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - ButtonWidth(TrL("Close##reshade"))));
+    if (IlionTheme::Button(TrL("Close##reshade")))
+        reshadePanelOpen = false;
+
+    // Status and connection
+    if (ImGui::BeginTable("##reshadeStatus", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings))
+    {
+        ImGui::TableSetupColumn("##l");
+        ImGui::TableSetupColumn("##v", ImGuiTableColumnFlags_WidthStretch);
+
+        const auto row = [](const char* label, const ImVec4* colour, const std::string& value)
+        {
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s", Tr(label));
+            ImGui::TableNextColumn();
+            if (colour != nullptr)
+                TextWrappedColored(*colour, "%s", value.c_str());
+            else
+                ImGui::TextWrapped("%s", value.c_str());
+        };
+
+        row("ReShade", rs.moduleFound ? &good : &warn,
+            rs.moduleFound ? std::string(Tr("detected")) + (rs.version.empty() ? "" : " " + rs.version) : std::string(Tr("not detected")));
+        row("Bridge", rs.registered ? &good : &warn,
+            rs.registered ? std::string(Tr("connected")) : std::string(Tr(rs.error.empty() ? "disconnected" : rs.error.c_str())));
+        row("Runtime", rs.runtime ? &good : &warn,
+            rs.runtime ? std::string(Tr("presenting frames")) : std::string(Tr("waiting for ReShade to present a frame")));
+
+        ImGui::EndTable();
+    }
+
+    if (!rs.moduleFound)
+    {
+        TextWrappedDisabled("%s", Tr("ReShade not detected. Install it with Instalar_ReShade.bat (it enables LoadReShade in OptiScaler.ini) and restart the game."));
+        return;
+    }
+
+    if (!rs.registered || !rs.runtime)
+        return;
+
+    // ReShade's processing, as ReShade reports it
+    bool effectsOn = rs.effectsOn;
+    if (IlionTheme::Checkbox(TrL("ReShade processing"), &effectsOn))
+        IlionReShade::SetEffectsState(effectsOn);
+
+    if (rs.pending > 0)
+    {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", Tr("applying..."));
+    }
+
+    ImGui::Spacing();
+    SectionTitle("Effects");
+
+    for (const auto& effect : rs.effects)
+    {
+        ImGui::PushID(effect.file.c_str());
+
+        const std::string header = std::string(Tr(ReShadeEffectName(effect.file))) + "###" + effect.file;
+
+        if (auto ch = ScopedCollapsingHeader(header.c_str()); ch.IsHeaderOpen())
+        {
+            ScopedIndent indent {};
+
+            if (!effect.loaded)
+            {
+                TextWrappedDisabled("%s %s", effect.file.c_str(), Tr("is not installed or ReShade hasn't loaded it."));
+            }
+            else
+            {
+                if (effect.file == "FakeHDR.fx")
+                    TextWrappedDisabled("%s", Tr("A visual simulation on the SDR image, not real HDR."));
+
+                bool enabled = effect.enabled;
+                if (IlionTheme::Checkbox(TrL("On##effect"), &enabled))
+                    IlionReShade::SetTechnique(effect.file, enabled);
+
+                SameLineIfRoom(ButtonWidth(TrL("Reset values")), 16.0f);
+                if (IlionTheme::Button(TrL("Reset values")))
+                    IlionReShade::ResetEffect(effect.file);
+
+                const float width = std::min(ImGui::GetFontSize() * 14.0f, ImGui::GetContentRegionAvail().x * 0.55f);
+
+                for (const auto& u : effect.uniforms)
+                {
+                    ImGui::PushID(u.name.c_str());
+                    float values[4] = { u.values[0], u.values[1], u.values[2], u.values[3] };
+                    bool changed = false;
+
+                    ImGui::SetNextItemWidth(width);
+
+                    if (u.type == 2)
+                    {
+                        bool on = values[0] != 0.0f;
+                        if (IlionTheme::Checkbox(u.label.c_str(), &on))
+                        {
+                            values[0] = on ? 1.0f : 0.0f;
+                            changed = true;
+                        }
+                    }
+                    else if (u.type == 1)
+                    {
+                        int ints[4] = { (int) values[0], (int) values[1], (int) values[2], (int) values[3] };
+                        const int lo = (int) u.min, hi = (int) u.max;
+                        changed = u.hasRange ? ImGui::SliderScalarN(u.label.c_str(), ImGuiDataType_S32, ints, u.count, &lo, &hi)
+                                             : ImGui::DragScalarN(u.label.c_str(), ImGuiDataType_S32, ints, u.count, 1.0f);
+
+                        for (int i = 0; i < 4; i++)
+                            values[i] = (float) ints[i];
+                    }
+                    else
+                    {
+                        changed = u.hasRange ? ImGui::SliderScalarN(u.label.c_str(), ImGuiDataType_Float, values, u.count, &u.min, &u.max, "%.3f")
+                                             : ImGui::DragScalarN(u.label.c_str(), ImGuiDataType_Float, values, u.count, 0.01f, nullptr, nullptr, "%.3f");
+                    }
+
+                    if (changed)
+                        IlionReShade::SetUniform(effect.file, u.name, values, u.count);
+
+                    ImGui::PopID();
+                }
+            }
+        }
+
+        ImGui::PopID();
+    }
+}
+
 // CUSTOM TAB -----------------------------
 struct MenuCommon::MenuBox
 {
@@ -15508,6 +15709,7 @@ const MenuCommon::MenuBox* MenuCommon::GetMenuBoxes(size_t& count)
         { "magnifier", "Graphics", "Magnifier",
           [](RenderMenuContext& c) { if (IsUpscalerActive(c.currentFeature)) RenderCard(c, RenderMagnifierSettings); } },
         { "gfx_advanced", "Graphics", "Advanced adjustments", [](RenderMenuContext& c) { RenderCard(c, RenderGraphicsAdvancedSettings); } },
+        { "reshade", "Graphics", "ReShade", [](RenderMenuContext& c) { RenderCard(c, RenderReShadeCard); } },
 
         { "fg_selection", "Frame Gen", "Frame Generation", [](RenderMenuContext& c) { RenderCard(c, RenderFrameGenerationSelection); } },
         { "fg_fsrfg", "Frame Gen", "FSR FG Settings", nullptr, RenderFrameGenerationRuntimeSettings },
@@ -15948,7 +16150,7 @@ static EssentialRole EssentialRoleOf(const char* id)
     static constexpr const char* main[] = { "upscaler",  "gfx_color",   "sharpness", "fg_selection", "fg_fsrfg",
                                             "fg_xefg",   "fg_dlssg",    "fg_optifg", "fg_reprojection", "fg_nvngx",
                                             "framerate", "ilion_latency", "vsync",   "fps_overlay",  "menu_scale",
-                                            "theme" };
+                                            "theme", "reshade" };
     static constexpr const char* secondary[] = { "mipmap", "anisotropy", "gfx_advanced", "low_latency", "keybinds" };
 
     for (const char* name : main)
@@ -16288,6 +16490,11 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
 
         // Own ID per tab, so every tab remembers its scroll position
         // ILION: Personal with its Customise panel open, the boxes at the left and the panel at the right
+        // ILION: the ReShade panel only beside Graphics; leaving the tab closes it
+        if (reshadePanelOpen && strcmp(tab.label, "Graphics") != 0)
+            reshadePanelOpen = false;
+
+        const bool reshadePanel = reshadePanelOpen;
         const bool personalPanel = selectedMenuTab == customTab && personalPanelOpen;
         float panelWidth = 0.0f;
 
@@ -16310,9 +16517,14 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
             const float avail = ImGui::GetContentRegionAvail().x;
             panelWidth = ImFloor(std::clamp(need, avail * 0.32f, avail * 0.55f));
         }
+        else if (reshadePanel)
+        {
+            // The window grew by this width (see the main window), so the tab keeps its own
+            panelWidth = ReShadePanelWidth(menuResScale);
+        }
 
         ImGui::PushID(selectedMenuTab);
-        ImGui::BeginChild("##MenuTabBody", ImVec2(personalPanel ? -(panelWidth + style.ItemSpacing.x) : 0.0f, 0.0f));
+        ImGui::BeginChild("##MenuTabBody", ImVec2((personalPanel || reshadePanel) ? -(panelWidth + style.ItemSpacing.x) : 0.0f, 0.0f));
 
         if (tab.draw != nullptr)
             tab.draw(ctx);
@@ -16387,6 +16599,13 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
             ImGui::SameLine();
             ImGui::BeginChild("##PersonalPanel", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
             RenderPersonalPanel(ctx);
+            ImGui::EndChild();
+        }
+        else if (reshadePanel)
+        {
+            ImGui::SameLine();
+            ImGui::BeginChild("##ReShadePanel", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
+            RenderReShadePanel(ctx);
             ImGui::EndChild();
         }
     }
@@ -17622,7 +17841,12 @@ void MenuCommon::RenderMainMenuWindow(RenderMenuContext& ctx)
     ImGuiWindowFlags mainFlags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse |
                                  ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
 
-    const float menuWidth = std::min(680.0f * menuResScale, io.DisplaySize.x - 20.0f);
+    // ILION: with the ReShade panel open the window grows by the panel to its right (Basic has no tabs, no panel)
+    if (config->MenuBasicMode.value_or_default())
+        reshadePanelOpen = false;
+
+    const float panelExtra = reshadePanelOpen ? ReShadePanelWidth(menuResScale) + ImGui::GetStyle().ItemSpacing.x : 0.0f;
+    const float menuWidth = std::min(680.0f * menuResScale + panelExtra, io.DisplaySize.x - 20.0f);
     const float maxMenuHeight = io.DisplaySize.y - 20.0f;
     const float minMenuHeight = std::min(300.0f * menuResScale, maxMenuHeight);
     const float menuHeight =
@@ -17711,6 +17935,11 @@ void MenuCommon::RenderMainMenuWindow(RenderMenuContext& ctx)
             ImGui::SetWindowPos(ImVec2 { posX, posY });
             lastPosition.x = posX;
             lastPosition.y = posY;
+        }
+        else if (winPos.x + winSize.x > io.DisplaySize.x - 10.0f)
+        {
+            // ILION: moved by the user and grown (ReShade panel): kept inside the screen, growing to the left instead
+            ImGui::SetWindowPos(ImVec2 { std::max(10.0f, io.DisplaySize.x - winSize.x - 10.0f), winPos.y });
         }
 
         // Blurred game image behind the window, the semi transparent window background tints it

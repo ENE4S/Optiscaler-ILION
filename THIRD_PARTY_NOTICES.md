@@ -134,3 +134,9 @@ files that are not stored here; its own `THIRD_PARTY_NOTICES.md` lists them one 
   against a publication of their authors.
 - No DLSS or NVIDIA DLL; the Streamline files are downloaded from NVIDIA by OptiScaler's fetcher script when the
   user runs it. No FSR 4.1.1B, FSR 4 Lite, Nukem9's dlssg-to-fsr3, XeFGUnlock or `D3D12Core.dll`.
+
+## ReShade add-on API headers (ILION v1.2-dev.26)
+
+`external/reshade/include/*.hpp` are the official add-on API headers of ReShade v6.8.0 (crosire/reshade, BSD 3-Clause,
+licence text in `external/reshade/LICENSE.md`). ILION uses them only for the types of the effect runtime; ReShade itself
+is not part of ILION and is installed by the user with `Instalar_ReShade.bat`.

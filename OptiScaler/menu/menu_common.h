@@ -233,6 +233,8 @@ class MenuCommon
     static bool RenderOptiFgHudFix(RenderMenuContext& ctx);    // ILION: HUDFix of OptiFG, Anti-Ghosting tab only
     static bool RenderDispatchFlags(RenderMenuContext& ctx);   // ILION: DLSS Enabler Dispatch Flags, Anti-Ghosting tab only
     static void RenderEssentialStrip(RenderMenuContext& ctx);  // ILION: status screens of the Essential mode
+    static void RenderReShadeCard(RenderMenuContext& ctx);   // ILION: ReShade card of Graphics
+    static void RenderReShadePanel(RenderMenuContext& ctx);  // ILION: ReShade side panel joined to the window
     static void RenderCustomTabSettings(RenderMenuContext& ctx);
     static void RenderStatusInfo(RenderMenuContext& ctx);
     static void RenderDetectedInfo(RenderMenuContext& ctx);

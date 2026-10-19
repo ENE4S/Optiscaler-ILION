@@ -86,6 +86,9 @@ void SetUniform(const std::string& file, const std::string& name, const float* v
 void ResetUniform(const std::string& file, const std::string& name);
 void ResetEffect(const std::string& file);
 
+// Asks ReShade to load an effect file again in the next frame (a newly installed one too); empty: every effect
+void ReloadEffect(const std::string& file);
+
 // Unregisters from ReShade; before ReShade is unloaded and at process detach
 void Shutdown();
 } // namespace IlionReShade

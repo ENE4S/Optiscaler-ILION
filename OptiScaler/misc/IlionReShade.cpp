@@ -36,6 +36,7 @@ struct Request
         Uniform,
         ResetOne,
         ResetAll,
+        Reload,
     } kind;
     std::string file;
     std::string name;
@@ -305,6 +306,10 @@ void ApplyRequest(reshade::api::effect_runtime* rt, const Request& r)
             rt->reset_uniform_value(variable);
         break;
 
+    case Request::Reload:
+        rt->reload_effect_next_frame(r.file.empty() ? nullptr : r.file.c_str());
+        break;
+
     case Request::ResetAll:
         rt->enumerate_uniform_variables(
             r.file.c_str(),
@@ -496,6 +501,8 @@ void SetUniform(const std::string& file, const std::string& name, const float* v
 void ResetUniform(const std::string& file, const std::string& name) { Queue({ Request::ResetOne, file, name }); }
 
 void ResetEffect(const std::string& file) { Queue({ Request::ResetAll, file }); }
+
+void ReloadEffect(const std::string& file) { Queue({ Request::Reload, file }); }
 
 void Shutdown()
 {

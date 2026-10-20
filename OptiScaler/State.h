@@ -7,6 +7,7 @@
 #include <inputs/FG/Streamline_Inputs_Dx12.h>
 #include <inputs/FG/Streamline_Inputs_Sl1_Dx12.h>
 
+#include <atomic>
 #include <set>
 #include <deque>
 #include <mutex>
@@ -292,6 +293,9 @@ class State
     bool dlssgGameDMFGSupported = false;
     sl::DLSSGMode dlssgLastSetMode = sl::DLSSGMode::eOff;
     int dlssgDetectedInterpolationCount = 0;
+    // ILION: calls of the game's DLSSG evaluate (one per game frame) and the tick of the last one, for the MFG cost screen
+    std::atomic<uint64_t> dlssgFgEvaluations { 0 };
+    std::atomic<uint64_t> dlssgFgLastEvaluateTick { 0 };
 
     // What the game requested from DLSSG when it's used as FG Input
     // This might need to get moved to Sl_Inputs_Dx12

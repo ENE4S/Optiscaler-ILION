@@ -46,6 +46,8 @@ struct Translation
 inline constexpr Translation kSpanish[] = {
     // Universal upscaler selector (v1.2-dev.5)
     { "Upscaler##IlionUpscaler", "Escalador" },
+    // ILION v1.2-dev.29: MFG cost
+    { "Compares the current real FPS with the average recorded before Multi Frame Generation was switched on. The percentage changes dynamically during play. Changes can also come from a different graphics load and don't necessarily show the cost of MFG alone.", "Compara los FPS reales actuales con el promedio registrado antes de activar Multi Frame Generation. El porcentaje cambia dinámicamente durante el juego. Las variaciones también pueden deberse a cambios en la carga gráfica y no representan necesariamente el coste exclusivo de MFG." },
     // ILION v1.2-dev.28: effect catalogue
     { "All packages", "Todos los paquetes" },
     { "Already in the shaders folder (put there by Instalar_ReShade.bat or by you): the catalogue doesn't touch it.", "Ya está en la carpeta de shaders (lo puso Instalar_ReShade.bat o tú): el catálogo no lo toca." },

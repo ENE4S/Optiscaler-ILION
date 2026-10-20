@@ -46,6 +46,10 @@ struct Translation
 inline constexpr Translation kSpanish[] = {
     // Universal upscaler selector (v1.2-dev.5)
     { "Upscaler##IlionUpscaler", "Escalador" },
+    // ILION v1.2-dev.29: MFG cost capture
+    { "Capture reference", "Capturar referencia" },
+    { "Capturing", "Capturando" },
+    { "Turn FG off, stand in a real scene of the game and press: ILION measures the real FPS for 10 s and keeps their average as the reference for the comparison.", "Desactiva FG, sitúate en una escena real del juego y pulsa: ILION mide los FPS reales durante 10 s y guarda su promedio como referencia para la comparación." },
     // ILION v1.2-dev.29: MFG cost source
     { "Real frames counted by", "Fotogramas reales contados por" },
     // ILION v1.2-dev.29: MFG cost

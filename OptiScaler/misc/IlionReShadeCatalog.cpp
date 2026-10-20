@@ -23,6 +23,7 @@ namespace
 {
 constexpr const char* kIndexUrl = "https://raw.githubusercontent.com/crosire/reshade-shaders/list/EffectPackages.ini";
 constexpr const char* kManifestName = "ILION-ReShade-efectos.txt";
+constexpr size_t kMaxDownload = 64u << 20; // no effect file, header or texture of the catalogue comes near it
 
 struct PackageInfo
 {
@@ -41,9 +42,11 @@ struct Catalog
     std::string indexError;
     std::vector<PackageInfo> packages;
     std::map<std::string, EffectState> states; // by lower-case effect file
-    std::vector<std::string> finished;
+    std::vector<Finished> finished;
     std::atomic<bool> busy { false };
+    bool removing = false;
     std::string busyWith;
+    std::atomic<uint64_t> revision { 1 };
 };
 
 Catalog& C()
@@ -88,7 +91,7 @@ bool HttpGet(const std::string& url, std::string& body, std::string& error)
 
     if (request != nullptr)
     {
-        WinHttpSetTimeouts(session, 8000, 8000, 15000, 15000);
+        WinHttpSetTimeouts(request, 8000, 8000, 15000, 15000);
 
         if (WinHttpSendRequest(request, L"User-Agent: OptiScaler-ILION\r\n", (DWORD) -1, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
             WinHttpReceiveResponse(request, nullptr))
@@ -106,11 +109,13 @@ bool HttpGet(const std::string& url, std::string& body, std::string& error)
                 if (!WinHttpReadData(request, chunk.data(), available, &read))
                     break;
                 body.append(chunk.data(), read);
+                if (body.size() > kMaxDownload)
+                    break;
             }
 
-            ok = status == 200;
+            ok = status == 200 && body.size() <= kMaxDownload;
             if (!ok)
-                error = "HTTP " + std::to_string(status);
+                error = body.size() > kMaxDownload ? "file too large" : "HTTP " + std::to_string(status);
         }
         else
         {
@@ -131,6 +136,14 @@ bool HttpGet(const std::string& url, std::string& body, std::string& error)
 
     return ok;
 }
+
+#ifdef ILION_CATALOG_TEST
+} // namespace
+bool TestHttpGet(const std::string& url, std::string& body, std::string& error); // the offline test serves the files
+namespace
+{
+#define HttpGet TestHttpGet
+#endif
 
 std::vector<std::string> SplitList(const std::string& text)
 {
@@ -282,6 +295,7 @@ void ScanDisk()
     }
 
     c.states = std::move(found);
+    c.revision++;
 }
 
 std::string RawUrl(const PackageInfo& p, const std::string& path)
@@ -362,14 +376,22 @@ bool ExistsUnder(const std::filesystem::path& root, const std::string& name)
     return false;
 }
 
-void SetState(const std::string& effect, EffectState::Kind kind, const std::string& message, bool depth = false)
+void SetState(const std::string& effect, EffectState::Kind kind, const std::string& message, const std::string& detail = "")
 {
     auto& c = C();
     std::scoped_lock guard(c.lock);
     auto& s = c.states[Lower(effect)];
     s.kind = kind;
     s.message = message;
-    s.needsDepth = depth;
+    s.detail = detail;
+    c.revision++;
+}
+
+// A path of the manifest or of a download stays inside the game folder (no "..", no drive or root of its own)
+bool Inside(const std::filesystem::path& game, const std::filesystem::path& path)
+{
+    const auto relative = path.lexically_normal().lexically_relative(game.lexically_normal());
+    return !relative.empty() && !relative.is_absolute() && *relative.begin() != L"..";
 }
 
 // The install itself, on the background thread
@@ -382,9 +404,9 @@ void InstallJob(size_t packageIndex, std::string effect)
         package = c.packages[packageIndex];
     }
 
-    const auto fail = [&](const std::string& why)
+    const auto fail = [&](const char* why, const std::string& detail = "")
     {
-        SetState(effect, EffectState::Failed, why);
+        SetState(effect, EffectState::Failed, why, detail);
         c.busy = false;
     };
 
@@ -398,7 +420,9 @@ void InstallJob(size_t packageIndex, std::string effect)
     {
         const std::string api = "https://api.github.com/repos/" + package.owner + "/" + package.repo + "/git/trees/" + package.branch + "?recursive=1";
         if (!HttpGet(api, body, error))
-            return fail("The package's file list couldn't be read (" + error + ")");
+            return fail(error == "HTTP 403" || error == "HTTP 429" ? "GitHub's limit of requests was reached: try again in an hour"
+                                                                     : "The package's file list couldn't be read",
+                        error);
 
         try
         {
@@ -421,8 +445,8 @@ void InstallJob(size_t packageIndex, std::string effect)
         return fail("The effect isn't in its package's repository any more");
 
     const std::filesystem::path game = GameDir();
-    const std::filesystem::path shaderDest = game / std::filesystem::path(package.installPath).lexically_normal();
-    const std::filesystem::path textureDest = game / std::filesystem::path(package.textureInstallPath).lexically_normal();
+    const std::filesystem::path shaderDest = (game / std::filesystem::path(package.installPath)).lexically_normal();
+    const std::filesystem::path textureDest = (game / std::filesystem::path(package.textureInstallPath)).lexically_normal();
     const std::filesystem::path shaderSearch = game / L"reshade-shaders" / L"Shaders";
     const std::filesystem::path textureSearch = game / L"reshade-shaders" / L"Textures";
     const std::string shaderRoot = RootFor(*effectPath, "Shaders");
@@ -433,10 +457,9 @@ void InstallJob(size_t packageIndex, std::string effect)
     std::vector<std::string> pending { *effectPath };
     std::set<std::string> seen;
     std::vector<std::string> missing;
-    bool depth = false;
 
     static const std::regex include(R"(#\s*include\s*[<"]([^>"]+)[>"])");
-    static const std::regex texture(R"(source\s*=\s*"([^"]+)")");
+    static const std::regex texture(R"re(source\s*=\s*"([^"]+)")re");
 
     while (!pending.empty())
     {
@@ -446,14 +469,13 @@ void InstallJob(size_t packageIndex, std::string effect)
             continue;
 
         if (!HttpGet(RawUrl(package, path), body, error))
-            return fail("Download failed: " + std::filesystem::path(path).filename().string() + " (" + error + ")");
+            return fail("Download failed", std::filesystem::path(path).filename().string() + " (" + error + ")");
 
         contents[path] = body;
         const std::string relative = path.size() > shaderRoot.size() && path.compare(0, shaderRoot.size(), shaderRoot) == 0
                                          ? path.substr(shaderRoot.size())
                                          : std::filesystem::path(path).filename().string();
-        files.push_back({ path, shaderDest / std::filesystem::path(relative).make_preferred() });
-        depth = depth || NeedsDepth(body);
+        files.push_back({ path, (shaderDest / std::filesystem::path(relative).make_preferred()).lexically_normal() });
 
         for (std::sregex_iterator it(body.begin(), body.end(), include), end; it != end; ++it)
         {
@@ -467,20 +489,19 @@ void InstallJob(size_t packageIndex, std::string effect)
         for (std::sregex_iterator it(body.begin(), body.end(), texture), end; it != end; ++it)
         {
             const std::string name = (*it)[1];
-            if (seen.count(Lower("tex:" + name)) > 0)
+            if (!seen.insert(Lower("tex:" + name)).second)
                 continue;
-            seen.insert(Lower("tex:" + name));
 
             if (const auto* found = FindInTree(package.tree, "", name); found != nullptr)
             {
                 std::string data;
                 if (!HttpGet(RawUrl(package, *found), data, error))
-                    return fail("Download failed: " + name + " (" + error + ")");
+                    return fail("Download failed", name + " (" + error + ")");
 
                 const std::string root = RootFor(*found, "Textures");
                 const std::string rel = found->size() > root.size() ? found->substr(root.size()) : name;
                 contents[*found] = data;
-                files.push_back({ *found, textureDest / std::filesystem::path(rel).make_preferred() });
+                files.push_back({ *found, (textureDest / std::filesystem::path(rel).make_preferred()).lexically_normal() });
             }
             else if (!ExistsUnder(textureSearch, name))
             {
@@ -494,7 +515,13 @@ void InstallJob(size_t packageIndex, std::string effect)
         std::string list;
         for (const auto& m : missing)
             list += (list.empty() ? "" : ", ") + m;
-        return fail("Missing files it needs: " + list);
+        return fail("Files it needs are missing", list);
+    }
+
+    for (const auto& [repoPath, local] : files)
+    {
+        if (!Inside(game, local))
+            return fail("The package points outside the game folder", repoPath);
     }
 
     // Write: files ILION already owns are replaced, anyone else's file stays as it is
@@ -503,9 +530,11 @@ void InstallJob(size_t packageIndex, std::string effect)
     for (const auto& [e, p] : manifest)
         owned.insert(Lower(p));
 
+    bool wrote = false;
+
     for (const auto& [repoPath, local] : files)
     {
-        const std::string rel = std::filesystem::relative(local, game).string();
+        const std::string rel = local.lexically_relative(game).string();
         std::error_code ec;
 
         if (std::filesystem::exists(local, ec) && owned.count(Lower(rel)) == 0)
@@ -515,8 +544,12 @@ void InstallJob(size_t packageIndex, std::string effect)
         std::ofstream out(local, std::ios::binary | std::ios::trunc);
         out.write(contents[repoPath].data(), (std::streamsize) contents[repoPath].size());
         if (!out)
-            return fail("Can't write " + rel);
+        {
+            WriteManifest(manifest); // what was written so far stays removable
+            return fail("A file couldn't be written", rel);
+        }
 
+        wrote = true;
         bool listed = false;
         for (const auto& [e, p] : manifest)
             listed = listed || (Lower(e) == Lower(effect) && Lower(p) == Lower(rel));
@@ -529,17 +562,53 @@ void InstallJob(size_t packageIndex, std::string effect)
 
     {
         std::scoped_lock guard(c.lock);
-        auto& s = c.states[Lower(effect)];
-        s.kind = EffectState::OnDisk;
-        s.byIlion = true;
-        s.needsDepth = depth;
-        s.message.clear();
-        c.finished.push_back(effect);
+        c.finished.push_back({ effect, true, wrote });
+        c.revision++;
     }
 
     c.busy = false;
 }
-void RemoveJob(const std::string& effectFile);
+
+void RemoveJob(const std::string& effectFile)
+{
+    auto& c = C();
+    const std::filesystem::path game = GameDir();
+    std::vector<std::pair<std::string, std::string>> keep;
+    std::vector<std::string> candidates;
+
+    for (const auto& line : ReadManifest())
+    {
+        if (Lower(line.first) == Lower(effectFile))
+            candidates.push_back(line.second);
+        else
+            keep.push_back(line);
+    }
+
+    // A file another effect still uses stays; nothing outside the game folder is touched
+    bool deleted = false;
+    for (const auto& path : candidates)
+    {
+        bool shared = false;
+        for (const auto& [e, p] : keep)
+            shared = shared || Lower(p) == Lower(path);
+
+        std::error_code ec;
+        if (!shared && Inside(game, game / path) && std::filesystem::remove(game / path, ec))
+            deleted = true;
+    }
+
+    WriteManifest(keep);
+    ScanDisk();
+
+    {
+        std::scoped_lock guard(c.lock);
+        c.finished.push_back({ effectFile, false, deleted });
+        c.removing = false;
+        c.revision++;
+    }
+
+    c.busy = false;
+}
 } // namespace
 
 void LoadIndex()
@@ -553,6 +622,7 @@ void LoadIndex()
         std::scoped_lock guard(c.lock);
         c.index = Snapshot::Loading;
         c.busyWith.clear();
+        c.revision++;
     }
 
     std::thread(
@@ -575,12 +645,15 @@ void LoadIndex()
             else
             {
                 c.index = Snapshot::IndexFailed;
-                c.indexError = ok ? "The package list is empty" : "The package list couldn't be downloaded (" + error + ")";
+                c.indexError = ok ? "" : error;
             }
+            c.revision++;
             c.busy = false;
         })
         .detach();
 }
+
+uint64_t Revision() { return C().revision; }
 
 Snapshot Get()
 {
@@ -592,6 +665,7 @@ Snapshot Get()
     for (const auto& p : c.packages)
         s.packages.push_back(p.pub);
     s.busy = c.busy;
+    s.removing = c.removing;
     s.busyWith = c.busyWith;
     return s;
 }
@@ -619,8 +693,12 @@ bool Install(size_t packageIndex, const std::string& effectFile)
             return false;
         }
         c.busyWith = effectFile;
-        c.states[Lower(effectFile)].kind = EffectState::Working;
-        c.states[Lower(effectFile)].message.clear();
+        c.removing = false;
+        auto& s = c.states[Lower(effectFile)];
+        s.kind = EffectState::Working;
+        s.message.clear();
+        s.detail.clear();
+        c.revision++;
     }
 
     std::thread(InstallJob, packageIndex, effectFile).detach();
@@ -634,46 +712,22 @@ bool Remove(const std::string& effectFile)
     if (!c.busy.compare_exchange_strong(expected, true))
         return false;
 
-    std::thread([effectFile] { RemoveJob(effectFile); }).detach();
+    {
+        std::scoped_lock guard(c.lock);
+        c.busyWith = effectFile;
+        c.removing = true;
+        c.revision++;
+    }
+
+    std::thread(RemoveJob, effectFile).detach();
     return true;
 }
 
-void RemoveJob(const std::string& effectFile)
-{
-    auto manifest = ReadManifest();
-    std::vector<std::pair<std::string, std::string>> keep;
-    std::vector<std::string> candidates;
-
-    for (const auto& line : manifest)
-    {
-        if (Lower(line.first) == Lower(effectFile))
-            candidates.push_back(line.second);
-        else
-            keep.push_back(line);
-    }
-
-    // A file another effect still uses stays
-    for (const auto& path : candidates)
-    {
-        bool shared = false;
-        for (const auto& [e, p] : keep)
-            shared = shared || Lower(p) == Lower(path);
-
-        std::error_code ec;
-        if (!shared)
-            std::filesystem::remove(GameDir() / path, ec);
-    }
-
-    WriteManifest(keep);
-    ScanDisk();
-    C().busy = false;
-}
-
-std::vector<std::string> TakeFinished()
+std::vector<Finished> TakeFinished()
 {
     auto& c = C();
     std::scoped_lock guard(c.lock);
-    std::vector<std::string> out;
+    std::vector<Finished> out;
     out.swap(c.finished);
     return out;
 }

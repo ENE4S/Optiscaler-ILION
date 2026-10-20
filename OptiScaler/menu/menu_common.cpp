@@ -17,6 +17,7 @@
 #include <misc/IlionCompare.h>
 #include <misc/IlionCapture.h>
 #include <misc/IlionReShade.h>
+#include <misc/IlionReShadeCatalog.h>
 #include <misc/IlionLatency.h>
 #include <misc/IlionOverlay.h>
 #include <misc/IlionVisual.h>
@@ -9884,13 +9885,15 @@ static void DrawFgCrt(const ImVec2& min, const ImVec2& size, const FgCrtData& d)
     draw->AddBezierQuadratic(ImVec2(gMax.x - gw * 0.30f, gMax.y - gh * 0.06f), ImVec2(gMax.x - gw * 0.08f, gMax.y - gh * 0.08f),
                              ImVec2(gMax.x - gw * 0.06f, gMax.y - gh * 0.30f), col(0.85f, 1.0f, 0.90f, 0.05f), 1.2f);
 
-    // Text: amber labels, intense yellow values, ACTIVE in bright phosphor green; a faint glow only
-    const ImVec4 amber(1.00f, 0.74f, 0.12f, 1.0f), yellow(1.00f, 0.95f, 0.12f, 1.0f), dim(0.50f, 0.58f, 0.42f, 1.0f);
-    const ImVec4 phosphor(0.35f, 1.00f, 0.35f, 1.0f);
+    // Text: bright amber labels, lemon yellow values (clearly apart from the amber), ACTIVE in vivid phosphor green
+    const ImVec4 amber(1.00f, 0.80f, 0.28f, 1.0f), yellow(1.00f, 1.00f, 0.42f, 1.0f), dim(0.56f, 0.64f, 0.48f, 1.0f);
+    const ImVec4 phosphor(0.30f, 1.00f, 0.42f, 1.0f);
     const auto text = [&](float sizePx, const ImVec2& at, const ImVec4& c, const char* s, ImFont* f)
     {
-        // Crisp letters: one faint phosphor bleed just below each glyph, no blur around it
-        draw->AddText(f, sizePx, ImVec2(at.x, at.y + 1.0f), col(c.x, c.y, c.z, 0.12f), s);
+        // Defined letters: a dark edge one pixel down-right separates them from the glass, a faint phosphor bleed
+        // below, then the glyph itself; same position and size as before
+        draw->AddText(f, sizePx, ImVec2(at.x + 1.0f, at.y + 1.0f), col(0, 0, 0, 0.55f), s);
+        draw->AddText(f, sizePx, ImVec2(at.x, at.y + 1.0f), col(c.x, c.y, c.z, 0.14f), s);
         draw->AddText(f, sizePx, at, ImGui::GetColorU32(c), s);
     };
 
@@ -15743,6 +15746,275 @@ static void RenderReShadeEffect(const IlionReShade::Effect& effect, bool added)
     ImGui::PopID();
 }
 
+// ILION: effect catalogue (misc/IlionReShadeCatalog.h). ReShade's official package list, read only when asked; one
+// effect at a time is downloaded with the files it needs on a background thread. When files changed, ReShade loads
+// its effects again (a new file isn't picked up by reloading it by name, only by a full reload).
+static IlionReShadeCatalog::Snapshot reshadeCatalogue;
+static uint64_t reshadeCatalogueRevision = 0;
+static std::string reshadeWaitingFor; // installed, until ReShade lists it
+static double reshadeWaitingSince = 0.0;
+
+static bool SameFile(const std::string& a, const std::string& b) { return _stricmp(a.c_str(), b.c_str()) == 0; }
+
+static bool InDefaultCatalogue(const std::string& file)
+{
+    for (const char* f : IlionReShade::kCatalogue)
+    {
+        if (SameFile(file, f))
+            return true;
+    }
+
+    return false;
+}
+
+// Finished installs and removals: the panel's list follows them and ReShade reloads only when files changed
+static void ProcessReShadeCatalogue()
+{
+    for (const auto& done : IlionReShadeCatalog::TakeFinished())
+    {
+        auto list = ReShadeAdded();
+        const auto same = [&](const IlionReShade::EffectRef& r) { return SameFile(r.file, done.effect); };
+
+        if (done.installed)
+        {
+            if (!InDefaultCatalogue(done.effect) && std::none_of(list.begin(), list.end(), same))
+            {
+                list.push_back({ done.effect, "" });
+                SaveReShadeAdded(list);
+            }
+
+            reshadeWaitingFor = done.effect;
+            reshadeWaitingSince = ImGui::GetTime();
+        }
+        else
+        {
+            const size_t before = list.size();
+            list.erase(std::remove_if(list.begin(), list.end(), same), list.end());
+            if (list.size() != before)
+                SaveReShadeAdded(list);
+
+            if (SameFile(reshadeWaitingFor, done.effect))
+                reshadeWaitingFor.clear();
+        }
+
+        if (done.changed)
+            IlionReShade::ReloadEffect("");
+    }
+}
+
+static std::string CatalogueLower(std::string text)
+{
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+    return text;
+}
+
+// One effect of the catalogue: its state and the key for it
+static void RenderCatalogueEffect(size_t package, const std::string& file, bool busy, const ImVec4& good, const ImVec4& warn)
+{
+    using Kind = IlionReShadeCatalog::EffectState::Kind;
+    const auto state = IlionReShadeCatalog::StateOf(file);
+    ImGui::PushID(file.c_str());
+
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(file.c_str());
+
+    if (state.needsDepth)
+    {
+        ImGui::SameLine();
+        ImGui::TextColored(warn, "%s", Tr("depth"));
+        if (ImGui::IsItemHovered())
+            WrappedTooltip("%s", Tr("Reads the game's depth buffer: it may show nothing, or look wrong, in games that don't give ReShade their depth."));
+    }
+
+    const char* key = nullptr;
+
+    if (state.kind == Kind::Working)
+    {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", Tr("downloading..."));
+    }
+    else if (state.kind == Kind::OnDisk && !state.byIlion)
+    {
+        ImGui::SameLine();
+        ImGui::TextColored(good, "%s", Tr("installed"));
+        if (ImGui::IsItemHovered())
+            WrappedTooltip("%s", Tr("Already in the shaders folder (put there by Instalar_ReShade.bat or by you): the catalogue doesn't touch it."));
+    }
+    else
+    {
+        key = state.kind == Kind::OnDisk ? "Remove##catalogue" : "Install##catalogue";
+    }
+
+    if (key != nullptr)
+    {
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - ButtonWidth(TrL(key))));
+        ImGui::BeginDisabled(busy);
+
+        if (IlionTheme::Button(TrL(key)))
+        {
+            if (state.kind == Kind::OnDisk)
+                IlionReShadeCatalog::Remove(file);
+            else
+                IlionReShadeCatalog::Install(package, file);
+        }
+
+        ImGui::EndDisabled();
+
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            WrappedTooltip("%s", Tr(state.kind == Kind::OnDisk
+                                        ? "Deletes the files the catalogue installed for this effect. Files other effects use, and files that were already there, stay."
+                                        : "Downloads only this effect and the files it needs, then ReShade loads its effects again."));
+    }
+
+    if (state.kind == Kind::Failed)
+        TextWrappedColored(warn, "%s%s%s", Tr(state.message.c_str()), state.detail.empty() ? "" : ": ", state.detail.c_str());
+
+    ImGui::PopID();
+}
+
+static void RenderReShadeCatalogue(const IlionReShade::Snapshot& rs, const ImVec4& good, const ImVec4& warn)
+{
+    if (const uint64_t revision = IlionReShadeCatalog::Revision(); revision != reshadeCatalogueRevision)
+    {
+        reshadeCatalogueRevision = revision;
+        reshadeCatalogue = IlionReShadeCatalog::Get();
+    }
+
+    const auto& cat = reshadeCatalogue;
+    using Index = IlionReShadeCatalog::Snapshot::Index;
+
+    ImGui::Spacing();
+    SectionTitle("Effect catalogue");
+
+    if (cat.index == Index::NotLoaded || cat.index == Index::IndexFailed)
+    {
+        TextWrappedDisabled("%s", Tr("Effects of ReShade's official package list, installed one by one: only the chosen effect and the files it needs are downloaded."));
+
+        if (cat.index == Index::IndexFailed)
+            TextWrappedColored(warn, "%s%s%s", Tr("The package list couldn't be downloaded"), cat.indexError.empty() ? "" : ": ", cat.indexError.c_str());
+
+        if (IlionTheme::Button(TrL(cat.index == Index::IndexFailed ? "Retry##catalogue" : "Load catalogue")))
+            IlionReShadeCatalog::LoadIndex();
+
+        return;
+    }
+
+    if (cat.index == Index::Loading)
+    {
+        ImGui::TextDisabled("%s", Tr("Loading the package list..."));
+        return;
+    }
+
+    // The operation running, and the effect waiting for ReShade
+    if (cat.busy)
+        ImGui::TextColored(warn, "%s %s", Tr(cat.removing ? "Removing" : "Downloading"), cat.busyWith.c_str());
+
+    if (!reshadeWaitingFor.empty())
+    {
+        bool listed = false;
+        for (const auto& t : rs.available)
+            listed = listed || SameFile(t.file, reshadeWaitingFor);
+
+        if (listed)
+        {
+            reshadeWaitingFor.clear();
+        }
+        else if (ImGui::GetTime() - reshadeWaitingSince < 20.0)
+        {
+            ImGui::TextDisabled("%s", Tr("ReShade is loading its effects again..."));
+        }
+        else
+        {
+            TextWrappedColored(warn, "%s %s", reshadeWaitingFor.c_str(),
+                               Tr("is installed but ReShade hasn't loaded it: it may have failed to compile (see ReShade.log) or need the game restarted."));
+            if (IlionTheme::Button(TrL("OK##catalogueWait")))
+                reshadeWaitingFor.clear();
+        }
+    }
+
+    // Search and package
+    static char search[64] {};
+    static int package = -1;
+    if (package >= (int) cat.packages.size())
+        package = -1;
+
+    const float half = std::floor((ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f);
+    ImGui::SetNextItemWidth(half);
+    ImGui::InputTextWithHint("##catalogueSearch", Tr("Search effect"), search, sizeof(search));
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(half);
+
+    if (IlionTheme::BeginCombo("##cataloguePackage", package < 0 ? Tr("All packages") : cat.packages[package].name.c_str()))
+    {
+        if (ImGui::Selectable(Tr("All packages"), package < 0))
+            package = -1;
+
+        for (int i = 0; i < (int) cat.packages.size(); i++)
+        {
+            if (ImGui::Selectable(cat.packages[i].name.c_str(), package == i))
+                package = i;
+            if (ImGui::IsItemHovered() && !cat.packages[i].description.empty())
+                WrappedTooltip("%s", cat.packages[i].description.c_str());
+        }
+
+        ImGui::EndCombo();
+    }
+
+    TextWrappedDisabled("%s", Tr("Every effect keeps its author's licence (see its package's repository). Installed effects appear under Added effects."));
+
+    const std::string needle = CatalogueLower(search);
+    bool any = false;
+
+    ImGui::BeginChild("##catalogueList", ImVec2(0.0f, std::floor(ImGui::GetFontSize() * 15.0f)), ImGuiChildFlags_Borders);
+
+    for (size_t p = 0; p < cat.packages.size(); p++)
+    {
+        if (package >= 0 && (size_t) package != p)
+            continue;
+
+        const auto& pkg = cat.packages[p];
+        const bool packageMatches = needle.empty() || CatalogueLower(pkg.name).find(needle) != std::string::npos;
+        std::vector<const std::string*> effects;
+        for (const auto& e : pkg.effects)
+        {
+            if (packageMatches || CatalogueLower(e).find(needle) != std::string::npos)
+                effects.push_back(&e);
+        }
+
+        if (effects.empty())
+            continue;
+
+        any = true;
+        ImGui::PushID((int) p);
+
+        // A search, or a single package picked, shows its effects without opening it
+        if (!needle.empty() || package >= 0)
+            ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+
+        const std::string title = pkg.name + "  (" + std::to_string(effects.size()) + ")";
+        const bool open = ImGui::TreeNodeEx(title.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth);
+
+        if (ImGui::IsItemHovered())
+            WrappedTooltip("%s%s%s", pkg.description.c_str(), pkg.repositoryUrl.empty() ? "" : "\n", pkg.repositoryUrl.c_str());
+
+        if (open)
+        {
+            for (const auto* e : effects)
+                RenderCatalogueEffect(p, *e, cat.busy, good, warn);
+
+            ImGui::TreePop();
+        }
+
+        ImGui::PopID();
+    }
+
+    if (!any)
+        ImGui::TextDisabled("%s", Tr("No effect matches the search."));
+
+    ImGui::EndChild();
+}
+
 void MenuCommon::RenderReShadePanel(RenderMenuContext& ctx)
 {
     IlionReShade::Poll();
@@ -15883,6 +16155,8 @@ void MenuCommon::RenderReShadePanel(RenderMenuContext& ctx)
 
     if (choices.empty())
         TextWrappedDisabled("%s", Tr("Every effect ReShade has loaded is already in the panel."));
+
+    RenderReShadeCatalogue(rs, good, warn);
 }
 
 // CUSTOM TAB -----------------------------
@@ -16737,6 +17011,9 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
             // The same amount the window grows by (width and gap), so the tab keeps its width while the panel slides
             panelWidth = std::max(1.0f, std::floor((ReShadePanelWidth(menuResScale) + style.ItemSpacing.x) * reshadePanelAmount) - style.ItemSpacing.x);
         }
+
+        // Catalogue installs finish in the background: their result is taken whichever tab is shown
+        ProcessReShadeCatalogue();
 
         ImGui::PushID(selectedMenuTab);
         ImGui::BeginChild("##MenuTabBody", ImVec2((personalPanel || reshadePanel) ? -(panelWidth + style.ItemSpacing.x) : 0.0f, 0.0f));

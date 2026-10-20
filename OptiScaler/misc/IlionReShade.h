@@ -86,7 +86,8 @@ void SetUniform(const std::string& file, const std::string& name, const float* v
 void ResetUniform(const std::string& file, const std::string& name);
 void ResetEffect(const std::string& file);
 
-// Asks ReShade to load an effect file again in the next frame (a newly installed one too); empty: every effect
+// Asks ReShade to load an effect file again in the next frame; empty: every effect. A file that is new on disk is
+// only picked up by the full reload (checked against ReShade 6.8.0), so the catalogue uses the empty form.
 void ReloadEffect(const std::string& file);
 
 // Unregisters from ReShade; before ReShade is unloaded and at process detach

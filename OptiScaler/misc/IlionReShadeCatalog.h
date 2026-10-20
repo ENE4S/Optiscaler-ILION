@@ -15,6 +15,7 @@
 // Every network and disk operation runs on one background thread, never on the render thread; the menu only reads a
 // snapshot.
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -40,7 +41,8 @@ struct EffectState
     } kind = Available;
     bool byIlion = false;      // installed by this catalogue (can be removed by it)
     bool needsDepth = false;   // reads the game's depth buffer: may not work in every game
-    std::string message;       // last error or note, in English (translated by the menu)
+    std::string message;       // last error, a fixed English text (translated by the menu)
+    std::string detail;        // what it is about: file names, HTTP status (not translated)
 };
 
 struct Snapshot
@@ -54,12 +56,24 @@ struct Snapshot
     } index = NotLoaded;
     std::string indexError;
     std::vector<Package> packages;
-    bool busy = false;   // a download is running
-    std::string busyWith; // effect file being installed
+    bool busy = false;     // the index, an install or a removal is running
+    bool removing = false; // busyWith is being removed, not installed
+    std::string busyWith;  // effect file being installed or removed
+};
+
+// An install or removal that finished
+struct Finished
+{
+    std::string effect;
+    bool installed = false; // false: removed
+    bool changed = false;   // files were written or deleted: ReShade has to load its effects again
 };
 
 // Downloads the package index (once; again only when asked)
 void LoadIndex();
+
+// Grows with every change of the index or of an effect's state: the menu copies the snapshot only then
+uint64_t Revision();
 
 Snapshot Get();
 
@@ -73,6 +87,6 @@ bool Install(size_t packageIndex, const std::string& effectFile);
 // Returns false when another operation is running.
 bool Remove(const std::string& effectFile);
 
-// Effects installed by the catalogue whose install finished since the last call (for the menu to add and reload)
-std::vector<std::string> TakeFinished();
+// Installs and removals finished since the last call (for the menu to update its panel and reload ReShade)
+std::vector<Finished> TakeFinished();
 } // namespace IlionReShadeCatalog

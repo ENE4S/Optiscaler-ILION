@@ -3,6 +3,7 @@
 
 #include <proxies/FfxApi_Proxy.h>
 #include <misc/IdentifyGpu.h>
+#include <fsr4/FSR4Models.h>
 
 struct ffxProviderInterface
 {
@@ -97,6 +98,7 @@ HRESULT STDMETHODCALLTYPE AmdExtFfxApi::UpdateFfxApiProvider(void* pData, uint32
             bool wasInt8ModelSelectionHooked = FSR4ModelSelection::IsCreateModelDriver2Hooked();
 
             FSR4ModelSelection::Hook(FSR4Upgrade::moduleAmdxcffx64, FSR4Source::DriverDll);
+            FSR4Models::Hook(FSR4Upgrade::moduleAmdxcffx64); // ILION: the driver dll's networks (2.4: four)
 
             wchar_t driverDllPath[MAX_PATH] = { 0 };
             GetModuleFileNameW(FSR4Upgrade::moduleAmdxcffx64, driverDllPath, MAX_PATH);

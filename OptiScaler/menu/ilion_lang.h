@@ -46,6 +46,15 @@ struct Translation
 inline constexpr Translation kSpanish[] = {
     // Universal upscaler selector (v1.2-dev.5)
     { "Upscaler##IlionUpscaler", "Escalador" },
+    // ILION v1.2-dev.30: FSR 4 models
+    { "Automatic", "Automático" },
+    { "Determined model", "Modelo determinado" },
+    { "FSR 4 network to run. Automatic lets FFX pick, as before.\nA network meant for another GPU (e.g. INT8 RDNA2 elsewhere) is experimental.", "Red de FSR 4 que se ejecuta. Automático deja que FFX elija, como antes.\nUna red pensada para otra GPU (p. ej. INT8 RDNA2 en otra) es experimental." },
+    { "FSR4 Model", "Modelo FSR4" },
+    { "Requested model", "Modelo solicitado" },
+    { "Requested: the network chosen above.\nDetermined: the one FFX picked in its support checks when it made the context.\nIt isn't a reading of what the GPU runs: not confirmed in execution.", "Solicitado: la red elegida arriba.\nDeterminado: la que FFX eligió en sus comprobaciones de soporte al crear el contexto.\nNo es una lectura de lo que ejecuta la GPU: no confirmado en ejecución." },
+    { "not determined", "no determinado" },
+    { "The selected FSR 4 model failed to start, the previous one was restored.", "El modelo de FSR 4 elegido no pudo iniciarse; se restauró el anterior." },
     // ILION v1.2-dev.29: MFG cost capture
     { "Capture reference", "Capturar referencia" },
     { "Capturing", "Capturando" },

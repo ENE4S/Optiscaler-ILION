@@ -12,6 +12,7 @@
 #include <proxies/FfxApi_Proxy.h>
 #include <upscalers/ffx/FFXFeature.h>
 #include <fsr4/FSR4Comparison.h>
+#include <fsr4/FSR4Models.h>
 #include <misc/HwTelemetry.h>
 #include <misc/IlionBenchmark.h>
 #include <misc/IlionCompare.h>
@@ -9263,6 +9264,67 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                 ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), Tr("(Potential FSR3 fallback)"));
             else
                 ImGui::TextDisabled(Tr("(Failed to hook)"));
+
+            // ILION: FSR 4 network (FSR4Models), when the dll in use has several. Changing it makes the context again,
+            // like the preset above; if that context fails, the previous choice comes back (FfxApiProxy)
+            const HMODULE srModule = FfxApiProxy::Dx12Module_SR();
+
+            if (auto models = FSR4Models::SelectableModels(srModule); !models.empty())
+            {
+                auto& selectedModel = config->Fsr4Model;
+                const std::optional<FSR4Model> previousModel =
+                    selectedModel.has_value() ? std::optional<FSR4Model>(selectedModel.value()) : std::nullopt;
+                const char* automatic = Tr("Automatic");
+                bool modelChanged = false;
+
+                ImGui::SetNextItemWidth(150.0f * menuResScale);
+                if (IlionTheme::BeginCombo(TrL("FSR4 Model"), previousModel.has_value() ? FSR4Models::Name(*previousModel) : automatic))
+                {
+                    if (ImGui::Selectable(automatic, !previousModel.has_value()) && previousModel.has_value())
+                    {
+                        selectedModel.reset();
+                        modelChanged = true;
+                    }
+
+                    for (const auto model : models)
+                    {
+                        if (ImGui::Selectable(FSR4Models::Name(model), previousModel == model) && previousModel != model)
+                        {
+                            selectedModel = model;
+                            modelChanged = true;
+                        }
+                    }
+
+                    ImGui::EndCombo();
+                }
+
+                if (modelChanged)
+                {
+                    FfxApiProxy::ArmSrModelRevert(previousModel);
+                    state.newBackend = currentBackend;
+                    MARK_ALL_BACKENDS_CHANGED();
+                }
+
+                ShowTooltip("FSR 4 network to run. Automatic lets FFX pick, as before.\n"
+                            "A network meant for another GPU (e.g. INT8 RDNA2 elsewhere) is experimental.");
+            }
+
+            // ILION: requested and determined network. Determined = the one FFX picked in its support checks when it made
+            // the context; it isn't a reading of what the GPU runs
+            if (srModule != nullptr)
+            {
+                const auto determined = FSR4Models::ActiveModel(srModule);
+
+                if (determined.has_value() || config->Fsr4Model.has_value())
+                {
+                    ImGui::TextDisabled("%s: %s  |  %s: %s", Tr("Requested model"),
+                                        config->Fsr4Model.has_value() ? FSR4Models::Name(config->Fsr4Model.value()) : Tr("Automatic"),
+                                        Tr("Determined model"), determined.has_value() ? FSR4Models::Name(*determined) : Tr("not determined"));
+                    ShowTooltip("Requested: the network chosen above.\n"
+                                "Determined: the one FFX picked in its support checks when it made the context.\n"
+                                "It isn't a reading of what the GPU runs: not confirmed in execution.");
+                }
+            }
         }
 
         if (majorFsrVersion >= 3)
@@ -15579,7 +15641,7 @@ void MenuCommon::RenderDetectedInfo(RenderMenuContext& ctx)
         { "FFX FG", FfxApiProxy::Dx12Module_FG() != nullptr },
         { "OptiPatcher", state.isOptiPatcherSucceed },
         { "DLSS capable GPU", primaryGpu.dlssCapable },
-        { "FSR4 capable GPU", primaryGpu.fsr4Support != FSR4Support::None, primaryGpu.fsr4Support == FSR4Support::INT8 },
+        { "FSR4 capable GPU", primaryGpu.fsr4Support != FSR4Support::None, IsFsr4Int8(primaryGpu.fsr4Support) },
     });
 
     // Frame ids that used to be in the performance overlay

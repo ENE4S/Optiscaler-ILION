@@ -259,6 +259,12 @@ bool Config::Reload(std::filesystem::path iniPath)
             else
                 Fsr4ForceModel.reset();
 
+            // ILION: FSR 4 network to run (FSR4Models), unset = the best one the GPU supports
+            if (auto v = readEnum<FSR4Model>("FSR", "Fsr4Model"))
+                Fsr4Model.set_from_config(*v);
+            else
+                Fsr4Model.reset();
+
             Fsr4EnableWatermark.set_from_config(readBool("FSR", "Fsr4EnableWatermark"));
             Fsr4DoNotLoadAmdxc64.set_from_config(readBool("FSR", "Fsr4DoNotLoadAmdxc64"));
 
@@ -1193,6 +1199,7 @@ bool Config::SaveIni()
         ini.SetValue("FSR", "DlssReactiveMaskBias",
                      GetFloatValue(Instance()->DlssReactiveMaskBias.value_for_config()).c_str());
         ini.SetValue("FSR", "Fsr4ForceModel", GetIntValue(Instance()->Fsr4ForceModel.value_for_config()).c_str());
+        ini.SetValue("FSR", "Fsr4Model", GetIntValue(Instance()->Fsr4Model.value_for_config()).c_str());
         ini.SetValue("FSR", "Fsr4Preset", GetIntValue(Instance()->Fsr4Preset.value_for_config()).c_str());
         ini.SetValue("FSR", "Fsr4SrVariant",
                      wstring_to_string(Instance()->Fsr4SrVariant.value_for_config_or(L"auto")).c_str());

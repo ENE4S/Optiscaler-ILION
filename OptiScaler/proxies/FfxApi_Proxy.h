@@ -12,6 +12,7 @@
 #include <inputs/FfxApi_Vk.h>
 
 #include <fsr4/FSR4ModelSelection.h>
+#include <fsr4/FSR4Models.h>
 #include <fsr4/FSR4VisualVerify.h>
 #include <fsr4/FSR4Versions.h>
 #include <misc/IlionUpscalers.h>
@@ -128,6 +129,10 @@ class FfxApiProxy
 
     // Dll that was in use before the last switch, kept until the new one has created a context
     inline static std::optional<FfxModule> _srRevertTarget;
+
+    // ILION: FSR 4 network chosen before the last model change (FSR4Models), kept until a context is made with the
+    // new one; nullopt inside means "automatic"
+    inline static std::optional<std::optional<FSR4Model>> _srModelRevertTarget;
 
     static bool IsSamePath(const std::wstring& a, const std::wstring& b)
     {
@@ -425,6 +430,9 @@ class FfxApiProxy
     }
 
   public:
+    // ILION: called by the menu when the FSR 4 network changes, before the backend is made again
+    static void ArmSrModelRevert(std::optional<FSR4Model> previous) { _srModelRevertTarget = previous; }
+
     static HMODULE Dx12Module() { return main_dx12.dll; }
     static HMODULE Dx12Module_SR() { return upscaling_dx12.dll; }
     static HMODULE Dx12Module_FG() { return fg_dx12.dll; }
@@ -985,6 +993,33 @@ class FfxApiProxy
         SrDiagSetSwitchResult(failedName, previousName, "REVERTED, the new dll couldn't create a context");
     }
 
+    // ILION: the context made with a newly chosen FSR 4 network failed: the previous choice comes back and the backend
+    // is made again with it, as a dll switch is reverted
+    static void RevertSrModelAfterFailure()
+    {
+        if (!_srModelRevertTarget.has_value())
+            return;
+
+        const auto previous = *_srModelRevertTarget;
+        _srModelRevertTarget.reset();
+
+        const std::string failed = Config::Instance()->Fsr4Model.has_value() ? FSR4Models::Name(Config::Instance()->Fsr4Model.value())
+                                                                             : "auto";
+        if (previous.has_value())
+            Config::Instance()->Fsr4Model = previous.value();
+        else
+            Config::Instance()->Fsr4Model.reset();
+
+        for (auto& changeBackend : State::Instance().changeBackend)
+            changeBackend.second = true;
+
+        const std::string restored = previous.has_value() ? FSR4Models::Name(previous.value()) : "auto";
+        LOG_ERROR("FSR 4 model {} couldn't create a context, {} is selected again", failed, restored);
+        ImGui::InsertNotification({ ImGuiToastType::Error, 10000,
+                                    Ilion::Tr("The selected FSR 4 model failed to start, the previous one was restored.") });
+        SrDiagSetSwitchResult("FSR 4 model " + failed, "FSR 4 model " + restored, "REVERTED, the model couldn't create a context");
+    }
+
     static FFXStructType GetType(ffxStructType_t type)
     {
         switch (type & FFX_API_EFFECT_MASK) // type without the specific effect
@@ -1094,6 +1129,7 @@ class FfxApiProxy
             if (!main_dx12.isLoader)
             {
                 FSR4ModelSelection::Hook(main_dx12.dll, FSR4Source::SDK);
+                FSR4Models::Hook(main_dx12.dll); // ILION: network choice (FP8/INT8...) when the dll has several
             }
         }
 
@@ -1919,6 +1955,7 @@ class FfxApiProxy
         }
 
         FSR4ModelSelection::Hook(module.dll, FSR4Source::SDK, rehook);
+        FSR4Models::Hook(module.dll); // ILION: network choice when the dll has several models
     }
 
     static feature_version VersionDx12_SR()
@@ -2107,9 +2144,15 @@ class FfxApiProxy
             SrDiagOnCreate(result);
 
             if (result == FFX_API_RETURN_OK)
+            {
                 _srRevertTarget.reset();
+                _srModelRevertTarget.reset();
+            }
             else
+            {
                 RevertSrVariantAfterFailure();
+                RevertSrModelAfterFailure();
+            }
 
             LOG_DEBUG("Created with upscaling_dx12: {:X}", (size_t) *context);
             return result;

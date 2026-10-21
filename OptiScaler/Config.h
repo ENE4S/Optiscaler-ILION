@@ -524,6 +524,7 @@ class Config
 
     // FSR4
     CustomOptional<FSR4Support> Fsr4ForceModel { FSR4Support::None };
+    CustomOptional<FSR4Model, NoDefault> Fsr4Model; // ILION: FSR 4 network (FSR4Models), unset = automatic
     CustomOptional<uint32_t, NoDefault> Fsr4Preset;
     CustomOptional<std::wstring, NoDefault> Fsr4SrVariant;
     CustomOptional<bool> Fsr4EnableWatermark { false };

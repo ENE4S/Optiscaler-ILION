@@ -578,14 +578,27 @@ void IdentifyGpu::updateD3d12Capabilities(D3d12Proxy::PFN_D3D12CreateDevice o_D3
 
                         if (cardInfo.has_value())
                         {
-                            if (cardInfo.value().generation == device_info::HwGeneration::kGfx11)
-                                res.fsr4Support = FSR4Support::INT8;
+                            // ILION: the INT8 models of the FSR 4.1.1+ providers per asic, as OptiScaler v10
+                            // (upstream d8aebe45, mirrors the driver's getFsr4ModelForAsic). Only what the GPU is
+                            // expected to run; a forced model (Fsr4ForceModel) still overrides it
+                            using device_info::AsicType;
+                            using device_info::HwGeneration;
+                            const auto& card = cardInfo.value();
 
-                            // if (cardInfo.value().generation == device_info::HwGeneration::kGfx11_5)
-                            //{
-                            //     res.fsr4Support = FSR4Support::INT8;
-                            //     res.fsr4ForcedSupport = true;
-                            // }
+                            // Navi 3x (RDNA3) and Strix Halo
+                            if ((card.generation == HwGeneration::kGfx11 && !card.is_apu) ||
+                                card.asic_type == AsicType::kGfx11_5_1)
+                                res.fsr4Support = FSR4Support::INT8;
+                            // Navi 2x (RDNA2)
+                            else if (card.generation == HwGeneration::kGfx10_3 && !card.is_apu)
+                                res.fsr4Support = FSR4Support::INT8_2;
+                            // Van Gogh, Strix Point, and the ones OptiScaler adds without official support (Phoenix,
+                            // Hawk Point, Krackan, Navi 10/12; Navi 14 lacks hardware INT8)
+                            else if (card.asic_type == AsicType::kGfx10_3_3 || card.asic_type == AsicType::kGfx11_5_0 ||
+                                     (card.generation == HwGeneration::kGfx11 && card.is_apu) ||
+                                     card.asic_type == AsicType::kGfx11_5_2 || card.asic_type == AsicType::kGfx10_1_0 ||
+                                     card.asic_type == AsicType::kGfx10_1_0Xl || card.asic_type == AsicType::kGfx10_1_1)
+                                res.fsr4Support = FSR4Support::INT8Lite;
                         }
                     }
 
@@ -649,6 +662,10 @@ void IdentifyGpu::updateD3d12Capabilities(D3d12Proxy::PFN_D3D12CreateDevice o_D3
             fsr4Support = "fp8";
         else if (gpu.fsr4Support == FSR4Support::INT8)
             fsr4Support = "int8";
+        else if (gpu.fsr4Support == FSR4Support::INT8_2)
+            fsr4Support = "int8-2";
+        else if (gpu.fsr4Support == FSR4Support::INT8Lite)
+            fsr4Support = "int8 lite";
 
         if (gpu.fsr4ForcedSupport)
             fsr4Support += " (forced)";

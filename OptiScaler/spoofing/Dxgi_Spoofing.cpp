@@ -179,7 +179,7 @@ HRESULT DxgiSpoofing::hkGetDesc1(IDXGIAdapter1* This, DXGI_ADAPTER_DESC1* pDesc)
         {
             const auto primaryGpu = IdentifyGpu::getPrimaryGpu();
 
-            if (primaryGpu.fsr4ForcedSupport && primaryGpu.fsr4Support == FSR4Support::INT8)
+            if (primaryGpu.fsr4ForcedSupport && IsFsr4Int8(primaryGpu.fsr4Support))
             {
                 LOG_TRACE("Spoofing vendor AMD for {}", caller);
                 pDesc->VendorId = VendorId::AMD;

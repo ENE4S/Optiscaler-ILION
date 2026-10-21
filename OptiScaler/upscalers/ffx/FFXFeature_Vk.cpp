@@ -181,14 +181,46 @@ bool FFXFeatureVk::InitFFX(const NVSDK_NGX_Parameter* InParameters)
             State::Instance().ffxUpscalerVersionsVk.ids[Config::Instance()->FfxUpscalerIndex.value_or_default()];
         backendDesc.header.pNext = &ov.header;
 
+        // ILION: the AMD Vulkan driver's FSR 4, picked by its index in the list (appended after the SDK's ones)
+        ffxCreateContextDescUpscaleVersionV2 upscaleVersion {};
+        _driverProvider = FSR4DriverProviderVk::IsAvailable() && ov.versionId == FSR4DriverProviderVk::VersionId();
+
+        if (_driverProvider)
+        {
+            if (!FSR4DriverProviderVk::IsSupported(Device, PhysicalDevice, backendDesc.vkDeviceProcAddr))
+            {
+                LOG_ERROR("The AMD Vulkan driver's FSR {} doesn't support this device", FSR4DriverProviderVk::VersionName());
+                _driverProvider = false;
+                FfxApiProxy::SrModelContextResult(false);
+                return false;
+            }
+
+            // The driver only takes the SDK 2.x backend type and wants the upscaler version, no version override
+            upscaleVersion.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE_VERSION_V2;
+            upscaleVersion.version = FFX_UPSCALER_VERSION_V2;
+            backendDesc.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_VK_V2;
+            backendDesc.header.pNext = &upscaleVersion.header;
+            LOG_INFO("Using the AMD Vulkan driver's FSR {} ({})", FSR4DriverProviderVk::VersionName(),
+                     wstring_to_string(FSR4DriverProviderVk::Path()));
+        }
+
         LOG_DEBUG("_createContext!");
-        auto ret = FfxApiProxy::VULKAN_CreateContext()(&_context, &_contextDesc.header, NULL);
+        auto ret = _driverProvider ? FSR4DriverProviderVk::CreateContext()(&_context, &_contextDesc.header, NULL)
+                                   : FfxApiProxy::VULKAN_CreateContext()(&_context, &_contextDesc.header, NULL);
+
+        // A newly chosen FSR 4 model comes back to the previous one when its context fails (as in DX12)
+        if (_driverProvider)
+            FfxApiProxy::SrModelContextResult(ret == FFX_API_RETURN_OK);
 
         if (ret != FFX_API_RETURN_OK)
         {
             LOG_ERROR("_createContext error: {0}", FfxApiProxy::ReturnCodeToString(ret));
+            _driverProvider = false;
             return false;
         }
+
+        if (_driverProvider)
+            FSR4DriverProviderVk::SetInUse(true);
     }
 
     auto version =
@@ -456,7 +488,7 @@ bool FFXFeatureVk::EvaluateInternal(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Param
         m_upscalerKeyValueConfig.header.type = FFX_API_CONFIGURE_DESC_TYPE_UPSCALE_KEYVALUE;
         m_upscalerKeyValueConfig.key = FFX_API_CONFIGURE_UPSCALE_KEY_FVELOCITYFACTOR;
         m_upscalerKeyValueConfig.ptr = &_velocity;
-        auto result = FfxApiProxy::VULKAN_Configure()(&_context, &m_upscalerKeyValueConfig.header);
+        auto result = ConfigureFn()(&_context, &m_upscalerKeyValueConfig.header);
 
         if (result != FFX_API_RETURN_OK)
             LOG_WARN("Velocity configure result: {}", (UINT) result);
@@ -471,7 +503,7 @@ bool FFXFeatureVk::EvaluateInternal(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Param
             m_upscalerKeyValueConfig.header.type = FFX_API_CONFIGURE_DESC_TYPE_UPSCALE_KEYVALUE;
             m_upscalerKeyValueConfig.key = FFX_API_CONFIGURE_UPSCALE_KEY_FREACTIVENESSSCALE;
             m_upscalerKeyValueConfig.ptr = &_reactiveScale;
-            auto result = FfxApiProxy::VULKAN_Configure()(&_context, &m_upscalerKeyValueConfig.header);
+            auto result = ConfigureFn()(&_context, &m_upscalerKeyValueConfig.header);
 
             if (result != FFX_API_RETURN_OK)
                 LOG_WARN("Reactive Scale configure result: {}", (UINT) result);
@@ -484,7 +516,7 @@ bool FFXFeatureVk::EvaluateInternal(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Param
             m_upscalerKeyValueConfig.header.type = FFX_API_CONFIGURE_DESC_TYPE_UPSCALE_KEYVALUE;
             m_upscalerKeyValueConfig.key = FFX_API_CONFIGURE_UPSCALE_KEY_FSHADINGCHANGESCALE;
             m_upscalerKeyValueConfig.ptr = &_shadingScale;
-            auto result = FfxApiProxy::VULKAN_Configure()(&_context, &m_upscalerKeyValueConfig.header);
+            auto result = ConfigureFn()(&_context, &m_upscalerKeyValueConfig.header);
 
             if (result != FFX_API_RETURN_OK)
                 LOG_WARN("Shading Scale configure result: {}", (UINT) result);
@@ -497,7 +529,7 @@ bool FFXFeatureVk::EvaluateInternal(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Param
             m_upscalerKeyValueConfig.header.type = FFX_API_CONFIGURE_DESC_TYPE_UPSCALE_KEYVALUE;
             m_upscalerKeyValueConfig.key = FFX_API_CONFIGURE_UPSCALE_KEY_FACCUMULATIONADDEDPERFRAME;
             m_upscalerKeyValueConfig.ptr = &_accAddPerFrame;
-            auto result = FfxApiProxy::VULKAN_Configure()(&_context, &m_upscalerKeyValueConfig.header);
+            auto result = ConfigureFn()(&_context, &m_upscalerKeyValueConfig.header);
 
             if (result != FFX_API_RETURN_OK)
                 LOG_WARN("Acc. Add Per Frame configure result: {}", (UINT) result);
@@ -510,7 +542,7 @@ bool FFXFeatureVk::EvaluateInternal(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Param
             m_upscalerKeyValueConfig.header.type = FFX_API_CONFIGURE_DESC_TYPE_UPSCALE_KEYVALUE;
             m_upscalerKeyValueConfig.key = FFX_API_CONFIGURE_UPSCALE_KEY_FMINDISOCCLUSIONACCUMULATION;
             m_upscalerKeyValueConfig.ptr = &_minDisOccAcc;
-            auto result = FfxApiProxy::VULKAN_Configure()(&_context, &m_upscalerKeyValueConfig.header);
+            auto result = ConfigureFn()(&_context, &m_upscalerKeyValueConfig.header);
 
             if (result != FFX_API_RETURN_OK)
                 LOG_WARN("Minimum Disocclusion Acc. configure result: {}", (UINT) result);
@@ -542,7 +574,7 @@ bool FFXFeatureVk::EvaluateInternal(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Param
     }
 
     LOG_DEBUG("Dispatch!!");
-    auto result = FfxApiProxy::VULKAN_Dispatch()(&_context, &params.header);
+    auto result = DispatchFn()(&_context, &params.header);
 
     if (result != FFX_API_RETURN_OK)
     {

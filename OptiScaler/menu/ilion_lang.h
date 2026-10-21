@@ -46,8 +46,17 @@ struct Translation
 inline constexpr Translation kSpanish[] = {
     // Universal upscaler selector (v1.2-dev.5)
     { "Upscaler##IlionUpscaler", "Escalador" },
+    // ILION v1.2-dev.31: SDK / driver names, Vulkan driver
+    { " · AMD driver", " · Controlador AMD" },
+    { "FFX provider", "Proveedor FFX" },
+    { "FSR 4 of AMD's Vulkan driver, native Vulkan. Switches while the game runs; its network is chosen with the FSR 4 model.", "FSR 4 del controlador Vulkan de AMD, Vulkan nativo. Cambia con el juego en marcha; su red se elige con el modelo FSR 4." },
+    { "OptiScaler's own lists, for what the selector above doesn't offer: the backend (native DLSS on NVIDIA included) and the provider inside the FFX dll in use.", "Las listas propias de OptiScaler, para lo que el selector de arriba no ofrece: el motor (DLSS nativo en NVIDIA incluido) y el proveedor dentro de la DLL FFX en uso." },
+    { "Provider inside the FFX dll in use, as that dll lists them: e.g. the AMD driver's FSR 4.1.2 that AMD's SDK dll hands the upscale to, or the SDK's own 4.1.1. The selector above picks the dll.", "Proveedor dentro de la DLL FFX en uso, tal como esa DLL los lista: p. ej. el FSR 4.1.2 del controlador AMD al que el SDK de AMD pasa el escalado, o el 4.1.1 propio del SDK. El selector de arriba elige la DLL." },
+    { "via SDK", "vía SDK" },
+    { " · AMD SDK", " · SDK AMD" },
+    { "FSR 4 · AMD driver", "FSR 4 · Controlador AMD" },
+    { "FSR 4 · AMD driver (installed)", "FSR 4 · Controlador AMD (instalado)" },
     // ILION v1.2-dev.30: AMD driver provider
-    { "FSR 4 AMD driver", "FSR 4 del controlador AMD" },
     { "The AMD driver gave no FSR 4 upscaler for this GPU", "El controlador AMD no dio ningún escalador FSR 4 para esta GPU" },
     { "AMD driver FSR provider: selectable as a provider entry only", "Proveedor FSR del controlador AMD: solo se puede elegir como entrada de proveedor" },
     // ILION v1.2-dev.30: FSR 4 models

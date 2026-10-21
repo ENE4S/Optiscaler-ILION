@@ -5,6 +5,7 @@
 #include <proxies/Dxgi_Proxy.h>
 #include <proxies/D3d12_Proxy.h>
 #include <misc/IdentifyGpu.h>
+#include <fsr4/FSR4DriverProviderVk.h>
 
 static void FfxLogCallback(uint32_t type, const wchar_t* message)
 {
@@ -65,7 +66,17 @@ bool FFXFeature::QueryVersionsVulkan()
     versionQuery.versionIds = versions.ids.data();
     versionQuery.versionNames = versions.names.data();
 
-    return FfxApiProxy::VULKAN_Query()(nullptr, &versionQuery.header) == FFX_API_RETURN_OK;
+    const bool ok = FfxApiProxy::VULKAN_Query()(nullptr, &versionQuery.header) == FFX_API_RETURN_OK;
+
+    // ILION: the AMD Vulkan driver's FSR 4 after the SDK's own providers, so their indexes and the default stay
+    if (ok && FSR4DriverProviderVk::Init() &&
+        std::find(versions.ids.begin(), versions.ids.end(), FSR4DriverProviderVk::VersionId()) == versions.ids.end())
+    {
+        versions.ids.push_back(FSR4DriverProviderVk::VersionId());
+        versions.names.push_back(FSR4DriverProviderVk::VersionName());
+    }
+
+    return ok;
 }
 
 void FFXFeature::EnsureVersionsDx12()

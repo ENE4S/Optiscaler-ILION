@@ -4,12 +4,26 @@
 
 #include "vk/ffx_api_vk.h"
 #include <proxies/FfxApi_Proxy.h>
+#include <fsr4/FSR4DriverProviderVk.h>
 
 class FFXFeatureVk : public FFXFeature, public IFeature_Vk
 {
   private:
+    // ILION: the context belongs to the AMD Vulkan driver's provider (FSR4DriverProviderVk) instead of
+    // amd_fidelityfx_vk.dll; every call of it goes to the same provider
+    bool _driverProvider = false;
+
   protected:
     bool InitFFX(const NVSDK_NGX_Parameter* InParameters);
+
+    PfnFfxConfigure ConfigureFn() const
+    {
+        return _driverProvider ? FSR4DriverProviderVk::Configure() : FfxApiProxy::VULKAN_Configure();
+    }
+    PfnFfxDispatch DispatchFn() const
+    {
+        return _driverProvider ? FSR4DriverProviderVk::Dispatch() : FfxApiProxy::VULKAN_Dispatch();
+    }
 
     // From IFeature_Vk
     bool InitInternal(VkCommandBuffer InCmdList, NVSDK_NGX_Parameter* InParameters) override;
@@ -35,6 +49,14 @@ class FFXFeatureVk : public FFXFeature, public IFeature_Vk
             return;
 
         if (_context != nullptr)
-            FfxApiProxy::VULKAN_DestroyContext()(&_context, NULL);
+        {
+            if (_driverProvider)
+            {
+                FSR4DriverProviderVk::DestroyContext()(&_context, NULL);
+                FSR4DriverProviderVk::SetInUse(false);
+            }
+            else
+                FfxApiProxy::VULKAN_DestroyContext()(&_context, NULL);
+        }
     }
 };

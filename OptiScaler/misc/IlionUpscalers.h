@@ -249,10 +249,11 @@ inline Entry FfxEntry(const std::wstring& key, const std::filesystem::path& dll,
     if (driverProvider)
     {
         // Its models (FP8, INT8, INT8 RDNA2, INT8 Lite) are chosen with the FSR 4 model of the menu
+        // Which FSR the driver dll has is only known once its provider answers: the label of what runs gives it
         entry.kind = Kind::Provider;
         entry.family = Family::Fsr4;
-        entry.display = "FSR 4 AMD driver";
-        entry.detail = entry.fileVersion;
+        entry.display = "FSR 4 · AMD driver";
+        entry.detail = "(" + wstring_to_string(folderName) + ")";
     }
     else if (HasHelixNetwork(entry.path))
     {
@@ -274,8 +275,12 @@ inline Entry FfxEntry(const std::wstring& key, const std::filesystem::path& dll,
         // official dll carries its version in its version resource
         if (entry.display == "FSR 4 Lite" && FileContains(entry.path, "-lossy-"))
             entry.display = "FSR 4 Lite (L)";
-        else if (entry.display == "FSR 4 official (AMD)" && entry.fileVersion.size() > 2)
-            entry.display = "FSR " + entry.fileVersion.substr(0, entry.fileVersion.rfind('.')) + " official (AMD)";
+        // AMD's own dll, from its verified AMD signature (not from the folder name): "FSR 4.1.1 · AMD SDK"
+        else if (entry.amdOfficial && entry.fileVersion.size() > 2)
+        {
+            entry.display = "FSR " + entry.fileVersion.substr(0, entry.fileVersion.rfind('.')) + " · AMD SDK";
+            entry.detail.clear();
+        }
     }
 
     return entry;
@@ -449,6 +454,33 @@ inline std::vector<Entry> ScanLocked()
         }
     }
 
+    // ILION: the installed AMD driver's DX12 FSR 4 provider, used where the driver keeps it (nothing is copied)
+    if (!known(L"FSR4/AMD driver"))
+    {
+        static const auto driverDll = []
+        {
+            std::error_code dllEc;
+            for (const auto& [luid, path] : Util::GetDriverStore())
+            {
+                if (std::filesystem::exists(path / L"amdxcffx64.dll", dllEc))
+                    return path / L"amdxcffx64.dll";
+            }
+            return std::filesystem::path();
+        }();
+
+        if (!driverDll.empty())
+        {
+            auto entry = FfxEntry(L"FSR4/AMD driver", driverDll, L"AMD driver", false, Family::Fsr4);
+
+            if (entry.kind == Kind::Provider)
+            {
+                entry.display = "FSR 4 · AMD driver (installed)";
+                entry.detail.clear();
+                result.push_back(std::move(entry));
+            }
+        }
+    }
+
     // Older installs, under their folder names as before
     for (const auto& legacyRoot : { LegacyRoot(), LegacyOptiRoot() })
     {
@@ -544,6 +576,9 @@ inline std::optional<Entry> FindByPath(const std::wstring& path)
 
     return std::nullopt;
 }
+
+// FFX dlls and AMD driver providers switch the same way, through the FFX proxy, while the game runs
+inline bool SwitchesAsFfx(const Entry& entry) { return entry.kind == Kind::Ffx || entry.kind == Kind::Provider; }
 
 // Path of the FFX dll saved under a key, empty when there's no usable FFX upscaler with it
 inline std::wstring FfxDllPathFor(const std::wstring& key)

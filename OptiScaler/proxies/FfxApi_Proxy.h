@@ -449,6 +449,15 @@ class FfxApiProxy
     // ILION: called by the menu when the FSR 4 network changes, before the backend is made again
     static void ArmSrModelRevert(std::optional<FSR4Model> previous) { _srModelRevertTarget = previous; }
 
+    // ILION: result of a context made outside the DX12 proxy (the Vulkan driver provider) after a model change
+    static void SrModelContextResult(bool ok)
+    {
+        if (ok)
+            _srModelRevertTarget.reset();
+        else
+            RevertSrModelAfterFailure();
+    }
+
     static HMODULE Dx12Module() { return main_dx12.dll; }
     static HMODULE Dx12Module_SR() { return upscaling_dx12.dll; }
     static HMODULE Dx12Module_FG() { return fg_dx12.dll; }

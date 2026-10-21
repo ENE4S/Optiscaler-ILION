@@ -53,9 +53,15 @@ struct Upscaler
     HMODULE module = nullptr;
     std::string versionName; // e.g. "4.1.2" as the driver names it
     ProviderInterface functions {};
+    bool (*isSupported)(const void* backend) = nullptr; // struct version 3 only
 };
 
-// Loads the driver dll at path (or takes it when already loaded) and gets its upscaler provider.
+// Loads the DX12 driver dll at path (or takes it when already loaded) and gets its upscaler provider.
 // false with the reason in problem otherwise
 bool LoadUpscaler(const std::wstring& path, Upscaler& out, std::string& problem);
+
+// The same for any driver dll: the FFX SDK dlls it looks for (answered with itself when missing), the struct versions
+// tried in order, and whether to ask through UpdateFfxApiProviderEx (Vulkan's amdvkffx64 answers struct version 3 there)
+bool LoadUpscaler(const std::wstring& path, std::initializer_list<const wchar_t*> sdkModules,
+                  std::initializer_list<uint32_t> structVersions, bool useEx, Upscaler& out, std::string& problem);
 } // namespace FSR4DriverProvider

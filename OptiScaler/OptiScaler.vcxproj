@@ -684,6 +684,7 @@ copy NUL "$(SolutionDir)x64\Release\a\!! EXTRACT ALL FILES TO GAME FOLDER !!" /Y
     <ClCompile Include="misc\IlionReShadeCatalog.cpp" />
     <ClCompile Include="scanner\rtti.cpp" />
     <ClCompile Include="fsr4\FSR4Models.cpp" />
+    <ClCompile Include="fsr4\FSR4DriverProvider.cpp" />
     <ClCompile Include="inputs\FSR2_Dx11.cpp" />
     <ClCompile Include="inputs\FSR2_Vk.cpp" />
     <ClCompile Include="inputs\XeSS_Dx11.cpp" />

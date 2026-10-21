@@ -53,9 +53,14 @@ class FSR4Versions
 
 
 
-    // Checks the file on disk: 64 bit dll that exports the five ffx api functions
-    static bool Validate(const std::wstring& dllPath, std::string* problem = nullptr)
+    // Checks the file on disk: 64 bit dll that exports the five ffx api functions.
+    // ILION: an AMD driver dll with FSR 4 (exports UpdateFfxApiProvider, e.g. amdxcffx64) passes only for a caller that
+    // asks for it through driverProvider, which then tells which of the two it is
+    static bool Validate(const std::wstring& dllPath, std::string* problem = nullptr, bool* driverProvider = nullptr)
     {
+        if (driverProvider != nullptr)
+            *driverProvider = false;
+
         const auto fail = [&](const char* text)
         {
             if (problem != nullptr)
@@ -149,6 +154,7 @@ class FSR4Versions
         static constexpr const char* required[] = { "ffxCreateContext", "ffxDestroyContext", "ffxConfigure",
                                                     "ffxQuery", "ffxDispatch" };
         bool found[std::size(required)] = {};
+        bool providerExport = false;
 
         for (size_t i = 0; i < nameCount; i++)
         {
@@ -164,12 +170,24 @@ class FSR4Versions
                 if (length == strlen(required[r]) && memcmp(exportName, required[r], length) == 0)
                     found[r] = true;
             }
+
+            providerExport = providerExport || (length == strlen("UpdateFfxApiProvider") &&
+                                                memcmp(exportName, "UpdateFfxApiProvider", length) == 0);
         }
 
         for (const bool exportFound : found)
         {
-            if (!exportFound)
-                return fail("not an FFX upscaler dll (ffx exports missing)");
+            if (exportFound)
+                continue;
+
+            if (providerExport && driverProvider != nullptr)
+            {
+                *driverProvider = true;
+                return true;
+            }
+
+            return fail(providerExport ? "AMD driver FSR provider: selectable as a provider entry only"
+                                       : "not an FFX upscaler dll (ffx exports missing)");
         }
 
         return true;

@@ -47,6 +47,9 @@ enum class Kind
 {
     Ffx,
     D4r,
+    // ILION: an AMD driver dll with FSR 4 (amdxcffx64, DX12): switched like an FFX dll, its FFX functions come from
+    // the provider it hands out (fsr4/FSR4DriverProvider); it stays loaded once used
+    Provider,
 };
 
 struct Entry
@@ -240,9 +243,18 @@ inline Entry FfxEntry(const std::wstring& key, const std::filesystem::path& dll,
     entry.path = dll.wstring();
     entry.legacy = legacy;
     entry.fileVersion = FileVersionOf(entry.path);
-    entry.valid = FSR4Versions::Validate(entry.path, &entry.problem);
+    bool driverProvider = false;
+    entry.valid = FSR4Versions::Validate(entry.path, &entry.problem, &driverProvider);
 
-    if (HasHelixNetwork(entry.path))
+    if (driverProvider)
+    {
+        // Its models (FP8, INT8, INT8 RDNA2, INT8 Lite) are chosen with the FSR 4 model of the menu
+        entry.kind = Kind::Provider;
+        entry.family = Family::Fsr4;
+        entry.display = "FSR 4 AMD driver";
+        entry.detail = entry.fileVersion;
+    }
+    else if (HasHelixNetwork(entry.path))
     {
         entry.family = Family::HelixSR;
         entry.display = "HelixSR";
@@ -424,7 +436,10 @@ inline std::vector<Entry> ScanLocked()
                 continue;
             }
 
-            const auto dll = sub.path() / FfxDllName;
+            // ILION: an FSR 4 folder may hold AMD's driver dll under its own name instead
+            auto dll = sub.path() / FfxDllName;
+            if (!std::filesystem::exists(dll, ec) && _wcsicmp(familyName.c_str(), L"FSR4") == 0)
+                dll = sub.path() / L"amdxcffx64.dll";
 
             if (std::filesystem::exists(dll, ec))
             {
@@ -534,7 +549,8 @@ inline std::optional<Entry> FindByPath(const std::wstring& path)
 inline std::wstring FfxDllPathFor(const std::wstring& key)
 {
     const auto entry = FindByKey(key);
-    return entry.has_value() && entry->kind == Kind::Ffx && entry->valid ? entry->path : std::wstring();
+    return entry.has_value() && (entry->kind == Kind::Ffx || entry->kind == Kind::Provider) && entry->valid ? entry->path
+                                                                                                           : std::wstring();
 }
 
 // Name to show for a loaded dll, the family and build as found on disk; empty when it isn't one of them

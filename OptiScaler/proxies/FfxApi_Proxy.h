@@ -13,6 +13,7 @@
 
 #include <fsr4/FSR4ModelSelection.h>
 #include <fsr4/FSR4Models.h>
+#include <fsr4/FSR4DriverProvider.h>
 #include <fsr4/FSR4VisualVerify.h>
 #include <fsr4/FSR4Versions.h>
 #include <misc/IlionUpscalers.h>
@@ -78,6 +79,8 @@ struct FfxModule
 
     bool isLoader = false;
     bool hooked = false;
+    // ILION: an AMD driver dll whose upscaler provider fills the functions below (fsr4/FSR4DriverProvider)
+    bool driverProvider = false;
 
     PfnFfxCreateContext CreateContext = nullptr;
     PfnFfxDestroyContext DestroyContext = nullptr;
@@ -133,6 +136,19 @@ class FfxApiProxy
     // ILION: FSR 4 network chosen before the last model change (FSR4Models), kept until a context is made with the
     // new one; nullopt inside means "automatic"
     inline static std::optional<std::optional<FSR4Model>> _srModelRevertTarget;
+
+    // ILION: the driver provider's query only knows its own contexts; a query without one (versions, ratios asked before
+    // a context exists) goes to the FFX dll that was in use before it
+    inline static PfnFfxQuery _providerQuery = nullptr;
+    inline static PfnFfxQuery _providerFallbackQuery = nullptr;
+
+    static ffxReturnCode_t ProviderQuery(ffxContext* context, ffxQueryDescHeader* desc)
+    {
+        if ((context == nullptr || *context == nullptr) && _providerFallbackQuery != nullptr)
+            return _providerFallbackQuery(context, desc);
+
+        return _providerQuery != nullptr ? _providerQuery(context, desc) : FFX_API_RETURN_ERROR;
+    }
 
     static bool IsSamePath(const std::wstring& a, const std::wstring& b)
     {
@@ -865,7 +881,8 @@ class FfxApiProxy
         if (target.dll == nullptr)
         {
             // Checked from the file, a dll that isn't a 64 bit FSR upscaler never gets loaded
-            if (std::string problem; !FSR4Versions::Validate(targetPath, &problem))
+            bool driverProvider = false;
+            if (std::string problem; !FSR4Versions::Validate(targetPath, &problem, &driverProvider))
             {
                 LOG_ERROR("{} can't be used: {}", wstring_to_string(targetPath), problem);
                 ImGui::InsertNotification(
@@ -874,7 +891,35 @@ class FfxApiProxy
                 return;
             }
 
-            target.dll = NtdllProxy::LoadLibraryExW_Ldr(targetPath.c_str(), NULL, 0);
+            // ILION: an AMD driver dll: its upscaler provider gives the five functions, its query goes through
+            // ProviderQuery. Loaded once, it stays loaded; switching back to it finds it in _srLoaded
+            if (driverProvider)
+            {
+                FSR4DriverProvider::Upscaler upscaler;
+                std::string providerProblem;
+
+                if (!FSR4DriverProvider::LoadUpscaler(targetPath, upscaler, providerProblem))
+                {
+                    LOG_ERROR("{} can't be used: {}", wstring_to_string(targetPath), providerProblem);
+                    ImGui::InsertNotification(
+                        { ImGuiToastType::Error, 10000, Ilion::Tr("The AMD driver gave no FSR 4 upscaler for this GPU") });
+                    SrDiagSetSwitchResult(diagFrom, diagTo, "FAILED, " + providerProblem);
+                    return;
+                }
+
+                target.dll = upscaler.module;
+                target.filePath = targetPath;
+                target.driverProvider = true;
+                target.providerName = upscaler.versionName;
+                target.CreateContext = reinterpret_cast<PfnFfxCreateContext>(upscaler.functions.createContext);
+                target.DestroyContext = reinterpret_cast<PfnFfxDestroyContext>(upscaler.functions.destroyContext);
+                target.Configure = reinterpret_cast<PfnFfxConfigure>(upscaler.functions.configure);
+                target.Dispatch = reinterpret_cast<PfnFfxDispatch>(upscaler.functions.dispatch);
+                _providerQuery = reinterpret_cast<PfnFfxQuery>(upscaler.functions.query);
+                target.Query = &ProviderQuery;
+            }
+            else
+                target.dll = NtdllProxy::LoadLibraryExW_Ldr(targetPath.c_str(), NULL, 0);
 
             if (target.dll == nullptr)
             {
@@ -889,13 +934,17 @@ class FfxApiProxy
             GetModuleFileNameW(target.dll, modulePath, MAX_PATH);
             target.filePath = std::wstring(modulePath);
 
-            target.Configure = (PfnFfxConfigure) KernelBaseProxy::GetProcAddress_()(target.dll, "ffxConfigure");
-            target.CreateContext =
-                (PfnFfxCreateContext) KernelBaseProxy::GetProcAddress_()(target.dll, "ffxCreateContext");
-            target.DestroyContext =
-                (PfnFfxDestroyContext) KernelBaseProxy::GetProcAddress_()(target.dll, "ffxDestroyContext");
-            target.Dispatch = (PfnFfxDispatch) KernelBaseProxy::GetProcAddress_()(target.dll, "ffxDispatch");
-            target.Query = (PfnFfxQuery) KernelBaseProxy::GetProcAddress_()(target.dll, "ffxQuery");
+            // A driver provider already has its functions, from its upscaler provider
+            if (!target.driverProvider)
+            {
+                target.Configure = (PfnFfxConfigure) KernelBaseProxy::GetProcAddress_()(target.dll, "ffxConfigure");
+                target.CreateContext =
+                    (PfnFfxCreateContext) KernelBaseProxy::GetProcAddress_()(target.dll, "ffxCreateContext");
+                target.DestroyContext =
+                    (PfnFfxDestroyContext) KernelBaseProxy::GetProcAddress_()(target.dll, "ffxDestroyContext");
+                target.Dispatch = (PfnFfxDispatch) KernelBaseProxy::GetProcAddress_()(target.dll, "ffxDispatch");
+                target.Query = (PfnFfxQuery) KernelBaseProxy::GetProcAddress_()(target.dll, "ffxQuery");
+            }
 
             if (target.CreateContext == nullptr || target.DestroyContext == nullptr || target.Configure == nullptr ||
                 target.Dispatch == nullptr || target.Query == nullptr)
@@ -911,8 +960,15 @@ class FfxApiProxy
                      (size_t) target.dll);
         }
 
-        // Model selection hooks are per source, move them to the module that's going to be used
-        HookFsr4ModelSelection(target, true);
+        // Model selection hooks are per source, move them to the module that's going to be used. A driver provider
+        // has its networks hooked by FSR4Models when loaded; its queries without a context go to the dll in use now
+        if (target.driverProvider)
+        {
+            if (!upscaling_dx12.driverProvider && upscaling_dx12.Query != nullptr)
+                _providerFallbackQuery = upscaling_dx12.Query;
+        }
+        else
+            HookFsr4ModelSelection(target, true);
 
         // Provider indexes belong to the dll they came from. The new dll starts with its own first provider, which
         // is the dll itself: HelixSR lists AMD's FSR after itself, an index kept from before could pick that one.
@@ -1255,9 +1311,19 @@ class FfxApiProxy
                     overridePath = SrVariantDllPath(Config::Instance()->Fsr4SrVariant.value());
 
                     // A dll that doesn't pass the checks isn't loaded, the default one gets used
-                    if (std::string problem; !overridePath.empty() && !FSR4Versions::Validate(overridePath, &problem))
+                    bool driverProvider = false;
+                    if (std::string problem; !overridePath.empty() && !FSR4Versions::Validate(overridePath, &problem, &driverProvider))
                     {
                         LOG_ERROR("Saved FSR version can't be used ({}): {}", problem, wstring_to_string(overridePath));
+                        overridePath.clear();
+                    }
+                    else if (driverProvider)
+                    {
+                        // ILION: an AMD driver provider: the default dll loads first (the driver checks that the SDK
+                        // dll is there), the provider is switched to when the first context is made
+                        LOG_INFO("Saved FSR version is an AMD driver provider, it's applied with the first context");
+                        std::scoped_lock pendingLock(_srMutex);
+                        _srPending = Config::Instance()->Fsr4SrVariant.value();
                         overridePath.clear();
                     }
                 }
@@ -1932,7 +1998,7 @@ class FfxApiProxy
     // answer the query) get them as before; a dll whose providers aren't AMD's is used as it is.
     static void HookFsr4ModelSelection(FfxModule& module, bool rehook)
     {
-        if (module.dll == nullptr)
+        if (module.dll == nullptr || module.driverProvider)
             return;
 
         if (module.version.major == 0)

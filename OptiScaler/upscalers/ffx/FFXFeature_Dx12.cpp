@@ -694,20 +694,20 @@ bool FFXFeatureDx12::InitFFX(const NVSDK_NGX_Parameter* InParameters)
         auto version =
             State::Instance().ffxUpscalerVersionsDx12.names[Config::Instance()->FfxUpscalerIndex.value_or_default()];
 
-        // ILION: the provider the context was really made with, as FFX reports it for the context; the version shown is
-        // that one, and a difference from the one asked for is logged
-        ffxQueryGetProviderVersion created {};
-        created.header.type = FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION;
+        // ILION: the provider the context was really made with, as the dll that made it reports (see
+        // FfxApiProxy::SrContextProviderVersion); the version shown is that one, a difference is logged
+        uint64_t createdId = 0;
+        const char* createdName = nullptr;
 
-        if (FfxApiProxy::D3D12_Query(&_context, &created.header) == FFX_API_RETURN_OK && created.versionName != nullptr)
+        if (FfxApiProxy::SrContextProviderVersion(&_context, &createdId, &createdName))
         {
-            if (version == nullptr || strcmp(created.versionName, version) != 0)
-                LOG_WARN("FFX provider asked: {}, context made with: {} (id {:X})", version ? version : "-", created.versionName,
-                         created.versionId);
+            if (version == nullptr || strcmp(createdName, version) != 0)
+                LOG_WARN("FFX provider asked: {}, context made with: {} (id {:X})", version ? version : "-", createdName,
+                         createdId);
             else
-                LOG_INFO("FFX context made with provider {} (id {:X})", created.versionName, created.versionId);
+                LOG_INFO("FFX context made with provider {} (id {:X})", createdName, createdId);
 
-            version = created.versionName;
+            version = createdName;
         }
 
         _name = "FSR";

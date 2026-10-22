@@ -469,6 +469,47 @@ class FfxApiProxy
 
   public:
     static void SetSrIndexManual(bool manual) { _srIndexManual = manual; }
+
+    // ILION: the provider an upscaling context was made with, asked to the dll that made it with FFX's own
+    // GET_PROVIDER_VERSION query. Never through D3D12_Query: GetIndirectType reads the field after the header of this
+    // query (versionId, 0) as its type, takes it as a general query and hands the context to main_dx12, a dll that
+    // doesn't own it (crash). Only asked to AMD based FFX dlls: not to an AMD driver provider (its query only knows the
+    // upscaler's descriptions) nor to third-party dlls such as HelixSR.
+    static bool SrContextProviderVersion(ffxContext* context, uint64_t* versionId, const char** versionName)
+    {
+        const auto fns = FindSrContext(context);
+        if (!fns.has_value() || fns->Query == nullptr || fns->owner == nullptr)
+            return false;
+
+        bool amdFfxDll = false;
+        {
+            std::scoped_lock lock(_srMutex);
+
+            if (upscaling_dx12.dll == fns->owner)
+                amdFfxDll = !upscaling_dx12.driverProvider && !upscaling_dx12.thirdParty;
+            else
+            {
+                for (const auto& loaded : _srLoaded)
+                {
+                    if (loaded.dll == fns->owner)
+                        amdFfxDll = !loaded.driverProvider && !loaded.thirdParty;
+                }
+            }
+        }
+
+        if (!amdFfxDll)
+            return false;
+
+        ffxQueryGetProviderVersion query {};
+        query.header.type = FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION;
+
+        if (fns->Query(context, &query.header) != FFX_API_RETURN_OK || query.versionName == nullptr)
+            return false;
+
+        *versionId = query.versionId;
+        *versionName = query.versionName;
+        return true;
+    }
     static void SrNoteDriverProviderId(uint64_t id)
     {
         if (id != 0)

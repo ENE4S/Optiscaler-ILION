@@ -527,8 +527,10 @@ static int NativeVulkanIndexFor(const IlionUpscalers::Entry* entry)
 
     const auto native = FindVulkanNativeFfx();
 
+    // The default dll: an FSR 4 that amd_fidelityfx_vk.dll lists, else the driver's Vulkan FSR 4; without either it
+    // keeps the DX12 interop with the default FSR 4 dll instead of falling back to the FSR 3.1 of amd_fidelityfx_vk.dll
     if (entry == nullptr)
-        return native.sdkFsr4 >= 0 ? native.sdkFsr4 : native.sdkFirst;
+        return native.sdkFsr4 >= 0 ? native.sdkFsr4 : native.direct;
 
     if (entry->kind == IlionUpscalers::Kind::Provider && entry->key == L"FSR4/AMD driver")
         return native.direct >= 0 ? native.direct : native.sdkFsr4;
@@ -1154,7 +1156,7 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
         if (api == Vulkan && VulkanBackendChoice() == VulkanBackend::Native && NativeVulkanIndexFor(nullptr) < 0)
         {
             variant.usable = false;
-            variant.reason = std::string(Tr("DLL not available")) + ": " + Tr("amd_fidelityfx_vk.dll lists no upscaler");
+            variant.reason = std::string(Tr("DLL not available")) + ": " + Tr("no native Vulkan FSR 4 provider was found");
         }
 
         variants.push_back(variant);

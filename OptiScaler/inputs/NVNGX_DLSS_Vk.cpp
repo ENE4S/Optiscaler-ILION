@@ -1062,7 +1062,13 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_VULKAN_EvaluateFeature(VkCommandBuffer 
     auto upscaleResult = deviceContext->Evaluate(InCmdList, InParameters);
 
     if (!upscaleResult)
+    {
         ImGui::InsertNotification({ ImGuiToastType::Error, 10000, "Upscaler failed to run!" });
+
+        // ILION: no silent fallback, the log says what was running and what replaces it
+        LOG_ERROR("Upscaler failed to run: {} (inited: {}), falling back to FSR 2.2.1", deviceContext->Name(),
+                  deviceContext->IsInited());
+    }
 
     if ((!upscaleResult || !deviceContext->IsInited()) &&
         Config::Instance()->VulkanUpscaler.value_or_default() != Upscaler::FSR22)

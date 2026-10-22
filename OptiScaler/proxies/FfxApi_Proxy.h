@@ -79,8 +79,13 @@ struct FfxModule
 
     bool isLoader = false;
     bool hooked = false;
-    // ILION: an AMD driver dll whose upscaler provider fills the functions below (fsr4/FSR4DriverProvider)
+    // ILION: an AMD driver dll whose upscaler provider fills the functions below (fsr4/FSR4DriverProvider). Its query
+    // only knows its own contexts: the versions query without a context is answered with this provider alone
+    // (providerVersionId, providerName), any other query without a context goes to fallbackQuery, the Query of the
+    // FFX dll that was in use when it was switched to (still loaded: switched dlls stay loaded)
     bool driverProvider = false;
+    uint64_t providerVersionId = 0;
+    PfnFfxQuery fallbackQuery = nullptr;
 
     PfnFfxCreateContext CreateContext = nullptr;
     PfnFfxDestroyContext DestroyContext = nullptr;
@@ -137,17 +142,27 @@ class FfxApiProxy
     // new one; nullopt inside means "automatic"
     inline static std::optional<std::optional<FSR4Model>> _srModelRevertTarget;
 
-    // ILION: the driver provider's query only knows its own contexts; a query without one (versions, ratios asked before
-    // a context exists) goes to the FFX dll that was in use before it
-    inline static PfnFfxQuery _providerQuery = nullptr;
-    inline static PfnFfxQuery _providerFallbackQuery = nullptr;
-
-    static ffxReturnCode_t ProviderQuery(ffxContext* context, ffxQueryDescHeader* desc)
+    // ILION: a query without a context for an AMD driver provider (see FfxModule::driverProvider). The versions query
+    // lists the provider itself, so the version list, its index and the names shown all belong to what runs
+    static ffxReturnCode_t DriverProviderQueryWithoutContext(const FfxModule& module, ffxQueryDescHeader* desc)
     {
-        if ((context == nullptr || *context == nullptr) && _providerFallbackQuery != nullptr)
-            return _providerFallbackQuery(context, desc);
+        if (desc != nullptr && desc->type == FFX_API_QUERY_DESC_TYPE_GET_VERSIONS)
+        {
+            auto versions = reinterpret_cast<ffxQueryDescGetVersions*>(desc);
 
-        return _providerQuery != nullptr ? _providerQuery(context, desc) : FFX_API_RETURN_ERROR;
+            if (versions->outputCount == nullptr)
+                return FFX_API_RETURN_ERROR_PARAMETER;
+
+            if (versions->versionIds != nullptr && *versions->outputCount >= 1)
+                versions->versionIds[0] = module.providerVersionId;
+            if (versions->versionNames != nullptr && *versions->outputCount >= 1)
+                versions->versionNames[0] = module.providerName.c_str();
+
+            *versions->outputCount = 1;
+            return FFX_API_RETURN_OK;
+        }
+
+        return module.fallbackQuery != nullptr ? module.fallbackQuery(nullptr, desc) : FFX_API_RETURN_NO_PROVIDER;
     }
 
     static bool IsSamePath(const std::wstring& a, const std::wstring& b)
@@ -900,8 +915,9 @@ class FfxApiProxy
                 return;
             }
 
-            // ILION: an AMD driver dll: its upscaler provider gives the five functions, its query goes through
-            // ProviderQuery. Loaded once, it stays loaded; switching back to it finds it in _srLoaded
+            // ILION: an AMD driver dll: its upscaler provider gives the five functions; its queries without a context
+            // are answered by DriverProviderQueryWithoutContext. Loaded once, it stays loaded; switching back to it
+            // finds it in _srLoaded with its own provider data
             if (driverProvider)
             {
                 FSR4DriverProvider::Upscaler upscaler;
@@ -924,8 +940,8 @@ class FfxApiProxy
                 target.DestroyContext = reinterpret_cast<PfnFfxDestroyContext>(upscaler.functions.destroyContext);
                 target.Configure = reinterpret_cast<PfnFfxConfigure>(upscaler.functions.configure);
                 target.Dispatch = reinterpret_cast<PfnFfxDispatch>(upscaler.functions.dispatch);
-                _providerQuery = reinterpret_cast<PfnFfxQuery>(upscaler.functions.query);
-                target.Query = &ProviderQuery;
+                target.Query = reinterpret_cast<PfnFfxQuery>(upscaler.functions.query);
+                target.providerVersionId = upscaler.functions.versionId;
             }
             else
                 target.dll = NtdllProxy::LoadLibraryExW_Ldr(targetPath.c_str(), NULL, 0);
@@ -970,11 +986,14 @@ class FfxApiProxy
         }
 
         // Model selection hooks are per source, move them to the module that's going to be used. A driver provider
-        // has its networks hooked by FSR4Models when loaded; its queries without a context go to the dll in use now
+        // has its networks hooked by FSR4Models when loaded; its other queries without a context go to the FFX dll in
+        // use now (or the one it already had)
         if (target.driverProvider)
         {
             if (!upscaling_dx12.driverProvider && upscaling_dx12.Query != nullptr)
-                _providerFallbackQuery = upscaling_dx12.Query;
+                target.fallbackQuery = upscaling_dx12.Query;
+            else if (target.fallbackQuery == nullptr && main_dx12.Query != nullptr)
+                target.fallbackQuery = main_dx12.Query;
         }
         else
             HookFsr4ModelSelection(target, true);
@@ -1943,6 +1962,16 @@ class FfxApiProxy
         if (module.Query == nullptr)
             return false;
 
+        // ILION: an AMD driver provider is its single provider; its own query isn't asked without a context
+        if (module.driverProvider)
+        {
+            if (firstName != nullptr)
+                *firstName = module.providerName;
+            if (allAmd != nullptr)
+                *allAmd = true;
+            return !module.providerName.empty();
+        }
+
         ffxQueryDescGetVersions versionQuery {};
         versionQuery.header.type = FFX_API_QUERY_DESC_TYPE_GET_VERSIONS;
         versionQuery.createDescType = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
@@ -2435,6 +2464,8 @@ class FfxApiProxy
             return fg_dx12.Query(context, desc);
         else if (auto srContext = FindSrContext(context); type == FFXStructType::Upscaling && srContext.has_value())
             return srContext->Query(context, desc);
+        else if (type == FFXStructType::Upscaling && upscaling_dx12.driverProvider && (context == nullptr || *context == nullptr))
+            return DriverProviderQueryWithoutContext(upscaling_dx12, desc);
         else if (type == FFXStructType::Upscaling && upscaling_dx12.dll != nullptr)
             return upscaling_dx12.Query(context, desc);
         else if (type == FFXStructType::Denoiser && denoiser_dx12.dll != nullptr)

@@ -26,6 +26,7 @@
 
 #include <magic_enum.hpp>
 #include <mutex>
+#include <set>
 #include <array>
 #include <atomic>
 
@@ -149,6 +150,18 @@ class FfxApiProxy
     // ILION: id of the upscaler provider the AMD driver handed to an FFX dll through IAmdExtFfxApi (FSR4Upgrade)
     inline static std::atomic<uint64_t> _driverProviderId { 0 };
 
+    // ILION: a stable copy of a provider name for the FFX version list (State::ffxUpscalerVersionsDx12 keeps the
+    // pointer until the next query). Each name is kept once for the whole session: a std::set node never moves, so the
+    // pointer stays valid when the module it came from is replaced by a dll switch
+    static const char* StableProviderName(const std::string& name)
+    {
+        static std::mutex namesMutex;
+        static std::set<std::string> names;
+
+        std::scoped_lock lock(namesMutex);
+        return names.insert(name).first->c_str();
+    }
+
     // ILION: a query without a context for an AMD driver provider (see FfxModule::driverProvider). The versions query
     // lists the provider itself, so the version list, its index and the names shown all belong to what runs
     static ffxReturnCode_t DriverProviderQueryWithoutContext(const FfxModule& module, ffxQueryDescHeader* desc)
@@ -163,7 +176,7 @@ class FfxApiProxy
             if (versions->versionIds != nullptr && *versions->outputCount >= 1)
                 versions->versionIds[0] = module.providerVersionId;
             if (versions->versionNames != nullptr && *versions->outputCount >= 1)
-                versions->versionNames[0] = module.providerName.c_str();
+                versions->versionNames[0] = StableProviderName(module.providerName);
 
             *versions->outputCount = 1;
             return FFX_API_RETURN_OK;

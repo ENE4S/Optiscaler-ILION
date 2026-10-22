@@ -9,6 +9,8 @@
 #include <WinTrust.h>
 
 #include <algorithm>
+#include <atomic>
+#include <map>
 #include <cstring>
 #include <cwctype>
 #include <filesystem>
@@ -80,6 +82,16 @@ struct Entry
 inline std::mutex _mutex;
 inline std::vector<Entry> _cache;
 inline bool _scanned = false;
+
+// ILION: grows with every scan of the folders, so a lookup kept by a caller knows when it has to be done again
+inline std::atomic<uint64_t> _generation { 0 };
+
+// ILION: whether two spellings of a path name the same file, asked to the disk once per pair (see SamePath); emptied
+// with every scan of the folders
+inline std::mutex _sameMutex;
+inline std::map<std::pair<std::wstring, std::wstring>, bool> _sameMemo;
+
+inline uint64_t Generation() { return _generation; }
 
 inline std::filesystem::path Root() { return Util::ExePath().parent_path() / L"ILION" / L"Escaladores"; }
 inline std::filesystem::path LegacyRoot() { return FSR4Versions::Root(); }
@@ -409,6 +421,12 @@ inline void AddD4r(const std::filesystem::path& folder, const std::wstring& key,
 // Every upscaler found, sorted by family and name. Reads the folders again; called with _mutex held.
 inline std::vector<Entry> ScanLocked()
 {
+    _generation++;
+    {
+        std::scoped_lock memoLock(_sameMutex);
+        _sameMemo.clear();
+    }
+
     std::vector<Entry> result;
     std::error_code ec;
 
@@ -555,13 +573,34 @@ inline std::vector<Entry> Rescan()
     return ScanLocked();
 }
 
+// Same file: the same text (case aside), else what the disk says. ILION: std::filesystem::equivalent opens both
+// files, and the menu and the overlay ask this on every frame; the answer for a pair doesn't change while the folders
+// stay as scanned, so the disk is asked once per pair (the memo is emptied with every scan)
 inline bool SamePath(const std::wstring& a, const std::wstring& b)
 {
     if (a.empty() || b.empty())
         return false;
 
+    if (_wcsicmp(a.c_str(), b.c_str()) == 0)
+        return true;
+
+    const auto key = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
+
+    {
+        std::scoped_lock lock(_sameMutex);
+        if (const auto found = _sameMemo.find(key); found != _sameMemo.end())
+            return found->second;
+    }
+
     std::error_code ec;
-    return std::filesystem::equivalent(a, b, ec) || _wcsicmp(a.c_str(), b.c_str()) == 0;
+    const bool same = std::filesystem::equivalent(a, b, ec);
+
+    std::scoped_lock lock(_sameMutex);
+    if (_sameMemo.size() > 512)
+        _sameMemo.clear();
+    _sameMemo[key] = same;
+
+    return same;
 }
 
 inline std::optional<Entry> FindByKey(const std::wstring& key)

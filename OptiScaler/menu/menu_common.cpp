@@ -572,6 +572,35 @@ static void SetConfiguredUpscaler(Upscaler upscaler)
     }
 }
 
+// ILION: the entry of the list the FFX dll in use belongs to (or the default dll's twin), looked up again only when
+// that dll, the twin key or the scan of the folders changes; the label is drawn on every frame
+static std::optional<IlionUpscalers::Entry> ActiveSrEntry(const std::wstring& srPath)
+{
+    static std::wstring cachedPath, cachedTwin;
+    static uint64_t cachedGeneration = 0;
+    static bool cachedValid = false;
+    static std::optional<IlionUpscalers::Entry> cachedEntry;
+
+    const auto generation = IlionUpscalers::Generation();
+    const auto& twin = SharedDefaultTwin();
+
+    if (!cachedValid || generation != cachedGeneration || srPath != cachedPath || twin != cachedTwin)
+    {
+        cachedEntry = IlionUpscalers::FindByPath(srPath);
+
+        if (!cachedEntry.has_value() && IlionUpscalers::SamePath(srPath, SharedDefaultSrDll()))
+            cachedEntry = IlionUpscalers::FindByKey(twin);
+
+        // The lookup may be the one that scanned the folders first
+        cachedGeneration = IlionUpscalers::Generation();
+        cachedPath = srPath;
+        cachedTwin = twin;
+        cachedValid = true;
+    }
+
+    return cachedEntry;
+}
+
 static std::string UpscalerLabel(IFeature* feature)
 {
     if (feature == nullptr)
@@ -588,14 +617,11 @@ static std::string UpscalerLabel(IFeature* feature)
     if (RunsSwitchedFfx(type))
     {
         // Short names everywhere; the full provider string stays in the log and the diagnostics
-        auto entry = IlionUpscalers::FindByPath(FfxApiProxy::Dx12Module_SR_Path());
+        const auto entry = ActiveSrEntry(FfxApiProxy::Dx12Module_SR_Path());
 
         // An AMD driver dll chosen in the selector: what runs is its FSR, with the version its provider created
         if (entry.has_value() && entry->kind == IlionUpscalers::Kind::Provider)
             return "FSR " + version + " · Driver";
-
-        if (!entry.has_value() && IlionUpscalers::SamePath(FfxApiProxy::Dx12Module_SR_Path(), SharedDefaultSrDll()))
-            entry = IlionUpscalers::FindByKey(SharedDefaultTwin());
 
         // HelixSR: "DLSS 3.7" is what its author says it runs. Shown only when the dll identified as HelixSR by its
         // file is the one the last upscale really executed (SR-DIAG); the version itself can't be checked from here

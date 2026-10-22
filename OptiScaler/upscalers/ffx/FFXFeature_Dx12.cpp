@@ -660,6 +660,12 @@ bool FFXFeatureDx12::InitFFX(const NVSDK_NGX_Parameter* InParameters)
 
         _contextDesc.header.pNext = &backendDesc.header;
 
+        // ILION: unless picked by hand in Advanced, the provider the dll in use runs itself (a community build its
+        // own, not the AMD driver's that every FFX dll also lists)
+        if (!FfxApiProxy::SrIndexManual())
+            Config::Instance()->FfxUpscalerIndex.set_volatile_value(
+                FfxApiProxy::SrAutomaticIndex(State::Instance().ffxUpscalerVersionsDx12.ids));
+
         if (Config::Instance()->FfxUpscalerIndex.value_or_default() < 0 ||
             Config::Instance()->FfxUpscalerIndex.value_or_default() >=
                 State::Instance().ffxUpscalerVersionsDx12.ids.size())
@@ -687,6 +693,23 @@ bool FFXFeatureDx12::InitFFX(const NVSDK_NGX_Parameter* InParameters)
 
         auto version =
             State::Instance().ffxUpscalerVersionsDx12.names[Config::Instance()->FfxUpscalerIndex.value_or_default()];
+
+        // ILION: the provider the context was really made with, as FFX reports it for the context; the version shown is
+        // that one, and a difference from the one asked for is logged
+        ffxQueryGetProviderVersion created {};
+        created.header.type = FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION;
+
+        if (FfxApiProxy::D3D12_Query(&_context, &created.header) == FFX_API_RETURN_OK && created.versionName != nullptr)
+        {
+            if (version == nullptr || strcmp(created.versionName, version) != 0)
+                LOG_WARN("FFX provider asked: {}, context made with: {} (id {:X})", version ? version : "-", created.versionName,
+                         created.versionId);
+            else
+                LOG_INFO("FFX context made with provider {} (id {:X})", created.versionName, created.versionId);
+
+            version = created.versionName;
+        }
+
         _name = "FSR";
         parse_version(version);
     }

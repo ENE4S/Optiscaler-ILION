@@ -757,6 +757,7 @@ static void SelectUpscaler(const IlionUpscalers::Entry* entry)
                 config->DLSSAllowExternalBackend = false;
 
             config->FfxUpscalerIndexVk = native;
+            FfxApiProxy::SetSrIndexManual(false);
             SetConfiguredUpscaler(Upscaler::FFX);
             state.newBackend = Upscaler::FFX;
             MARK_ALL_BACKENDS_CHANGED();
@@ -769,8 +770,10 @@ static void SelectUpscaler(const IlionUpscalers::Entry* entry)
             config->DLSSAllowExternalBackend = false;
 
         // The dll's own first provider (FSR 4, or HelixSR itself), also when FSR 3.1 of the same dll ran before.
-        // ILION: saved too, so an index of another provider isn't read back from the ini at the next start
+        // ILION: saved too, so an index of another provider isn't read back from the ini at the next start; the index
+        // is resolved again for the new dll (its own provider, not the AMD driver's it also lists)
         config->FfxUpscalerIndex = 0;
+        FfxApiProxy::SetSrIndexManual(false);
 
         SetConfiguredUpscaler(FfxBackendForApi());
         FfxApiProxy::RequestSrVariant(key);
@@ -847,6 +850,11 @@ static void SelectFfxProvider(int index)
         config->DLSSAllowExternalBackend = false;
 
     FfxIndexFor(Upscaler::FFX, State::Instance().api) = index;
+
+    // A provider picked by its index (FSR 3.1 of the dll in use) is kept as picked
+    if (State::Instance().api != Vulkan)
+        FfxApiProxy::SetSrIndexManual(true);
+
     SetConfiguredUpscaler(Upscaler::FFX);
     State::Instance().newBackend = Upscaler::FFX;
     MARK_ALL_BACKENDS_CHANGED();
@@ -2245,7 +2253,12 @@ void MenuCommon::RenderUpscalerCombo(const API api, Upscaler currentUpscaler, co
 
             // Switching to FFX starts with the newest one
             if (entry.ffxIndex >= 0 && currentUpscaler != entry.upscaler)
+            {
                 FfxIndexFor(entry.upscaler, api) = entry.ffxIndex;
+
+                if (&FfxIndexFor(entry.upscaler, api) == &config->FfxUpscalerIndex)
+                    FfxApiProxy::SetSrIndexManual(true);
+            }
         }
 
         // Dimmed tags aligned to the right
@@ -9304,6 +9317,11 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                             ffxIndex != n)
                         {
                             ffxIndexConfig = n;
+
+                            // A provider picked by hand in Advanced stays until an implementation is chosen again
+                            if (&ffxIndexConfig == &config->FfxUpscalerIndex)
+                                FfxApiProxy::SetSrIndexManual(true);
+
                             state.newBackend = currentBackend;
                             MARK_ALL_BACKENDS_CHANGED();
                         }
@@ -9316,6 +9334,13 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
     
                 ShowTooltip("Provider inside the FFX dll in use, as that dll lists them: e.g. the AMD driver's FSR 4.1.2 that "
                             "AMD's SDK dll hands the upscale to, or the SDK's own 4.1.1. The selector above picks the dll.");
+
+                // ILION: a provider picked here by hand, until an implementation is chosen again in the selector
+                if (FfxApiProxy::SrIndexManual() && &ffxIndexConfig == &config->FfxUpscalerIndex)
+                {
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("%s", Tr("(manual)"));
+                }
             }
             }
         }

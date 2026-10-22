@@ -162,7 +162,13 @@ HRESULT STDMETHODCALLTYPE AmdExtFfxApi::UpdateFfxApiProvider(void* pData, uint32
         spdlog::log(level, "UpdateFfxApiProviderEx for: {}, result: 0x{:X}", effect, (UINT) result);
 
         if (effectType == FFXStructType::Upscaling)
+        {
             FfxApiProxy::SrDiagOnDriverProvider(callerModule, result);
+
+            // ILION: the driver's provider id, so the FFX dlls of ILION's folders run their own provider instead
+            if (SUCCEEDED(result))
+                FfxApiProxy::SrNoteDriverProviderId(reinterpret_cast<ExternalProviderData*>(pData)->provider.versionId);
+        }
 
         State::EnableChecks(owner);
         return result;
@@ -179,7 +185,13 @@ HRESULT STDMETHODCALLTYPE AmdExtFfxApi::UpdateFfxApiProvider(void* pData, uint32
         spdlog::log(level, "UpdateFfxApiProvider for: {}, result: 0x{:X}", effect, (UINT) result);
 
         if (effectType == FFXStructType::Upscaling)
+        {
             FfxApiProxy::SrDiagOnDriverProvider(callerModule, result);
+
+            // ILION: the driver's provider id, so the FFX dlls of ILION's folders run their own provider instead
+            if (SUCCEEDED(result))
+                FfxApiProxy::SrNoteDriverProviderId(reinterpret_cast<ExternalProviderData*>(pData)->provider.versionId);
+        }
 
         State::EnableChecks(owner);
         return result;

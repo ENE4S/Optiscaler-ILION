@@ -142,6 +142,13 @@ class FfxApiProxy
     // new one; nullopt inside means "automatic"
     inline static std::optional<std::optional<FSR4Model>> _srModelRevertTarget;
 
+    // ILION: the FFX provider index was picked by hand (Advanced) since the last implementation choice; until then
+    // the index is resolved for the dll in use (SrAutomaticIndex)
+    inline static bool _srIndexManual = false;
+
+    // ILION: id of the upscaler provider the AMD driver handed to an FFX dll through IAmdExtFfxApi (FSR4Upgrade)
+    inline static std::atomic<uint64_t> _driverProviderId { 0 };
+
     // ILION: a query without a context for an AMD driver provider (see FfxModule::driverProvider). The versions query
     // lists the provider itself, so the version list, its index and the names shown all belong to what runs
     static ffxReturnCode_t DriverProviderQueryWithoutContext(const FfxModule& module, ffxQueryDescHeader* desc)
@@ -461,6 +468,40 @@ class FfxApiProxy
     }
 
   public:
+    static void SetSrIndexManual(bool manual) { _srIndexManual = manual; }
+    static void SrNoteDriverProviderId(uint64_t id)
+    {
+        if (id != 0)
+            _driverProviderId = id;
+    }
+    static bool SrIndexManual() { return _srIndexManual; }
+
+    // ILION: the provider of its FFX version list the dll in use runs by itself. An FFX dll also lists the AMD driver's
+    // provider (an external one, bit 31 of its id): ILION's IAmdExtFfxApi (FSR4Upgrade) hands it to every FFX dll that
+    // asks, and it comes first as the newest. Index 0 would make a community build pass the upscale to the driver.
+    //   default dll (not one of ILION's folders): 0, AMD's driver through the SDK, as it always was
+    //   FSR 4 dlls of ILION's folders (community builds, Lite, AMD's SDK dll): their own first provider
+    //   HelixSR, other FFX dlls, AMD driver providers: 0
+    static int SrAutomaticIndex(const std::vector<uint64_t>& ids)
+    {
+        if (ids.empty() || upscaling_dx12.driverProvider)
+            return 0;
+
+        const auto entry = IlionUpscalers::FindByPath(upscaling_dx12.filePath);
+        if (!entry.has_value() || entry->family != IlionUpscalers::Family::Fsr4)
+            return 0;
+
+        // Not the driver's: neither an external id nor the id the driver handed out (see SrNoteDriverProviderId)
+        const uint64_t driverId = _driverProviderId;
+        for (size_t i = 0; i < ids.size(); i++)
+        {
+            if ((ids[i] & 0x80000000ull) == 0 && ids[i] != driverId)
+                return (int) i;
+        }
+
+        return 0;
+    }
+
     // ILION: called by the menu when the FSR 4 network changes, before the backend is made again
     static void ArmSrModelRevert(std::optional<FSR4Model> previous) { _srModelRevertTarget = previous; }
 

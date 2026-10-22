@@ -46,6 +46,8 @@ struct Translation
 inline constexpr Translation kSpanish[] = {
     // Universal upscaler selector (v1.2-dev.5)
     { "Upscaler##IlionUpscaler", "Escalador" },
+    // ILION v1.2-dev.36
+    { "(manual)", "(manual)" },
     // ILION v1.2-dev.35
     { "no native Vulkan FSR 4 provider was found", "no se encontró ningún proveedor FSR 4 nativo de Vulkan" },
     // ILION v1.2-dev.34: Vulkan backend

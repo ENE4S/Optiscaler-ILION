@@ -46,6 +46,14 @@ struct Translation
 inline constexpr Translation kSpanish[] = {
     // Universal upscaler selector (v1.2-dev.5)
     { "Upscaler##IlionUpscaler", "Escalador" },
+    // ILION v1.2-dev.34: Vulkan backend
+    { "Automatic (recommended)", "Automático (recomendado)" },
+    { "DX12 interop", "Interop DX12" },
+    { "Native Vulkan", "Vulkan nativo" },
+    { "Upscaling backend", "Backend de escalado" },
+    { "amd_fidelityfx_vk.dll lists no upscaler", "amd_fidelityfx_vk.dll no lista ningún escalador" },
+    { "it runs only through the DX12 interop, the upscaling backend is native Vulkan", "solo funciona mediante el interop DX12 y el backend de escalado es Vulkan nativo" },
+    { "Automatic: native Vulkan where the implementation has it (AMD's driver, the default dll), the DX12 interop for dlls that need it (community builds, Lite, AMD's SDK dll).\nNative Vulkan: only implementations that run natively.\nDX12 interop: every FFX dll through OptiScaler's DX12 interop (w/DX12).", "Automático: Vulkan nativo cuando la implementación lo tiene (controlador AMD, DLL por defecto) y el interop DX12 para las DLL que lo necesitan (variantes de la comunidad, Lite, DLL del SDK de AMD).\nVulkan nativo: solo implementaciones que funcionan de forma nativa.\nInterop DX12: todas las DLL FFX mediante el interop DX12 de OptiScaler (w/DX12)." },
     // ILION v1.2-dev.33: Vulkan SDK FSR 4
     { "FSR 4 of AMD's Vulkan driver, native Vulkan, as amd_fidelityfx_vk.dll lists it and hands the upscale over. Switches while the game runs.", "FSR 4 del controlador Vulkan de AMD, Vulkan nativo, tal como lo lista amd_fidelityfx_vk.dll, que le pasa el escalado. Cambia con el juego en marcha." },
     // ILION v1.2-dev.32: provider origin

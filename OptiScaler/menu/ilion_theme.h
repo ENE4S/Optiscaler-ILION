@@ -43,12 +43,12 @@ inline ImFont* SkinFont()
     return skin == Skin::Terminal ? terminalFont : skin == Skin::Crt ? crtFont : skin == Skin::Flat ? modernFont : nullptr;
 }
 
-// ILION: the FSR 4 model only, an intense radioactive orange used nowhere else (redder than the FPS and input oranges);
-// on light backgrounds only darker, still clearly orange
-inline ImVec4 Fsr4ModelOrange(const ImVec4& background)
+// ILION: the FSR 4 model only, an intense radioactive amber (#FFB000) used nowhere else: not ILION's yellow, not the
+// oranges of FPS and input, not red; on light backgrounds only darker, still clearly amber
+inline ImVec4 Fsr4ModelAmber(const ImVec4& background)
 {
     const float light = background.x * 0.299f + background.y * 0.587f + background.z * 0.114f;
-    return light > 0.55f ? ImVec4(0.80f, 0.24f, 0.00f, 1.0f) : ImVec4(1.00f, 0.33f, 0.00f, 1.0f);
+    return light > 0.55f ? ImVec4(0.72f, 0.46f, 0.00f, 1.0f) : ImVec4(1.00f, 0.69f, 0.00f, 1.0f);
 }
 
 // ILION in the window name: a radioactive yellow, darker on light backgrounds so it can still be read

@@ -45,6 +45,10 @@ struct HookedModule
     // Only filled when the module has several models to choose from
     std::vector<PatchedProvider> patchedProviders;
 
+    // ILION: the model whose support check last answered yes, the one FFX took for the context it was making; a yes
+    // kept from an older context can't stand for it when FFX checks the models in another order or stops early
+    std::optional<FSR4Model> lastSupported;
+
     bool HasModel(FSR4Model model) const { return std::ranges::find(models, model) != models.end(); }
 };
 
@@ -95,6 +99,9 @@ bool hkIsSupported(void* provider, void* device)
 
         lock.lock();
         patched->lastReportedSupport = supported;
+
+        if (supported)
+            hooked.lastSupported = model;
 
         return supported;
     }
@@ -237,14 +244,8 @@ std::optional<FSR4Model> FSR4Models::ActiveModel(HMODULE module)
         return std::nullopt;
     }
 
-    // FFX stops at the first supported model, the providers are in the order it checks them
-    for (auto& patched : hooked->patchedProviders)
-    {
-        if (patched.lastReportedSupport.value_or(false))
-            return patched.provider->model;
-    }
-
-    return std::nullopt;
+    // ILION: the last model FFX was told yes for (see lastSupported)
+    return hooked->lastSupported;
 }
 
 const char* FSR4Models::Name(FSR4Model model) { return Provider(model).name; }

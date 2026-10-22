@@ -350,6 +350,10 @@ inline void AddHelix(const std::filesystem::path& folder, const std::wstring& ke
         break;
     }
 
+    // ILION: builds of HelixSR told apart by the version in their file ("HelixSR 1.9.3"), not by the folder name
+    if (entry.valid && !entry.fileVersion.empty())
+        entry.display = "HelixSR " + entry.fileVersion;
+
     if (!entry.path.empty())
         out.push_back(std::move(entry));
 }

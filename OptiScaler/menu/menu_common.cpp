@@ -198,11 +198,18 @@ static const char* requestedMenuTab = nullptr; // Label of a tab to switch to on
 static bool personalPanelOpen = false;          // ILION: Customise panel of Personal, at the right of its boxes
 static bool reshadePanelOpen = false;           // ILION: ReShade panel, joined to the right of the window (Graphics)
 
+static void DedupeSrVariants(std::vector<FfxApiProxy::SrVariant>& list);
+
 // The FSR upscaler dlls that can be selected. One list and one way of selecting for the Upscaling tab and for
 // Benchmark, both show the same state.
 static std::vector<FfxApiProxy::SrVariant>& SharedSrVariants()
 {
-    static std::vector<FfxApiProxy::SrVariant> variants = FfxApiProxy::SrVariants();
+    static std::vector<FfxApiProxy::SrVariant> variants = []
+    {
+        auto list = FfxApiProxy::SrVariants();
+        DedupeSrVariants(list);
+        return list;
+    }();
     return variants;
 }
 
@@ -242,9 +249,37 @@ static bool SameFileContent(const std::wstring& a, const std::wstring& b)
     return true;
 }
 
+// ILION: the same dll copied to two folders of one family (e.g. HelixSR and HelixSR\helix 1.8) is listed once; the
+// saved choice is the copy kept. Different files keep their own entries
+static void DedupeSrVariants(std::vector<FfxApiProxy::SrVariant>& list)
+{
+    const auto saved = Config::Instance()->Fsr4SrVariant.value_or(L"");
+
+    for (size_t i = 0; i < list.size(); i++)
+    {
+        for (size_t j = i + 1; j < list.size();)
+        {
+            if (list[i].family == list[j].family && list[i].kind == list[j].kind && list[i].valid && list[j].valid &&
+                SameFileContent(list[i].path, list[j].path))
+            {
+                if (_wcsicmp(list[j].key.c_str(), saved.c_str()) == 0)
+                    std::swap(list[i], list[j]);
+
+                LOG_INFO("Same dll listed once: {} (also {})", wstring_to_string(list[i].path), wstring_to_string(list[j].path));
+                list.erase(list.begin() + j);
+                continue;
+            }
+
+            j++;
+        }
+    }
+}
+
 static void RescanSrVariants()
 {
-    SharedSrVariants() = FfxApiProxy::SrVariants();
+    auto scanned = FfxApiProxy::SrVariants();
+    DedupeSrVariants(scanned);
+    SharedSrVariants() = scanned;
     SharedDefaultSrDll() = FfxApiProxy::SrVariantDllPath(L"");
 
     // The default dll is listed once: under its twin's name when it is the same file as one of the list
@@ -470,9 +505,10 @@ static std::string UpscalerLabel(IFeature* feature)
     const auto version = StrFmt("%u.%u.%u", feature->Version().major, feature->Version().minor, feature->Version().patch);
     const auto type = feature->GetUpscalerType();
 
-    // ILION: the AMD Vulkan driver's FSR 4, native Vulkan
-    if (type == Upscaler::FFX && State::Instance().api == Vulkan && FSR4DriverProviderVk::InUse())
-        return "FSR " + version + " · VK";
+    // ILION: native Vulkan FFX running FSR 4 is the AMD Vulkan driver's: directly (ILION's provider) or handed over by
+    // amd_fidelityfx_vk.dll
+    if (type == Upscaler::FFX && State::Instance().api == Vulkan && feature->Version().major >= 4)
+        return "FSR " + version + (FSR4DriverProviderVk::InUse() ? " · VK" : " · VK (SDK)");
 
     if (RunsSwitchedFfx(type))
     {
@@ -720,12 +756,15 @@ static UpscalerStatus FfxProviderStatus(int index, IFeature* feature)
     return status;
 }
 
-// ILION: the AMD Vulkan driver's FSR 4, a provider of the Vulkan FFX list picked by its index
-static UpscalerStatus VkDriverStatus(int index, IFeature* feature)
+// ILION: an FSR 4 of the Vulkan native FFX list picked by its index: the AMD Vulkan driver's through ILION's provider
+// (direct) or as amd_fidelityfx_vk.dll hands it over
+static UpscalerStatus VkFsr4Status(int index, bool direct, IFeature* feature)
 {
     UpscalerStatus status;
-    status.selected = ConfiguredUpscaler() == Upscaler::FFX && Config::Instance()->FfxUpscalerIndexVk.value_or_default() == index;
-    status.loaded = feature != nullptr && feature->GetUpscalerType() == Upscaler::FFX && FSR4DriverProviderVk::InUse();
+    const bool indexChosen = Config::Instance()->FfxUpscalerIndexVk.value_or_default() == index;
+    status.selected = ConfiguredUpscaler() == Upscaler::FFX && indexChosen;
+    status.loaded = indexChosen && feature != nullptr && feature->GetUpscalerType() == Upscaler::FFX &&
+                    feature->Version().major >= 4 && FSR4DriverProviderVk::InUse() == direct;
     status.active = status.loaded && feature->FrameCount() > 0;
     return status;
 }
@@ -776,7 +815,15 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
     // FSR 3.1 in DX12 is a provider of the FFX dll in use; in Vulkan FSR 3.1 (amd_fidelityfx_vk.dll) and the AMD
     // Vulkan driver's FSR 4 are providers of the Vulkan FFX list
     int fsr31Index = -1;
-    int vkDriverIndex = -1;
+
+    struct VkFsr4
+    {
+        int index;
+        bool direct; // ILION's own provider of amdvkffx64; else as amd_fidelityfx_vk.dll lists it
+        std::string name;
+    };
+
+    std::vector<VkFsr4> vkFsr4;
 
     if (api == Vulkan)
     {
@@ -785,9 +832,17 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
 
         for (size_t i = 0; i < vk.ids.size() && i < vk.names.size(); i++)
         {
-            if (FSR4DriverProviderVk::IsAvailable() && vk.ids[i] == FSR4DriverProviderVk::VersionId())
-                vkDriverIndex = (int) i;
-            else if (fsr31Index < 0 && vk.names[i] != nullptr && strncmp(vk.names[i], "3.1", 3) == 0)
+            if (vk.names[i] == nullptr)
+                continue;
+
+            // "4.1.2 *" as the driver names it: the number only, the full name stays in the tooltip
+            const std::string full = vk.names[i];
+            const std::string number = full.substr(0, full.find(' '));
+            const bool direct = FSR4DriverProviderVk::IsAvailable() && vk.ids[i] == FSR4DriverProviderVk::VersionId();
+
+            if (direct || number.rfind("4", 0) == 0)
+                vkFsr4.push_back({ (int) i, direct, "FSR " + number + (direct ? " · VK" : " · VK (SDK)") });
+            else if (fsr31Index < 0 && strncmp(vk.names[i], "3.1", 3) == 0)
                 fsr31Index = (int) i;
         }
     }
@@ -842,7 +897,7 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
     for (const auto& entry : entries)
         present[familyOf(entry)] = true;
 
-    if (vkDriverIndex >= 0)
+    if (!vkFsr4.empty())
         present[FamFsr4] = true;
 
     // Family of what runs (or is chosen): the variant list opens on it
@@ -869,8 +924,8 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
     if (fsr31Index >= 0)
         consider(FamFsr31, FfxProviderStatus(fsr31Index, feature));
 
-    if (vkDriverIndex >= 0)
-        consider(FamFsr4, VkDriverStatus(vkDriverIndex, feature));
+    for (const auto& vk : vkFsr4)
+        consider(FamFsr4, VkFsr4Status(vk.index, vk.direct, feature));
 
     static int shown[2] = { -1, -1 };
     int& family = shown[strcmp(id, "benchmark") == 0 ? 1 : 0];
@@ -906,7 +961,8 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
         bool usable = true;
         std::string reason;  // why it can't be used: API, hardware, dll or dependency
         int ffxIndex = -1;   // FSR 3.1 as a provider of the FFX dll in use (DX12), or a Vulkan FFX provider
-        bool vkDriver = false; // the AMD Vulkan driver's FSR 4
+        bool vkDriver = false; // an FSR 4 of the Vulkan native list (the AMD Vulkan driver's)
+        bool vkDirect = false; // through ILION's own provider of amdvkffx64, not handed over by amd_fidelityfx_vk.dll
     };
 
     // Why an upscaler of the list can't be used here, in the words of the four reasons
@@ -977,17 +1033,15 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
         variants.push_back(variant);
     }
 
-    if (family == FamFsr4 && vkDriverIndex >= 0)
+    for (const auto& vk : vkFsr4)
     {
-        Variant variant { nullptr, Upscaler::Reset, false,
-                          [] {
-                              // "4.1.2 *" as the driver names it: the number only, the full name stays in the tooltip
-                              std::string name = FSR4DriverProviderVk::VersionName();
-                              return "FSR " + name.substr(0, name.find(' ')) + " · VK";
-                          }(),
-                          VkDriverStatus(vkDriverIndex, feature) };
-        variant.ffxIndex = vkDriverIndex;
+        if (family != FamFsr4)
+            break;
+
+        Variant variant { nullptr, Upscaler::Reset, false, vk.name, VkFsr4Status(vk.index, vk.direct, feature) };
+        variant.ffxIndex = vk.index;
         variant.vkDriver = true;
+        variant.vkDirect = vk.direct;
         variants.push_back(variant);
     }
 
@@ -1062,11 +1116,18 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
                 continue;
             }
 
-            if (variant.vkDriver)
+            if (variant.vkDriver && variant.vkDirect)
             {
                 WrappedTooltip("%s\nFSR %s\n%s", Tr("FSR 4 of AMD's Vulkan driver, native Vulkan. Switches while the game runs; its "
                                                     "network is chosen with the FSR 4 model."),
                                FSR4DriverProviderVk::VersionName(), wstring_to_string(FSR4DriverProviderVk::Path()).c_str());
+                continue;
+            }
+
+            if (variant.vkDriver)
+            {
+                WrappedTooltip("%s", Tr("FSR 4 of AMD's Vulkan driver, native Vulkan, as amd_fidelityfx_vk.dll lists it and hands "
+                                        "the upscale over. Switches while the game runs."));
                 continue;
             }
 
@@ -1831,9 +1892,19 @@ static void RenderFsr4ModelControls(Upscaler currentBackend, IFeature* feature, 
 
     // ILION: FSR 4 network (FSR4Models), when the dll in use has several. Changing it makes the context again,
     // like the preset above; if that context fails, the previous choice comes back (FfxApiProxy)
-    // The module whose networks are offered: the AMD Vulkan driver's while its FSR runs, else the DX12 dll in use
-    const HMODULE srModule = State::Instance().api == Vulkan && FSR4DriverProviderVk::InUse() ? FSR4DriverProviderVk::Module()
-                                                                                              : FfxApiProxy::Dx12Module_SR();
+    // Only with an FFX backend chosen and running (switching to XeSS, DLSS... hides it; the preference stays saved)
+    Upscaler target = state.newBackend != Upscaler::Reset ? state.newBackend : currentBackend;
+    const bool ffxBackend = (target == Upscaler::FFX || target == Upscaler::FFX_on12) &&
+                            feature != nullptr && (feature->GetUpscalerType() == Upscaler::FFX ||
+                                                   feature->GetUpscalerType() == Upscaler::FFX_on12);
+    if (!ffxBackend)
+        return;
+
+    // The module whose networks are offered: native Vulkan FFX runs the AMD Vulkan driver's (directly or through
+    // amd_fidelityfx_vk.dll, the same amdvkffx64 module); DX12 and the Vulkan to DX12 interop the DX12 dll in use
+    const bool vulkanNative = state.api == Vulkan && target == Upscaler::FFX;
+    const HMODULE srModule = vulkanNative ? (FSR4DriverProviderVk::IsAvailable() ? FSR4DriverProviderVk::Module() : nullptr)
+                                          : FfxApiProxy::Dx12Module_SR();
 
     if (auto models = FSR4Models::SelectableModels(srModule); !models.empty())
     {
@@ -1843,9 +1914,9 @@ static void RenderFsr4ModelControls(Upscaler currentBackend, IFeature* feature, 
         const char* automatic = Tr("Automatic");
         bool modelChanged = false;
 
-        // Radioactive yellow for the model (green stays the implementation's), darker on light themes
-        const ImVec4 modelColour = IlionTheme::IlionYellow(ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
-        const ImVec4 modelItemColour = IlionTheme::IlionYellow(ImGui::GetStyleColorVec4(ImGuiCol_PopupBg));
+        // Radioactive orange for the model (green stays the implementation's), darker on light themes
+        const ImVec4 modelColour = IlionTheme::Fsr4ModelOrange(ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
+        const ImVec4 modelItemColour = IlionTheme::Fsr4ModelOrange(ImGui::GetStyleColorVec4(ImGuiCol_PopupBg));
 
         ImGui::SetNextItemWidth(150.0f * scale);
         if (IlionTheme::BeginCombo(TrL("FSR4 Model"), previousModel.has_value() ? FSR4Models::Name(*previousModel) : automatic, 0,
@@ -1885,7 +1956,7 @@ static void RenderFsr4ModelControls(Upscaler currentBackend, IFeature* feature, 
 
     // ILION: requested and determined network, in Advanced. Determined = the one FFX picked in its support checks when
     // it made the context; it isn't a reading of what the GPU runs
-    if (srModule != nullptr && !EssentialView())
+    if (srModule != nullptr && !basicView && !EssentialView())
     {
         // Only while an FFX FSR 4 context really runs: after a failure (OptiScaler falls back to FSR 2.2) or with
         // another provider of the dll, the last support checks no longer tell anything
@@ -9005,9 +9076,8 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
         ImGui::Spacing();
         DrawUpscalerSelector(currentFeature, menuResScale, "upscaling");
 
-        // ILION: the FSR 4 model, in Essential and Advanced (Basic keeps the automatic one)
-        if (!basicView)
-            RenderFsr4ModelControls(currentBackend, currentFeature, menuResScale);
+        // ILION: the FSR 4 model, in every mode (the same state and checks; its diagnosis only in Advanced)
+        RenderFsr4ModelControls(currentBackend, currentFeature, menuResScale);
 
         // ILION: OptiScaler's own backend list (native DLSS on NVIDIA included) and the FFX provider list, unchanged,
         // folded under one key; ILION's manager above stays the main selector. Not in Basic, which keeps it simple

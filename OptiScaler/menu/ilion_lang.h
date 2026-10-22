@@ -46,6 +46,8 @@ struct Translation
 inline constexpr Translation kSpanish[] = {
     // Universal upscaler selector (v1.2-dev.5)
     { "Upscaler##IlionUpscaler", "Escalador" },
+    // ILION v1.2-dev.33: Vulkan SDK FSR 4
+    { "FSR 4 of AMD's Vulkan driver, native Vulkan, as amd_fidelityfx_vk.dll lists it and hands the upscale over. Switches while the game runs.", "FSR 4 del controlador Vulkan de AMD, Vulkan nativo, tal como lo lista amd_fidelityfx_vk.dll, que le pasa el escalado. Cambia con el juego en marcha." },
     // ILION v1.2-dev.32: provider origin
     { "AMD driver dll, used from the installed driver.", "DLL del controlador AMD, usada desde el controlador instalado." },
     { "Copy of an AMD driver dll in an ILION folder.", "Copia de una DLL del controlador AMD en una carpeta de ILION." },

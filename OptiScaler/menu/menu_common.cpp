@@ -395,7 +395,7 @@ static std::string EntryName(const IlionUpscalers::Entry& entry)
     // "FSR 4.1.1 · AMD SDK" carries its version, only the words after it are translated
     std::string name = Tr(entry.display.c_str());
 
-    for (const char* suffix : { " official (AMD)", " · AMD SDK" })
+    for (const char* suffix : { " official (AMD)" })
     {
         const auto at = entry.display.find(suffix);
         if (at != std::string::npos && at + strlen(suffix) == entry.display.size())
@@ -414,6 +414,14 @@ static std::string EntryName(const IlionUpscalers::Entry& entry)
 // The FFX upscaler backend of the API in use: FFX in DX12, FFX through OptiScaler's DX12 interop in DX11 and Vulkan
 // (where plain FFX is the Vulkan FSR 3.1 dll). Both run the dll ILION switches.
 static Upscaler FfxBackendForApi() { return State::Instance().api == DX12 ? Upscaler::FFX : Upscaler::FFX_on12; }
+
+// ILION: the FFX index of the list a backend uses. Vulkan native FFX has its own list and index (UpscalerIndexVk), so
+// an index picked there never selects a provider of the DX12 list the Vulkan to DX12 interop uses, nor the other way
+static CustomOptional<int>& FfxIndexFor(Upscaler upscaler, API api)
+{
+    auto config = Config::Instance();
+    return upscaler == Upscaler::FFX && api == API::Vulkan ? config->FfxUpscalerIndexVk : config->FfxUpscalerIndex;
+}
 
 static bool RunsSwitchedFfx(Upscaler type)
 {
@@ -464,7 +472,7 @@ static std::string UpscalerLabel(IFeature* feature)
 
     // ILION: the AMD Vulkan driver's FSR 4, native Vulkan
     if (type == Upscaler::FFX && State::Instance().api == Vulkan && FSR4DriverProviderVk::InUse())
-        return "FSR " + version + Tr(" · AMD driver") + " (Vulkan)";
+        return "FSR " + version + " · VK";
 
     if (RunsSwitchedFfx(type))
     {
@@ -473,7 +481,7 @@ static std::string UpscalerLabel(IFeature* feature)
 
         // An AMD driver dll chosen in the selector: what runs is its FSR, with the version its provider created
         if (entry.has_value() && entry->kind == IlionUpscalers::Kind::Provider)
-            return "FSR " + version + Tr(" · AMD driver");
+            return "FSR " + version + " · Driver";
 
         if (!entry.has_value() && IlionUpscalers::SamePath(FfxApiProxy::Dx12Module_SR_Path(), SharedDefaultSrDll()))
             entry = IlionUpscalers::FindByKey(SharedDefaultTwin());
@@ -502,7 +510,7 @@ static std::string UpscalerLabel(IFeature* feature)
 
             if (index >= 0 && index < (int) versions.ids.size() && (versions.ids[index] & 0x80000000ull) != 0 &&
                 feature->Version().major >= 4)
-                return "FSR " + version + Tr(" · AMD driver") + " (" + Tr("via SDK") + ")";
+                return "FSR " + version + " · Driver (" + Tr("via SDK") + ")";
         }
 
         // The default dll, or the game's own: AMD's FSR
@@ -618,8 +626,9 @@ static void SelectUpscaler(const IlionUpscalers::Entry* entry)
         if (config->DLSSAllowExternalBackend.value_or_default())
             config->DLSSAllowExternalBackend = false;
 
-        // The dll's own first provider (FSR 4, or HelixSR itself), also when FSR 3.1 of the same dll ran before
-        config->FfxUpscalerIndex.set_volatile_value(0);
+        // The dll's own first provider (FSR 4, or HelixSR itself), also when FSR 3.1 of the same dll ran before.
+        // ILION: saved too, so an index of another provider isn't read back from the ini at the next start
+        config->FfxUpscalerIndex = 0;
 
         SetConfiguredUpscaler(FfxBackendForApi());
         FfxApiProxy::RequestSrVariant(key);
@@ -695,7 +704,7 @@ static void SelectFfxProvider(int index)
     if (config->DLSSAllowExternalBackend.value_or_default())
         config->DLSSAllowExternalBackend = false;
 
-    config->FfxUpscalerIndex = index;
+    FfxIndexFor(Upscaler::FFX, State::Instance().api) = index;
     SetConfiguredUpscaler(Upscaler::FFX);
     State::Instance().newBackend = Upscaler::FFX;
     MARK_ALL_BACKENDS_CHANGED();
@@ -705,7 +714,7 @@ static void SelectFfxProvider(int index)
 static UpscalerStatus FfxProviderStatus(int index, IFeature* feature)
 {
     UpscalerStatus status;
-    status.selected = ConfiguredUpscaler() == Upscaler::FFX && Config::Instance()->FfxUpscalerIndex.value_or_default() == index;
+    status.selected = ConfiguredUpscaler() == Upscaler::FFX && FfxIndexFor(Upscaler::FFX, State::Instance().api).value_or_default() == index;
     status.loaded = feature != nullptr && feature->GetUpscalerType() == Upscaler::FFX && feature->Version().major == 3;
     status.active = status.loaded && feature->FrameCount() > 0;
     return status;
@@ -715,7 +724,7 @@ static UpscalerStatus FfxProviderStatus(int index, IFeature* feature)
 static UpscalerStatus VkDriverStatus(int index, IFeature* feature)
 {
     UpscalerStatus status;
-    status.selected = ConfiguredUpscaler() == Upscaler::FFX && Config::Instance()->FfxUpscalerIndex.value_or_default() == index;
+    status.selected = ConfiguredUpscaler() == Upscaler::FFX && Config::Instance()->FfxUpscalerIndexVk.value_or_default() == index;
     status.loaded = feature != nullptr && feature->GetUpscalerType() == Upscaler::FFX && FSR4DriverProviderVk::InUse();
     status.active = status.loaded && feature->FrameCount() > 0;
     return status;
@@ -971,7 +980,11 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
     if (family == FamFsr4 && vkDriverIndex >= 0)
     {
         Variant variant { nullptr, Upscaler::Reset, false,
-                          std::string("FSR ") + FSR4DriverProviderVk::VersionName() + Tr(" · AMD driver") + " (Vulkan)",
+                          [] {
+                              // "4.1.2 *" as the driver names it: the number only, the full name stays in the tooltip
+                              std::string name = FSR4DriverProviderVk::VersionName();
+                              return "FSR " + name.substr(0, name.find(' ')) + " · VK";
+                          }(),
                           VkDriverStatus(vkDriverIndex, feature) };
         variant.ffxIndex = vkDriverIndex;
         variant.vkDriver = true;
@@ -1051,9 +1064,9 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
 
             if (variant.vkDriver)
             {
-                WrappedTooltip("%s\n%s", Tr("FSR 4 of AMD's Vulkan driver, native Vulkan. Switches while the game runs; its "
-                                            "network is chosen with the FSR 4 model."),
-                               wstring_to_string(FSR4DriverProviderVk::Path()).c_str());
+                WrappedTooltip("%s\nFSR %s\n%s", Tr("FSR 4 of AMD's Vulkan driver, native Vulkan. Switches while the game runs; its "
+                                                    "network is chosen with the FSR 4 model."),
+                               FSR4DriverProviderVk::VersionName(), wstring_to_string(FSR4DriverProviderVk::Path()).c_str());
                 continue;
             }
 
@@ -1074,6 +1087,11 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
 
             if (!entry.fileVersion.empty())
                 tip += StrFmt("\n%s: %s", Tr("File version"), entry.fileVersion.c_str());
+
+            // Where an AMD driver dll comes from: the installed driver or a copy in an ILION folder
+            if (entry.kind == IlionUpscalers::Kind::Provider)
+                tip += std::string("\n") + Tr(entry.key == L"FSR4/AMD driver" ? "AMD driver dll, used from the installed driver."
+                                                                             : "Copy of an AMD driver dll in an ILION folder.");
 
             if (IlionUpscalers::SwitchesAsFfx(entry))
                 tip += std::string("\n") + Tr("Switches while the game runs.");
@@ -1806,7 +1824,7 @@ static std::vector<int> FfxVersionsNewestFirst(const State::FfxVersionList& vers
 
 // ILION: FSR 4 model (C of technology / implementation / model), under the upscaler selector. Shown only when the
 // module in use has several networks; changing it makes the context again and reverts if that fails
-static void RenderFsr4ModelControls(Upscaler currentBackend, float scale)
+static void RenderFsr4ModelControls(Upscaler currentBackend, IFeature* feature, float scale)
 {
     auto config = Config::Instance();
     auto& state = State::Instance();
@@ -1825,9 +1843,16 @@ static void RenderFsr4ModelControls(Upscaler currentBackend, float scale)
         const char* automatic = Tr("Automatic");
         bool modelChanged = false;
 
+        // Radioactive yellow for the model (green stays the implementation's), darker on light themes
+        const ImVec4 modelColour = IlionTheme::IlionYellow(ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
+        const ImVec4 modelItemColour = IlionTheme::IlionYellow(ImGui::GetStyleColorVec4(ImGuiCol_PopupBg));
+
         ImGui::SetNextItemWidth(150.0f * scale);
-        if (IlionTheme::BeginCombo(TrL("FSR4 Model"), previousModel.has_value() ? FSR4Models::Name(*previousModel) : automatic))
+        if (IlionTheme::BeginCombo(TrL("FSR4 Model"), previousModel.has_value() ? FSR4Models::Name(*previousModel) : automatic, 0,
+                                   &modelColour))
         {
+            ImGui::PushStyleColor(ImGuiCol_Text, modelItemColour);
+
             if (ImGui::Selectable(automatic, !previousModel.has_value()) && previousModel.has_value())
             {
                 selectedModel.reset();
@@ -1843,6 +1868,7 @@ static void RenderFsr4ModelControls(Upscaler currentBackend, float scale)
                 }
             }
 
+            ImGui::PopStyleColor();
             ImGui::EndCombo();
         }
 
@@ -1861,7 +1887,11 @@ static void RenderFsr4ModelControls(Upscaler currentBackend, float scale)
     // it made the context; it isn't a reading of what the GPU runs
     if (srModule != nullptr && !EssentialView())
     {
-        const auto determined = FSR4Models::ActiveModel(srModule);
+        // Only while an FFX FSR 4 context really runs: after a failure (OptiScaler falls back to FSR 2.2) or with
+        // another provider of the dll, the last support checks no longer tell anything
+        const bool fsr4Runs = feature != nullptr && feature->IsInited() && feature->Version().major >= 4 &&
+                              (feature->GetUpscalerType() == Upscaler::FFX || feature->GetUpscalerType() == Upscaler::FFX_on12);
+        const auto determined = fsr4Runs ? FSR4Models::ActiveModel(srModule) : std::nullopt;
 
         if (determined.has_value() || config->Fsr4Model.has_value())
         {
@@ -1879,11 +1909,12 @@ void MenuCommon::RenderUpscalerCombo(const API api, Upscaler currentUpscaler, co
 {
     auto primaryGpu = IdentifyGpu::getPrimaryGpu();
     auto config = Config::Instance();
-    const int ffxIndex = config->FfxUpscalerIndex.value_or_default();
 
     Upscaler targetBackend = State::Instance().newBackend;
     if (targetBackend == Upscaler::Reset)
         targetBackend = currentUpscaler;
+
+    const int ffxIndex = FfxIndexFor(targetBackend, api).value_or_default();
 
     // Interop is only shown here, the list uses a tag for it
     auto selectedName = ShortUpscalerName(targetBackend, api, ffxIndex);
@@ -1970,7 +2001,7 @@ void MenuCommon::RenderUpscalerCombo(const API api, Upscaler currentUpscaler, co
 
             // Switching to FFX starts with the newest one
             if (entry.ffxIndex >= 0 && currentUpscaler != entry.upscaler)
-                config->FfxUpscalerIndex = entry.ffxIndex;
+                FfxIndexFor(entry.upscaler, api) = entry.ffxIndex;
         }
 
         // Dimmed tags aligned to the right
@@ -8976,7 +9007,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
         // ILION: the FSR 4 model, in Essential and Advanced (Basic keeps the automatic one)
         if (!basicView)
-            RenderFsr4ModelControls(currentBackend, menuResScale);
+            RenderFsr4ModelControls(currentBackend, currentFeature, menuResScale);
 
         // ILION: OptiScaler's own backend list (native DLSS on NVIDIA included) and the FFX provider list, unchanged,
         // folded under one key; ILION's manager above stays the main selector. Not in Basic, which keeps it simple
@@ -9011,7 +9042,8 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             {
                 ImGui::Spacing();
     
-                const int ffxIndex = config->FfxUpscalerIndex.value_or_default();
+                auto& ffxIndexConfig = FfxIndexFor(currentBackend, state.api);
+                const int ffxIndex = ffxIndexConfig.value_or_default();
                 auto currentName =
                     ffxIndex >= 0 && ffxIndex < versions->names.size() ? StrFmt("FSR %s", versions->names[ffxIndex]) : "";
     
@@ -9024,7 +9056,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                         if (ImGui::Selectable(StrFmt("FSR %s##%d", versions->names[n], n).c_str(), ffxIndex == n) &&
                             ffxIndex != n)
                         {
-                            config->FfxUpscalerIndex = n;
+                            ffxIndexConfig = n;
                             state.newBackend = currentBackend;
                             MARK_ALL_BACKENDS_CHANGED();
                         }

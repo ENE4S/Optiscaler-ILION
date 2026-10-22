@@ -508,6 +508,9 @@ class Config
     // FSR
     CustomOptional<bool> FsrDebugView { false };
     CustomOptional<int> FfxUpscalerIndex { 0 };
+    // ILION: index of the Vulkan native FFX list (FSR 3.1 of amd_fidelityfx_vk.dll, the AMD Vulkan driver's FSR 4);
+    // kept apart from the DX12 list's, which the Vulkan to DX12 interop also uses
+    CustomOptional<int> FfxUpscalerIndexVk { 0 };
     CustomOptional<int> FfxFGIndex { 0 };
     CustomOptional<bool> FsrUseMaskForTransparency { true };
     CustomOptional<bool> FsrNonLinearColorSpace { false };

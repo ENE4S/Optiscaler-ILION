@@ -250,10 +250,18 @@ inline Entry FfxEntry(const std::wstring& key, const std::filesystem::path& dll,
     {
         // Its models (FP8, INT8, INT8 RDNA2, INT8 Lite) are chosen with the FSR 4 model of the menu
         // Which FSR the driver dll has is only known once its provider answers: the label of what runs gives it
+        // Short name from the folder it was copied to ("FSR4_RDNA2" -> "FSR 4 · RDNA2"): a local copy, not the installed
+        // driver; the path and the file version stay in the tooltip
         entry.kind = Kind::Provider;
         entry.family = Family::Fsr4;
-        entry.display = "FSR 4 · AMD driver";
-        entry.detail = "(" + wstring_to_string(folderName) + ")";
+        std::string folder = wstring_to_string(folderName);
+        for (const char* prefix : { "FSR4_", "FSR4-", "FSR4 ", "fsr4_", "fsr4-", "fsr4 " })
+        {
+            if (folder.rfind(prefix, 0) == 0 && folder.size() > strlen(prefix))
+                folder = folder.substr(strlen(prefix));
+        }
+        entry.display = "FSR 4 · " + folder;
+        entry.detail.clear();
     }
     else if (HasHelixNetwork(entry.path))
     {
@@ -278,7 +286,7 @@ inline Entry FfxEntry(const std::wstring& key, const std::filesystem::path& dll,
         // AMD's own dll, from its verified AMD signature (not from the folder name): "FSR 4.1.1 · AMD SDK"
         else if (entry.amdOfficial && entry.fileVersion.size() > 2)
         {
-            entry.display = "FSR " + entry.fileVersion.substr(0, entry.fileVersion.rfind('.')) + " · AMD SDK";
+            entry.display = "FSR " + entry.fileVersion.substr(0, entry.fileVersion.rfind('.')) + " · SDK";
             entry.detail.clear();
         }
     }
@@ -474,7 +482,7 @@ inline std::vector<Entry> ScanLocked()
 
             if (entry.kind == Kind::Provider)
             {
-                entry.display = "FSR 4 · AMD driver (installed)";
+                entry.display = "FSR 4 · Driver";
                 entry.detail.clear();
                 result.push_back(std::move(entry));
             }

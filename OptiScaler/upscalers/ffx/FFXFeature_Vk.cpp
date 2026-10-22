@@ -170,15 +170,15 @@ bool FFXFeatureVk::InitFFX(const NVSDK_NGX_Parameter* InParameters)
 
         _contextDesc.header.pNext = &backendDesc.header;
 
-        if (Config::Instance()->FfxUpscalerIndex.value_or_default() < 0 ||
-            Config::Instance()->FfxUpscalerIndex.value_or_default() >=
+        if (Config::Instance()->FfxUpscalerIndexVk.value_or_default() < 0 ||
+            Config::Instance()->FfxUpscalerIndexVk.value_or_default() >=
                 State::Instance().ffxUpscalerVersionsVk.ids.size())
-            Config::Instance()->FfxUpscalerIndex.set_volatile_value(0);
+            Config::Instance()->FfxUpscalerIndexVk.set_volatile_value(0);
 
         ffxOverrideVersion ov = { 0 };
         ov.header.type = FFX_API_DESC_TYPE_OVERRIDE_VERSION;
         ov.versionId =
-            State::Instance().ffxUpscalerVersionsVk.ids[Config::Instance()->FfxUpscalerIndex.value_or_default()];
+            State::Instance().ffxUpscalerVersionsVk.ids[Config::Instance()->FfxUpscalerIndexVk.value_or_default()];
         backendDesc.header.pNext = &ov.header;
 
         // ILION: the AMD Vulkan driver's FSR 4, picked by its index in the list (appended after the SDK's ones)
@@ -224,7 +224,7 @@ bool FFXFeatureVk::InitFFX(const NVSDK_NGX_Parameter* InParameters)
     }
 
     auto version =
-        State::Instance().ffxUpscalerVersionsVk.names[Config::Instance()->FfxUpscalerIndex.value_or_default()];
+        State::Instance().ffxUpscalerVersionsVk.names[Config::Instance()->FfxUpscalerIndexVk.value_or_default()];
     _name = "FSR";
     parse_version(version);
 

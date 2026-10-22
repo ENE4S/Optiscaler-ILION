@@ -1212,10 +1212,25 @@ inline bool SliderInt(const char* label, int* value, int min, int max, const cha
 // The drop-down as a selector set into the panel: a recessed window with what is selected in green and a key
 // with the arrow next to it. ImGui's own combo does the work with its field and its button made invisible; what
 // it would write as the selected value is written here instead, the list it opens is its own.
-inline bool BeginCombo(const char* label, const char* preview, ImGuiComboFlags flags = 0)
+// previewColour (optional, ILION): the colour of the chosen value only, e.g. the FSR 4 model in radioactive yellow;
+// the label and the field keep the theme's
+inline bool BeginCombo(const char* label, const char* preview, ImGuiComboFlags flags = 0, const ImVec4* previewColour = nullptr)
 {
     if (!industrial)
-        return ImGui::BeginCombo(label, preview, flags);
+    {
+        if (previewColour == nullptr || preview == nullptr)
+            return ImGui::BeginCombo(label, preview, flags);
+
+        const bool open = ImGui::BeginCombo(label, "", flags | ImGuiComboFlags_CustomPreview);
+
+        if (ImGui::BeginComboPreview())
+        {
+            ImGui::TextColored(*previewColour, "%s", preview);
+            ImGui::EndComboPreview();
+        }
+
+        return open;
+    }
 
     ImGuiWindow* window = ImGui::GetCurrentWindow();
 
@@ -1246,8 +1261,8 @@ inline bool BeginCombo(const char* label, const char* preview, ImGuiComboFlags f
     DrawWell(window->DrawList, min, fieldMax, hovered);
 
     window->DrawList->PushClipRect(ImVec2(min.x + 2.0f, min.y), ImVec2(fieldMax.x - 2.0f, fieldMax.y), true);
-    window->DrawList->AddText(ImVec2(min.x + style.FramePadding.x, min.y + style.FramePadding.y), ImGui::GetColorU32(LampGreen),
-                              preview);
+    window->DrawList->AddText(ImVec2(min.x + style.FramePadding.x, min.y + style.FramePadding.y),
+                              ImGui::GetColorU32(previewColour != nullptr ? *previewColour : LampGreen), preview);
     window->DrawList->PopClipRect();
 
     DrawKey(window->DrawList, ImRect(ImVec2(fieldMax.x, min.y), ImVec2(min.x + width, min.y + height)),

@@ -250,6 +250,7 @@ bool Config::Reload(std::filesystem::path iniPath)
             FsrMinDisOccAcc.set_from_config(readFloat("FSR", "MinDisOccAcc"));
             FsrDebugView.set_from_config(readBool("FSR", "DebugView"));
             FfxUpscalerIndex.set_from_config(readInt("FSR", "UpscalerIndex"));
+            FfxUpscalerIndexVk.set_from_config(readInt("FSR", "UpscalerIndexVk"));
             FfxFGIndex.set_from_config(readInt("FSR", "FGIndex"));
             FsrUseMaskForTransparency.set_from_config(readBool("FSR", "UseReactiveMaskForTransparency"));
             DlssReactiveMaskBias.set_from_config(readFloat("FSR", "DlssReactiveMaskBias"));
@@ -1193,6 +1194,7 @@ bool Config::SaveIni()
         ini.SetValue("FSR", "MinDisOccAcc", GetFloatValue(Instance()->FsrMinDisOccAcc.value_for_config()).c_str());
         ini.SetValue("FSR", "DebugView", GetBoolValue(Instance()->FsrDebugView.value_for_config()).c_str());
         ini.SetValue("FSR", "UpscalerIndex", GetIntValue(Instance()->FfxUpscalerIndex.value_for_config()).c_str());
+        ini.SetValue("FSR", "UpscalerIndexVk", GetIntValue(Instance()->FfxUpscalerIndexVk.value_for_config()).c_str());
         ini.SetValue("FSR", "FGIndex", GetIntValue(Instance()->FfxFGIndex.value_for_config()).c_str());
         ini.SetValue("FSR", "UseReactiveMaskForTransparency",
                      GetBoolValue(Instance()->FsrUseMaskForTransparency.value_for_config()).c_str());
@@ -1805,6 +1807,7 @@ bool Config::SaveUpscalerChoice()
     const std::string upscaler11 = config->Dx11Upscaler.value_for_config().transform(UpscalerToCode).value_or("auto");
     const std::string upscalerVk = config->VulkanUpscaler.value_for_config().transform(UpscalerToCode).value_or("auto");
     const std::string ffxIndex = GetIntValue(config->FfxUpscalerIndex.value_for_config());
+    const std::string ffxIndexVk = GetIntValue(config->FfxUpscalerIndexVk.value_for_config());
     const std::string external = GetBoolValue(config->DLSSAllowExternalBackend.value_for_config());
     const std::string variant = wstring_to_string(config->Fsr4SrVariant.value_for_config_or(L"auto"));
     const std::string nvngx = wstring_to_string(config->NvngxPath.value_for_config_or(L"auto"));
@@ -1820,6 +1823,7 @@ bool Config::SaveUpscalerChoice()
         target->SetValue("Upscalers", "Dx11Upscaler", upscaler11.c_str());
         target->SetValue("Upscalers", "VulkanUpscaler", upscalerVk.c_str());
         target->SetValue("FSR", "UpscalerIndex", ffxIndex.c_str());
+        target->SetValue("FSR", "UpscalerIndexVk", ffxIndexVk.c_str());
         target->SetValue("DLSS", "AllowExternalBackend", external.c_str());
         target->SetValue("FSR", "Fsr4SrVariant", variant.c_str());
         target->SetValue("Libraries", "NvngxPath", nvngx.c_str());

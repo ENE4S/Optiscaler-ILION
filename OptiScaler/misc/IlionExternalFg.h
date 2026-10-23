@@ -7,6 +7,8 @@
 // Self-contained (Win32 + STL) so it can be tested outside the game.
 
 #include <windows.h>
+#include <shlobj.h>
+#include <shobjidl.h>
 
 #include <atomic>
 #include <cstdio>
@@ -83,38 +85,292 @@ inline bool IsExecutableImage(const std::filesystem::path& file)
     return ok;
 }
 
-// The engine from what the user gave, or from the usual install places; empty when none is found
-inline std::filesystem::path FindEngine(const std::wstring& given)
+// The engine inside a folder the user or a search gave: the folder itself may be the app's, its Engine folder or
+// nvngx.dll itself
+inline std::filesystem::path EngineIn(const std::filesystem::path& p)
 {
-    std::vector<std::filesystem::path> places;
-
-    if (!given.empty())
+    std::error_code ec;
+    for (const auto& candidate : { p, p / L"Engine" / L"nvngx.dll", p / L"nvngx.dll" })
     {
-        std::filesystem::path p(given);
-        places.push_back(p);
-        places.push_back(p / L"Engine" / L"nvngx.dll");
-        places.push_back(p / L"nvngx.dll");
+        if (std::filesystem::is_regular_file(candidate, ec) && IsExecutableImage(candidate))
+            return candidate;
     }
 
+    return {};
+}
+
+inline bool NamesSuperMotion(std::wstring text)
+{
+    for (auto& c : text)
+        c = towlower(c);
+    return text.find(L"super motion") != std::wstring::npos || text.find(L"super-motion") != std::wstring::npos ||
+           text.find(L"supermotion") != std::wstring::npos;
+}
+
+// A path out of a registry or shortcut value: "C:\x\app.exe",0 or "C:\x\app.exe" --arg -> C:\x
+inline std::filesystem::path FolderOf(std::wstring value)
+{
+    if (!value.empty() && value[0] == L'"')
+    {
+        const auto end = value.find(L'"', 1);
+        value = value.substr(1, end == std::wstring::npos ? std::wstring::npos : end - 1);
+    }
+    else if (const auto comma = value.find(L','); comma != std::wstring::npos)
+        value = value.substr(0, comma);
+
+    std::filesystem::path p(value);
+    return p.has_extension() ? p.parent_path() : p;
+}
+
+// Where MFG SUPER MOTION may be, most likely first. Its installer is not public, so every trace it can leave is
+// looked at: its uninstall entry, its start-with-Windows entry, its shortcuts, the usual install folders, and a
+// folder named after it in Downloads, Desktop or Documents (the .rar build).
+inline std::vector<std::filesystem::path> CandidateFolders()
+{
+    namespace fs = std::filesystem;
+    std::vector<fs::path> places;
+
+    // 1. Uninstall entries, both registry views, machine and user
+    const struct { HKEY root; REGSAM view; } hives[] = {
+        { HKEY_CURRENT_USER, KEY_WOW64_64KEY },  { HKEY_LOCAL_MACHINE, KEY_WOW64_64KEY },
+        { HKEY_LOCAL_MACHINE, KEY_WOW64_32KEY },
+    };
+
+    for (const auto& hive : hives)
+    {
+        HKEY uninstall = nullptr;
+        if (RegOpenKeyExW(hive.root, L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall", 0,
+                          KEY_READ | hive.view, &uninstall) != ERROR_SUCCESS)
+            continue;
+
+        wchar_t sub[256];
+        for (DWORD i = 0;; i++)
+        {
+            DWORD size = 256;
+            if (RegEnumKeyExW(uninstall, i, sub, &size, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS)
+                break;
+
+            const auto read = [&](const wchar_t* name)
+            {
+                wchar_t value[MAX_PATH * 2] {};
+                DWORD bytes = sizeof(value) - sizeof(wchar_t);
+                RegGetValueW(uninstall, sub, name, RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ, nullptr, value, &bytes);
+                return std::wstring(value);
+            };
+
+            if (!NamesSuperMotion(read(L"DisplayName")) && !NamesSuperMotion(sub))
+                continue;
+
+            for (const wchar_t* name : { L"InstallLocation", L"DisplayIcon", L"UninstallString" })
+            {
+                const auto value = read(name);
+                if (!value.empty())
+                    places.push_back(name[0] == L'I' ? fs::path(value) : FolderOf(value));
+            }
+        }
+
+        RegCloseKey(uninstall);
+    }
+
+    // 2. Start with Windows (the app writes its own path there when asked to)
+    HKEY run = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_READ, &run) ==
+        ERROR_SUCCESS)
+    {
+        wchar_t name[256], value[MAX_PATH * 2];
+        for (DWORD i = 0;; i++)
+        {
+            DWORD nameSize = 256, bytes = sizeof(value) - sizeof(wchar_t), type = 0;
+            if (RegEnumValueW(run, i, name, &nameSize, nullptr, &type, reinterpret_cast<BYTE*>(value), &bytes) !=
+                ERROR_SUCCESS)
+                break;
+            value[bytes / sizeof(wchar_t)] = 0;
+            if (type == REG_SZ && (NamesSuperMotion(name) || NamesSuperMotion(value)))
+                places.push_back(FolderOf(value));
+        }
+        RegCloseKey(run);
+    }
+
+    // 3. Shortcuts on the desktop and in the start menu
+    const auto knownFolder = [](REFKNOWNFOLDERID id)
+    {
+        PWSTR raw = nullptr;
+        fs::path p;
+        if (SUCCEEDED(SHGetKnownFolderPath(id, 0, nullptr, &raw)))
+            p = raw;
+        CoTaskMemFree(raw);
+        return p;
+    };
+
+    const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    for (const auto& id : { FOLDERID_Desktop, FOLDERID_PublicDesktop, FOLDERID_Programs, FOLDERID_CommonPrograms })
+    {
+        std::error_code ec;
+        const fs::path root = knownFolder(id);
+        if (root.empty())
+            continue;
+
+        for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec);
+             it != fs::recursive_directory_iterator(); it.increment(ec))
+        {
+            if (it.depth() > 2)
+                it.disable_recursion_pending();
+            if (_wcsicmp(it->path().extension().c_str(), L".lnk") != 0 || !NamesSuperMotion(it->path().filename()))
+                continue;
+
+            IShellLinkW* link = nullptr;
+            if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))))
+                continue;
+
+            IPersistFile* file = nullptr;
+            wchar_t target[MAX_PATH] {};
+            if (SUCCEEDED(link->QueryInterface(IID_PPV_ARGS(&file))) && SUCCEEDED(file->Load(it->path().c_str(), STGM_READ)) &&
+                SUCCEEDED(link->GetPath(target, MAX_PATH, nullptr, SLGP_RAWPATH)) && target[0] != 0)
+                places.push_back(fs::path(target).parent_path());
+
+            if (file)
+                file->Release();
+            link->Release();
+        }
+    }
+    if (SUCCEEDED(com))
+        CoUninitialize();
+
+    // 4. The usual install folders
     for (const wchar_t* env : { L"LOCALAPPDATA", L"ProgramFiles", L"ProgramFiles(x86)" })
     {
         wchar_t base[MAX_PATH] {};
         if (GetEnvironmentVariableW(env, base, MAX_PATH) == 0)
             continue;
 
-        const std::filesystem::path root = env[0] == L'L' ? std::filesystem::path(base) / L"Programs" : base;
-        for (const wchar_t* name : { L"MFG SUPER MOTION", L"MFG-SUPER-MOTION", L"Mfg Super Motion" })
-            places.push_back(root / name / L"Engine" / L"nvngx.dll");
+        const fs::path root = env[0] == L'L' ? fs::path(base) / L"Programs" : fs::path(base);
+        for (const wchar_t* name : { L"MFG SUPER MOTION", L"MFG-SUPER-MOTION", L"Mfg Super Motion", L"NODIX-TECH" })
+            places.push_back(root / name);
     }
 
-    std::error_code ec;
-    for (const auto& p : places)
+    // 5. An unpacked copy (the .rar build) in Downloads, Desktop or Documents, two levels down, by its folder name
+    for (const auto& root : { knownFolder(FOLDERID_Downloads), knownFolder(FOLDERID_Desktop),
+                              knownFolder(FOLDERID_Documents) })
     {
-        if (std::filesystem::is_regular_file(p, ec) && IsExecutableImage(p))
-            return p;
+        std::error_code ec;
+        if (root.empty())
+            continue;
+
+        for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec);
+             it != fs::recursive_directory_iterator(); it.increment(ec))
+        {
+            if (it.depth() >= 2)
+                it.disable_recursion_pending();
+            if (it->is_directory(ec) && NamesSuperMotion(it->path().filename()))
+                places.push_back(it->path());
+        }
+    }
+
+    return places;
+}
+
+// The engine from what the user gave, else from every place MFG SUPER MOTION may be; empty when none is found
+inline std::filesystem::path FindEngine(const std::wstring& given)
+{
+    if (!given.empty())
+    {
+        if (auto engine = EngineIn(given); !engine.empty())
+            return engine;
+    }
+
+    for (const auto& folder : CandidateFolders())
+    {
+        if (auto engine = EngineIn(folder); !engine.empty())
+            return engine;
+
+        // A versioned folder inside (an unpacked "Mfg Super Motion 1.0.3\MFG SUPER MOTION\...")
+        std::error_code ec;
+        for (const auto& inside : std::filesystem::directory_iterator(folder, ec))
+        {
+            if (inside.is_directory(ec))
+            {
+                if (auto engine = EngineIn(inside.path()); !engine.empty())
+                    return engine;
+            }
+        }
     }
 
     return {};
+}
+
+// The search off the render thread: started once ILION loads, read by the tab
+class Finder
+{
+  public:
+    void Start(const std::wstring& given)
+    {
+        if (started.exchange(true))
+            return;
+
+        std::thread(
+            [this, given]
+            {
+                auto found = FindEngine(given);
+                std::lock_guard lock(mutex);
+                result = found;
+                done = true;
+            })
+            .detach();
+    }
+
+    // Again, after the user installed it or gave a folder
+    void Restart(const std::wstring& given)
+    {
+        {
+            std::lock_guard lock(mutex);
+            done = false;
+        }
+        started = false;
+        Start(given);
+    }
+
+    bool Done()
+    {
+        std::lock_guard lock(mutex);
+        return done;
+    }
+
+    std::filesystem::path Result()
+    {
+        std::lock_guard lock(mutex);
+        return result;
+    }
+
+  private:
+    std::atomic<bool> started = false;
+    std::mutex mutex;
+    bool done = false;
+    std::filesystem::path result;
+};
+
+// Text of the Windows clipboard, read only when the user presses Paste (ImGui's own paste does not reach every game)
+inline std::wstring ClipboardText()
+{
+    std::wstring text;
+    if (!OpenClipboard(nullptr))
+        return text;
+
+    if (HANDLE data = GetClipboardData(CF_UNICODETEXT))
+    {
+        if (auto* chars = static_cast<const wchar_t*>(GlobalLock(data)))
+        {
+            text = chars;
+            GlobalUnlock(data);
+        }
+    }
+    CloseClipboard();
+
+    // A path copied from Explorer comes in quotes
+    while (!text.empty() && (text.back() == L'"' || iswspace(text.back())))
+        text.pop_back();
+    while (!text.empty() && (text.front() == L'"' || iswspace(text.front())))
+        text.erase(text.begin());
+    return text;
 }
 
 struct Status

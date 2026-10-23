@@ -17813,28 +17813,60 @@ void MenuCommon::RenderAntiGhostingTab(RenderMenuContext& ctx)
         requestedMenuTab = "Upscaling";
 }
 
+// ILION: External Frame Gen. Settings and the search for MFG SUPER MOTION, started the first time the menu is drawn
+// (off the render thread) so the engine is already found when the tab is opened.
+struct ExternalFgShared
+{
+    IlionExternalFg::Settings settings;
+    IlionExternalFg::Finder finder;
+    std::filesystem::path iniPath;
+};
+
+static ExternalFgShared& ExternalFg()
+{
+    static ExternalFgShared shared;
+    static std::once_flag loaded;
+    std::call_once(loaded,
+                   []
+                   {
+                       shared.iniPath = Util::DllPath().parent_path() / L"ILION" / L"ExternalFG.ini";
+                       IlionExternalFg::Load(shared.settings, shared.iniPath);
+                   });
+
+    shared.finder.Start(shared.settings.folder);
+    return shared;
+}
+
 // ILION: External Frame Gen tab (Advanced mode only). MFG SUPER MOTION's engine runs as its own process on the
 // game's window (misc/IlionExternalFg.h); nothing of OptiScaler's frame generation is touched. AFMF is described,
 // not switched: it is a driver setting of Adrenalin.
 void MenuCommon::RenderExternalFgTab(RenderMenuContext& ctx)
 {
     static IlionExternalFg::Engine engine;
-    static IlionExternalFg::Settings settings;
-    static std::filesystem::path iniPath;
-    static std::filesystem::path enginePath;
     static char folderText[MAX_PATH] {};
     static std::string startError;
     static bool needsRestart = false;
+    static bool folderShown = false;
+
+    auto& shared = ExternalFg();
+    auto& settings = shared.settings;
+    const auto& iniPath = shared.iniPath;
 
     const float scale = ctx.menuResScale;
     const ImVec4 warnColour = IlionTheme::Themed(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), IlionTheme::Role::Warn);
 
-    if (iniPath.empty())
+    const bool searching = !shared.finder.Done();
+    const std::filesystem::path enginePath = searching ? std::filesystem::path() : shared.finder.Result();
+
+    // What was found is kept, so the next start finds it at once
+    if (!enginePath.empty())
     {
-        iniPath = Util::DllPath().parent_path() / L"ILION" / L"ExternalFG.ini";
-        IlionExternalFg::Load(settings, iniPath);
-        enginePath = IlionExternalFg::FindEngine(settings.folder);
-        strncpy_s(folderText, wstring_to_string(settings.folder).c_str(), _TRUNCATE);
+        const auto app = enginePath.parent_path().parent_path().wstring();
+        if (settings.folder != app)
+        {
+            settings.folder = app;
+            IlionExternalFg::Save(settings, iniPath);
+        }
     }
 
     const auto status = engine.GetStatus();
@@ -17856,19 +17888,46 @@ void MenuCommon::RenderExternalFgTab(RenderMenuContext& ctx)
                                  "ILION does not include it: it starts its engine and sends it your settings. SMFG "
                                  "works on any card; DLSS MFG needs NVIDIA RTX."));
 
-    ImGui::SetNextItemWidth(std::min(ImGui::GetContentRegionAvail().x * 0.7f, 420.0f * scale));
-    if (ImGui::InputText(TrL("Program folder##ExtFg"), folderText, sizeof(folderText)))
+    if (searching)
+        TextWrappedDisabled("%s", Tr("Looking for MFG SUPER MOTION..."));
+    else if (enginePath.empty())
+        TextWrappedColored(warnColour, "%s", Tr("MFG SUPER MOTION was not found. Install it, or copy its folder (the "
+                                                 "one with the Engine folder) and press Paste."));
+    else
+        TextWrappedDisabled("%s: %s", Tr("Found automatically"), wstring_to_string(enginePath.wstring()).c_str());
+
+    // The folder by hand: only when nothing was found, or when asked for
+    if (!searching && !enginePath.empty())
     {
-        settings.folder = string_to_wstring(folderText);
-        enginePath = IlionExternalFg::FindEngine(settings.folder);
-        IlionExternalFg::Save(settings, iniPath);
+        if (IlionTheme::Button(folderShown ? TrL("Hide location##ExtFg") : TrL("Change location##ExtFg")))
+            folderShown = !folderShown;
     }
 
-    if (enginePath.empty())
-        TextWrappedColored(warnColour, "%s", Tr("Engine not found. Write the folder MFG SUPER MOTION is installed in "
-                                                 "(the one with the Engine folder)."));
-    else
-        TextWrappedDisabled("%s: %s", Tr("Engine"), wstring_to_string(enginePath.wstring()).c_str());
+    if (!searching && (enginePath.empty() || folderShown))
+    {
+        const auto useFolder = [&](const std::wstring& folder)
+        {
+            settings.folder = folder;
+            strncpy_s(folderText, wstring_to_string(folder).c_str(), _TRUNCATE);
+            IlionExternalFg::Save(settings, iniPath);
+            shared.finder.Restart(folder);
+        };
+
+        ImGui::SetNextItemWidth(std::min(ImGui::GetContentRegionAvail().x * 0.6f, 380.0f * scale));
+        if (ImGui::InputText(TrL("Program folder##ExtFg"), folderText, sizeof(folderText),
+                             ImGuiInputTextFlags_EnterReturnsTrue))
+            useFolder(string_to_wstring(folderText));
+
+        if (IlionTheme::Button(TrL("Paste##ExtFg")))
+        {
+            const auto pasted = IlionExternalFg::ClipboardText();
+            if (!pasted.empty())
+                useFolder(pasted);
+        }
+        ImGui::SameLine();
+        if (IlionTheme::Button(TrL("Search again##ExtFg")))
+            shared.finder.Restart(settings.folder);
+    }
 
     // Controls: a change is saved and, while the engine runs, sent to it
     const auto changed = [&](const char* key, int value)
@@ -18000,6 +18059,7 @@ void MenuCommon::RenderExternalFgTab(RenderMenuContext& ctx)
 
 void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
 {
+    ExternalFg(); // ILION: the search for MFG SUPER MOTION starts with the menu
     auto& state = ctx.state;
     auto config = ctx.config;
     auto& currentFeature = ctx.currentFeature;

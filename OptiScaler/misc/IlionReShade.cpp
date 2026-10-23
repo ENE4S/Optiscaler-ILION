@@ -60,6 +60,21 @@ RegisterEventFn unregisterEvent = nullptr;
 UnregisterAddonFn unregisterAddon = nullptr;
 std::atomic<reshade::api::effect_runtime*> runtime { nullptr };
 std::atomic<uint64_t> lastPresent { 0 };
+uint64_t registeredTick = 0; // ILION: when ILION registered with ReShade
+
+// ILION: the ReShade64.dll next to the game's exe is the one [Plugins] LoadReShade loads; ReShade's own setup loads it
+// from elsewhere (its Vulkan layer from its own folder)
+bool IsLoadReShadeModule(HMODULE module, std::string* path)
+{
+    wchar_t file[MAX_PATH] {};
+    if (GetModuleFileNameW(module, file, MAX_PATH) == 0)
+        return false;
+
+    *path = wstring_to_string(file);
+
+    std::error_code ec;
+    return std::filesystem::equivalent(file, Util::ExePath().parent_path() / L"ReShade64.dll", ec);
+}
 
 // The ReShade module: ReShade64.dll by name, else any loaded module with the add-on exports
 HMODULE FindReShade()
@@ -449,6 +464,7 @@ void Poll()
             registerEvent = onEvent;
             unregisterEvent = offEvent;
             unregisterAddon = unregister;
+            registeredTick = GetTickCount64();
             dirty = true;
         }
     }
@@ -456,6 +472,8 @@ void Poll()
     std::scoped_lock guard(lock);
     snapshot.moduleFound = module != nullptr;
     snapshot.version = module != nullptr ? ModuleVersion(module) : "";
+    snapshot.path.clear();
+    snapshot.fromLoadReShade = module != nullptr && IsLoadReShadeModule(module, &snapshot.path);
     snapshot.registered = registered;
     snapshot.error = error;
 
@@ -468,7 +486,10 @@ Snapshot Get()
     std::scoped_lock guard(lock);
     Snapshot copy = snapshot;
     copy.pending = requests.size();
-    copy.runtime = runtime.load() != nullptr && GetTickCount64() - lastPresent.load() < 2000;
+    const uint64_t now = GetTickCount64();
+    copy.runtime = runtime.load() != nullptr && now - lastPresent.load() < 2000;
+    copy.presented = copy.registered && lastPresent.load() != 0;
+    copy.registeredMs = copy.registered ? now - registeredTick : 0;
     return copy;
 }
 

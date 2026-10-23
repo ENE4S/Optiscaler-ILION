@@ -692,8 +692,10 @@ static UpscalerStatus StatusOf(const IlionUpscalers::Entry* entry, IFeature* fea
             return status;
         }
 
-        // Outside DX12 the saved dll only counts while FFX through the interop is the chosen upscaler
-        status.selected = !dlssChosen && _wcsicmp(saved.c_str(), key.c_str()) == 0 &&
+        // Outside DX12 the saved dll only counts while FFX through the interop is the chosen upscaler.
+        // ILION: native DLSS chosen (NVIDIA) isn't the saved FFX dll either
+        const bool nativeDlssChosen = ConfiguredUpscaler() == Upscaler::DLSS && !config->DLSSAllowExternalBackend.value_or_default();
+        status.selected = !dlssChosen && !nativeDlssChosen && _wcsicmp(saved.c_str(), key.c_str()) == 0 &&
                           (State::Instance().api == DX12 || ConfiguredUpscaler() == Upscaler::FFX_on12);
         status.loaded = !path.empty() && FfxApiProxy::IsActiveSrDll(path);
 
@@ -858,7 +860,9 @@ static void SelectBackend(Upscaler upscaler)
 static UpscalerStatus BackendStatus(Upscaler upscaler, IFeature* feature)
 {
     UpscalerStatus status;
-    status.selected = ConfiguredUpscaler() == upscaler;
+    // ILION: DLSS saved with AllowExternalBackend is d4r's entry, not native DLSS
+    status.selected = ConfiguredUpscaler() == upscaler &&
+                      !(upscaler == Upscaler::DLSS && Config::Instance()->DLSSAllowExternalBackend.value_or_default());
     status.loaded = feature != nullptr && feature->GetUpscalerType() == upscaler;
     status.active = status.loaded && feature->FrameCount() > 0;
     return status;
@@ -970,9 +974,9 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
     const bool showDefault = !defaultDll.empty() && SharedDefaultTwin().empty();
     const bool locked = FfxApiProxy::SrSwitchLocked();
 
-    // Families in their order; the FFX ones and DLSS 4 only when something of them was found
+    // Families in their order; the FFX ones and DLSS (native DLSS, DLSS 4 through d4r) only when something of them is there
     enum FamilyId { FamFsr4, FamFsr31, FamFsr2, FamXess, FamDlss4, FamHelix, FamFfx, FamCount };
-    static const char* familyNames[FamCount] = { "FSR 4", "FSR 3.1", "FSR 2", "XeSS", "DLSS 4", "HelixSR", "FFX" };
+    static const char* familyNames[FamCount] = { "FSR 4", "FSR 3.1", "FSR 2", "XeSS", "DLSS", "HelixSR", "FFX" };
 
     const auto api = State::Instance().api;
 
@@ -1078,6 +1082,18 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
                      { FamXess, Upscaler::XeSS, "XeSS", nullptr } };
     }
 
+    // ILION: native DLSS, where OptiScaler's own backend list offers it (a DLSS capable GPU, not while d4r runs)
+    if (IdentifyGpu::getPrimaryGpu().dlssCapable && !State::Instance().dlssExternalBackend)
+    {
+        builtIns.push_back({ FamDlss4, Upscaler::DLSS, "DLSS", nullptr });
+
+        if (api != DX12)
+            builtIns.push_back({ FamDlss4, Upscaler::DLSS_on12, "DLSS (DX12 interop)", nullptr });
+    }
+
+    for (const auto& builtIn : builtIns)
+        present[builtIn.family] = true;
+
     for (const auto& entry : entries)
         present[familyOf(entry)] = true;
 
@@ -1170,9 +1186,17 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
             return std::string(Tr("API not compatible")) + ": " +
                    Tr("it runs only through the DX12 interop, the upscaling backend is native Vulkan");
 
-        // Only AMD's own FSR 4 dll keeps AMD's hardware rule; community builds decide by themselves whether they run
-        if (entry.family == IlionUpscalers::Family::Fsr4 && entry.amdOfficial && vendor != VendorId::AMD)
-            return std::string(Tr("Hardware not compatible")) + ": " + Tr("AMD's official FSR 4 needs an AMD GPU");
+        // ILION: AMD's driver provider runs the AMD driver's own code: only on an AMD GPU (an NVIDIA PC with an AMD iGPU
+        // also has this driver installed)
+        if (entry.kind == IlionUpscalers::Kind::Provider && vendor != VendorId::AMD && vendor != VendorId::Invalid)
+            return std::string(Tr("Hardware not compatible")) + ": " + Tr("FSR 4 through the AMD driver needs an AMD GPU");
+
+        // Only AMD's own FSR 4 dll keeps AMD's hardware rule, unless an INT8 model is forced (Fsr4ForceModel), which is
+        // how OptiScaler runs it on other GPUs; community builds decide by themselves whether they run
+        if (entry.family == IlionUpscalers::Family::Fsr4 && entry.amdOfficial && vendor != VendorId::AMD &&
+            !IsFsr4Int8(Config::Instance()->Fsr4ForceModel.value_or_default()))
+            return std::string(Tr("Hardware not compatible")) + ": " +
+                   Tr("AMD's official FSR 4 needs an AMD GPU, or an INT8 model forced with Fsr4ForceModel");
 
         if (!entry.valid)
             return std::string(Tr("DLL not available")) + ": " + Tr(entry.problem.c_str());
@@ -16664,6 +16688,32 @@ static const char* ReShadeEffectNote(const std::string& file)
     return nullptr;
 }
 
+// ILION: why ReShade isn't working, when the reason is known; nullptr otherwise. ReShade loaded as ReShade64.dll
+// (LoadReShade, Instalar_ReShade.bat) hooks DirectX and OpenGL only: in Vulkan it works only as its own Vulkan layer.
+// ReShade refuses a second instance in a process, so LoadReShade's copy, loaded first, also keeps its layer out
+static const char* ReShadeDiagnosis(const IlionReShade::Snapshot& rs)
+{
+    const bool vulkan = State::Instance().api == Vulkan;
+    const bool silent = rs.registered && !rs.presented && rs.registeredMs > 5000;
+
+    if (!rs.moduleFound)
+        return vulkan ? "In Vulkan ReShade only works through its own Vulkan layer: install it with ReShade's official setup "
+                        "(choose Vulkan and the version with add-ons) and restart the game. Instalar_ReShade.bat covers "
+                        "DirectX only."
+                      : "ReShade not detected. Install it with Instalar_ReShade.bat (it enables LoadReShade in "
+                        "OptiScaler.ini) and restart the game.";
+
+    if (silent && vulkan && rs.fromLoadReShade)
+        return "ReShade loaded through LoadReShade hooks DirectX and OpenGL only, not Vulkan, and keeps ReShade's Vulkan "
+               "layer from loading. For this Vulkan game set [Plugins] LoadReShade=false and install ReShade with its "
+               "official setup (Vulkan, version with add-ons).";
+
+    if (silent)
+        return "ReShade is connected but presents no frames. ReShade's own log (ReShade.log next to the game) tells why.";
+
+    return nullptr;
+}
+
 void MenuCommon::RenderReShadeCard(RenderMenuContext& ctx)
 {
     IlionReShade::Poll();
@@ -16671,13 +16721,18 @@ void MenuCommon::RenderReShadeCard(RenderMenuContext& ctx)
 
     SectionTitle("ReShade");
 
+    const char* diagnosis = ReShadeDiagnosis(rs);
+
     if (!rs.moduleFound)
-        TextWrappedDisabled("%s", Tr("ReShade not detected. Install it with Instalar_ReShade.bat (it enables LoadReShade in OptiScaler.ini) and restart the game."));
+        TextWrappedDisabled("%s", Tr(diagnosis));
     else if (!rs.registered)
         TextWrappedColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), "%s", Tr(rs.error.c_str()));
     else
         ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.35f, 0.85f, 0.45f, 1.f), IlionTheme::Role::Good)), "%s %s",
                            Tr("ReShade connected"), rs.version.c_str());
+
+    if (rs.moduleFound && diagnosis != nullptr)
+        TextWrappedColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), "%s", Tr(diagnosis));
 
     const char* key = reshadePanelOpen ? "Close ReShade panel" : "Open ReShade panel";
     if (IlionTheme::Button(TrL(key)))
@@ -17093,14 +17148,22 @@ void MenuCommon::RenderReShadePanel(RenderMenuContext& ctx)
         row("Runtime", rs.runtime ? &good : &warn,
             rs.runtime ? std::string(Tr("presenting frames")) : std::string(Tr("waiting for ReShade to present a frame")));
 
+        if (rs.moduleFound && !rs.path.empty())
+            row("File", nullptr, rs.path);
+
         ImGui::EndTable();
     }
 
+    const char* diagnosis = ReShadeDiagnosis(rs);
+
     if (!rs.moduleFound)
     {
-        TextWrappedDisabled("%s", Tr("ReShade not detected. Install it with Instalar_ReShade.bat (it enables LoadReShade in OptiScaler.ini) and restart the game."));
+        TextWrappedDisabled("%s", Tr(diagnosis));
         return;
     }
+
+    if (diagnosis != nullptr)
+        TextWrappedColored(warn, "%s", Tr(diagnosis));
 
     if (!rs.registered || !rs.runtime)
         return;

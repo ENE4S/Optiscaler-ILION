@@ -17,6 +17,7 @@
 #include <fsr4/FSR4VisualVerify.h>
 #include <fsr4/FSR4Versions.h>
 #include <misc/IlionUpscalers.h>
+#include <misc/IdentifyGpu.h>
 #include <menu/ilion_lang.h>
 
 #include "ffx_api.h"
@@ -1015,6 +1016,22 @@ class FfxApiProxy
             // finds it in _srLoaded with its own provider data
             if (driverProvider)
             {
+                // ILION: the AMD driver's code only runs on an AMD GPU (a saved choice from an AMD PC, or the driver of
+                // an AMD iGPU next to another GPU, is never loaded); the dll in use stays
+                if (const auto vendor = IdentifyGpu::getPrimaryGpu().vendorId;
+                    vendor != VendorId::AMD && vendor != VendorId::Invalid)
+                {
+                    LOG_ERROR("{} not loaded: FSR 4 through the AMD driver needs an AMD GPU", wstring_to_string(targetPath));
+                    ImGui::InsertNotification(
+                        { ImGuiToastType::Error, 10000, Ilion::Tr("FSR 4 through the AMD driver needs an AMD GPU") });
+                    SrDiagSetSwitchResult(diagFrom, diagTo, "FAILED, not an AMD GPU");
+
+                    if (Config::Instance()->Fsr4SrVariant.value_or(L"") == *pending)
+                        Config::Instance()->Fsr4SrVariant.reset();
+
+                    return;
+                }
+
                 FSR4DriverProvider::Upscaler upscaler;
                 std::string providerProblem;
 

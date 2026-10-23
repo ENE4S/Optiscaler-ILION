@@ -190,6 +190,17 @@ inline constexpr Translation kSpanish[] = {
     { "Cancel##d4rWarning", "Cancelar" },
     // ILION v1.2-dev.21
     { "AMD's official FSR 4 needs an AMD GPU", "El FSR 4 oficial de AMD necesita una GPU AMD" },
+    // ILION v1.2-dev.39
+    { "FSR 4 through the AMD driver needs an AMD GPU", "FSR 4 a través del driver de AMD necesita una GPU AMD" },
+    { "AMD's official FSR 4 needs an AMD GPU, or an INT8 model forced with Fsr4ForceModel",
+      "El FSR 4 oficial de AMD necesita una GPU AMD, o un modelo INT8 forzado con Fsr4ForceModel" },
+    { "DLSS (DX12 interop)", "DLSS (interop. DX12)" },
+    { "In Vulkan ReShade only works through its own Vulkan layer: install it with ReShade's official setup (choose Vulkan and the version with add-ons) and restart the game. Instalar_ReShade.bat covers DirectX only.",
+      "En Vulkan, ReShade solo funciona a través de su propia capa Vulkan: instálalo con el instalador oficial de ReShade (elige Vulkan y la versión con add-ons) y reinicia el juego. Instalar_ReShade.bat solo cubre DirectX." },
+    { "ReShade loaded through LoadReShade hooks DirectX and OpenGL only, not Vulkan, and keeps ReShade's Vulkan layer from loading. For this Vulkan game set [Plugins] LoadReShade=false and install ReShade with its official setup (Vulkan, version with add-ons).",
+      "ReShade cargado con LoadReShade solo engancha DirectX y OpenGL, no Vulkan, e impide que se cargue la capa Vulkan de ReShade. Para este juego Vulkan pon [Plugins] LoadReShade=false e instala ReShade con su instalador oficial (Vulkan, versión con add-ons)." },
+    { "ReShade is connected but presents no frames. ReShade's own log (ReShade.log next to the game) tells why.",
+      "ReShade está conectado pero no presenta fotogramas. Su propio registro (ReShade.log junto al juego) indica el motivo." },
     // ILION v1.2-dev.20
     { "ILION (original), Fallout and Light: the instrument panel look of ILION in three styles.\nClassic: the original look, with the colour settings below.", "ILION (original), Fallout y Claro: el aspecto de panel de instrumentos de ILION en tres estilos.\nClásico: el aspecto original, con los ajustes de color de abajo." },
     // ILION v1.2-dev.19

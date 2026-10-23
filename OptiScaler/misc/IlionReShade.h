@@ -69,6 +69,12 @@ struct Snapshot
     std::vector<Technique> available;   // every technique ReShade has loaded
     uint64_t revision = 0;     // grows with every read back
     size_t pending = 0;        // requests not applied yet
+
+    // ILION: which ReShade, for the diagnosis. ReShade refuses to load a second instance in a process, so there is one
+    std::string path;             // its file
+    bool fromLoadReShade = false; // it is the ReShade64.dll next to the game's exe, the one [Plugins] LoadReShade loads
+    bool presented = false;       // it presented a frame since ILION registered with it
+    uint64_t registeredMs = 0;    // time since ILION registered with it, 0 when not registered
 };
 
 // Looks for ReShade and registers ILION (rate-limited, cheap once registered). Called by the menu, never per frame

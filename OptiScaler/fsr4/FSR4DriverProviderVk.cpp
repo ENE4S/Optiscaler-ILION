@@ -7,6 +7,7 @@
 #include <Config.h>
 #include <State.h>
 #include <Util.h>
+#include <misc/IdentifyGpu.h>
 #include <ffx_upscale.h>
 #include "vk/ffx_api_vk.h"
 
@@ -353,6 +354,14 @@ bool FSR4DriverProviderVk::Init()
         return IsAvailable();
 
     initTried = true;
+
+    // ILION: the AMD driver's code only runs on an AMD GPU; an AMD iGPU's driver next to another GPU isn't used.
+    // A GPU not identified (Invalid) keeps the previous behaviour
+    if (const auto vendor = IdentifyGpu::getPrimaryGpu().vendorId; vendor != VendorId::AMD && vendor != VendorId::Invalid)
+    {
+        LOG_INFO("AMD Vulkan driver FSR provider not used: the primary GPU isn't AMD");
+        return false;
+    }
 
     const auto path = FindDriverDll();
     if (path.empty())

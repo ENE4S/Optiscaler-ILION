@@ -17837,16 +17837,161 @@ static ExternalFgShared& ExternalFg()
     return shared;
 }
 
-// ILION: External Frame Gen tab (Advanced mode only). MFG SUPER MOTION's engine runs as its own process on the
-// game's window (misc/IlionExternalFg.h); nothing of OptiScaler's frame generation is touched. AFMF is described,
-// not switched: it is a driver setting of Adrenalin.
+// What the external FG screen shows: only what MFG SUPER MOTION's engine says about itself (its "@" lines), never
+// OptiScaler's frame generation or the overlay's counters
+struct ExtFgCrtData
+{
+    int state = 0;            // 0 off, 1 starting, 2 active, 3 error
+    std::string generator;    // the generator the engine was started with
+    std::string multiplier = "-";
+    std::string capture = "-";
+    double baseFps = -1.0;    // real frames of the game a second
+    double outputFps = -1.0;  // every frame shown a second
+};
+
+static std::string ExtFgGeneratorName(int generator, int msmSearch)
+{
+    switch (generator)
+    {
+    case 0:
+        return "DLSS MFG";
+    case 1:
+        return "XeSS MFG";
+    default:
+        return msmSearch == 1 ? "SMFG FAST" : "SMFG 1.0";
+    }
+}
+
+// The screen: a dark bezel with four screws and a blue-green glass, figures in the CRT font. Same family as the FG
+// screen, its own tint, so it can't be taken for OptiScaler's frame generation.
+static void DrawExtFgCrt(const ImVec2& min, const ImVec2& size, const ExtFgCrtData& d)
+{
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    ImFont* font = IlionTheme::crtFont != nullptr ? IlionTheme::crtFont : ImGui::GetFont();
+    ImFont* bigFont = IlionTheme::crtTitleFont != nullptr ? IlionTheme::crtTitleFont : font;
+    const float fs = ImGui::GetFontSize();
+    const ImVec2 max(min.x + size.x, min.y + size.y);
+    const auto col = [](float r, float g, float b, float a = 1.0f) { return ImGui::GetColorU32(ImVec4(r, g, b, a)); };
+
+    // Bezel, screws, recess
+    const float bezel = std::floor(fs * 0.55f);
+    const float rounding = std::floor(fs * 0.45f);
+    draw->AddRectFilled(ImVec2(min.x + 2.0f, min.y + 3.0f), ImVec2(max.x + 2.0f, max.y + 3.0f), col(0, 0, 0, 0.45f), rounding);
+    draw->AddRectFilledMultiColor(min, max, col(0.36f, 0.38f, 0.40f), col(0.36f, 0.38f, 0.40f), col(0.15f, 0.16f, 0.18f),
+                                  col(0.15f, 0.16f, 0.18f));
+    draw->AddRect(min, max, col(0.04f, 0.04f, 0.05f), rounding, 0, 1.5f);
+    draw->AddLine(ImVec2(min.x + rounding, min.y + 1.0f), ImVec2(max.x - rounding, min.y + 1.0f), col(0.75f, 0.78f, 0.80f, 0.5f));
+
+    const float screw = std::max(2.0f, std::floor(fs * 0.17f));
+    for (const ImVec2 at : { ImVec2(min.x + bezel * 0.5f, min.y + bezel * 0.5f), ImVec2(max.x - bezel * 0.5f, min.y + bezel * 0.5f),
+                             ImVec2(min.x + bezel * 0.5f, max.y - bezel * 0.5f), ImVec2(max.x - bezel * 0.5f, max.y - bezel * 0.5f) })
+    {
+        draw->AddCircleFilled(at, screw, col(0.52f, 0.54f, 0.56f));
+        draw->AddCircle(at, screw, col(0.07f, 0.07f, 0.08f), 0, 1.0f);
+        draw->AddLine(ImVec2(at.x - screw * 0.6f, at.y + screw * 0.6f), ImVec2(at.x + screw * 0.6f, at.y - screw * 0.6f),
+                      col(0.14f, 0.14f, 0.15f), 1.0f);
+    }
+
+    const ImVec2 rMin(min.x + bezel, min.y + bezel), rMax(max.x - bezel, max.y - bezel);
+    draw->AddRectFilled(rMin, rMax, col(0, 0, 0), rounding * 1.6f);
+    const ImVec2 gMin(rMin.x + 2.0f, rMin.y + 2.0f), gMax(rMax.x - 2.0f, rMax.y - 2.0f);
+    const float glassRound = rounding * 1.5f, gw = gMax.x - gMin.x, gh = gMax.y - gMin.y;
+    draw->AddRectFilled(gMin, gMax, col(0.012f, 0.050f, 0.062f), glassRound);
+
+    draw->PushClipRect(ImVec2(gMin.x + 1.0f, gMin.y + 1.0f), ImVec2(gMax.x - 1.0f, gMax.y - 1.0f), true);
+    const ImU32 clear = col(0, 0, 0, 0), edge = col(0, 0, 0, 0.5f);
+    draw->AddRectFilledMultiColor(gMin, ImVec2(gMin.x + gw * 0.2f, gMax.y), edge, clear, clear, edge);
+    draw->AddRectFilledMultiColor(ImVec2(gMax.x - gw * 0.2f, gMin.y), gMax, clear, edge, edge, clear);
+    draw->AddRectFilledMultiColor(gMin, ImVec2(gMax.x, gMin.y + gh * 0.16f), edge, edge, clear, clear);
+    for (float y = gMin.y + 2.0f; y < gMax.y; y += 3.0f)
+        draw->AddLine(ImVec2(gMin.x, y), ImVec2(gMax.x, y), col(0, 0, 0, 0.14f));
+    draw->AddRectFilledMultiColor(ImVec2(gMin.x + gw * 0.06f, gMin.y + gh * 0.04f), ImVec2(gMax.x - gw * 0.06f, gMin.y + gh * 0.30f),
+                                  col(0.8f, 0.95f, 1.0f, 0.035f), col(0.8f, 0.95f, 1.0f, 0.035f), clear, clear);
+
+    // Text: cyan labels, white-blue values, ACTIVE in phosphor green
+    const ImVec4 label(0.42f, 0.86f, 0.95f, 1.0f), value(0.88f, 0.97f, 1.0f, 1.0f), dim(0.40f, 0.52f, 0.56f, 1.0f);
+    const ImVec4 phosphor(0.30f, 1.0f, 0.42f, 1.0f), warn(1.0f, 0.55f, 0.25f, 1.0f);
+    const auto text = [&](ImFont* f, float px, const ImVec2& at, const ImVec4& c, const char* s)
+    {
+        draw->AddText(f, px, ImVec2(at.x + 1.0f, at.y + 1.0f), col(0, 0, 0, 0.55f), s);
+        draw->AddText(f, px, ImVec2(at.x, at.y + 1.0f), col(c.x, c.y, c.z, 0.14f), s);
+        draw->AddText(f, px, at, ImGui::GetColorU32(c), s);
+    };
+    const auto width = [&](ImFont* f, float px, const char* s) { return f->CalcTextSizeA(px, FLT_MAX, 0.0f, s).x; };
+
+    const float pad = std::floor(fs * 0.6f);
+    const float x = gMin.x + pad, right = gMax.x - pad;
+    float y = gMin.y + std::floor(pad * 0.7f);
+
+    // Title: the program and its state
+    const char* stateText = d.state == 2   ? FgCrtWord("ACTIVE", "ACTIVO")
+                            : d.state == 1 ? FgCrtWord("STARTING", "INICIANDO")
+                            : d.state == 3 ? "ERROR"
+                                           : FgCrtWord("OFF", "APAGADO");
+    const ImVec4 stateColour = d.state == 2 ? phosphor : d.state == 3 ? warn : d.state == 1 ? label : dim;
+    const float titlePx = std::floor(fs * 1.1f);
+    text(bigFont, titlePx, ImVec2(x, y), label, "SUPER MOTION");
+    text(bigFont, titlePx, ImVec2(right - width(bigFont, titlePx, stateText), y), stateColour, stateText);
+    y += titlePx + std::floor(fs * 0.25f);
+    draw->AddLine(ImVec2(x, y), ImVec2(right, y), col(label.x, label.y, label.z, 0.45f), 1.0f);
+    y += std::floor(fs * 0.35f);
+
+    // Generator and multiplier on one line, capture under it
+    const bool on = d.state == 2;
+    text(font, fs, ImVec2(x, y), label, "GEN");
+    text(font, fs, ImVec2(x + width(font, fs, "GEN "), y), on ? value : dim, d.generator.c_str());
+    const std::string mult = d.multiplier == "-" ? std::string("-") : "x" + d.multiplier;
+    const float multX = right - width(font, fs, mult.c_str());
+    text(font, fs, ImVec2(multX, y), on ? value : dim, mult.c_str());
+    text(font, fs, ImVec2(multX - width(font, fs, "MULT "), y), label, "MULT");
+    y += std::floor(fs * 1.5f);
+
+    // Three figures: base, generated, shown
+    const float bigPx = std::floor(fs * 1.9f);
+    const float column = (right - x) / 3.0f;
+    const auto figure = [&](int i, const char* caption, double fps)
+    {
+        const std::string number = fps >= 0.0 ? StrFmt("%.0f", fps) : std::string("-");
+        const float cx = x + column * (i + 0.5f);
+        text(font, fs * 0.85f, ImVec2(std::floor(cx - width(font, fs * 0.85f, caption) * 0.5f), y), label, caption);
+        text(bigFont, bigPx, ImVec2(std::floor(cx - width(bigFont, bigPx, number.c_str()) * 0.5f), y + std::floor(fs * 1.05f)),
+             fps >= 0.0 ? (i == 1 ? phosphor : value) : dim, number.c_str());
+    };
+
+    const double generated = on && d.baseFps >= 0.0 && d.outputFps >= d.baseFps ? d.outputFps - d.baseFps : -1.0;
+    figure(0, FgCrtWord("BASE", "BASE"), on ? d.baseFps : -1.0);
+    figure(1, FgCrtWord("GENERATED", "GENERADOS"), generated);
+    figure(2, FgCrtWord("SHOWN", "MOSTRADOS"), on ? d.outputFps : -1.0);
+    y += std::floor(fs * 1.05f) + bigPx + std::floor(fs * 0.2f);
+
+    draw->AddLine(ImVec2(x, y), ImVec2(right, y), col(label.x, label.y, label.z, 0.30f), 1.0f);
+    y += std::floor(fs * 0.25f);
+    const std::string captureLine = std::string(FgCrtWord("CAPTURE ", "CAPTURA ")) + (on ? d.capture : std::string("-"));
+    text(font, fs * 0.85f, ImVec2(x, y), dim, captureLine.c_str());
+    const char* fpsWord = "FPS";
+    text(font, fs * 0.85f, ImVec2(right - width(font, fs * 0.85f, fpsWord), y), dim, fpsWord);
+
+    draw->PopClipRect();
+    draw->AddRect(gMin, gMax, col(0.30f, 0.55f, 0.62f, 0.30f), glassRound, 0, 1.0f);
+}
+
+static ImVec2 ExtFgCrtSize()
+{
+    const float fs = ImGui::GetFontSize();
+    return ImVec2(std::floor(fs * 19.0f), std::floor(fs * 9.6f));
+}
+
+// ILION: External FG tab (Advanced mode only). MFG SUPER MOTION's engine runs as its own process on the game's
+// window (misc/IlionExternalFg.h); nothing of OptiScaler's frame generation is touched. The screen shows only that
+// engine's own figures. Settings are in small key-selected pages, the program's location and notes under Info.
 void MenuCommon::RenderExternalFgTab(RenderMenuContext& ctx)
 {
     static IlionExternalFg::Engine engine;
     static char folderText[MAX_PATH] {};
     static std::string startError;
     static bool needsRestart = false;
-    static bool folderShown = false;
+    static int page = 0;
+    static int startedGenerator = -1, startedSearch = 0;
 
     auto& shared = ExternalFg();
     auto& settings = shared.settings;
@@ -17872,62 +18017,118 @@ void MenuCommon::RenderExternalFgTab(RenderMenuContext& ctx)
     const auto status = engine.GetStatus();
     const bool running = status.running;
 
-    TextWrappedDisabled("%s", Tr("Frame generation from outside the game: a separate program captures the game's "
-                                 "window and shows real and generated frames in its own window over it. Use only one "
-                                 "frame generation at a time."));
-
     // Only one frame generation at a time
     const auto fg = ctx.state.currentFG;
     if (fg != nullptr && fg->IsActive() && !fg->IsPaused())
         TextWrappedColored(warnColour, "%s", Tr("OptiScaler's frame generation is on. Turn it off in Frame Gen "
                                                  "before starting an external one."));
 
-    // 1. MFG SUPER MOTION ------------------------------------------------
-    SectionTitle("MFG SUPER MOTION");
-    TextWrappedDisabled("%s", Tr("Free program by NODIX TECH, installed by you (github.com/NODIX-TECH/MFG-SUPER-MOTION). "
-                                 "ILION does not include it: it starts its engine and sends it your settings. SMFG "
-                                 "works on any card; DLSS MFG needs NVIDIA RTX."));
+    // The screen, centred, and the key that starts or stops the engine under it
+    ExtFgCrtData d;
+    d.generator = ExtFgGeneratorName(running ? startedGenerator : settings.generator,
+                                     running ? startedSearch : settings.msmSearch);
+    if (running)
+    {
+        d.state = !status.error.empty() ? 3 : status.baseFps > 0.0 ? 2 : 1;
+        d.baseFps = status.baseFps;
+        d.outputFps = status.outputFps;
+        if (!status.mfg.empty() && isdigit((unsigned char) status.mfg[0]))
+            d.multiplier = status.mfg.substr(0, status.mfg.find(' '));
 
+        // "@source <hwnd> <w> <h> <dxgi|wgc> <placement>": the fourth word
+        char hwndText[32] {}, api[16] {};
+        int w = 0, h = 0;
+        if (sscanf_s(status.source.c_str(), "%31s %d %d %15s", hwndText, 32, &w, &h, api, 16) == 4)
+            d.capture = IlionTheme::Upper(api);
+    }
+    else if (!startError.empty() || !status.error.empty())
+    {
+        d.state = 3;
+    }
+
+    const ImVec2 crt = ExtFgCrtSize();
+    const float avail = ImGui::GetContentRegionAvail().x;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, std::floor((avail - crt.x) * 0.5f)));
+    const ImVec2 crtPos = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(crt);
+    DrawExtFgCrt(crtPos, crt, d);
+    if (ImGui::IsItemHovered())
+        WrappedTooltip("%s", Tr("Figures of MFG SUPER MOTION itself: the game's real frames, the frames it generates "
+                                "and all it shows. OptiScaler's frame generation is not counted here."));
+
+    const char* action = running ? TrL("Stop##ExtFg") : TrL("Start##ExtFg");
+    const float actionWidth = IlionTheme::LampButtonWidth(action);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, std::floor((avail - actionWidth) * 0.5f)));
+    ImGui::BeginDisabled(!running && enginePath.empty());
+    if (IlionTheme::LampButton(action, running ? IlionTheme::Lamp::Red : IlionTheme::Lamp::Green))
+    {
+        if (running)
+        {
+            engine.Stop();
+            LOG_INFO("External FG: stopped");
+        }
+        else
+        {
+            startError.clear();
+            if (engine.Start(enginePath, Util::GetProcessWindow(), settings, startError))
+            {
+                startedGenerator = settings.generator;
+                startedSearch = settings.msmSearch;
+                LOG_INFO("External FG: started {}", wstring_to_string(enginePath.wstring()));
+            }
+            else
+            {
+                LOG_WARN("External FG: {}", startError);
+            }
+        }
+        needsRestart = false;
+    }
+    ImGui::EndDisabled();
+
+    // One short line only when something needs the user
     if (searching)
         TextWrappedDisabled("%s", Tr("Looking for MFG SUPER MOTION..."));
     else if (enginePath.empty())
-        TextWrappedColored(warnColour, "%s", Tr("MFG SUPER MOTION was not found. Install it, or copy its folder (the "
-                                                 "one with the Engine folder) and press Paste."));
-    else
-        TextWrappedDisabled("%s: %s", Tr("Found automatically"), wstring_to_string(enginePath.wstring()).c_str());
+        TextWrappedColored(warnColour, "%s", Tr("MFG SUPER MOTION not found. See Info."));
+    if (!startError.empty())
+        TextWrappedColored(warnColour, "%s: %s", Tr("Could not start"), startError.c_str());
+    if (!status.error.empty())
+        TextWrappedColored(warnColour, "%s: %s", Tr("Error"), status.error.c_str());
+    if (needsRestart)
+        TextWrappedColored(warnColour, "%s", Tr("Stop and start again to apply the generator or the window mode."));
 
-    // The folder by hand: only when nothing was found, or when asked for
-    if (!searching && !enginePath.empty())
+    // Page keys, centred: the same keys as the menu's mode selector
+    ImGui::Dummy(ImVec2(0.0f, std::floor(4.0f * scale)));
+    const char* pages[] = { Tr("Generation"), Tr("Pacing"), Tr("Capture"), Tr("Info") };
+    float widest = 0.0f;
+    for (const char* p : pages)
+        widest = std::max(widest, ImGui::CalcTextSize(p).x);
+    const ImVec2 keySize = IlionTheme::SelectorKeySize(widest, false);
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const float rowWidth = keySize.x * 4.0f + spacing * 3.0f;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, std::floor((avail - rowWidth) * 0.5f)));
+
+    for (int i = 0; i < 4; i++)
     {
-        if (IlionTheme::Button(folderShown ? TrL("Hide location##ExtFg") : TrL("Change location##ExtFg")))
-            folderShown = !folderShown;
+        if (i > 0)
+            ImGui::SameLine();
+
+        const ImVec2 pos = ImGui::GetCursorScreenPos();
+        ImGui::PushID(i);
+        if (ImGui::InvisibleButton("##ExtFgPage", keySize))
+            page = i;
+        const bool hovered = ImGui::IsItemHovered();
+        ImGui::PopID();
+
+        IlionTheme::DrawSelectorKey(ImGui::GetWindowDrawList(), ImRect(pos, ImVec2(pos.x + keySize.x, pos.y + keySize.y)),
+                                    page == i, hovered);
+        const ImVec2 textSize = ImGui::CalcTextSize(pages[i]);
+        ImGui::GetWindowDrawList()->AddText(
+            ImVec2(std::floor(pos.x + (keySize.x - textSize.x) * 0.5f), std::floor(pos.y + (keySize.y - textSize.y) * 0.5f)),
+            ImGui::GetColorU32(page == i || hovered ? ImGuiCol_Text : ImGuiCol_TextDisabled), pages[i]);
     }
 
-    if (!searching && (enginePath.empty() || folderShown))
-    {
-        const auto useFolder = [&](const std::wstring& folder)
-        {
-            settings.folder = folder;
-            strncpy_s(folderText, wstring_to_string(folder).c_str(), _TRUNCATE);
-            IlionExternalFg::Save(settings, iniPath);
-            shared.finder.Restart(folder);
-        };
-
-        ImGui::SetNextItemWidth(std::min(ImGui::GetContentRegionAvail().x * 0.6f, 380.0f * scale));
-        if (ImGui::InputText(TrL("Program folder##ExtFg"), folderText, sizeof(folderText),
-                             ImGuiInputTextFlags_EnterReturnsTrue))
-            useFolder(IlionExternalFg::CleanPath(string_to_wstring(folderText)));
-
-        if (IlionTheme::Button(TrL("Paste##ExtFg")))
-        {
-            const auto pasted = IlionExternalFg::ClipboardText();
-            if (!pasted.empty())
-                useFolder(pasted);
-        }
-        ImGui::SameLine();
-        if (IlionTheme::Button(TrL("Search again##ExtFg")))
-            shared.finder.Restart(settings.folder);
-    }
+    ImGui::Dummy(ImVec2(0.0f, std::floor(4.0f * scale)));
 
     // Controls: a change is saved and, while the engine runs, sent to it
     const auto changed = [&](const char* key, int value)
@@ -17942,6 +18143,7 @@ void MenuCommon::RenderExternalFgTab(RenderMenuContext& ctx)
         }
     };
 
+    const float fieldWidth = std::min(ImGui::GetContentRegionAvail().x * 0.55f, 240.0f * scale);
     const auto combo = [&](const char* label, const char* key, int& value, std::initializer_list<const char*> names,
                            int first)
     {
@@ -17950,7 +18152,7 @@ void MenuCommon::RenderExternalFgTab(RenderMenuContext& ctx)
             items.push_back(Tr(n));
 
         const int index = std::clamp(value - first, 0, (int) items.size() - 1);
-        ImGui::SetNextItemWidth(std::min(ImGui::GetContentRegionAvail().x * 0.6f, 260.0f * scale));
+        ImGui::SetNextItemWidth(fieldWidth);
         if (IlionTheme::BeginCombo(TrL(label), items[index]))
         {
             for (int i = 0; i < (int) items.size(); i++)
@@ -17968,93 +18170,100 @@ void MenuCommon::RenderExternalFgTab(RenderMenuContext& ctx)
     const auto check = [&](const char* label, const char* key, int& value)
     {
         bool on = value != 0;
-        if (ImGui::Checkbox(TrL(label), &on))
+        if (IlionTheme::Checkbox(TrL(label), &on))
         {
             value = on ? 1 : 0;
             changed(key, value);
         }
     };
 
-    SectionTitle("Generation");
-    combo("Generator##ExtFg", "generator", settings.generator, { "DLSS MFG (NVIDIA RTX)", "XeSS MFG", "SMFG (any card)" },
-          0);
-    combo("Multiplier##ExtFg", "multiplier", settings.multiplier, { "x2", "x3", "x4", "x5", "x6" }, 2);
-    combo("Kind of game##ExtFg", "game", settings.game,
-          { "Automatic", "2D", "2.5D", "First person", "Third person", "Racing", "Open world", "Manual size" }, 0);
-    if (settings.game == 7)
+    switch (page)
     {
-        ImGui::SetNextItemWidth(std::min(ImGui::GetContentRegionAvail().x * 0.6f, 260.0f * scale));
-        if (ImGui::SliderInt(TrL("Generated frame size (%)##ExtFg"), &settings.flow, 10, 100))
-            changed("flow", settings.flow);
-    }
-    if (settings.generator == 2)
-        combo("SMFG motion search##ExtFg", "msm_search", settings.msmSearch, { "Full", "Fast" }, 0);
-    check("Adaptive Motion Learning##ExtFg", "aml", settings.aml);
-    check("No generated frames in very fast motion##ExtFg", "guard", settings.guard);
-    check("Keep still pixels##ExtFg", "still", settings.still);
+    case 0: // Generation
+        combo("Generator##ExtFg", "generator", settings.generator, { "DLSS MFG (NVIDIA RTX)", "XeSS MFG", "SMFG (any card)" },
+              0);
+        combo("Multiplier##ExtFg", "multiplier", settings.multiplier, { "x2", "x3", "x4", "x5", "x6" }, 2);
+        combo("Kind of game##ExtFg", "game", settings.game,
+              { "Automatic", "2D", "2.5D", "First person", "Third person", "Racing", "Open world", "Manual size" }, 0);
+        if (settings.game == 7)
+        {
+            ImGui::SetNextItemWidth(fieldWidth);
+            if (IlionTheme::SliderInt(TrL("Generated frame size (%)##ExtFg"), &settings.flow, 10, 100))
+                changed("flow", settings.flow);
+        }
+        if (settings.generator == 2)
+            combo("SMFG motion search##ExtFg", "msm_search", settings.msmSearch, { "Full", "Fast" }, 0);
+        check("Adaptive Motion Learning##ExtFg", "aml", settings.aml);
+        check("No generated frames in very fast motion##ExtFg", "guard", settings.guard);
+        check("Keep still pixels##ExtFg", "still", settings.still);
+        break;
 
-    SectionTitle("Pacing and screen");
-    combo("Queue##ExtFg", "queue", settings.queue, { "Least delay", "Balanced", "Smoothest" }, 0);
-    combo("Sync##ExtFg", "sync", settings.sync,
-          { "Off (tearing)", "Newest frame each refresh", "VSync", "Every 2nd refresh", "Every 3rd refresh" }, 0);
-    check("Low Latency##ExtFg", "low_latency", settings.lowLatency);
-    check("VRR##ExtFg", "vrr", settings.vrr);
-    check("Limit to refresh rate##ExtFg", "screen_limit", settings.screenLimit);
-    check("FPS counter of the program##ExtFg", "counter", settings.counter);
+    case 1: // Pacing
+        combo("Queue##ExtFg", "queue", settings.queue, { "Least delay", "Balanced", "Smoothest" }, 0);
+        combo("Sync##ExtFg", "sync", settings.sync,
+              { "Off (tearing)", "Newest frame each refresh", "VSync", "Every 2nd refresh", "Every 3rd refresh" }, 0);
+        check("Low Latency##ExtFg", "low_latency", settings.lowLatency);
+        check("VRR##ExtFg", "vrr", settings.vrr);
+        check("Limit to refresh rate##ExtFg", "screen_limit", settings.screenLimit);
+        check("FPS counter of the program##ExtFg", "counter", settings.counter);
+        break;
 
-    SectionTitle("Capture and window");
-    combo("Capture##ExtFg", "capture_api", settings.captureApi, { "Automatic", "DXGI", "WGC" }, -1);
-    combo("Game window##ExtFg", "window_mode", settings.windowMode, { "Borderless", "Scaled to screen", "As it is" }, 0);
-    TextWrappedDisabled("%s", Tr("Generator and Game window are applied when the engine starts. The engine puts the "
-                                 "game's window back as it was when it stops."));
+    case 2: // Capture
+        combo("Capture##ExtFg", "capture_api", settings.captureApi, { "Automatic", "DXGI", "WGC" }, -1);
+        combo("Game window##ExtFg", "window_mode", settings.windowMode, { "Borderless", "Scaled to screen", "As it is" }, 0);
+        TextWrappedDisabled("%s", Tr("Generator and Game window are applied when the engine starts. The engine puts the "
+                                     "game's window back as it was when it stops."));
+        break;
 
-    // Start / stop and what the engine says
-    SectionTitle("Engine");
-    ImGui::BeginDisabled(enginePath.empty() || running);
-    if (IlionTheme::Button(TrL("Start##ExtFg")))
+    default: // Info
     {
-        startError.clear();
-        needsRestart = false;
-        if (!engine.Start(enginePath, Util::GetProcessWindow(), settings, startError))
-            LOG_WARN("External FG: {}", startError);
-        else
-            LOG_INFO("External FG: started {}", wstring_to_string(enginePath.wstring()));
-    }
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!running);
-    if (IlionTheme::Button(TrL("Stop##ExtFg")))
-    {
-        engine.Stop();
-        needsRestart = false;
-        LOG_INFO("External FG: stopped");
-    }
-    ImGui::EndDisabled();
+        TextWrappedDisabled("%s", Tr("Frame generation from outside the game: a separate program captures the game's "
+                                     "window and shows real and generated frames in its own window over it. Use only "
+                                     "one frame generation at a time."));
+        TextWrappedDisabled("%s", Tr("Free program by NODIX TECH, installed by you (github.com/NODIX-TECH/MFG-SUPER-MOTION). "
+                                     "ILION does not include it: it starts its engine and sends it your settings. SMFG "
+                                     "works on any card; DLSS MFG needs NVIDIA RTX."));
 
-    if (!startError.empty())
-        TextWrappedColored(warnColour, "%s: %s", Tr("Could not start"), startError.c_str());
-    if (needsRestart)
-        TextWrappedColored(warnColour, "%s", Tr("Stop and start again to apply the generator or the window mode."));
+        if (!searching)
+        {
+            if (enginePath.empty())
+                TextWrappedColored(warnColour, "%s", Tr("MFG SUPER MOTION was not found. Install it, or copy its folder (the "
+                                                         "one with the Engine folder) and press Paste."));
+            else
+                TextWrappedDisabled("%s: %s", Tr("Found automatically"), wstring_to_string(enginePath.wstring()).c_str());
 
-    if (running || !status.state.empty())
-    {
-        ImGui::Text("%s: %s", Tr("State"), status.state.empty() ? "-" : status.state.c_str());
-        if (status.baseFps > 0.0)
-            ImGui::Text("%s: %.0f  ->  %s: %.0f", Tr("Game FPS"), status.baseFps, Tr("Shown FPS"), status.outputFps);
-        if (!status.mfg.empty())
-            ImGui::Text("MFG: %s", status.mfg.c_str());
-        if (!status.source.empty())
-            TextWrappedDisabled("%s: %s", Tr("Source"), status.source.c_str());
-        if (!status.error.empty())
-            TextWrappedColored(warnColour, "%s: %s", Tr("Error"), status.error.c_str());
+            const auto useFolder = [&](const std::wstring& folder)
+            {
+                settings.folder = folder;
+                strncpy_s(folderText, wstring_to_string(folder).c_str(), _TRUNCATE);
+                IlionExternalFg::Save(settings, iniPath);
+                shared.finder.Restart(folder);
+            };
+
+            ImGui::SetNextItemWidth(fieldWidth);
+            if (ImGui::InputText(TrL("Program folder##ExtFg"), folderText, sizeof(folderText),
+                                 ImGuiInputTextFlags_EnterReturnsTrue))
+                useFolder(IlionExternalFg::CleanPath(string_to_wstring(folderText)));
+
+            if (IlionTheme::Button(TrL("Paste##ExtFg")))
+            {
+                const auto pasted = IlionExternalFg::ClipboardText();
+                if (!pasted.empty())
+                    useFolder(pasted);
+            }
+            ImGui::SameLine();
+            if (IlionTheme::Button(TrL("Search again##ExtFg")))
+                shared.finder.Restart(settings.folder);
+        }
+
+        SectionTitle("AMD Fluid Motion Frames (AFMF)");
+        TextWrappedDisabled("%s", Tr("Frame generation of the Radeon driver. It is switched in AMD Software: Adrenalin "
+                                     "Edition (Alt+R > Gaming > Graphics). ILION does not switch it yet: it needs AMD's "
+                                     "ADLX library, a later step. Do not use it together with MFG SUPER MOTION or "
+                                     "OptiScaler's frame generation."));
+        break;
     }
-
-    // 2. AMD Fluid Motion Frames -------------------------------------------
-    SectionTitle("AMD Fluid Motion Frames (AFMF)");
-    TextWrappedDisabled("%s", Tr("Frame generation of the Radeon driver. It is switched in AMD Software: Adrenalin "
-                                 "Edition (Alt+R > Gaming > Graphics). ILION does not switch it yet: it needs AMD's "
-                                 "ADLX library, a later step. Do not use it together with MFG SUPER MOTION or "
-                                 "OptiScaler's frame generation."));
+    }
 }
 
 void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
@@ -18083,7 +18292,7 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
         { "MAIN", "Custom", "Boxes picked in Menu > Custom Tab.", RenderCustomTab },
         { "MAIN", "Upscaling", "Backend and output scaling.", RenderUpscalerStateMessage },
         { "MAIN", "Frame Gen", "Frame generation source, output and pacing." },
-        { "MAIN", "External Frame Gen", "MFG SUPER MOTION started and steered from here; AFMF explained. Advanced mode only.",
+        { "MAIN", "External FG", "MFG SUPER MOTION started and steered from here; AFMF explained. Advanced mode only.",
           RenderExternalFgTab, false,
           [](RenderMenuContext& c) { return !c.config->MenuBasicMode.value_or_default() && !c.config->MenuEssentialMode.value_or_default(); } },
         { "MAIN", "Anti-Ghosting", "Options against ghosting and trails, grouped by the technology they work with.",

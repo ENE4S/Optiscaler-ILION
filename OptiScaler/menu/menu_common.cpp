@@ -60,6 +60,7 @@
 #include <memory>
 #include <type_traits>
 #include <misc/IdentifyGpu.h>
+#include <misc/IlionExternalFg.h>
 #include <hooks/Xell_Hooks.h>
 #include <low_latency/input/input_common.h>
 
@@ -17812,6 +17813,191 @@ void MenuCommon::RenderAntiGhostingTab(RenderMenuContext& ctx)
         requestedMenuTab = "Upscaling";
 }
 
+// ILION: External Frame Gen tab (Advanced mode only). MFG SUPER MOTION's engine runs as its own process on the
+// game's window (misc/IlionExternalFg.h); nothing of OptiScaler's frame generation is touched. AFMF is described,
+// not switched: it is a driver setting of Adrenalin.
+void MenuCommon::RenderExternalFgTab(RenderMenuContext& ctx)
+{
+    static IlionExternalFg::Engine engine;
+    static IlionExternalFg::Settings settings;
+    static std::filesystem::path iniPath;
+    static std::filesystem::path enginePath;
+    static char folderText[MAX_PATH] {};
+    static std::string startError;
+    static bool needsRestart = false;
+
+    const float scale = ctx.menuResScale;
+    const ImVec4 warnColour = IlionTheme::Themed(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), IlionTheme::Role::Warn);
+
+    if (iniPath.empty())
+    {
+        iniPath = Util::DllPath().parent_path() / L"ILION" / L"ExternalFG.ini";
+        IlionExternalFg::Load(settings, iniPath);
+        enginePath = IlionExternalFg::FindEngine(settings.folder);
+        strncpy_s(folderText, wstring_to_string(settings.folder).c_str(), _TRUNCATE);
+    }
+
+    const auto status = engine.GetStatus();
+    const bool running = status.running;
+
+    TextWrappedDisabled("%s", Tr("Frame generation from outside the game: a separate program captures the game's "
+                                 "window and shows real and generated frames in its own window over it. Use only one "
+                                 "frame generation at a time."));
+
+    // Only one frame generation at a time
+    const auto fg = ctx.state.currentFG;
+    if (fg != nullptr && fg->IsActive() && !fg->IsPaused())
+        TextWrappedColored(warnColour, "%s", Tr("OptiScaler's frame generation is on. Turn it off in Frame Gen "
+                                                 "before starting an external one."));
+
+    // 1. MFG SUPER MOTION ------------------------------------------------
+    SectionTitle("MFG SUPER MOTION");
+    TextWrappedDisabled("%s", Tr("Free program by NODIX TECH, installed by you (github.com/NODIX-TECH/MFG-SUPER-MOTION). "
+                                 "ILION does not include it: it starts its engine and sends it your settings. SMFG "
+                                 "works on any card; DLSS MFG needs NVIDIA RTX."));
+
+    ImGui::SetNextItemWidth(std::min(ImGui::GetContentRegionAvail().x * 0.7f, 420.0f * scale));
+    if (ImGui::InputText(TrL("Program folder##ExtFg"), folderText, sizeof(folderText)))
+    {
+        settings.folder = string_to_wstring(folderText);
+        enginePath = IlionExternalFg::FindEngine(settings.folder);
+        IlionExternalFg::Save(settings, iniPath);
+    }
+
+    if (enginePath.empty())
+        TextWrappedColored(warnColour, "%s", Tr("Engine not found. Write the folder MFG SUPER MOTION is installed in "
+                                                 "(the one with the Engine folder)."));
+    else
+        TextWrappedDisabled("%s: %s", Tr("Engine"), wstring_to_string(enginePath.wstring()).c_str());
+
+    // Controls: a change is saved and, while the engine runs, sent to it
+    const auto changed = [&](const char* key, int value)
+    {
+        IlionExternalFg::Save(settings, iniPath);
+        if (running)
+        {
+            if (IlionExternalFg::IsLiveKey(key))
+                engine.Send(key, value);
+            else
+                needsRestart = true;
+        }
+    };
+
+    const auto combo = [&](const char* label, const char* key, int& value, std::initializer_list<const char*> names,
+                           int first)
+    {
+        std::vector<const char*> items;
+        for (const char* n : names)
+            items.push_back(Tr(n));
+
+        const int index = std::clamp(value - first, 0, (int) items.size() - 1);
+        ImGui::SetNextItemWidth(std::min(ImGui::GetContentRegionAvail().x * 0.6f, 260.0f * scale));
+        if (IlionTheme::BeginCombo(TrL(label), items[index]))
+        {
+            for (int i = 0; i < (int) items.size(); i++)
+            {
+                if (ImGui::Selectable(items[i], index == i) && index != i)
+                {
+                    value = i + first;
+                    changed(key, value);
+                }
+            }
+            ImGui::EndCombo();
+        }
+    };
+
+    const auto check = [&](const char* label, const char* key, int& value)
+    {
+        bool on = value != 0;
+        if (ImGui::Checkbox(TrL(label), &on))
+        {
+            value = on ? 1 : 0;
+            changed(key, value);
+        }
+    };
+
+    SectionTitle("Generation");
+    combo("Generator##ExtFg", "generator", settings.generator, { "DLSS MFG (NVIDIA RTX)", "XeSS MFG", "SMFG (any card)" },
+          0);
+    combo("Multiplier##ExtFg", "multiplier", settings.multiplier, { "x2", "x3", "x4", "x5", "x6" }, 2);
+    combo("Kind of game##ExtFg", "game", settings.game,
+          { "Automatic", "2D", "2.5D", "First person", "Third person", "Racing", "Open world", "Manual size" }, 0);
+    if (settings.game == 7)
+    {
+        ImGui::SetNextItemWidth(std::min(ImGui::GetContentRegionAvail().x * 0.6f, 260.0f * scale));
+        if (ImGui::SliderInt(TrL("Generated frame size (%)##ExtFg"), &settings.flow, 10, 100))
+            changed("flow", settings.flow);
+    }
+    if (settings.generator == 2)
+        combo("SMFG motion search##ExtFg", "msm_search", settings.msmSearch, { "Full", "Fast" }, 0);
+    check("Adaptive Motion Learning##ExtFg", "aml", settings.aml);
+    check("No generated frames in very fast motion##ExtFg", "guard", settings.guard);
+    check("Keep still pixels##ExtFg", "still", settings.still);
+
+    SectionTitle("Pacing and screen");
+    combo("Queue##ExtFg", "queue", settings.queue, { "Least delay", "Balanced", "Smoothest" }, 0);
+    combo("Sync##ExtFg", "sync", settings.sync,
+          { "Off (tearing)", "Newest frame each refresh", "VSync", "Every 2nd refresh", "Every 3rd refresh" }, 0);
+    check("Low Latency##ExtFg", "low_latency", settings.lowLatency);
+    check("VRR##ExtFg", "vrr", settings.vrr);
+    check("Limit to refresh rate##ExtFg", "screen_limit", settings.screenLimit);
+    check("FPS counter of the program##ExtFg", "counter", settings.counter);
+
+    SectionTitle("Capture and window");
+    combo("Capture##ExtFg", "capture_api", settings.captureApi, { "Automatic", "DXGI", "WGC" }, -1);
+    combo("Game window##ExtFg", "window_mode", settings.windowMode, { "Borderless", "Scaled to screen", "As it is" }, 0);
+    TextWrappedDisabled("%s", Tr("Generator and Game window are applied when the engine starts. The engine puts the "
+                                 "game's window back as it was when it stops."));
+
+    // Start / stop and what the engine says
+    SectionTitle("Engine");
+    ImGui::BeginDisabled(enginePath.empty() || running);
+    if (IlionTheme::Button(TrL("Start##ExtFg")))
+    {
+        startError.clear();
+        needsRestart = false;
+        if (!engine.Start(enginePath, Util::GetProcessWindow(), settings, startError))
+            LOG_WARN("External FG: {}", startError);
+        else
+            LOG_INFO("External FG: started {}", wstring_to_string(enginePath.wstring()));
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!running);
+    if (IlionTheme::Button(TrL("Stop##ExtFg")))
+    {
+        engine.Stop();
+        needsRestart = false;
+        LOG_INFO("External FG: stopped");
+    }
+    ImGui::EndDisabled();
+
+    if (!startError.empty())
+        TextWrappedColored(warnColour, "%s: %s", Tr("Could not start"), startError.c_str());
+    if (needsRestart)
+        TextWrappedColored(warnColour, "%s", Tr("Stop and start again to apply the generator or the window mode."));
+
+    if (running || !status.state.empty())
+    {
+        ImGui::Text("%s: %s", Tr("State"), status.state.empty() ? "-" : status.state.c_str());
+        if (status.baseFps > 0.0)
+            ImGui::Text("%s: %.0f  ->  %s: %.0f", Tr("Game FPS"), status.baseFps, Tr("Shown FPS"), status.outputFps);
+        if (!status.mfg.empty())
+            ImGui::Text("MFG: %s", status.mfg.c_str());
+        if (!status.source.empty())
+            TextWrappedDisabled("%s: %s", Tr("Source"), status.source.c_str());
+        if (!status.error.empty())
+            TextWrappedColored(warnColour, "%s: %s", Tr("Error"), status.error.c_str());
+    }
+
+    // 2. AMD Fluid Motion Frames -------------------------------------------
+    SectionTitle("AMD Fluid Motion Frames (AFMF)");
+    TextWrappedDisabled("%s", Tr("Frame generation of the Radeon driver. It is switched in AMD Software: Adrenalin "
+                                 "Edition (Alt+R > Gaming > Graphics). ILION does not switch it yet: it needs AMD's "
+                                 "ADLX library, a later step. Do not use it together with MFG SUPER MOTION or "
+                                 "OptiScaler's frame generation."));
+}
+
 void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
 {
     auto& state = ctx.state;
@@ -17837,6 +18023,9 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
         { "MAIN", "Custom", "Boxes picked in Menu > Custom Tab.", RenderCustomTab },
         { "MAIN", "Upscaling", "Backend and output scaling.", RenderUpscalerStateMessage },
         { "MAIN", "Frame Gen", "Frame generation source, output and pacing." },
+        { "MAIN", "External Frame Gen", "MFG SUPER MOTION started and steered from here; AFMF explained. Advanced mode only.",
+          RenderExternalFgTab, false,
+          [](RenderMenuContext& c) { return !c.config->MenuBasicMode.value_or_default() && !c.config->MenuEssentialMode.value_or_default(); } },
         { "MAIN", "Anti-Ghosting", "Options against ghosting and trails, grouped by the technology they work with.",
           RenderAntiGhostingTab },
         { "MAIN", "Latency & FPS", "Frame limiter, low latency and V-Sync." },

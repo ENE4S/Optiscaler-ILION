@@ -67,22 +67,49 @@ inline std::vector<std::pair<std::string, int>> OptionLines(const Settings& s)
     return lines;
 }
 
-// An executable PE file (MFG SUPER MOTION's engine is an .exe named nvngx.dll; NVIDIA's real nvngx.dll is a DLL)
+// An executable PE file (MFG SUPER MOTION's engine is an .exe named nvngx.dll; NVIDIA's real nvngx.dll is a DLL).
+// Read through KernelBase: inside the game OptiScaler's kernel32 CreateFileW hook sends every "nvngx.dll" path to a
+// signed stand-in dll, so the engine would be read as that dll and turned away.
 inline bool IsExecutableImage(const std::filesystem::path& file)
 {
-    FILE* f = nullptr;
-    _wfopen_s(&f, file.c_str(), L"rb");
-    if (f == nullptr)
+    using CreateFileWFn = HANDLE(WINAPI*)(LPCWSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE);
+    static const auto openFile = []
+    {
+        const HMODULE kernelBase = GetModuleHandleW(L"kernelbase.dll");
+        const auto fn = kernelBase ? reinterpret_cast<CreateFileWFn>(GetProcAddress(kernelBase, "CreateFileW")) : nullptr;
+        return fn != nullptr ? fn : &CreateFileW;
+    }();
+
+    const HANDLE f = openFile(file.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE)
         return false;
+
+    const auto read = [&](LONG offset, void* to, DWORD size)
+    {
+        DWORD got = 0;
+        return SetFilePointer(f, offset, nullptr, FILE_BEGIN) != INVALID_SET_FILE_POINTER &&
+               ReadFile(f, to, size, &got, nullptr) && got == size;
+    };
 
     IMAGE_DOS_HEADER dos {};
     IMAGE_NT_HEADERS64 nt {};
-    bool ok = fread(&dos, sizeof(dos), 1, f) == 1 && dos.e_magic == IMAGE_DOS_SIGNATURE &&
-              fseek(f, dos.e_lfanew, SEEK_SET) == 0 && fread(&nt, sizeof(nt), 1, f) == 1 &&
-              nt.Signature == IMAGE_NT_SIGNATURE && (nt.FileHeader.Characteristics & IMAGE_FILE_DLL) == 0 &&
-              (nt.FileHeader.Characteristics & IMAGE_FILE_EXECUTABLE_IMAGE) != 0;
-    fclose(f);
+    const bool ok = read(0, &dos, sizeof(dos)) && dos.e_magic == IMAGE_DOS_SIGNATURE &&
+                    read(dos.e_lfanew, &nt, sizeof(nt)) && nt.Signature == IMAGE_NT_SIGNATURE &&
+                    (nt.FileHeader.Characteristics & IMAGE_FILE_DLL) == 0 &&
+                    (nt.FileHeader.Characteristics & IMAGE_FILE_EXECUTABLE_IMAGE) != 0;
+    CloseHandle(f);
     return ok;
+}
+
+// A path as typed or pasted: no quotes or spaces around it
+inline std::wstring CleanPath(std::wstring text)
+{
+    while (!text.empty() && (text.back() == L'"' || iswspace(text.back())))
+        text.pop_back();
+    while (!text.empty() && (text.front() == L'"' || iswspace(text.front())))
+        text.erase(text.begin());
+    return text;
 }
 
 // The engine inside a folder the user or a search gave: the folder itself may be the app's, its Engine folder or
@@ -272,9 +299,9 @@ inline std::vector<std::filesystem::path> CandidateFolders()
 // The engine from what the user gave, else from every place MFG SUPER MOTION may be; empty when none is found
 inline std::filesystem::path FindEngine(const std::wstring& given)
 {
-    if (!given.empty())
+    if (const auto clean = CleanPath(given); !clean.empty())
     {
-        if (auto engine = EngineIn(given); !engine.empty())
+        if (auto engine = EngineIn(clean); !engine.empty())
             return engine;
     }
 
@@ -366,11 +393,7 @@ inline std::wstring ClipboardText()
     CloseClipboard();
 
     // A path copied from Explorer comes in quotes
-    while (!text.empty() && (text.back() == L'"' || iswspace(text.back())))
-        text.pop_back();
-    while (!text.empty() && (text.front() == L'"' || iswspace(text.front())))
-        text.erase(text.begin());
-    return text;
+    return CleanPath(text);
 }
 
 struct Status
@@ -635,7 +658,7 @@ inline void Load(Settings& s, const std::filesystem::path& ini)
     const wchar_t* f = ini.c_str();
     wchar_t folder[MAX_PATH] {};
     GetPrivateProfileStringW(L"SuperMotion", L"Folder", L"", folder, MAX_PATH, f);
-    s.folder = folder;
+    s.folder = CleanPath(folder);
 
     const auto get = [&](const wchar_t* key, int& v) { v = (int) GetPrivateProfileIntW(L"SuperMotion", key, v, f); };
     get(L"Generator", s.generator);

@@ -68,20 +68,58 @@ inline std::vector<std::pair<std::string, int>> OptionLines(const Settings& s)
 }
 
 // An executable PE file (MFG SUPER MOTION's engine is an .exe named nvngx.dll; NVIDIA's real nvngx.dll is a DLL).
-// Read through KernelBase: inside the game OptiScaler's kernel32 CreateFileW hook sends every "nvngx.dll" path to a
-// signed stand-in dll, so the engine would be read as that dll and turned away.
+// Opened through ntdll: inside the game OptiScaler's Detours hook on CreateFileW (which Detours follows into
+// KernelBase) sends every "nvngx.dll" path to a signed stand-in dll, so the engine would be read as that dll and
+// turned away. NtOpenFile is below that hook.
+inline HANDLE OpenForRead(const std::filesystem::path& file)
+{
+    struct NtUnicodeString
+    {
+        USHORT Length;
+        USHORT MaximumLength;
+        PWSTR Buffer;
+    };
+    struct NtObjectAttributes
+    {
+        ULONG Length;
+        HANDLE RootDirectory;
+        NtUnicodeString* ObjectName;
+        ULONG Attributes;
+        PVOID SecurityDescriptor;
+        PVOID SecurityQualityOfService;
+    };
+    struct NtIoStatusBlock
+    {
+        union
+        {
+            LONG Status;
+            PVOID Pointer;
+        };
+        ULONG_PTR Information;
+    };
+    using NtOpenFileFn = LONG(NTAPI*)(PHANDLE, ACCESS_MASK, NtObjectAttributes*, NtIoStatusBlock*, ULONG, ULONG);
+
+    static const auto ntOpenFile =
+        reinterpret_cast<NtOpenFileFn>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtOpenFile"));
+    if (ntOpenFile == nullptr)
+        return INVALID_HANDLE_VALUE;
+
+    std::error_code ec;
+    std::wstring nt = L"\\??\\" + std::filesystem::absolute(file, ec).wstring();
+    NtUnicodeString name { (USHORT) (nt.size() * sizeof(wchar_t)), (USHORT) (nt.size() * sizeof(wchar_t)), nt.data() };
+    NtObjectAttributes attributes { sizeof(NtObjectAttributes), nullptr, &name, 0x40 /* OBJ_CASE_INSENSITIVE */ };
+    NtIoStatusBlock io {};
+    HANDLE handle = nullptr;
+
+    const LONG status = ntOpenFile(&handle, GENERIC_READ | SYNCHRONIZE, &attributes, &io,
+                                   FILE_SHARE_READ | FILE_SHARE_DELETE,
+                                   0x20 /* FILE_SYNCHRONOUS_IO_NONALERT */ | 0x40 /* FILE_NON_DIRECTORY_FILE */);
+    return status >= 0 ? handle : INVALID_HANDLE_VALUE;
+}
+
 inline bool IsExecutableImage(const std::filesystem::path& file)
 {
-    using CreateFileWFn = HANDLE(WINAPI*)(LPCWSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE);
-    static const auto openFile = []
-    {
-        const HMODULE kernelBase = GetModuleHandleW(L"kernelbase.dll");
-        const auto fn = kernelBase ? reinterpret_cast<CreateFileWFn>(GetProcAddress(kernelBase, "CreateFileW")) : nullptr;
-        return fn != nullptr ? fn : &CreateFileW;
-    }();
-
-    const HANDLE f = openFile(file.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
-                              FILE_ATTRIBUTE_NORMAL, nullptr);
+    const HANDLE f = OpenForRead(file);
     if (f == INVALID_HANDLE_VALUE)
         return false;
 

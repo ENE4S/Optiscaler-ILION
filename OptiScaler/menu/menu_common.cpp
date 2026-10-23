@@ -17916,7 +17916,7 @@ void MenuCommon::RenderExternalFgTab(RenderMenuContext& ctx)
         ImGui::SetNextItemWidth(std::min(ImGui::GetContentRegionAvail().x * 0.6f, 380.0f * scale));
         if (ImGui::InputText(TrL("Program folder##ExtFg"), folderText, sizeof(folderText),
                              ImGuiInputTextFlags_EnterReturnsTrue))
-            useFolder(string_to_wstring(folderText));
+            useFolder(IlionExternalFg::CleanPath(string_to_wstring(folderText)));
 
         if (IlionTheme::Button(TrL("Paste##ExtFg")))
         {

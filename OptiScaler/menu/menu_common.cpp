@@ -61,6 +61,7 @@
 #include <type_traits>
 #include <misc/IdentifyGpu.h>
 #include <misc/IlionExternalFg.h>
+#include <misc/IlionAfmf.h>
 #include <hooks/Xell_Hooks.h>
 #include <low_latency/input/input_common.h>
 
@@ -17862,15 +17863,12 @@ static std::string ExtFgGeneratorName(int generator, int msmSearch)
     }
 }
 
-// The screen: a dark bezel with four screws and a blue-green glass, figures in the CRT font. Same family as the FG
-// screen, its own tint, so it can't be taken for OptiScaler's frame generation.
-static void DrawExtFgCrt(const ImVec2& min, const ImVec2& size, const ExtFgCrtData& d)
+// The glass of the external screens: bezel with four screws, recess, blue-green glass with depth and scan lines.
+// Leaves a clip rect pushed on the glass; the caller draws its text and pops it.
+static void DrawExtCrtGlass(ImDrawList* draw, const ImVec2& min, const ImVec2& max, ImVec2& gMinOut, ImVec2& gMaxOut,
+                            float& glassRoundOut)
 {
-    ImDrawList* draw = ImGui::GetWindowDrawList();
-    ImFont* font = IlionTheme::crtFont != nullptr ? IlionTheme::crtFont : ImGui::GetFont();
-    ImFont* bigFont = IlionTheme::crtTitleFont != nullptr ? IlionTheme::crtTitleFont : font;
     const float fs = ImGui::GetFontSize();
-    const ImVec2 max(min.x + size.x, min.y + size.y);
     const auto col = [](float r, float g, float b, float a = 1.0f) { return ImGui::GetColorU32(ImVec4(r, g, b, a)); };
 
     // Bezel, screws, recess
@@ -17907,6 +17905,26 @@ static void DrawExtFgCrt(const ImVec2& min, const ImVec2& size, const ExtFgCrtDa
         draw->AddLine(ImVec2(gMin.x, y), ImVec2(gMax.x, y), col(0, 0, 0, 0.14f));
     draw->AddRectFilledMultiColor(ImVec2(gMin.x + gw * 0.06f, gMin.y + gh * 0.04f), ImVec2(gMax.x - gw * 0.06f, gMin.y + gh * 0.30f),
                                   col(0.8f, 0.95f, 1.0f, 0.035f), col(0.8f, 0.95f, 1.0f, 0.035f), clear, clear);
+
+    gMinOut = gMin;
+    gMaxOut = gMax;
+    glassRoundOut = glassRound;
+}
+
+// The screen: a dark bezel with four screws and a blue-green glass, figures in the CRT font. Same family as the FG
+// screen, its own tint, so it can't be taken for OptiScaler's frame generation.
+static void DrawExtFgCrt(const ImVec2& min, const ImVec2& size, const ExtFgCrtData& d)
+{
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    ImFont* font = IlionTheme::crtFont != nullptr ? IlionTheme::crtFont : ImGui::GetFont();
+    ImFont* bigFont = IlionTheme::crtTitleFont != nullptr ? IlionTheme::crtTitleFont : font;
+    const float fs = ImGui::GetFontSize();
+    const ImVec2 max(min.x + size.x, min.y + size.y);
+    const auto col = [](float r, float g, float b, float a = 1.0f) { return ImGui::GetColorU32(ImVec4(r, g, b, a)); };
+
+    ImVec2 gMin, gMax;
+    float glassRound = 0.0f;
+    DrawExtCrtGlass(draw, min, max, gMin, gMax, glassRound);
 
     // Text: cyan labels, white-blue values, ACTIVE in phosphor green
     const ImVec4 label(0.42f, 0.86f, 0.95f, 1.0f), value(0.88f, 0.97f, 1.0f, 1.0f), dim(0.40f, 0.52f, 0.56f, 1.0f);
@@ -17981,6 +17999,221 @@ static ImVec2 ExtFgCrtSize()
     return ImVec2(std::floor(fs * 19.0f), std::floor(fs * 9.6f));
 }
 
+// A centred row of selector keys of one size, the menu's mode selector look; returns true when the choice changed
+static bool ExtKeyRow(const char* id, const char* const* labels, int count, int& selected)
+{
+    float widest = 0.0f;
+    for (int i = 0; i < count; i++)
+        widest = std::max(widest, ImGui::CalcTextSize(labels[i]).x);
+
+    const ImVec2 keySize = IlionTheme::SelectorKeySize(widest, false);
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const float rowWidth = keySize.x * count + spacing * (count - 1);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, std::floor((ImGui::GetContentRegionAvail().x - rowWidth) * 0.5f)));
+
+    bool changed = false;
+    ImGui::PushID(id);
+    for (int i = 0; i < count; i++)
+    {
+        if (i > 0)
+            ImGui::SameLine();
+
+        const ImVec2 pos = ImGui::GetCursorScreenPos();
+        ImGui::PushID(i);
+        if (ImGui::InvisibleButton("##Key", keySize) && selected != i)
+        {
+            selected = i;
+            changed = true;
+        }
+        const bool hovered = ImGui::IsItemHovered();
+        ImGui::PopID();
+
+        IlionTheme::DrawSelectorKey(ImGui::GetWindowDrawList(), ImRect(pos, ImVec2(pos.x + keySize.x, pos.y + keySize.y)),
+                                    selected == i, hovered);
+        const ImVec2 textSize = ImGui::CalcTextSize(labels[i]);
+        ImGui::GetWindowDrawList()->AddText(
+            ImVec2(std::floor(pos.x + (keySize.x - textSize.x) * 0.5f), std::floor(pos.y + (keySize.y - textSize.y) * 0.5f)),
+            ImGui::GetColorU32(selected == i || hovered ? ImGuiCol_Text : ImGuiCol_TextDisabled), labels[i]);
+    }
+    ImGui::PopID();
+    return changed;
+}
+
+// ILION: AMD Fluid Motion Frames, the Radeon driver's own frame generation, read and switched through ADLX
+// (misc/IlionAfmf.h). Asked for the first time the AFMF segment is opened; nothing is loaded before that.
+static IlionAfmf::Control& Afmf()
+{
+    static IlionAfmf::Control control;
+    return control;
+}
+
+// The AFMF screen: the same glass as Super Motion's, the driver's state and its AFMF 2.1 settings
+static void DrawAfmfCrt(const ImVec2& min, const ImVec2& size, const IlionAfmf::Snapshot& s)
+{
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    ImFont* font = IlionTheme::crtFont != nullptr ? IlionTheme::crtFont : ImGui::GetFont();
+    ImFont* bigFont = IlionTheme::crtTitleFont != nullptr ? IlionTheme::crtTitleFont : font;
+    const float fs = ImGui::GetFontSize();
+    const ImVec2 max(min.x + size.x, min.y + size.y);
+    const auto col = [](float r, float g, float b, float a = 1.0f) { return ImGui::GetColorU32(ImVec4(r, g, b, a)); };
+
+    ImVec2 gMin, gMax;
+    float glassRound = 0.0f;
+    DrawExtCrtGlass(draw, min, max, gMin, gMax, glassRound);
+
+    const ImVec4 label(0.42f, 0.86f, 0.95f, 1.0f), value(0.88f, 0.97f, 1.0f, 1.0f), dim(0.40f, 0.52f, 0.56f, 1.0f);
+    const ImVec4 phosphor(0.30f, 1.0f, 0.42f, 1.0f), warn(1.0f, 0.55f, 0.25f, 1.0f);
+    const auto text = [&](ImFont* f, float px, const ImVec2& at, const ImVec4& c, const char* t)
+    {
+        draw->AddText(f, px, ImVec2(at.x + 1.0f, at.y + 1.0f), col(0, 0, 0, 0.55f), t);
+        draw->AddText(f, px, ImVec2(at.x, at.y + 1.0f), col(c.x, c.y, c.z, 0.14f), t);
+        draw->AddText(f, px, at, ImGui::GetColorU32(c), t);
+    };
+    const auto width = [&](ImFont* f, float px, const char* t) { return f->CalcTextSizeA(px, FLT_MAX, 0.0f, t).x; };
+
+    const float pad = std::floor(fs * 0.6f);
+    const float x = gMin.x + pad, right = gMax.x - pad;
+    float y = gMin.y + std::floor(pad * 0.7f);
+
+    // Title and state
+    const bool ready = s.phase == 2;
+    const char* stateText = s.phase <= 1                ? FgCrtWord("READING", "LEYENDO")
+                            : !ready || !s.supported    ? FgCrtWord("N/A", "N/D")
+                            : s.enabled                 ? FgCrtWord("ON", "ACTIVADO")
+                                                        : FgCrtWord("OFF", "APAGADO");
+    const ImVec4 stateColour = ready && s.supported && s.enabled ? phosphor : ready && !s.supported ? warn : dim;
+    const float titlePx = std::floor(fs * 1.1f);
+    text(bigFont, titlePx, ImVec2(x, y), label, "AMD AFMF");
+    text(bigFont, titlePx, ImVec2(right - width(bigFont, titlePx, stateText), y), stateColour, stateText);
+    y += titlePx + std::floor(fs * 0.25f);
+    draw->AddLine(ImVec2(x, y), ImVec2(right, y), col(label.x, label.y, label.z, 0.45f), 1.0f);
+    y += std::floor(fs * 0.45f);
+
+    // The big word: what generates the frames, and its version of AFMF
+    const float bigPx = std::floor(fs * 1.9f);
+    const char* big = s.extended ? "AFMF 2.1" : "AFMF";
+    text(bigFont, bigPx, ImVec2(std::floor((x + right - width(bigFont, bigPx, big)) * 0.5f), y), ready && s.enabled ? value : dim, big);
+    y += bigPx + std::floor(fs * 0.35f);
+
+    // Its settings, three to a line
+    const auto pick = [](int v, const char* a, const char* b, const char* c) { return v == 0 ? a : v == 1 ? b : v == 2 ? c : "-"; };
+    const float column = (right - x) / 3.0f;
+    const auto cell = [&](int i, const char* caption, const char* shown)
+    {
+        const float cx = x + column * (i + 0.5f);
+        text(font, fs * 0.8f, ImVec2(std::floor(cx - width(font, fs * 0.8f, caption) * 0.5f), y), label, caption);
+        text(font, fs, ImVec2(std::floor(cx - width(font, fs, shown) * 0.5f), y + std::floor(fs * 0.95f)),
+             ready && s.enabled && s.extended ? value : dim, shown);
+    };
+
+    cell(0, FgCrtWord("SEARCH", "BUSQUEDA"),
+         s.extended ? pick(s.search, "AUTO", FgCrtWord("STANDARD", "ESTANDAR"), FgCrtWord("HIGH", "ALTA")) : "-");
+    cell(1, FgCrtWord("MODE", "MODO"),
+         s.extended ? pick(s.performance, "AUTO", FgCrtWord("QUALITY", "CALIDAD"), FgCrtWord("PERFORM.", "RENDIM.")) : "-");
+    cell(2, FgCrtWord("FAST MOTION", "MOV. RAPIDO"),
+         s.extended ? pick(s.fastMotion, FgCrtWord("REPEAT", "REPETIR"), FgCrtWord("BLEND", "MEZCLAR"), "-") : "-");
+    y += std::floor(fs * 2.1f);
+
+    draw->AddLine(ImVec2(x, y), ImVec2(right, y), col(label.x, label.y, label.z, 0.30f), 1.0f);
+    y += std::floor(fs * 0.25f);
+    text(font, fs * 0.85f, ImVec2(x, y), dim, FgCrtWord("RADEON DRIVER - GLOBAL", "DRIVER RADEON - GLOBAL"));
+
+    draw->PopClipRect();
+    draw->AddRect(gMin, gMax, col(0.30f, 0.55f, 0.62f, 0.30f), glassRound, 0, 1.0f);
+}
+
+// The AFMF segment of the External FG tab
+static void RenderAfmfSegment(float scale, const ImVec4& warnColour, bool superMotionRunning, bool optiFgOn)
+{
+    auto& afmf = Afmf();
+    afmf.Start();
+    const auto s = afmf.Get();
+    const bool ready = s.phase == 2;
+
+    if (ready && s.enabled && (superMotionRunning || optiFgOn))
+        TextWrappedColored(warnColour, "%s", Tr("Another frame generation is on as well (MFG SUPER MOTION or OptiScaler's). "
+                                                 "Use only one at a time."));
+
+    const ImVec2 crt = ExtFgCrtSize();
+    const float avail = ImGui::GetContentRegionAvail().x;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, std::floor((avail - crt.x) * 0.5f)));
+    const ImVec2 crtPos = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(crt);
+    DrawAfmfCrt(crtPos, crt, s);
+    if (ImGui::IsItemHovered())
+        WrappedTooltip("%s", Tr("The Radeon driver's AFMF setting, the same one AMD Software: Adrenalin Edition switches. "
+                                "It is global: it applies to every game that has no profile of its own in Adrenalin."));
+
+    // On / off key under the screen
+    const char* action = ready && s.enabled ? TrL("Turn AFMF off##Afmf") : TrL("Turn AFMF on##Afmf");
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
+                         std::max(0.0f, std::floor((avail - IlionTheme::LampButtonWidth(action)) * 0.5f)));
+    ImGui::BeginDisabled(!ready || !s.supported || s.busy);
+    if (IlionTheme::LampButton(action, ready && s.enabled ? IlionTheme::Lamp::Red : IlionTheme::Lamp::Green))
+    {
+        afmf.Set(IlionAfmf::Enabled, s.enabled ? 0 : 1);
+        LOG_INFO("AFMF: {} through ADLX", s.enabled ? "off" : "on");
+    }
+    ImGui::EndDisabled();
+
+    if (s.phase <= 1)
+        TextWrappedDisabled("%s", Tr("Asking the Radeon driver..."));
+    else if (s.phase == 3)
+        TextWrappedColored(warnColour, "%s: %s", Tr("AFMF can't be controlled from here"), s.reason.c_str());
+    else if (!s.supported)
+        TextWrappedColored(warnColour, "%s", Tr("The driver says this card does not support AFMF."));
+    if (!s.lastError.empty())
+        TextWrappedColored(warnColour, "%s", s.lastError.c_str());
+
+    if (!ready || !s.supported)
+        return;
+
+    ImGui::Dummy(ImVec2(0.0f, std::floor(4.0f * scale)));
+    const float fieldWidth = std::min(ImGui::GetContentRegionAvail().x * 0.55f, 240.0f * scale);
+
+    // AFMF 2.1 settings, as in Adrenalin
+    const auto combo = [&](const char* label, IlionAfmf::Setting which, int current, std::initializer_list<const char*> names)
+    {
+        std::vector<const char*> items;
+        for (const char* n : names)
+            items.push_back(Tr(n));
+
+        const int index = std::clamp(current, 0, (int) items.size() - 1);
+        ImGui::SetNextItemWidth(fieldWidth);
+        ImGui::BeginDisabled(s.busy || current < 0);
+        if (IlionTheme::BeginCombo(TrL(label), current < 0 ? "-" : items[index]))
+        {
+            for (int i = 0; i < (int) items.size(); i++)
+            {
+                if (ImGui::Selectable(items[i], index == i) && index != i)
+                    afmf.Set(which, i);
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::EndDisabled();
+    };
+
+    if (s.extended)
+    {
+        combo("Search mode##Afmf", IlionAfmf::Search, s.search, { "Auto", "Standard", "High" });
+        combo("Performance mode##Afmf", IlionAfmf::Performance, s.performance, { "Auto", "Quality", "Performance" });
+        combo("Fast motion response##Afmf", IlionAfmf::FastMotion, s.fastMotion, { "Repeat frames", "Blended frames" });
+        if (s.algorithmSupported)
+            combo("Algorithm##Afmf", IlionAfmf::Algorithm, s.algorithm, { "Auto", "Enhanced", "Standard" });
+    }
+    else
+    {
+        TextWrappedDisabled("%s", Tr("This driver offers only on and off for AFMF through ADLX."));
+    }
+
+    if (IlionTheme::Button(TrL("Read again##Afmf")))
+        afmf.Refresh();
+
+    TextWrappedDisabled("%s", Tr("A global driver setting, kept after the game closes, as when it is changed in Adrenalin. "
+                                 "If the game doesn't show it at once, restart the game. AFMF works in fullscreen or "
+                                 "borderless DirectX 11/12, Vulkan and OpenGL games."));
+}
+
 // ILION: External FG tab (Advanced mode only). MFG SUPER MOTION's engine runs as its own process on the game's
 // window (misc/IlionExternalFg.h); nothing of OptiScaler's frame generation is touched. The screen shows only that
 // engine's own figures. Settings are in small key-selected pages, the program's location and notes under Info.
@@ -18017,11 +18250,29 @@ void MenuCommon::RenderExternalFgTab(RenderMenuContext& ctx)
     const auto status = engine.GetStatus();
     const bool running = status.running;
 
-    // Only one frame generation at a time
     const auto fg = ctx.state.currentFG;
-    if (fg != nullptr && fg->IsActive() && !fg->IsPaused())
+    const bool optiFgOn = fg != nullptr && fg->IsActive() && !fg->IsPaused();
+
+    // Two segments: MFG SUPER MOTION (a program) and AMD AFMF (the Radeon driver)
+    static int segment = 0;
+    const char* segments[] = { "MFG SUPER MOTION", "AMD AFMF" };
+    ExtKeyRow("##ExtFgSegments", segments, 2, segment);
+    ImGui::Dummy(ImVec2(0.0f, std::floor(4.0f * scale)));
+
+    if (segment == 1)
+    {
+        RenderAfmfSegment(scale, warnColour, running, optiFgOn);
+        return;
+    }
+
+    // Only one frame generation at a time (AFMF is known only once its segment was opened)
+    const auto afmfState = Afmf().Get();
+    if (optiFgOn)
         TextWrappedColored(warnColour, "%s", Tr("OptiScaler's frame generation is on. Turn it off in Frame Gen "
                                                  "before starting an external one."));
+    else if (afmfState.phase == 2 && afmfState.enabled)
+        TextWrappedColored(warnColour, "%s", Tr("AMD AFMF is on in the driver. Turn it off in the AMD AFMF segment "
+                                                 "before starting MFG SUPER MOTION."));
 
     // The screen, centred, and the key that starts or stops the engine under it
     ExtFgCrtData d;
@@ -18100,33 +18351,7 @@ void MenuCommon::RenderExternalFgTab(RenderMenuContext& ctx)
     // Page keys, centred: the same keys as the menu's mode selector
     ImGui::Dummy(ImVec2(0.0f, std::floor(4.0f * scale)));
     const char* pages[] = { Tr("Generation"), Tr("Pacing"), Tr("Capture"), Tr("Info") };
-    float widest = 0.0f;
-    for (const char* p : pages)
-        widest = std::max(widest, ImGui::CalcTextSize(p).x);
-    const ImVec2 keySize = IlionTheme::SelectorKeySize(widest, false);
-    const float spacing = ImGui::GetStyle().ItemSpacing.x;
-    const float rowWidth = keySize.x * 4.0f + spacing * 3.0f;
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, std::floor((avail - rowWidth) * 0.5f)));
-
-    for (int i = 0; i < 4; i++)
-    {
-        if (i > 0)
-            ImGui::SameLine();
-
-        const ImVec2 pos = ImGui::GetCursorScreenPos();
-        ImGui::PushID(i);
-        if (ImGui::InvisibleButton("##ExtFgPage", keySize))
-            page = i;
-        const bool hovered = ImGui::IsItemHovered();
-        ImGui::PopID();
-
-        IlionTheme::DrawSelectorKey(ImGui::GetWindowDrawList(), ImRect(pos, ImVec2(pos.x + keySize.x, pos.y + keySize.y)),
-                                    page == i, hovered);
-        const ImVec2 textSize = ImGui::CalcTextSize(pages[i]);
-        ImGui::GetWindowDrawList()->AddText(
-            ImVec2(std::floor(pos.x + (keySize.x - textSize.x) * 0.5f), std::floor(pos.y + (keySize.y - textSize.y) * 0.5f)),
-            ImGui::GetColorU32(page == i || hovered ? ImGuiCol_Text : ImGuiCol_TextDisabled), pages[i]);
-    }
+    ExtKeyRow("##ExtFgPages", pages, 4, page);
 
     ImGui::Dummy(ImVec2(0.0f, std::floor(4.0f * scale)));
 
@@ -18281,11 +18506,8 @@ void MenuCommon::RenderExternalFgTab(RenderMenuContext& ctx)
                 shared.finder.Restart(settings.folder);
         }
 
-        SectionTitle("AMD Fluid Motion Frames (AFMF)");
-        TextWrappedDisabled("%s", Tr("Frame generation of the Radeon driver. It is switched in AMD Software: Adrenalin "
-                                     "Edition (Alt+R > Gaming > Graphics). ILION does not switch it yet: it needs AMD's "
-                                     "ADLX library, a later step. Do not use it together with MFG SUPER MOTION or "
-                                     "OptiScaler's frame generation."));
+        TextWrappedDisabled("%s", Tr("AMD Fluid Motion Frames, the Radeon driver's frame generation, is in the AMD AFMF "
+                                     "segment at the top of this tab."));
         break;
     }
     }
@@ -18317,7 +18539,7 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
         { "MAIN", "Custom", "Boxes picked in Menu > Custom Tab.", RenderCustomTab },
         { "MAIN", "Upscaling", "Backend and output scaling.", RenderUpscalerStateMessage },
         { "MAIN", "Frame Gen", "Frame generation source, output and pacing." },
-        { "MAIN", "External FG", "MFG SUPER MOTION started and steered from here; AFMF explained. Advanced mode only.",
+        { "MAIN", "External FG", "MFG SUPER MOTION and AMD AFMF started and steered from here. Advanced mode only.",
           RenderExternalFgTab, false,
           [](RenderMenuContext& c) { return !c.config->MenuBasicMode.value_or_default() && !c.config->MenuEssentialMode.value_or_default(); } },
         { "MAIN", "Anti-Ghosting", "Options against ghosting and trails, grouped by the technology they work with.",

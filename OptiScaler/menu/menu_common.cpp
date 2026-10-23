@@ -18193,6 +18193,9 @@ void MenuCommon::RenderExternalFgTab(RenderMenuContext& ctx)
         }
         if (settings.generator == 2)
             combo("SMFG motion search##ExtFg", "msm_search", settings.msmSearch, { "Full", "Fast" }, 0);
+        else // SMFG finds the motion itself; DLSS MFG and XeSS MFG can be given it
+            combo("Motion source##ExtFg", "motion", settings.motion,
+                  { "NVIDIA Optical Flow", "GPU estimate", "The generator's own (recommended)" }, 0);
         check("Adaptive Motion Learning##ExtFg", "aml", settings.aml);
         check("No generated frames in very fast motion##ExtFg", "guard", settings.guard);
         check("Keep still pixels##ExtFg", "still", settings.still);
@@ -18206,6 +18209,28 @@ void MenuCommon::RenderExternalFgTab(RenderMenuContext& ctx)
         check("VRR##ExtFg", "vrr", settings.vrr);
         check("Limit to refresh rate##ExtFg", "screen_limit", settings.screenLimit);
         check("FPS counter of the program##ExtFg", "counter", settings.counter);
+        check("Realtime GPU priority##ExtFg", "gpu_class", settings.gpuClass);
+
+        // Limit of the frames shown (real and generated); off is 0, on keeps the last value
+        {
+            static int lastLimit = 120;
+            if (settings.frameLimit >= 20)
+                lastLimit = settings.frameLimit;
+
+            bool limited = settings.frameLimit >= 20;
+            if (IlionTheme::Checkbox(TrL("Limit shown FPS##ExtFg"), &limited))
+            {
+                settings.frameLimit = limited ? lastLimit : 0;
+                changed("frame_limit", settings.frameLimit);
+            }
+
+            if (limited)
+            {
+                ImGui::SetNextItemWidth(fieldWidth);
+                if (IlionTheme::SliderInt(TrL("Shown FPS##ExtFgLimit"), &settings.frameLimit, 20, 360))
+                    changed("frame_limit", settings.frameLimit);
+            }
+        }
         break;
 
     case 2: // Capture

@@ -10,6 +10,7 @@
 #include <shlobj.h>
 #include <shobjidl.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cwchar>
@@ -41,6 +42,9 @@ struct Settings
     int counter = 1;
     int msmSearch = 0;    // SMFG: 0 full search, 1 fast
     int aml = 0;          // Adaptive Motion Learning
+    int frameLimit = 0;   // most frames shown a second (real and generated), 0 none, else 20..360
+    int motion = 2;       // DLSS MFG and XeSS MFG: 2 the generator's own, 0 NVIDIA Optical Flow, 1 GPU estimate
+    int gpuClass = 1;     // the card's scheduling class for the engine: 1 realtime, 0 normal
 };
 
 // Options changed while it runs ("Live" in the engine's README); the rest need a restart
@@ -57,6 +61,7 @@ inline std::vector<std::pair<std::string, int>> OptionLines(const Settings& s)
         { "low_latency", s.lowLatency }, { "vrr", s.vrr },            { "still", s.still },
         { "guard", s.guard },         { "screen_limit", s.screenLimit }, { "counter", s.counter },
         { "msm_search", s.msmSearch }, { "aml", s.aml },              { "mfg", 1 },
+        { "frame_limit", s.frameLimit }, { "motion", s.motion },     { "gpu_class", s.gpuClass },
     };
 
     if (s.game == 7)
@@ -717,6 +722,13 @@ inline void Load(Settings& s, const std::filesystem::path& ini)
     get(L"Counter", s.counter);
     get(L"MsmSearch", s.msmSearch);
     get(L"Aml", s.aml);
+    get(L"FrameLimit", s.frameLimit);
+    get(L"Motion", s.motion);
+    get(L"GpuClass", s.gpuClass);
+
+    // The engine takes 0 or 20..360 for the limit
+    if (s.frameLimit != 0)
+        s.frameLimit = std::clamp(s.frameLimit, 20, 360);
 }
 
 inline void Save(const Settings& s, const std::filesystem::path& ini)
@@ -745,5 +757,8 @@ inline void Save(const Settings& s, const std::filesystem::path& ini)
     put(L"Counter", s.counter);
     put(L"MsmSearch", s.msmSearch);
     put(L"Aml", s.aml);
+    put(L"FrameLimit", s.frameLimit);
+    put(L"Motion", s.motion);
+    put(L"GpuClass", s.gpuClass);
 }
 } // namespace IlionExternalFg

@@ -18117,6 +18117,8 @@ static void DrawAfmfCrt(const ImVec2& min, const ImVec2& size, const IlionAfmf::
     draw->AddLine(ImVec2(x, y), ImVec2(right, y), col(label.x, label.y, label.z, 0.30f), 1.0f);
     y += std::floor(fs * 0.25f);
     text(font, fs * 0.85f, ImVec2(x, y), dim, FgCrtWord("RADEON DRIVER - GLOBAL", "DRIVER RADEON - GLOBAL"));
+    const char* antiLag = ready && s.antiLag ? "ANTI-LAG ON" : "ANTI-LAG OFF";
+    text(font, fs * 0.85f, ImVec2(right - width(font, fs * 0.85f, antiLag), y), ready && s.antiLag ? label : dim, antiLag);
 
     draw->PopClipRect();
     draw->AddRect(gMin, gMax, col(0.30f, 0.55f, 0.62f, 0.30f), glassRound, 0, 1.0f);
@@ -18164,6 +18166,8 @@ static void RenderAfmfSegment(float scale, const ImVec4& warnColour, bool superM
         TextWrappedColored(warnColour, "%s", Tr("The driver says this card does not support AFMF."));
     if (!s.lastError.empty())
         TextWrappedColored(warnColour, "%s", s.lastError.c_str());
+    if (ready && s.changedEnabled)
+        TextWrappedColored(warnColour, "%s", Tr("Saved in the driver. Restart the game: AFMF is taken when the game starts."));
 
     if (!ready || !s.supported)
         return;

@@ -2195,6 +2195,8 @@ inline constexpr Translation kSpanish[] = {
     { "Enhanced", "Mejorado" },
     { "This driver offers only on and off for AFMF through ADLX.", "Este driver solo permite activar y desactivar AFMF mediante ADLX." },
     { "Read again##Afmf", "Leer de nuevo" },
+    { "Saved in the driver. Restart the game: AFMF is taken when the game starts.",
+      "Guardado en el driver. Reinicia el juego: AFMF se aplica al arrancar el juego." },
     { "A global driver setting, kept after the game closes, as when it is changed in Adrenalin. If the game doesn't show it at once, restart the game. AFMF works in fullscreen or borderless DirectX 11/12, Vulkan and OpenGL games.",
       "Es un ajuste global del driver: se mantiene al cerrar el juego, igual que si lo cambias en Adrenalin. Si el juego no lo refleja al momento, reinícialo. AFMF funciona en juegos DirectX 11/12, Vulkan y OpenGL a pantalla completa o sin bordes." },
     { "Standard", "Estándar" },

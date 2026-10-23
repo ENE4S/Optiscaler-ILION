@@ -35,7 +35,9 @@ struct Snapshot
     bool algorithmSupported = false;
     int algorithm = -1, search = -1, performance = -1, fastMotion = -1;
     bool busy = false;
-    std::string lastError; // the last change the driver refused
+    bool antiLag = false;        // Radeon Anti-Lag on (Adrenalin turns it on with AFMF)
+    bool changedEnabled = false; // AFMF switched from here in this session: the game takes it at its next start
+    std::string lastError;       // the last change the driver refused
 };
 
 class Control
@@ -148,6 +150,26 @@ class Control
             return false;
         }
 
+        // Radeon Anti-Lag of every card: Adrenalin turns it on with AFMF (seen in the driver's registry,
+        // KMD_DeLagEnabled 0 -> 1 when AFMF is switched on there). IADLXSystem::GetGPUs is entry 1;
+        // IADLXGPUList: Size 3, At_GPUList 11; IADLX3DSettingsServices::GetAntiLag(gpu) is entry 3.
+        void* gpus = nullptr;
+        if (Succeeded(Slot<AdlxResult(__stdcall*)(void*, void**)>(system, 1)(system, &gpus)) && gpus != nullptr)
+        {
+            const unsigned count = Slot<unsigned(__stdcall*)(void*)>(gpus, 3)(gpus);
+            for (unsigned i = 0; i < count && antiLagCount < MaxCards; i++)
+            {
+                void* gpu = nullptr;
+                void* antiLag = nullptr;
+                if (Succeeded(Slot<AdlxResult(__stdcall*)(void*, unsigned, void**)>(gpus, 11)(gpus, i, &gpu)) && gpu != nullptr &&
+                    Succeeded(Slot<AdlxResult(__stdcall*)(void*, void*, void**)>(services, 3)(services, gpu, &antiLag)) &&
+                    antiLag != nullptr)
+                {
+                    antiLags[antiLagCount++] = antiLag;
+                }
+            }
+        }
+
         // IADLX3DSettingsServices1 (ADLX 1.3): GetAMDFluidMotionFrames is entry 17
         void* services1 = Query(services, L"IADLX3DSettingsServices1");
         if (services1 == nullptr)
@@ -192,12 +214,36 @@ class Control
         {
             AdlxResult r = -1;
             if (which == Enabled)
+            {
                 r = Slot<AdlxResult(__stdcall*)(void*, uint8_t)>(afmf, 5)(afmf, value != 0 ? 1 : 0);
+
+                // As Adrenalin does: AFMF on brings Anti-Lag on (IADLX3DAntiLag: IsSupported 3, SetEnabled 5).
+                // Turning AFMF off leaves Anti-Lag as it is.
+                for (int i = 0; value != 0 && Succeeded(r) && i < antiLagCount; i++)
+                {
+                    uint8_t supported = 0;
+                    if (Succeeded(Slot<AdlxResult(__stdcall*)(void*, uint8_t*)>(antiLags[i], 3)(antiLags[i], &supported)) &&
+                        supported != 0 && !Succeeded(Slot<AdlxResult(__stdcall*)(void*, uint8_t)>(antiLags[i], 5)(antiLags[i], 1)))
+                        error = "AFMF on, but the driver refused Radeon Anti-Lag";
+                }
+            }
             else if (afmf1 != nullptr)
                 r = Slot<AdlxResult(__stdcall*)(void*, int)>(afmf1, 6 + which * 2)(afmf1, value);
 
             if (!Succeeded(r))
                 error = "the driver refused the change (" + std::to_string(r) + ")";
+            else if (which == Enabled)
+                read.changedEnabled = true;
+        }
+
+        // Anti-Lag: on when every card that has it has it on (IsEnabled 4)
+        read.antiLag = antiLagCount > 0;
+        for (int i = 0; i < antiLagCount; i++)
+        {
+            uint8_t supported = 0, on = 0;
+            if (Succeeded(Slot<AdlxResult(__stdcall*)(void*, uint8_t*)>(antiLags[i], 3)(antiLags[i], &supported)) && supported != 0 &&
+                !(Succeeded(Slot<AdlxResult(__stdcall*)(void*, uint8_t*)>(antiLags[i], 4)(antiLags[i], &on)) && on != 0))
+                read.antiLag = false;
         }
 
         uint8_t flag = 0;
@@ -226,6 +272,7 @@ class Control
 
         std::lock_guard lock(stateLock);
         read.lastError = error;
+        read.changedEnabled = read.changedEnabled || state.changedEnabled;
         state = read;
     }
 
@@ -234,5 +281,8 @@ class Control
     Snapshot state;
     void* afmf = nullptr;  // kept for the life of the process, never released at unload (loader lock)
     void* afmf1 = nullptr;
+    static constexpr int MaxCards = 8;
+    void* antiLags[MaxCards] {};
+    int antiLagCount = 0;
 };
 } // namespace IlionAfmf

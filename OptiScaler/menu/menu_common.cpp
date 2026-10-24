@@ -18041,9 +18041,29 @@ static bool ExtKeyRow(const char* id, const char* const* labels, int count, int&
 
 // ILION: AMD Fluid Motion Frames, the Radeon driver's own frame generation, read and switched through ADLX
 // (misc/IlionAfmf.h). Asked for the first time the AFMF segment is opened; nothing is loaded before that.
+namespace OptiInput
+{
+extern thread_local int bypassHookDepth; // menu/input: the input hooks let this thread's calls through while it is set
+}
+
 static IlionAfmf::Control& Afmf()
 {
     static IlionAfmf::Control control;
+
+    // AMD's AFMF key is pressed with the menu open: OptiScaler's own bypass lets that one press reach the system,
+    // only on the thread that presses it; the game's input stays blocked as before
+    static const bool bypassSet = []
+    {
+        IlionAfmf::RunUnblocked = [](const std::function<void()>& press)
+        {
+            OptiInput::bypassHookDepth++;
+            press();
+            OptiInput::bypassHookDepth--;
+        };
+        return true;
+    }();
+    (void) bypassSet;
+
     return control;
 }
 

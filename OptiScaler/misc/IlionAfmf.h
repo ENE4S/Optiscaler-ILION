@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <cwctype>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -171,6 +172,10 @@ inline int AfmfStateOf(const Toast& toast)
     return -1;
 }
 
+// Runs a function with the host's input blocking lifted for the calling thread (in ILION: OptiScaler's
+// OptiInput::bypassHookDepth); empty outside the game
+inline std::function<void(const std::function<void()>&)> RunUnblocked;
+
 // Presses AMD's key the way a hand does: modifiers, the key, then all up in reverse
 inline bool SendHotkey(const std::vector<WORD>& keys)
 {
@@ -198,9 +203,21 @@ inline bool SendHotkey(const std::vector<WORD>& keys)
 
     // Down, a short hold, up: the service sees a pressed key, not a flicker
     const UINT half = (UINT) keys.size();
-    const UINT sentDown = SendInput(half, inputs.data(), sizeof(INPUT));
-    Sleep(60);
-    const UINT sentUp = SendInput(half, inputs.data() + half, sizeof(INPUT));
+    UINT sentDown = 0, sentUp = 0;
+    const auto press = [&]
+    {
+        sentDown = SendInput(half, inputs.data(), sizeof(INPUT));
+        Sleep(60);
+        sentUp = SendInput(half, inputs.data() + half, sizeof(INPUT));
+    };
+
+    // With its menu open OptiScaler's SendInput hook (menu/input) drops every keyboard event of the game's process and
+    // still reports it sent: the press runs inside OptiScaler's own bypass, set by the menu (RunUnblocked)
+    if (RunUnblocked != nullptr)
+        RunUnblocked(press);
+    else
+        press();
+
     return sentDown == half && sentUp == half;
 }
 

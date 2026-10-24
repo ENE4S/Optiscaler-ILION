@@ -9,12 +9,201 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <cwctype>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace IlionAfmf
 {
+// ---- Live switch: the way Adrenalin switches AFMF while a game runs ----
+// AMD's overlay service switches AFMF of the running game with its own key (HKLM\SOFTWARE\AMD\DVR,
+// ToggleFrameGen, "Alt+Shift,G" by default) and writes the toast it shows into
+// HKCU\Software\AMD\DVR\Overlays\<toast>: "title" ("AMD Fluid Motion Frames 3 está desactivado"), "text2" (at a game's
+// start: "...|AMD Fluid Motion Frames 2.1|DESACTIVADO|disabled|..."), "toastid" counting every toast. The global
+// ADLX setting is only read by a game when it starts and a game's own profile wins over it; the key acts at once.
+
+// "Alt+Shift,G" -> VK_MENU, VK_SHIFT, 'G'
+inline std::vector<WORD> ParseHotkey(const std::string& text)
+{
+    std::vector<WORD> keys;
+    std::string word;
+
+    const auto add = [&](std::string w)
+    {
+        for (auto& c : w)
+            c = (char) toupper((unsigned char) c);
+        while (!w.empty() && w.front() == ' ')
+            w.erase(w.begin());
+        while (!w.empty() && w.back() == ' ')
+            w.pop_back();
+
+        if (w.empty())
+            return;
+        if (w == "ALT")
+            keys.push_back(VK_MENU);
+        else if (w == "SHIFT")
+            keys.push_back(VK_SHIFT);
+        else if (w == "CTRL" || w == "CONTROL")
+            keys.push_back(VK_CONTROL);
+        else if (w.size() == 1 && isalnum((unsigned char) w[0]))
+            keys.push_back((WORD) w[0]);
+        else if (w[0] == 'F' && w.size() <= 3 && isdigit((unsigned char) w[1]))
+            keys.push_back((WORD) (VK_F1 + atoi(w.c_str() + 1) - 1));
+        else
+            keys.clear(), keys.push_back(0); // unknown word: marks the key as unusable
+    };
+
+    for (char c : text)
+    {
+        if (c == '+' || c == ',')
+            add(word), word.clear();
+        else
+            word += c;
+    }
+    add(word);
+
+    for (WORD k : keys)
+        if (k == 0)
+            return {};
+    return keys;
+}
+
+inline std::wstring ReadRegString(HKEY root, const wchar_t* key, const wchar_t* name)
+{
+    wchar_t value[1024] {};
+    DWORD bytes = sizeof(value) - sizeof(wchar_t);
+    if (RegGetValueW(root, key, name, RRF_RT_REG_SZ, nullptr, value, &bytes) != ERROR_SUCCESS)
+        return L"";
+    return value;
+}
+
+inline std::string ToggleHotkeyText()
+{
+    const std::wstring text = ReadRegString(HKEY_LOCAL_MACHINE, L"SOFTWARE\\AMD\\DVR", L"ToggleFrameGen");
+    std::string narrow;
+    for (wchar_t c : text.empty() ? std::wstring(L"Alt+Shift,G") : text)
+        narrow += (char) (c < 128 ? c : '?');
+    return narrow;
+}
+
+struct Toast
+{
+    int id = -1;
+    std::wstring title;
+    std::wstring text2;
+};
+
+// The toast AMD's overlay shows (its key under Overlays has type "toast")
+inline Toast ReadToast()
+{
+    Toast toast;
+    HKEY overlays = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\AMD\\DVR\\Overlays", 0, KEY_READ, &overlays) != ERROR_SUCCESS)
+        return toast;
+
+    wchar_t sub[128];
+    for (DWORD i = 0;; i++)
+    {
+        DWORD size = 128;
+        if (RegEnumKeyExW(overlays, i, sub, &size, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS)
+            break;
+
+        const std::wstring key = std::wstring(L"Software\\AMD\\DVR\\Overlays\\") + sub;
+        if (ReadRegString(HKEY_CURRENT_USER, key.c_str(), L"type") != L"toast")
+            continue;
+
+        DWORD id = 0, bytes = sizeof(id);
+        if (RegGetValueW(HKEY_CURRENT_USER, key.c_str(), L"toastid", RRF_RT_REG_DWORD, nullptr, &id, &bytes) == ERROR_SUCCESS)
+            toast.id = (int) id;
+        else
+            toast.id = _wtoi(ReadRegString(HKEY_CURRENT_USER, key.c_str(), L"toastid").c_str());
+        toast.title = ReadRegString(HKEY_CURRENT_USER, key.c_str(), L"title");
+        toast.text2 = ReadRegString(HKEY_CURRENT_USER, key.c_str(), L"text2");
+        break;
+    }
+
+    RegCloseKey(overlays);
+    return toast;
+}
+
+inline std::wstring Lower(std::wstring s)
+{
+    for (auto& c : s)
+        c = towlower(c);
+    return s;
+}
+
+// 1 on, 0 off, -1 the toast says nothing about AFMF
+inline int AfmfStateOf(const Toast& toast)
+{
+    // The toggle's own toast: "AMD Fluid Motion Frames 3 está activado / desactivado", "... is enabled / disabled"
+    const std::wstring title = Lower(toast.title);
+    if (title.find(L"fluid motion frames") != std::wstring::npos)
+    {
+        if (title.find(L"desactiv") != std::wstring::npos || title.find(L"disabled") != std::wstring::npos ||
+            title.find(L" off") != std::wstring::npos || title.find(L"deshabilit") != std::wstring::npos)
+            return 0;
+        if (title.find(L"activ") != std::wstring::npos || title.find(L"enabled") != std::wstring::npos ||
+            title.find(L" on") != std::wstring::npos || title.find(L"habilit") != std::wstring::npos)
+            return 1;
+    }
+
+    // The game's start summary: "<name>|<shown word>|active or disabled|..."; the third word isn't translated
+    const std::wstring text = Lower(toast.text2);
+    const auto at = text.find(L"fluid motion frames");
+    if (at != std::wstring::npos)
+    {
+        const auto first = text.find(L'|', at);
+        const auto second = first == std::wstring::npos ? first : text.find(L'|', first + 1);
+        if (second != std::wstring::npos)
+        {
+            const auto third = text.find(L'|', second + 1);
+            const std::wstring status = text.substr(second + 1, third == std::wstring::npos ? std::wstring::npos : third - second - 1);
+            if (status == L"active")
+                return 1;
+            if (status == L"disabled")
+                return 0;
+        }
+    }
+
+    return -1;
+}
+
+// Presses AMD's key the way a hand does: modifiers, the key, then all up in reverse
+inline bool SendHotkey(const std::vector<WORD>& keys)
+{
+    if (keys.empty())
+        return false;
+
+    std::vector<INPUT> inputs;
+    for (WORD k : keys)
+    {
+        INPUT in {};
+        in.type = INPUT_KEYBOARD;
+        in.ki.wVk = k;
+        in.ki.wScan = (WORD) MapVirtualKeyW(k, MAPVK_VK_TO_VSC);
+        inputs.push_back(in);
+    }
+    for (auto k = keys.rbegin(); k != keys.rend(); ++k)
+    {
+        INPUT in {};
+        in.type = INPUT_KEYBOARD;
+        in.ki.wVk = *k;
+        in.ki.wScan = (WORD) MapVirtualKeyW(*k, MAPVK_VK_TO_VSC);
+        in.ki.dwFlags = KEYEVENTF_KEYUP;
+        inputs.push_back(in);
+    }
+
+    // Down, a short hold, up: the service sees a pressed key, not a flicker
+    const UINT half = (UINT) keys.size();
+    const UINT sentDown = SendInput(half, inputs.data(), sizeof(INPUT));
+    Sleep(60);
+    const UINT sentUp = SendInput(half, inputs.data() + half, sizeof(INPUT));
+    return sentDown == half && sentUp == half;
+}
+
 // ADLX_AFMF_ALGORITHM, _SEARCH_MODE_TYPE, _PERFORMANCE_MODE_TYPE, _FAST_MOTION_RESP
 enum Setting
 {
@@ -35,6 +224,9 @@ struct Snapshot
     bool algorithmSupported = false;
     int algorithm = -1, search = -1, performance = -1, fastMotion = -1;
     bool busy = false;
+    int live = -1;               // AFMF in the running game, from AMD's toast: 1 on, 0 off, -1 not known yet
+    bool liveBusy = false;       // the key was pressed, waiting for AMD's toast
+    std::string liveMessage;     // AMD's toast after the key, or why nothing came
     bool antiLag = false;        // Radeon Anti-Lag on (Adrenalin turns it on with AFMF)
     bool changedEnabled = false; // AFMF switched from here in this session: the game takes it at its next start
     std::string lastError;       // the last change the driver refused
@@ -87,6 +279,68 @@ class Control
     {
         std::lock_guard lock(stateLock);
         return state;
+    }
+
+    // AFMF in the running game as AMD's last toast tells it (a game's start summary, or the last switch)
+    void ReadLive()
+    {
+        const int live = AfmfStateOf(ReadToast());
+        std::lock_guard lock(stateLock);
+        if (live >= 0)
+            state.live = live;
+    }
+
+    // Switches AFMF in the running game at once with AMD's own key, then reads AMD's answer
+    void ToggleLive()
+    {
+        {
+            std::lock_guard lock(stateLock);
+            if (state.liveBusy)
+                return;
+            state.liveBusy = true;
+            state.liveMessage.clear();
+        }
+
+        std::thread(
+            [this]
+            {
+                const auto keys = ParseHotkey(ToggleHotkeyText());
+                const Toast before = ReadToast();
+                std::string message;
+                int live = -1;
+
+                if (keys.empty())
+                    message = "AMD's AFMF key could not be read";
+                else if (!SendHotkey(keys))
+                    message = "the key could not be sent";
+                else
+                {
+                    // AMD's toast comes within about a second
+                    for (int i = 0; i < 40; i++)
+                    {
+                        Sleep(75);
+                        const Toast now = ReadToast();
+                        if (now.id == before.id && now.title == before.title)
+                            continue;
+
+                        live = AfmfStateOf(now);
+                        char text[512] {};
+                        WideCharToMultiByte(CP_UTF8, 0, now.title.c_str(), -1, text, sizeof(text) - 1, nullptr, nullptr);
+                        message = text;
+                        break;
+                    }
+
+                    if (message.empty())
+                        message = "AMD Software did not answer (it has to run with its in-game overlay on)";
+                }
+
+                std::lock_guard lock(stateLock);
+                state.liveBusy = false;
+                state.liveMessage = message;
+                if (live >= 0)
+                    state.live = live;
+            })
+            .detach();
     }
 
   private:
@@ -273,6 +527,9 @@ class Control
         std::lock_guard lock(stateLock);
         read.lastError = error;
         read.changedEnabled = read.changedEnabled || state.changedEnabled;
+        read.live = state.live; // kept: it comes from AMD's toasts, not from ADLX
+        read.liveBusy = state.liveBusy;
+        read.liveMessage = state.liveMessage;
         state = read;
     }
 

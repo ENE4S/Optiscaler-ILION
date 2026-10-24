@@ -18075,13 +18075,16 @@ static void DrawAfmfCrt(const ImVec2& min, const ImVec2& size, const IlionAfmf::
     const float x = gMin.x + pad, right = gMax.x - pad;
     float y = gMin.y + std::floor(pad * 0.7f);
 
-    // Title and state
+    // Title and state: AFMF in the running game when AMD's toast told it, else the driver's global setting
     const bool ready = s.phase == 2;
-    const char* stateText = s.phase <= 1                ? FgCrtWord("READING", "LEYENDO")
+    const bool known = s.live >= 0;
+    const bool on = known ? s.live == 1 : ready && s.enabled;
+    const char* stateText = s.liveBusy                  ? FgCrtWord("SWITCHING", "CAMBIANDO")
+                            : s.phase <= 1              ? FgCrtWord("READING", "LEYENDO")
                             : !ready || !s.supported    ? FgCrtWord("N/A", "N/D")
-                            : s.enabled                 ? FgCrtWord("ON", "ACTIVADO")
+                            : on                        ? FgCrtWord("ON", "ACTIVADO")
                                                         : FgCrtWord("OFF", "APAGADO");
-    const ImVec4 stateColour = ready && s.supported && s.enabled ? phosphor : ready && !s.supported ? warn : dim;
+    const ImVec4 stateColour = ready && s.supported && on ? phosphor : ready && !s.supported ? warn : dim;
     const float titlePx = std::floor(fs * 1.1f);
     text(bigFont, titlePx, ImVec2(x, y), label, "AMD AFMF");
     text(bigFont, titlePx, ImVec2(right - width(bigFont, titlePx, stateText), y), stateColour, stateText);
@@ -18092,7 +18095,7 @@ static void DrawAfmfCrt(const ImVec2& min, const ImVec2& size, const IlionAfmf::
     // The big word: what generates the frames, and its version of AFMF
     const float bigPx = std::floor(fs * 1.9f);
     const char* big = s.extended ? "AFMF 2.1" : "AFMF";
-    text(bigFont, bigPx, ImVec2(std::floor((x + right - width(bigFont, bigPx, big)) * 0.5f), y), ready && s.enabled ? value : dim, big);
+    text(bigFont, bigPx, ImVec2(std::floor((x + right - width(bigFont, bigPx, big)) * 0.5f), y), on ? value : dim, big);
     y += bigPx + std::floor(fs * 0.35f);
 
     // Its settings, three to a line
@@ -18103,7 +18106,7 @@ static void DrawAfmfCrt(const ImVec2& min, const ImVec2& size, const IlionAfmf::
         const float cx = x + column * (i + 0.5f);
         text(font, fs * 0.8f, ImVec2(std::floor(cx - width(font, fs * 0.8f, caption) * 0.5f), y), label, caption);
         text(font, fs, ImVec2(std::floor(cx - width(font, fs, shown) * 0.5f), y + std::floor(fs * 0.95f)),
-             ready && s.enabled && s.extended ? value : dim, shown);
+             on && s.extended ? value : dim, shown);
     };
 
     cell(0, FgCrtWord("SEARCH", "BUSQUEDA"),
@@ -18116,7 +18119,8 @@ static void DrawAfmfCrt(const ImVec2& min, const ImVec2& size, const IlionAfmf::
 
     draw->AddLine(ImVec2(x, y), ImVec2(right, y), col(label.x, label.y, label.z, 0.30f), 1.0f);
     y += std::floor(fs * 0.25f);
-    text(font, fs * 0.85f, ImVec2(x, y), dim, FgCrtWord("RADEON DRIVER - GLOBAL", "DRIVER RADEON - GLOBAL"));
+    text(font, fs * 0.85f, ImVec2(x, y), dim,
+         known ? FgCrtWord("IN THIS GAME", "EN ESTE JUEGO") : FgCrtWord("RADEON DRIVER - GLOBAL", "DRIVER RADEON - GLOBAL"));
     const char* antiLag = ready && s.antiLag ? "ANTI-LAG ON" : "ANTI-LAG OFF";
     text(font, fs * 0.85f, ImVec2(right - width(font, fs * 0.85f, antiLag), y), ready && s.antiLag ? label : dim, antiLag);
 
@@ -18129,10 +18133,20 @@ static void RenderAfmfSegment(float scale, const ImVec4& warnColour, bool superM
 {
     auto& afmf = Afmf();
     afmf.Start();
+
+    // AMD's toast is read about once a second: AFMF can be switched in Adrenalin or with its key as well
+    static ULONGLONG lastRead = 0;
+    if (GetTickCount64() - lastRead > 1000)
+    {
+        lastRead = GetTickCount64();
+        afmf.ReadLive();
+    }
+
     const auto s = afmf.Get();
     const bool ready = s.phase == 2;
+    const bool on = s.live >= 0 ? s.live == 1 : ready && s.enabled;
 
-    if (ready && s.enabled && (superMotionRunning || optiFgOn))
+    if (on && (superMotionRunning || optiFgOn))
         TextWrappedColored(warnColour, "%s", Tr("Another frame generation is on as well (MFG SUPER MOTION or OptiScaler's). "
                                                  "Use only one at a time."));
 
@@ -18143,20 +18157,23 @@ static void RenderAfmfSegment(float scale, const ImVec4& warnColour, bool superM
     ImGui::Dummy(crt);
     DrawAfmfCrt(crtPos, crt, s);
     if (ImGui::IsItemHovered())
-        WrappedTooltip("%s", Tr("The Radeon driver's AFMF setting, the same one AMD Software: Adrenalin Edition switches. "
-                                "It is global: it applies to every game that has no profile of its own in Adrenalin."));
+        WrappedTooltip("%s", Tr("AFMF in this game as AMD Software reports it. The key switches it at once, with "
+                                "AMD's own AFMF key, as when it is pressed by hand: no restart and nothing to open."));
 
-    // On / off key under the screen
-    const char* action = ready && s.enabled ? TrL("Turn AFMF off##Afmf") : TrL("Turn AFMF on##Afmf");
+    // On / off key under the screen: AMD's own AFMF key, so it acts on the running game at once
+    const char* action = on ? TrL("Turn AFMF off##Afmf") : TrL("Turn AFMF on##Afmf");
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
                          std::max(0.0f, std::floor((avail - IlionTheme::LampButtonWidth(action)) * 0.5f)));
-    ImGui::BeginDisabled(!ready || !s.supported || s.busy);
-    if (IlionTheme::LampButton(action, ready && s.enabled ? IlionTheme::Lamp::Red : IlionTheme::Lamp::Green))
+    ImGui::BeginDisabled(!ready || !s.supported || s.liveBusy);
+    if (IlionTheme::LampButton(action, on ? IlionTheme::Lamp::Red : IlionTheme::Lamp::Green))
     {
-        afmf.Set(IlionAfmf::Enabled, s.enabled ? 0 : 1);
-        LOG_INFO("AFMF: {} through ADLX", s.enabled ? "off" : "on");
+        afmf.ToggleLive();
+        LOG_INFO("AFMF: AMD key {} sent to switch it {}", IlionAfmf::ToggleHotkeyText(), on ? "off" : "on");
     }
     ImGui::EndDisabled();
+
+    if (!s.liveMessage.empty())
+        TextWrappedDisabled("AMD: %s", s.liveMessage.c_str());
 
     if (s.phase <= 1)
         TextWrappedDisabled("%s", Tr("Asking the Radeon driver..."));
@@ -18166,8 +18183,6 @@ static void RenderAfmfSegment(float scale, const ImVec4& warnColour, bool superM
         TextWrappedColored(warnColour, "%s", Tr("The driver says this card does not support AFMF."));
     if (!s.lastError.empty())
         TextWrappedColored(warnColour, "%s", s.lastError.c_str());
-    if (ready && s.changedEnabled)
-        TextWrappedColored(warnColour, "%s", Tr("Saved in the driver. Restart the game: AFMF is taken when the game starts."));
 
     if (!ready || !s.supported)
         return;
@@ -18211,11 +18226,15 @@ static void RenderAfmfSegment(float scale, const ImVec4& warnColour, bool superM
     }
 
     if (IlionTheme::Button(TrL("Read again##Afmf")))
+    {
         afmf.Refresh();
+        afmf.ReadLive();
+    }
 
-    TextWrappedDisabled("%s", Tr("A global driver setting, kept after the game closes, as when it is changed in Adrenalin. "
-                                 "If the game doesn't show it at once, restart the game. AFMF works in fullscreen or "
-                                 "borderless DirectX 11/12, Vulkan and OpenGL games."));
+    TextWrappedDisabled(Tr("The key presses AMD's AFMF key (%s) for you: AFMF changes in this game at once, as when it is "
+                           "pressed by hand. AMD Software has to be running with its in-game overlay on. The three modes "
+                           "above are saved in the driver."),
+                        IlionAfmf::ToggleHotkeyText().c_str());
 }
 
 // ILION: External FG tab (Advanced mode only). MFG SUPER MOTION's engine runs as its own process on the game's

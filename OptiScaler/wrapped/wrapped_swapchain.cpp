@@ -13,6 +13,7 @@
 
 #include <misc/FrameLimit.h>
 #include <misc/IlionLatency.h>
+#include <misc/IlionRegulator.h>
 
 #include <d3d11.h>
 #include <d3d12.h>
@@ -522,6 +523,21 @@ static HRESULT LocalPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
 
     if (cq != nullptr)
         IlionLatency::AfterPresent(pSwapChain, presentResult);
+
+    // ILION latency regulator: holds the game here until the GPU is close enough behind (DX12 only, no FG, no bridge)
+    if (IlionRegulator::CurrentLevel() != IlionRegulator::Off)
+    {
+        if (cq == nullptr)
+            IlionRegulator::Skip(isD3D11 ? IlionRegulator::Status::NotSupported : IlionRegulator::Status::NoFrames);
+        else if (State::Instance().swapchainInteropApi != SwapchainInteropApi::None ||
+                 IdentifyGpu::getPrimaryGpu().dxgiIsDxvk)
+            IlionRegulator::Skip(IlionRegulator::Status::NotSupported);
+        else if ((fg != nullptr && fg->IsActive() && !fg->IsPaused()) ||
+                 (fg == nullptr && State::Instance().activeFgOutput != FGOutput::NoFG))
+            IlionRegulator::Skip(IlionRegulator::Status::FrameGeneration);
+        else if (willPresent)
+            IlionRegulator::AfterPresent(cq);
+    }
 
     if (presentResult == S_OK)
     {

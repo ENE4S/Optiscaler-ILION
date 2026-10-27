@@ -317,6 +317,9 @@ LmxxfFullNetwork.set_from_config(readBool("DlssNr", "LmxxfFullNetwork"));
         // Framerate
         {
             FramerateLimit.set_from_config(readFloat("Framerate", "FramerateLimit"));
+
+            if (auto v = readInt("Framerate", "IlionLatencyRegulator"); v.has_value() && *v >= 0 && *v <= 2)
+                IlionLatencyRegulator.set_from_config(v);
         }
 
         // FSR Common
@@ -1255,6 +1258,8 @@ bool Config::SaveIni()
     {
         ini.SetValue("Framerate", "FramerateLimit",
                      GetFloatValue(Instance()->FramerateLimit.value_for_config()).c_str());
+        ini.SetValue("Framerate", "IlionLatencyRegulator",
+                     GetIntValue(Instance()->IlionLatencyRegulator.value_for_config()).c_str());
     }
 
     // Output Scaling

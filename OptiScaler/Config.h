@@ -819,6 +819,8 @@ class Config
 
     // Framerate
     CustomOptional<float> FramerateLimit { 0.0f };
+    // ILION dev.51: latency regulator (misc/IlionRegulator.h): 0 off, 1 balanced (2 frames in flight), 2 maximum (1)
+    CustomOptional<int> IlionLatencyRegulator { 0 };
 
     // HDR
     CustomOptional<bool> ForceHDR { false };

@@ -25,6 +25,7 @@
 #include <misc/IlionReShade.h>
 #include <misc/IlionReShadeCatalog.h>
 #include <misc/IlionLatency.h>
+#include <misc/IlionRegulator.h>
 #include <misc/IlionOverlay.h>
 #include <misc/IlionVisual.h>
 #include <misc/IlionVisualInterpret.h>
@@ -8827,6 +8828,9 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                 if (fakenvapi::isUsingAsMainNvapi())
                     reducerId = 1 + (int) fakenvapi::getCurrentMode() * 2 + (fakenvapi::isLowLatencyActive() ? 1 : 0);
 
+                // ILION dev.51: the latency regulator's level too
+                reducerId += 1000 * IlionRegulator::CurrentLevel();
+
                 const auto latency = IlionLatency::Get(reducerId);
                 const auto ms = [](double value) { return value >= 0.0 ? StrFmt("%.1f ms", value) : std::string(Tr("N/A")); };
                 const bool measured = state.swapchainApi == DX12 && latency.valid;
@@ -14333,6 +14337,80 @@ inline const char* SwapchainApiName(API api)
 }
 } // namespace IlionLatency
 
+// ILION dev.51: keys and state of the latency regulator (misc/IlionRegulator.h). In Latency & FPS and in Neural
+// Rendering; id keeps the two copies apart
+static void DrawLatencyRegulatorControls(const char* id)
+{
+    using namespace IlionRegulator;
+
+    const int level = CurrentLevel();
+    const char* labels[] = { "Off", "Balanced", "Maximum" };
+    const char* tips[] = {
+        "ILION adds no wait: the game runs as it did",
+        "At most one frame waits in the GPU queue. When the GPU is the limit the frame rate stays the same",
+        "The CPU starts a frame only when the GPU has finished the previous one. Lowest latency, costs frame rate"
+    };
+
+    for (int i = 0; i < 3; i++)
+    {
+        if (i > 0)
+            ImGui::SameLine();
+
+        const std::string label = std::string(Tr(labels[i])) + "##IlionReg" + id + std::to_string(i);
+        const bool selected = level == i;
+        if (selected)
+            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        if (IlionTheme::Button(label.c_str()) && !selected)
+            Config::Instance()->IlionLatencyRegulator = i;
+        if (selected)
+            ImGui::PopStyleColor();
+        UpscalerTip(tips[i]);
+    }
+
+    const Status state = CurrentState();
+    ImVec4 colour = IlionTheme::TextDim;
+    std::string text;
+
+    if (level == Off)
+        text = Tr("Off: the game keeps its own frame queue");
+    else if (state == Status::Active)
+    {
+        colour = IlionTheme::LampGreen;
+        text = StrFmt(Tr("Working: the game waits %.1f ms per frame for the GPU"), MeanWaitMs());
+    }
+    else if (state == Status::FrameGeneration)
+    {
+        colour = IlionTheme::LampAmber;
+        text = Tr("Paused while frame generation is active: the generator paces the frames");
+    }
+    else if (state == Status::NotSupported)
+    {
+        colour = IlionTheme::LampAmber;
+        text = Tr("Not available here: DirectX 12 only (not DX11, DXVK or the Vulkan and DX11 bridges)");
+    }
+    else if (state == Status::Failed)
+    {
+        colour = IlionTheme::LampAmber;
+        text = Tr("Could not start: the GPU fence was not created");
+    }
+    else
+        text = Tr("Waiting for a DirectX 12 frame");
+
+    WrappedText(colour, text.c_str());
+
+    if (level != Off)
+        WrappedText(IlionTheme::TextDim, Tr("See the effect in the overlay with ILION's estimated latency"));
+}
+
+void MenuCommon::RenderLatencyRegulator(RenderMenuContext& ctx)
+{
+    SectionTitle("Latency regulator");
+    WrappedText(IlionTheme::TextDim,
+                Tr("Keeps the game from running frames ahead of the GPU: each frame waiting in the queue adds a whole "
+                   "frame of latency. Works with any DirectX 12 game, with or without Reflex"));
+    DrawLatencyRegulatorControls("L");
+}
+
 void MenuCommon::RenderIntelligentLatency(RenderMenuContext& ctx)
 {
     using namespace IlionLatency;
@@ -17331,6 +17409,7 @@ const MenuCommon::MenuBox* MenuCommon::GetMenuBoxes(size_t& count)
               ImGui::EndDisabled();
           } },
 #endif
+        { "ilion_regulator", "Latency & FPS", "Latency regulator", [](RenderMenuContext& c) { RenderCard(c, RenderLatencyRegulator); } },
         { "vsync", "Latency & FPS", "V-Sync", [](RenderMenuContext& c) { RenderCard(c, RenderVsyncSettings); } },
 
         { "fps_overlay", "Overlay", "FPS Overlay", [](RenderMenuContext& c) { RenderCard(c, RenderFpsOverlaySettings); } },
@@ -17746,7 +17825,7 @@ static EssentialRole EssentialRoleOf(const char* id)
 {
     static constexpr const char* main[] = { "upscaler",  "gfx_color",   "sharpness", "fg_selection", "fg_fsrfg",
                                             "fg_xefg",   "fg_dlssg",    "fg_optifg", "fg_reprojection", "fg_nvngx",
-                                            "framerate", "ilion_latency", "vsync",   "fps_overlay",  "menu_scale",
+                                            "framerate", "ilion_latency", "ilion_regulator", "vsync",   "fps_overlay",  "menu_scale",
                                             "theme", "reshade" };
     static constexpr const char* secondary[] = { "mipmap", "anisotropy", "gfx_advanced", "low_latency", "keybinds" };
 
@@ -18964,6 +19043,67 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
         }
         if (before && ctx.currentFeature && ctx.currentFeature->GetUpscalerType() == Upscaler::DLSSD)
             ImGui::TextWrapped("%s", Tr("Before is unavailable for Ray Reconstruction; select After."));
+    }
+    // ILION dev.51: automatic performance. Adaptive NR is AMDNR's dynamic NR resolution (DynamicNr.h, [DlssNr]
+    // AmdDynamicRes / AmdDynamicTargetFps) with a target picked by intent; the latency regulator is the same as in
+    // Latency & FPS
+    {
+        ScopedCard card;
+        SectionTitle("Automatic performance");
+        const bool advanced = !cfg.MenuBasicMode.value_or_default() && !cfg.MenuEssentialMode.value_or_default();
+        const bool dynamic = cfg.AmdDynamicRes.value_or_default();
+        const int target = cfg.AmdDynamicTargetFps.value_or_default();
+        const int targets[] = { 0, 40, 50, 60 };
+        const char* labels[] = { "Off", "Quality", "Balanced", "Smooth" };
+        const char* tips[] = {
+            "NR always runs at the NR resolution set below",
+            "Aims at 40 FPS: the network gets smaller only when the game can't hold them",
+            "Aims at 50 FPS: the network gets smaller only when the game can't hold them",
+            "Aims at 60 FPS: the network gets smaller only when the game can't hold them"
+        };
+        int profile = -1; // -1 = a target of the ini or of the slider below
+        if (!dynamic)
+            profile = 0;
+        else
+            for (int i = 1; i < 4; i++)
+                if (target == targets[i]) profile = i;
+
+        ImGui::TextUnformatted(Tr("Adaptive NR"));
+        ImGui::BeginDisabled(!ready || restart);
+        for (int i = 0; i < 4; i++) {
+            if (i > 0) ImGui::SameLine();
+            const std::string label = std::string(Tr(labels[i])) + "##NrAdaptive" + std::to_string(i);
+            const bool selected = profile == i;
+            if (selected) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+            if (IlionTheme::Button(label.c_str()) && !selected) {
+                cfg.AmdDynamicRes = i != 0;
+                if (i != 0) cfg.AmdDynamicTargetFps = targets[i];
+            }
+            if (selected) ImGui::PopStyleColor();
+            UpscalerTip(tips[i]);
+        }
+        if (dynamic && advanced) {
+            int value = std::clamp(target, 30, 240);
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            if (ImGui::SliderInt("##NrAdaptiveTarget", &value, 30, 240, Tr("Target: %d FPS")))
+                cfg.AmdDynamicTargetFps = value;
+        }
+        ImGui::EndDisabled();
+        if (dynamic) {
+            WrappedText(IlionTheme::TextDim,
+                        StrFmt(Tr("Target %d FPS. The NR resolution below is the maximum: when the game can't hold the "
+                                  "target the network steps down to 50%% at most, and goes back up after 5 s with room "
+                                  "to spare. No test runs: it follows the frame time while you play"),
+                               std::clamp(target, 30, 240)).c_str());
+            if (ChosenRuntime() == NeuralRuntime::Lmxxf || ActiveRuntime() == NeuralRuntime::Lmxxf)
+                WrappedText(IlionTheme::TextDim,
+                            Tr("lmxxf: each step rebuilds the network for a moment. When its runtime needs it, the steps "
+                               "stop after 12 changes in a session"));
+        }
+
+        ImGui::Spacing();
+        ImGui::TextUnformatted(Tr("Latency regulator"));
+        DrawLatencyRegulatorControls("N");
     }
     // ILION dev.50: the neural monitor, only in Advanced (not Essential, not Basic)
     if (!cfg.MenuBasicMode.value_or_default() && !cfg.MenuEssentialMode.value_or_default())

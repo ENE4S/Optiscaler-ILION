@@ -11171,8 +11171,11 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
     // OptiFG requirements
     auto constexpr optiFgIndex = (uint32_t) FGInput::Upscaler;
+    // ILION dev.50: the XeMFG Vulkan bridge is suspended; Available() (which loads XeFG / XeLL) is asked only with
+    // [Plugins] XeMfgVulkanExperimental=true, else Vulkan is as before the bridge
+    const bool vulkanBridgeAllowed = config->XeMfgVulkanExperimental.value_or_default();
     inputOptions[optiFgIndex].set_disabled(state.swapchainApi == API::Vulkan &&
-        !(state.activeFgOutput == FGOutput::XeFG && VkwDx12SC::Available()), "Unsupported API");
+        !(state.activeFgOutput == FGOutput::XeFG && vulkanBridgeAllowed && VkwDx12SC::Available()), "Unsupported API");
 
     if (!inputOptions[optiFgIndex].disabled && state.activeFgOutput == FGOutput::FSRFG && !FfxApiProxy::IsFGReady() &&
         !ffxInitTried)
@@ -11252,7 +11255,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
     // XeFG output requirements
     auto constexpr xefgOutputIndex = (uint32_t) FGOutput::XeFG;
     outputOptions[xefgOutputIndex].set_disabled(state.swapchainApi == API::Vulkan &&
-        (!VkwDx12SC::Available() || (state.activeFgInput != FGInput::Upscaler &&
+        (!vulkanBridgeAllowed || !VkwDx12SC::Available() || (state.activeFgInput != FGInput::Upscaler &&
          state.activeFgInput != FGInput::DLSSG && state.activeFgInput != FGInput::NoFG)), "Unsupported API");
     // Unsupported FG input selected
     const auto currentInputIndex = (uint32_t) state.activeFgInput;
@@ -18564,6 +18567,235 @@ void MenuCommon::RenderExternalFgTab(RenderMenuContext& ctx)
 }
 
 
+// ILION dev.50: what Neural Rendering is doing, read from the bridge's own state (nothing new is asked of the backends).
+// NR runs on DirectX 12 on an AMD GPU: every OptiScaler input (DLSS, FSR 2/3, FFX, XeSS) reaches it through
+// NVSDK_NGX_D3D12_EvaluateFeature (inputs/NVNGX_DLSS_Dx12.cpp); D3D11 and Vulkan never call it.
+enum class NrUiState
+{
+    Disabled,    // switched off, could run
+    Unsupported, // the API or the GPU can never run it
+    NoBackend,   // runtime files missing or a runtime choice is needed
+    Restart,     // the runtime was changed after one was built
+    Error,       // the runtime stopped, or refused the game's device
+    NoUpscaler,  // on, but no OptiScaler upscaler frame yet
+    Starting,    // on, waiting for the first completed model output
+    Active,      // a model output completed on the GPU in the last 1.5 s
+};
+
+struct NrUiStatus
+{
+    NrUiState state = NrUiState::Disabled;
+    const char* text = ""; // English key, translated where it is shown
+};
+
+static NrUiStatus NrStatusNow(API api, IFeature* feature, bool enabled, bool ready, bool restart, bool active)
+{
+    using namespace DlssNr::AmdBridge;
+
+    if (api != DX12)
+        return { NrUiState::Unsupported, "Not available: Neural Rendering needs DirectX 12" };
+    if (!GpuSupportInfo().amd)
+        return { NrUiState::Unsupported, "Not available: Neural Rendering needs an AMD Radeon GPU" };
+    if (restart)
+        return { NrUiState::Restart, "Restart the game to change the runtime." };
+    if (!ready)
+        return { NrUiState::NoBackend, "Backend not available: runtime files missing or runtime choice required" };
+    if (!enabled)
+        return { NrUiState::Disabled, "Disabled (available)" };
+    if (RuntimeStopped() || !NrDeviceRefusal().empty())
+        return { NrUiState::Error, "Error: the NR runtime stopped; see technical information" };
+    if (active)
+        return { NrUiState::Active, "Active and processing" };
+    if (feature == nullptr)
+        return { NrUiState::NoUpscaler, "Waiting for the upscaler: NR runs on an OptiScaler upscaler frame" };
+    return { NrUiState::Starting, "Starting: waiting for the first model output" };
+}
+
+// The monitor's readings, refreshed four times a second so the figures stay still enough to read
+struct NrMonitorReading
+{
+    ULONGLONG at = 0;
+    std::string backend;  // "DANIEL 0.6.0", "LMXXF 1.0.0.0"
+    bool backendLive = false;
+    UINT inW = 0, inH = 0;     // the colour NR receives (render size before the upscaler, output size after)
+    UINT netW = 0, netH = 0;   // the model's working size
+    UINT outW = 0, outH = 0;   // what NR writes (into the same resource it received)
+    float gpuMs = -1.f;        // Stats::nrGpuMs, -1 = no reading
+    bool lmxxf = false;
+};
+
+// lmxxf's runtime carries its version in the file; read once
+static const std::string& LmxxfRuntimeVersion()
+{
+    static std::string version;
+    static bool read = false;
+    if (!read)
+    {
+        read = true;
+        const auto path = Lmxxf::RuntimePath(Util::DllPath().parent_path());
+        std::error_code ec;
+        if (std::filesystem::exists(path, ec))
+        {
+            version = FileVersionText(path.wstring());
+            if (version == "-")
+                version.clear();
+        }
+    }
+    return version;
+}
+
+static void DrawNrMonitor(IFeature* feature, const NrUiStatus& status, bool before)
+{
+    using namespace DlssNr::AmdBridge;
+    using Ilion::Tr;
+
+    static NrMonitorReading reading;
+    const ULONGLONG now = GetTickCount64();
+    const bool live = status.state == NrUiState::Active || status.state == NrUiState::Starting ||
+                      status.state == NrUiState::NoUpscaler || status.state == NrUiState::Error;
+
+    if (now - reading.at >= 250)
+    {
+        reading = {};
+        reading.at = now;
+
+        const auto runtime = ActiveRuntime() != NeuralRuntime::Unchosen ? ActiveRuntime() : ChosenRuntime();
+        reading.lmxxf = runtime == NeuralRuntime::Lmxxf;
+        reading.backendLive = BackendActive() && live;
+        if (runtime == NeuralRuntime::Daniel || (runtime == NeuralRuntime::Unchosen && HasFiles()))
+        {
+            const char* name = RuntimeName();
+            reading.backend = std::string("DANIEL") + (name ? std::string(" ") + name : "");
+        }
+        else if (runtime == NeuralRuntime::Lmxxf || LmxxfReady())
+        {
+            reading.lmxxf = true;
+            const auto& v = LmxxfRuntimeVersion();
+            reading.backend = "LMXXF" + (v.empty() ? "" : " " + v);
+        }
+
+        // No telemetry while NR is off or no backend is built: the stats are asked only while it runs
+        if (BackendActive() && live)
+        {
+            const auto s = Stats();
+            reading.netW = s.width;
+            reading.netH = s.height;
+            reading.gpuMs = s.nrGpuMs;
+
+            if (auto* f = feature)
+            {
+                reading.inW = before ? f->RenderWidth() : f->DisplayWidth();
+                reading.inH = before ? f->RenderHeight() : f->DisplayHeight();
+                reading.outW = reading.inW;
+                reading.outH = reading.inH;
+            }
+        }
+    }
+
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    ImFont* mono = IlionTheme::crtFont != nullptr ? IlionTheme::crtFont : ImGui::GetFont();
+    const float fs = ImGui::GetFontSize();
+    const float pad = std::floor(fs * 0.6f);
+    const float rowH = std::floor(fs * 1.55f);
+    const int rows = 6;
+    const float width = std::floor(ImGui::GetContentRegionAvail().x);
+    const float height = pad * 2.0f + rowH * (rows + 2);
+    const ImVec2 min = ImGui::GetCursorScreenPos();
+    const ImVec2 max(min.x + width, min.y + height);
+    ImGui::Dummy(ImVec2(width, height));
+
+    const auto col = [](float r, float g, float b, float a = 1.0f) { return ImGui::GetColorU32(ImVec4(r, g, b, a)); };
+    const ImU32 orange = col(0.95f, 0.46f, 0.04f), ink = col(0.07f, 0.04f, 0.01f), inkSoft = col(0.20f, 0.10f, 0.02f);
+    const ImU32 well = col(0.06f, 0.05f, 0.04f);
+    const ImVec4 phosphor(0.30f, 1.0f, 0.42f, 1.0f), cyan(0.10f, 0.92f, 1.0f, 1.0f), grey(0.55f, 0.55f, 0.52f, 1.0f);
+    const ImVec4 yellow(1.0f, 0.92f, 0.05f, 1.0f), red(1.0f, 0.16f, 0.10f, 1.0f), crimson(1.0f, 0.22f, 0.50f, 1.0f);
+    const ImVec4 amber(1.0f, 0.72f, 0.10f, 1.0f);
+
+    // Flat industrial orange plate, one thin dark outline
+    const float rounding = std::floor(fs * 0.2f);
+    draw->AddRectFilled(min, max, orange, rounding);
+    draw->AddRect(min, max, col(0.0f, 0.0f, 0.0f, 0.55f), rounding, 0, 1.0f);
+
+    const auto text = [&](ImFont* f, float px, ImVec2 at, ImU32 c, const char* s) { draw->AddText(f, px, at, c, s); };
+    const auto widthOf = [&](ImFont* f, float px, const char* s) { return f->CalcTextSizeA(px, FLT_MAX, 0.0f, s).x; };
+
+    const float x = min.x + pad, right = max.x - pad;
+    float y = min.y + pad;
+
+    // Title and the ONLINE / OFFLINE lamp, drawn (no glyph needed)
+    text(mono, fs, ImVec2(x, y), ink, Tr("NEURAL MONITOR"));
+    const char* lampText = status.state == NrUiState::Active ? "ONLINE"
+                           : status.state == NrUiState::Error ? "ERROR"
+                           : status.state == NrUiState::Starting || status.state == NrUiState::NoUpscaler
+                               ? Tr("STARTING")
+                               : "OFFLINE";
+    const ImVec4 lampColour = status.state == NrUiState::Active ? phosphor
+                              : status.state == NrUiState::Error ? red
+                              : status.state == NrUiState::Starting || status.state == NrUiState::NoUpscaler ? amber
+                                                                                                             : grey;
+    const float lampW = widthOf(mono, fs, lampText);
+    const float badgeW = lampW + fs * 1.6f;
+    const ImVec2 bMin(right - badgeW, y - fs * 0.12f), bMax(right, y + fs * 1.12f);
+    draw->AddRectFilled(bMin, bMax, well, std::floor(fs * 0.15f));
+    const ImVec2 dot(bMin.x + fs * 0.6f, (bMin.y + bMax.y) * 0.5f);
+    if (status.state == NrUiState::Disabled || status.state == NrUiState::Unsupported ||
+        status.state == NrUiState::NoBackend || status.state == NrUiState::Restart)
+        draw->AddCircle(dot, fs * 0.28f, ImGui::GetColorU32(lampColour), 0, 1.5f);
+    else
+        draw->AddCircleFilled(dot, fs * 0.30f, ImGui::GetColorU32(lampColour));
+    text(mono, fs, ImVec2(dot.x + fs * 0.55f, y), ImGui::GetColorU32(lampColour), lampText);
+    y += rowH;
+    draw->AddLine(ImVec2(x, y - fs * 0.25f), ImVec2(right, y - fs * 0.25f), inkSoft, 1.0f);
+
+    // Rows: label in dark ink on the orange, value in a dark well
+    const float labelW = std::floor(width * 0.36f);
+    const auto row = [&](const char* label, const std::string& value, const ImVec4& colour, bool valueOk)
+    {
+        text(mono, fs * 0.92f, ImVec2(x, y + fs * 0.12f), ink, label);
+        const ImVec2 wMin(x + labelW, y), wMax(right, y + fs * 1.25f);
+        draw->AddRectFilled(wMin, wMax, well, std::floor(fs * 0.15f));
+        std::string shown = valueOk ? value : std::string(Tr("NO DATA"));
+        while (shown.size() > 1 && widthOf(mono, fs, shown.c_str()) > wMax.x - wMin.x - fs * 0.8f)
+            shown.pop_back();
+        text(mono, fs, ImVec2(wMin.x + fs * 0.4f, y + fs * 0.12f), ImGui::GetColorU32(valueOk ? colour : grey),
+             shown.c_str());
+        y += rowH;
+    };
+
+    const auto size = [](UINT w, UINT h) { return std::to_string(w) + " x " + std::to_string(h); };
+
+    row(Tr("BACKEND"), reading.backend, reading.backendLive ? phosphor : grey, !reading.backend.empty());
+    row(Tr("POSITION"), before ? Tr("BEFORE UPSCALING") : Tr("AFTER UPSCALING"), cyan, true);
+    row(Tr("NR INPUT"), size(reading.inW, reading.inH), cyan, reading.inW > 0);
+    row(Tr("NETWORK"), size(reading.netW, reading.netH), cyan, reading.netW > 0);
+    row(Tr("NR OUTPUT"), size(reading.outW, reading.outH), cyan, reading.outW > 0);
+
+    // NR time: GPU time of the neural pass alone, coloured by range
+    const float ms = reading.gpuMs;
+    const ImVec4 msColour = ms < 20.f ? phosphor : ms < 30.f ? yellow : ms < 40.f ? red : crimson;
+    char msText[32] {};
+    if (ms >= 0.f)
+        snprintf(msText, sizeof msText, "%.1f ms  %s", ms, reading.lmxxf ? "HIP" : "D3D12");
+    row(Tr("NR GPU TIME"), msText, msColour, ms >= 0.f);
+    if (ImGui::IsItemHovered())
+        WrappedTooltip("%s", Tr(reading.lmxxf
+                                    ? "GPU time of the neural network per job (HIP, reported by the lmxxf runtime), mean of its "
+                                      "last statistics window. Frame Generation is not included."
+                                    : "GPU time the neural pass takes on the game's queue (two D3D12 timestamps around it, read "
+                                      "when its frame has finished, no waits), mean of the last 60 model frames. Frame "
+                                      "Generation is not included."));
+
+    // Processing state, one word under the rows
+    const char* stateWord = status.state == NrUiState::Active     ? Tr("PROCESSING")
+                            : status.state == NrUiState::Starting ? Tr("STARTING")
+                            : status.state == NrUiState::NoUpscaler ? Tr("NO DATA")
+                            : status.state == NrUiState::Error      ? "ERROR"
+                            : status.state == NrUiState::Disabled   ? Tr("DISABLED")
+                                                                    : Tr("NOT AVAILABLE");
+    const std::string stateLine = std::string(Tr("STATE")) + ": " + stateWord;
+    text(mono, fs * 0.92f, ImVec2(x, y + fs * 0.12f), ink, stateLine.c_str());
+}
+
 void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
 {
     using namespace DlssNr::AmdBridge;
@@ -18577,6 +18809,7 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
     const bool ready = choice == NeuralRuntime::Daniel ? daniel : choice == NeuralRuntime::Lmxxf ? lmxxf : (daniel != lmxxf);
     const bool restart = BackendActive() && choice != NeuralRuntime::Unchosen && ActiveRuntime() != choice;
     const bool active = RecentlyActive();
+    const NrUiStatus nrStatus = NrStatusNow(ctx.state.api, ctx.currentFeature, cfg.DlssNrEnabled.value_or_default(), ready, restart, active);
     const ImVec4 amber(1.f, 0.65f, 0.06f, 1.f);
     {
         ScopedCard card;
@@ -18590,8 +18823,12 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
         }
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered()) WrappedTooltip("%s", Tr("The amber lamp requires a completed model output on the GPU; enabling NR alone does not light it."));
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        ImGui::TextWrapped("%s", Tr(active ? "NR active" : enabled && RuntimeStopped() ? "NR stopped; see technical information" : enabled ? "NR waiting for valid model output" : "NR disabled"));
+        // ILION dev.50: from NrStatusNow - an incompatibility or a missing backend is said as such
+        const bool nrProblem = nrStatus.state == NrUiState::Error || nrStatus.state == NrUiState::Unsupported ||
+                               nrStatus.state == NrUiState::NoBackend || nrStatus.state == NrUiState::Restart;
+        ImGui::PushStyleColor(ImGuiCol_Text, nrProblem ? IlionTheme::Themed(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), IlionTheme::Role::Warn)
+                                                       : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("%s", Tr(nrStatus.text));
         ImGui::PopStyleColor();
         ImGui::Spacing();
         ImGui::TextUnformatted(Tr("Runtime"));
@@ -18628,10 +18865,14 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
             }
             ImGui::EndCombo();
         }
-        if (restart) ImGui::TextWrapped("%s", Tr("Restart the game to change the runtime."));
-        else if (!ready) ImGui::TextWrapped("%s", Tr("Dependencies missing or runtime choice required."));
         if (before && ctx.currentFeature && ctx.currentFeature->GetUpscalerType() == Upscaler::DLSSD)
             ImGui::TextWrapped("%s", Tr("Before is unavailable for Ray Reconstruction; select After."));
+    }
+    // ILION dev.50: the neural monitor, only in Advanced (not Essential, not Basic)
+    if (!cfg.MenuBasicMode.value_or_default() && !cfg.MenuEssentialMode.value_or_default())
+    {
+        ScopedCard card;
+        DrawNrMonitor(ctx.currentFeature, nrStatus, cfg.DlssNrRunBeforeSr.value_or_default());
     }
     {
         ScopedCard card;

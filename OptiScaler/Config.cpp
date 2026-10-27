@@ -904,6 +904,7 @@ LmxxfFullNetwork.set_from_config(readBool("DlssNr", "LmxxfFullNetwork"));
         {
             PluginPath.set_from_config(readWString("Plugins", "Path"));
             XeMfgVariant.set_from_config(readWString("Plugins", "XeMfgVariant"));
+            XeMfgVulkanExperimental.set_from_config(readBool("Plugins", "XeMfgVulkanExperimental"));
             LoadSpecialK.set_from_config(readBool("Plugins", "LoadSpecialK"));
             LoadReShade.set_from_config(readBool("Plugins", "LoadReShade"));
             ReShadeAddedEffects.set_from_config(readString("ReShade", "AddedEffects"));
@@ -1791,6 +1792,8 @@ ini.SetValue("DlssNr", "LmxxfFullNetwork", GetBoolValue(Instance()->LmxxfFullNet
 
         ini.SetValue("Plugins", "Path", wstring_to_string(Instance()->PluginPath.value_for_config_or(L"auto")).c_str());
         ini.SetValue("Plugins", "XeMfgVariant", wstring_to_string(Instance()->XeMfgVariant.value_for_config_or(L"auto")).c_str());
+        ini.SetValue("Plugins", "XeMfgVulkanExperimental",
+                     GetBoolValue(Instance()->XeMfgVulkanExperimental.value_for_config()).c_str());
         ini.SetValue("Plugins", "LoadSpecialK", GetBoolValue(Instance()->LoadSpecialK.value_for_config()).c_str());
         ini.SetValue("Plugins", "LoadReShade", GetBoolValue(Instance()->LoadReShade.value_for_config()).c_str());
         ini.SetValue("ReShade", "AddedEffects", Instance()->ReShadeAddedEffects.value_for_config_or("auto").c_str());

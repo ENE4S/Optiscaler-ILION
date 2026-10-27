@@ -280,6 +280,10 @@ bool VkwDx12SC::Wanted()
 {
     auto& state = State::Instance();
 
+    // ILION dev.50: suspended, runs only with [Plugins] XeMfgVulkanExperimental=true
+    if (!Config::Instance()->XeMfgVulkanExperimental.value_or_default())
+        return false;
+
     // Every FG input, the Nvngx one has no FG output
     return state.activeFgOutput == FGOutput::XeFG &&
            (state.activeFgInput == FGInput::Upscaler || state.activeFgInput == FGInput::DLSSG) &&

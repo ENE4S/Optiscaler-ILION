@@ -667,6 +667,9 @@ class Config
     // Plugins
     CustomOptional<std::wstring, NoDefault> PluginPath;
     CustomOptional<std::wstring, NoDefault> XeMfgVariant; // ILION: folder of plugins/XeMFG loaded as the XeMFG variant, empty = none
+    // ILION dev.50: the XeMFG Vulkan bridge (with_dx12/vk_with_dx12_sc) is suspended; it runs only when this is true,
+    // never because an FGOutput=XeFG came with the ini
+    CustomOptional<bool> XeMfgVulkanExperimental { false };
     CustomOptional<bool> LoadSpecialK { false };
     CustomOptional<bool> LoadReShade { false };
     CustomOptional<std::string, NoDefault> ReShadeAddedEffects; // ILION: effects added to the ReShade panel, "file|technique;..."

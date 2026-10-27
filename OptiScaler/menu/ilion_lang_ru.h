@@ -1782,5 +1782,12 @@ inline constexpr Translation kRussian[] = {
     { "TOTAL FPS", "ВСЕГО FPS" },
     { "TURN FG OFF AND CAPTURE 10 s OF PLAY", "ВЫКЛЮЧИТЕ FG И ЗАПИШИТЕ 10 с ИГРЫ" },
     { "the game's DLSSG calls", "вызовы DLSSG игры" },
+    { "NEURAL COST", "ЗАТРАТЫ НЕЙРОСЕТИ" },
+    { "Processing time of the neural network on the GPU. It is not directly added latency or lost FPS.", "Время обработки нейросети на GPU. Это не то же самое, что добавленная задержка или потеря FPS." },
+    { "Frame markers (CPU)", "Маркеры кадра (CPU)" },
+    { "Low latency timings, frame markers (CPU):", "Тайминги низкой задержки, маркеры кадра (CPU):" },
+    { "Reflex timings, frame markers (CPU):", "Тайминги Reflex, маркеры кадра (CPU):" },
+    { "OptiScaler's Reflex timings: the frame report of Reflex or fakenvapi. With fakenvapi only its CPU times are real: Frame markers (CPU) goes from the first to the last marker of one frame on the CPU. It includes neither the GPU queue nor the screen, so it is not comparable with ILION's latency", "Тайминги Reflex в OptiScaler: отчёт о кадре от Reflex или fakenvapi. С fakenvapi реальны только времена CPU: «Маркеры кадра (CPU)» — от первого до последнего маркера одного кадра на CPU. Не включает очередь GPU и экран, поэтому несравнимо с задержкой ILION" },
+    { "ILION's latency, DirectX 12: simulation start to the refresh that shows the frame, or to the end of the GPU work when the refresh can't be known. CPU: simulation start to Present. Present to GPU end: includes frames waiting in the queue. With frame generation the generator's own delay is not included. With Neural Rendering the GPU part includes the game's queue waiting for the neural network (HIP), and the frames queued behind it", "Задержка ILION, DirectX 12: от начала симуляции до обновления экрана, показывающего кадр, или до конца работы GPU, если обновление узнать нельзя. CPU: от начала симуляции до Present. От Present до конца GPU: включает кадры, ждущие в очереди. С генерацией кадров собственная задержка генератора не учитывается. С Neural Rendering часть GPU включает ожидание очередью игры результата нейросети (HIP) и кадры, стоящие в очереди за ним" },
 };
 } // namespace Ilion

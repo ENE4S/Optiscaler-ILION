@@ -1782,5 +1782,12 @@ inline constexpr Translation kPortuguese[] = {
     { "TOTAL FPS", "FPS TOTAL" },
     { "TURN FG OFF AND CAPTURE 10 s OF PLAY", "DESLIGUE O FG E CAPTURE 10 s DE JOGO" },
     { "the game's DLSSG calls", "chamadas ao DLSSG do jogo" },
+    { "NEURAL COST", "CUSTO NEURAL" },
+    { "Processing time of the neural network on the GPU. It is not directly added latency or lost FPS.", "Tempo de processamento da rede neural na GPU. Não equivale diretamente a latência adicional nem a perda de FPS." },
+    { "Frame markers (CPU)", "Marcas do quadro (CPU)" },
+    { "Low latency timings, frame markers (CPU):", "Tempos de baixa latência, marcas do quadro (CPU):" },
+    { "Reflex timings, frame markers (CPU):", "Tempos do Reflex, marcas do quadro (CPU):" },
+    { "OptiScaler's Reflex timings: the frame report of Reflex or fakenvapi. With fakenvapi only its CPU times are real: Frame markers (CPU) goes from the first to the last marker of one frame on the CPU. It includes neither the GPU queue nor the screen, so it is not comparable with ILION's latency", "Tempos do Reflex no OptiScaler: o relatório de quadro do Reflex ou do fakenvapi. Com fakenvapi só os tempos de CPU são reais: Marcas do quadro (CPU) vai da primeira à última marca de um quadro na CPU. Não inclui a fila da GPU nem a tela, então não é comparável com a latência do ILION" },
+    { "ILION's latency, DirectX 12: simulation start to the refresh that shows the frame, or to the end of the GPU work when the refresh can't be known. CPU: simulation start to Present. Present to GPU end: includes frames waiting in the queue. With frame generation the generator's own delay is not included. With Neural Rendering the GPU part includes the game's queue waiting for the neural network (HIP), and the frames queued behind it", "Latência do ILION, DirectX 12: do início da simulação até a atualização que mostra o quadro, ou até o fim do trabalho da GPU quando a atualização não pode ser conhecida. CPU: do início da simulação até o Present. Present até o fim da GPU: inclui quadros esperando na fila. Com geração de quadros, o atraso próprio do gerador não está incluído. Com Neural Rendering a parte de GPU inclui a espera da fila do jogo pela rede neural (HIP) e os quadros na fila atrás dela" },
 };
 } // namespace Ilion

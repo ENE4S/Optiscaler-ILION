@@ -8666,16 +8666,16 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                     {
                         rowWidth = std::max(rowWidth, ImGui::CalcTextSize("Reflex timings").x);
                         OverlayBlockTitle("Reflex timings", rowWidth, false);
-                        OverlayRow(Tr("Whole frame"), StrFmt("%.1f ms", rangeInNs / 1000.0), rowWidth, &mainFigureYellow);
+                        OverlayRow(Tr("Frame markers (CPU)"), StrFmt("%.1f ms", rangeInNs / 1000.0), rowWidth, &mainFigureYellow);
                     }
                     else if (industrialHorizontal)
                     {
                         OverlayCellRowTitle("Reflex timings");
-                        OverlayCell(Tr("Whole frame"), StrFmt("%.1f ms", rangeInNs / 1000.0), &mainFigureYellow);
+                        OverlayCell(Tr("Frame markers (CPU)"), StrFmt("%.1f ms", rangeInNs / 1000.0), &mainFigureYellow);
                     }
                     else
                     {
-                        ImGui::TextUnformatted("Low latency timings, whole frame:");
+                        ImGui::TextUnformatted(Tr("Low latency timings, frame markers (CPU):"));
                         ImGui::SameLine();
                         ImGui::TextColored(mainFigureYellow, "%.1fms", rangeInNs / 1000.0);
                     }
@@ -8755,16 +8755,16 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                     {
                         rowWidth = std::max(rowWidth, ImGui::CalcTextSize("Reflex timings").x);
                         OverlayBlockTitle("Reflex timings", rowWidth, false);
-                        OverlayRow(Tr("Whole frame"), StrFmt("%.1f ms", rangeInNs / 1000.0), rowWidth, &mainFigureYellow);
+                        OverlayRow(Tr("Frame markers (CPU)"), StrFmt("%.1f ms", rangeInNs / 1000.0), rowWidth, &mainFigureYellow);
                     }
                     else if (industrialHorizontal)
                     {
                         OverlayCellRowTitle("Reflex timings");
-                        OverlayCell(Tr("Whole frame"), StrFmt("%.1f ms", rangeInNs / 1000.0), &mainFigureYellow);
+                        OverlayCell(Tr("Frame markers (CPU)"), StrFmt("%.1f ms", rangeInNs / 1000.0), &mainFigureYellow);
                     }
                     else
                     {
-                        ImGui::TextUnformatted("Reflex timings, whole frame:");
+                        ImGui::TextUnformatted(Tr("Reflex timings, frame markers (CPU):"));
                         ImGui::SameLine();
                         ImGui::TextColored(mainFigureYellow, "%.1fms", rangeInNs / 1000.0);
                     }
@@ -15399,12 +15399,15 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
                 { "Upscaler time", "GPU time of the upscaler and its average", IlionOverlay::UpscalerTime },
                 { "Upscaler time graph", "Graph of the last upscaler times", IlionOverlay::UpscalerGraph },
                 { "Reflex timings##element", "OptiScaler's Reflex timings: the frame report of Reflex or fakenvapi. With fakenvapi only its CPU times "
-                  "are real: Whole frame ends at the last marker of the frame, not on screen",
+                  "are real: Frame markers (CPU) goes from the first to the last marker of one frame on the CPU. It includes "
+                  "neither the GPU queue nor the screen, so it is not comparable with ILION's latency",
                   IlionOverlay::ReflexTimings },
                 { "ILION estimated latency##element",
                   "ILION's latency, DirectX 12: simulation start to the refresh that shows the frame, or to the end of the GPU "
                   "work when the refresh can't be known. CPU: simulation start to Present. Present to GPU end: includes "
-                  "frames waiting in the queue. With frame generation the generator's own delay is not included",
+                  "frames waiting in the queue. With frame generation the generator's own delay is not included. With Neural "
+                  "Rendering the GPU part includes the game's queue waiting for the neural network (HIP), and the frames "
+                  "queued behind it",
                   IlionOverlay::IlionLatency },
             };
 
@@ -18688,38 +18691,94 @@ static void DrawNrMonitor(IFeature* feature, const NrUiStatus& status, bool befo
         }
     }
 
+    // ---- The screen: an orange phosphor display behind glass, the family of the Frame Generation screen ----
     ImDrawList* draw = ImGui::GetWindowDrawList();
     ImFont* mono = IlionTheme::crtFont != nullptr ? IlionTheme::crtFont : ImGui::GetFont();
+    ImFont* big = IlionTheme::crtTitleFont != nullptr ? IlionTheme::crtTitleFont : mono;
     const float fs = ImGui::GetFontSize();
-    const float pad = std::floor(fs * 0.6f);
-    const float rowH = std::floor(fs * 1.55f);
-    const int rows = 6;
+    const float pad = std::floor(fs * 0.75f);
+    const float labelPx = std::floor(fs * 0.86f);
+    const float bigPx = std::floor(fs * 2.1f);
     const float width = std::floor(ImGui::GetContentRegionAvail().x);
-    const float height = pad * 2.0f + rowH * (rows + 2);
+    const float titleH = std::floor(fs * 1.6f);
+    const float costH = std::floor(fs * 3.9f);
+    const float cellH = std::floor(fs * 2.55f);
+    const float stateH = std::floor(fs * 1.5f);
+    const float gap = std::floor(fs * 0.45f);
+    const float height = pad * 2.0f + titleH + gap + costH + gap + cellH * 2.0f + gap + stateH;
     const ImVec2 min = ImGui::GetCursorScreenPos();
     const ImVec2 max(min.x + width, min.y + height);
     ImGui::Dummy(ImVec2(width, height));
 
     const auto col = [](float r, float g, float b, float a = 1.0f) { return ImGui::GetColorU32(ImVec4(r, g, b, a)); };
-    const ImU32 orange = col(0.95f, 0.46f, 0.04f), ink = col(0.07f, 0.04f, 0.01f), inkSoft = col(0.20f, 0.10f, 0.02f);
-    const ImU32 well = col(0.06f, 0.05f, 0.04f);
-    const ImVec4 phosphor(0.30f, 1.0f, 0.42f, 1.0f), cyan(0.10f, 0.92f, 1.0f, 1.0f), grey(0.55f, 0.55f, 0.52f, 1.0f);
-    const ImVec4 yellow(1.0f, 0.92f, 0.05f, 1.0f), red(1.0f, 0.16f, 0.10f, 1.0f), crimson(1.0f, 0.22f, 0.50f, 1.0f);
-    const ImVec4 amber(1.0f, 0.72f, 0.10f, 1.0f);
-
-    // Flat industrial orange plate, one thin dark outline
-    const float rounding = std::floor(fs * 0.2f);
-    draw->AddRectFilled(min, max, orange, rounding);
-    draw->AddRect(min, max, col(0.0f, 0.0f, 0.0f, 0.55f), rounding, 0, 1.0f);
-
-    const auto text = [&](ImFont* f, float px, ImVec2 at, ImU32 c, const char* s) { draw->AddText(f, px, at, c, s); };
     const auto widthOf = [&](ImFont* f, float px, const char* s) { return f->CalcTextSizeA(px, FLT_MAX, 0.0f, s).x; };
 
-    const float x = min.x + pad, right = max.x - pad;
-    float y = min.y + pad;
+    // Readout colours
+    const ImVec4 cream(1.00f, 0.95f, 0.84f, 1.0f);   // labels: warm white, readable on the orange
+    const ImVec4 phosphor(0.36f, 1.00f, 0.46f, 1.0f);
+    const ImVec4 cyan(0.30f, 0.94f, 1.00f, 1.0f);
+    const ImVec4 grey(0.78f, 0.70f, 0.62f, 1.0f);
+    const ImVec4 yellow(1.00f, 0.95f, 0.20f, 1.0f), red(1.00f, 0.26f, 0.18f, 1.0f), crimson(1.00f, 0.30f, 0.62f, 1.0f);
+    const ImVec4 amber(1.00f, 0.80f, 0.30f, 1.0f);
 
-    // Title and the ONLINE / OFFLINE lamp, drawn (no glyph needed)
-    text(mono, fs, ImVec2(x, y), ink, Tr("NEURAL MONITOR"));
+    // Thin warm edge, then the glass: deep orange at the edges, lit towards the middle (no flat block)
+    const float rounding = std::floor(fs * 0.45f);
+    draw->AddRectFilled(ImVec2(min.x + 1.0f, min.y + 2.0f), ImVec2(max.x + 1.0f, max.y + 2.0f), col(0, 0, 0, 0.35f), rounding);
+    draw->AddRectFilled(min, max, col(0.52f, 0.20f, 0.02f), rounding);
+    const ImVec2 gMin(min.x + 1.5f, min.y + 1.5f), gMax(max.x - 1.5f, max.y - 1.5f);
+    const float gw = gMax.x - gMin.x, gh = gMax.y - gMin.y;
+    draw->AddRectFilledMultiColor(gMin, gMax, col(0.93f, 0.45f, 0.06f), col(0.93f, 0.45f, 0.06f), col(0.70f, 0.29f, 0.03f),
+                                  col(0.70f, 0.29f, 0.03f));
+
+    draw->PushClipRect(gMin, gMax, true);
+    const ImU32 clear = col(0, 0, 0, 0), edge = col(0.25f, 0.07f, 0.0f, 0.55f);
+    draw->AddRectFilledMultiColor(gMin, ImVec2(gMin.x + gw * 0.12f, gMax.y), edge, clear, clear, edge);
+    draw->AddRectFilledMultiColor(ImVec2(gMax.x - gw * 0.12f, gMin.y), gMax, clear, edge, edge, clear);
+    draw->AddRectFilledMultiColor(ImVec2(gMin.x, gMax.y - gh * 0.16f), gMax, clear, clear, edge, edge);
+    // Glow in the middle of the tube
+    draw->AddRectFilledMultiColor(ImVec2(gMin.x + gw * 0.15f, gMin.y + gh * 0.08f), ImVec2(gMax.x - gw * 0.15f, gMin.y + gh * 0.55f),
+                                  col(1.0f, 0.70f, 0.30f, 0.0f), col(1.0f, 0.70f, 0.30f, 0.0f), col(1.0f, 0.70f, 0.30f, 0.10f),
+                                  col(1.0f, 0.70f, 0.30f, 0.10f));
+    // Scan lines and a faint pixel grid
+    for (float y = gMin.y + 1.0f; y < gMax.y; y += 3.0f)
+        draw->AddLine(ImVec2(gMin.x, y), ImVec2(gMax.x, y), col(0.20f, 0.05f, 0.0f, 0.13f));
+    for (float x = gMin.x + 2.0f; x < gMax.x; x += 3.0f)
+        draw->AddLine(ImVec2(x, gMin.y), ImVec2(x, gMax.y), col(0.20f, 0.05f, 0.0f, 0.04f));
+    // Glass: a soft curved highlight at the top left, a thin sheen at the bottom
+    draw->AddBezierQuadratic(ImVec2(gMin.x + gw * 0.04f, gMin.y + gh * 0.30f), ImVec2(gMin.x + gw * 0.06f, gMin.y + gh * 0.05f),
+                             ImVec2(gMin.x + gw * 0.30f, gMin.y + gh * 0.04f), col(1.0f, 0.95f, 0.85f, 0.18f), 1.5f);
+    draw->AddLine(ImVec2(gMin.x + gw * 0.12f, gMax.y - 2.5f), ImVec2(gMax.x - gw * 0.12f, gMax.y - 2.5f), col(1.0f, 0.9f, 0.7f, 0.10f));
+
+    // Text with a dark edge and a faint phosphor bleed, as on the FG screen
+    const auto text = [&](ImFont* f, float px, ImVec2 at, const ImVec4& c, const char* s)
+    {
+        draw->AddText(f, px, ImVec2(at.x + 1.0f, at.y + 1.0f), col(0.18f, 0.05f, 0.0f, 0.75f), s);
+        draw->AddText(f, px, ImVec2(at.x, at.y + 1.0f), col(c.x, c.y, c.z, 0.18f), s);
+        draw->AddText(f, px, at, ImGui::GetColorU32(c), s);
+    };
+    // A dark readout band set into the glass: translucent, rounded, with a lit top edge, not a black cell
+    const auto band = [&](ImVec2 a, ImVec2 b)
+    {
+        const float r = std::floor(fs * 0.25f);
+        draw->AddRectFilled(a, b, col(0.16f, 0.04f, 0.0f, 0.62f), r);
+        draw->AddRectFilledMultiColor(a, ImVec2(b.x, a.y + (b.y - a.y) * 0.45f), col(0, 0, 0, 0.18f), col(0, 0, 0, 0.18f), clear, clear);
+        draw->AddLine(ImVec2(a.x + r, b.y - 0.5f), ImVec2(b.x - r, b.y - 0.5f), col(1.0f, 0.75f, 0.40f, 0.35f), 1.0f);
+    };
+    // Tick marks along a division line
+    const auto division = [&](float y)
+    {
+        draw->AddLine(ImVec2(gMin.x + pad, y), ImVec2(gMax.x - pad, y), col(1.0f, 0.88f, 0.65f, 0.45f), 1.0f);
+        for (float x = gMin.x + pad; x <= gMax.x - pad; x += std::floor(fs * 1.2f))
+            draw->AddLine(ImVec2(x, y), ImVec2(x, y + 3.0f), col(1.0f, 0.88f, 0.65f, 0.40f), 1.0f);
+    };
+
+    const float x0 = gMin.x + pad, x1 = gMax.x - pad;
+    float y = gMin.y + pad;
+
+    // Title and the status lamp (drawn, no glyph needed)
+    text(big, std::floor(fs * 1.15f), ImVec2(x0, y + std::floor(fs * 0.05f)), cream, Tr("NEURAL MONITOR"));
+    const bool hollow = status.state == NrUiState::Disabled || status.state == NrUiState::Unsupported ||
+                        status.state == NrUiState::NoBackend || status.state == NrUiState::Restart;
     const char* lampText = status.state == NrUiState::Active ? "ONLINE"
                            : status.state == NrUiState::Error ? "ERROR"
                            : status.state == NrUiState::Starting || status.state == NrUiState::NoUpscaler
@@ -18729,67 +18788,109 @@ static void DrawNrMonitor(IFeature* feature, const NrUiStatus& status, bool befo
                               : status.state == NrUiState::Error ? red
                               : status.state == NrUiState::Starting || status.state == NrUiState::NoUpscaler ? amber
                                                                                                              : grey;
-    const float lampW = widthOf(mono, fs, lampText);
-    const float badgeW = lampW + fs * 1.6f;
-    const ImVec2 bMin(right - badgeW, y - fs * 0.12f), bMax(right, y + fs * 1.12f);
-    draw->AddRectFilled(bMin, bMax, well, std::floor(fs * 0.15f));
-    const ImVec2 dot(bMin.x + fs * 0.6f, (bMin.y + bMax.y) * 0.5f);
-    if (status.state == NrUiState::Disabled || status.state == NrUiState::Unsupported ||
-        status.state == NrUiState::NoBackend || status.state == NrUiState::Restart)
+    const float lampW = widthOf(mono, fs, lampText) + fs * 1.9f;
+    const ImVec2 lMin(x1 - lampW, y), lMax(x1, y + std::floor(fs * 1.3f));
+    band(lMin, lMax);
+    const ImVec2 dot(lMin.x + fs * 0.7f, (lMin.y + lMax.y) * 0.5f);
+    if (hollow)
         draw->AddCircle(dot, fs * 0.28f, ImGui::GetColorU32(lampColour), 0, 1.5f);
     else
-        draw->AddCircleFilled(dot, fs * 0.30f, ImGui::GetColorU32(lampColour));
-    text(mono, fs, ImVec2(dot.x + fs * 0.55f, y), ImGui::GetColorU32(lampColour), lampText);
-    y += rowH;
-    draw->AddLine(ImVec2(x, y - fs * 0.25f), ImVec2(right, y - fs * 0.25f), inkSoft, 1.0f);
-
-    // Rows: label in dark ink on the orange, value in a dark well
-    const float labelW = std::floor(width * 0.36f);
-    const auto row = [&](const char* label, const std::string& value, const ImVec4& colour, bool valueOk)
     {
-        text(mono, fs * 0.92f, ImVec2(x, y + fs * 0.12f), ink, label);
-        const ImVec2 wMin(x + labelW, y), wMax(right, y + fs * 1.25f);
-        draw->AddRectFilled(wMin, wMax, well, std::floor(fs * 0.15f));
-        std::string shown = valueOk ? value : std::string(Tr("NO DATA"));
-        while (shown.size() > 1 && widthOf(mono, fs, shown.c_str()) > wMax.x - wMin.x - fs * 0.8f)
-            shown.pop_back();
-        text(mono, fs, ImVec2(wMin.x + fs * 0.4f, y + fs * 0.12f), ImGui::GetColorU32(valueOk ? colour : grey),
-             shown.c_str());
-        y += rowH;
-    };
+        draw->AddCircleFilled(dot, fs * 0.45f, ImGui::GetColorU32(ImVec4(lampColour.x, lampColour.y, lampColour.z, 0.25f)));
+        draw->AddCircleFilled(dot, fs * 0.28f, ImGui::GetColorU32(lampColour));
+    }
+    text(mono, fs, ImVec2(dot.x + fs * 0.6f, y + std::floor(fs * 0.15f)), lampColour, lampText);
+    y += titleH;
+    division(y);
+    y += gap;
 
-    const auto size = [](UINT w, UINT h) { return std::to_string(w) + " x " + std::to_string(h); };
-
-    row(Tr("BACKEND"), reading.backend, reading.backendLive ? phosphor : grey, !reading.backend.empty());
-    row(Tr("POSITION"), before ? Tr("BEFORE UPSCALING") : Tr("AFTER UPSCALING"), cyan, true);
-    row(Tr("NR INPUT"), size(reading.inW, reading.inH), cyan, reading.inW > 0);
-    row(Tr("NETWORK"), size(reading.netW, reading.netH), cyan, reading.netW > 0);
-    row(Tr("NR OUTPUT"), size(reading.outW, reading.outH), cyan, reading.outW > 0);
-
-    // NR time: GPU time of the neural pass alone, coloured by range
+    // Main readout: the neural cost, the largest figure of the screen
+    const ImVec2 cMin(x0, y), cMax(x1, y + costH);
+    band(cMin, cMax);
+    const char* costLabel = Tr("NEURAL COST");
+    text(mono, labelPx, ImVec2(cMin.x + fs * 0.6f, cMin.y + std::floor(fs * 0.35f)), cream, costLabel);
     const float ms = reading.gpuMs;
-    const ImVec4 msColour = ms < 20.f ? phosphor : ms < 30.f ? yellow : ms < 40.f ? red : crimson;
-    char msText[32] {};
+    std::string value;
+    ImVec4 valueColour = grey;
     if (ms >= 0.f)
-        snprintf(msText, sizeof msText, "%.1f ms  %s", ms, reading.lmxxf ? "HIP" : "D3D12");
-    row(Tr("NR GPU TIME"), msText, msColour, ms >= 0.f);
-    if (ImGui::IsItemHovered())
-        WrappedTooltip("%s", Tr(reading.lmxxf
-                                    ? "GPU time of the neural network per job (HIP, reported by the lmxxf runtime), mean of its "
-                                      "last statistics window. Frame Generation is not included."
-                                    : "GPU time the neural pass takes on the game's queue (two D3D12 timestamps around it, read "
-                                      "when its frame has finished, no waits), mean of the last 60 model frames. Frame "
-                                      "Generation is not included."));
+    {
+        char buffer[32] {};
+        snprintf(buffer, sizeof buffer, "%.1f", ms);
+        value = buffer;
+        if (Ilion::CurrentLang() != Ilion::Lang::EN) // decimal comma in Spanish, Portuguese and Russian
+            std::replace(value.begin(), value.end(), '.', ',');
+        valueColour = ms < 20.f ? phosphor : ms < 30.f ? yellow : ms < 40.f ? red : crimson;
+    }
+    else
+    {
+        value = Tr("NO DATA");
+    }
+    const float valueY = cMin.y + std::floor(fs * 1.35f);
+    const float valueW = widthOf(big, bigPx, value.c_str());
+    text(big, bigPx, ImVec2(cMin.x + fs * 0.6f, valueY), valueColour, value.c_str());
+    if (ms >= 0.f)
+    {
+        const std::string unit = std::string("ms \xC2\xB7 ") + (reading.lmxxf ? "HIP" : "D3D12");
+        text(mono, fs, ImVec2(cMin.x + fs * 0.6f + valueW + fs * 0.5f, valueY + bigPx - fs * 1.15f), cream, unit.c_str());
+        // A bar of the cost against 50 ms, with the colour ranges marked under it
+        const float barX = std::max(cMin.x + fs * 0.6f + valueW + fs * 6.5f, cMin.x + (cMax.x - cMin.x) * 0.48f);
+        const float barW = cMax.x - fs * 0.8f - barX;
+        if (barW > fs * 4.0f)
+        {
+            const float barY = valueY + bigPx * 0.45f, barH = std::floor(fs * 0.55f);
+            draw->AddRectFilled(ImVec2(barX, barY), ImVec2(barX + barW, barY + barH), col(0, 0, 0, 0.35f), 2.0f);
+            const float filled = barW * std::clamp(ms / 50.f, 0.0f, 1.0f);
+            draw->AddRectFilled(ImVec2(barX, barY), ImVec2(barX + filled, barY + barH), ImGui::GetColorU32(valueColour), 2.0f);
+            for (const float mark : { 20.f, 30.f, 40.f })
+            {
+                const float mx = barX + barW * mark / 50.f;
+                draw->AddLine(ImVec2(mx, barY - 2.0f), ImVec2(mx, barY + barH + 2.0f), col(1.0f, 0.92f, 0.80f, 0.70f), 1.0f);
+            }
+        }
+    }
+    if (ImGui::IsMouseHoveringRect(cMin, cMax))
+        WrappedTooltip("%s", Tr("Processing time of the neural network on the GPU. It is not directly added latency or lost FPS."));
+    y += costH + gap;
 
-    // Processing state, one word under the rows
-    const char* stateWord = status.state == NrUiState::Active     ? Tr("PROCESSING")
-                            : status.state == NrUiState::Starting ? Tr("STARTING")
+    // Two rows of readouts: backend and position, then the three sizes
+    const auto cell = [&](float a, float b, const char* label, const std::string& shownValue, const ImVec4& colour, bool ok)
+    {
+        band(ImVec2(a, y), ImVec2(b, y + cellH - std::floor(fs * 0.3f)));
+        text(mono, labelPx, ImVec2(a + fs * 0.5f, y + std::floor(fs * 0.25f)), cream, label);
+        std::string s = ok ? shownValue : std::string(Tr("NO DATA"));
+        while (s.size() > 1 && widthOf(mono, fs, s.c_str()) > b - a - fs * 1.0f)
+            s.pop_back();
+        text(mono, fs, ImVec2(a + fs * 0.5f, y + std::floor(fs * 1.15f)), ok ? colour : grey, s.c_str());
+    };
+    const auto size = [](UINT w, UINT h) { return std::to_string(w) + "\xC3\x97" + std::to_string(h); };
+    const float span = x1 - x0, g2 = std::floor(fs * 0.4f);
+
+    const float half = std::floor((span - g2) * 0.5f);
+    cell(x0, x0 + half, Tr("BACKEND"), reading.backend, reading.backendLive ? phosphor : grey, !reading.backend.empty());
+    cell(x0 + half + g2, x1, Tr("POSITION"), before ? Tr("BEFORE UPSCALING") : Tr("AFTER UPSCALING"), cyan, true);
+    y += cellH;
+
+    const float third = std::floor((span - g2 * 2.0f) / 3.0f);
+    cell(x0, x0 + third, Tr("NR INPUT"), size(reading.inW, reading.inH), cyan, reading.inW > 0);
+    cell(x0 + third + g2, x0 + third * 2.0f + g2, Tr("NETWORK"), size(reading.netW, reading.netH), cyan, reading.netW > 0);
+    cell(x0 + (third + g2) * 2.0f, x1, Tr("NR OUTPUT"), size(reading.outW, reading.outH), cyan, reading.outW > 0);
+    y += cellH;
+    division(y - std::floor(fs * 0.1f));
+    y += gap;
+
+    // Processing state, one line at the bottom
+    const char* stateWord = status.state == NrUiState::Active       ? Tr("PROCESSING")
+                            : status.state == NrUiState::Starting   ? Tr("STARTING")
                             : status.state == NrUiState::NoUpscaler ? Tr("NO DATA")
                             : status.state == NrUiState::Error      ? "ERROR"
                             : status.state == NrUiState::Disabled   ? Tr("DISABLED")
                                                                     : Tr("NOT AVAILABLE");
-    const std::string stateLine = std::string(Tr("STATE")) + ": " + stateWord;
-    text(mono, fs * 0.92f, ImVec2(x, y + fs * 0.12f), ink, stateLine.c_str());
+    const std::string stateLine = std::string(Tr("STATE")) + "  ";
+    text(mono, labelPx, ImVec2(x0, y + std::floor(fs * 0.1f)), cream, stateLine.c_str());
+    text(mono, fs, ImVec2(x0 + widthOf(mono, labelPx, stateLine.c_str()), y), lampColour, stateWord);
+
+    draw->PopClipRect();
+    draw->AddRect(min, max, col(1.0f, 0.72f, 0.35f, 0.55f), rounding, 0, 1.0f);
 }
 
 void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)

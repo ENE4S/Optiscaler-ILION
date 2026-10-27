@@ -215,6 +215,7 @@ class MenuCommon
     static void RenderMainMenuHeaderMessages(RenderMenuContext& ctx);
     static void RenderUpscalerStateMessage(RenderMenuContext& ctx);
     static void RenderMainMenuTabs(RenderMenuContext& ctx);
+    static void RenderNeuralRendering(RenderMenuContext& ctx);
     static void PlotLinesWithRange(const char* label, float (*values_getter)(void* data, int idx), void* data,
                                    int values_count, int values_offset, const char* overlay_text, ImVec2 graph_size,
                                    float padding);

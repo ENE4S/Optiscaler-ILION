@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "VkwDx12_Inputs.h"
 #include "Streamline_Inputs_Dx12.h"
 #include <Config.h>
 #include <resource_tracking/ResTrack_dx12.h>
@@ -453,4 +454,50 @@ void Sl_Inputs_Dx12::markPresent(uint64_t frameId)
 
     if (State::Instance().currentFG != nullptr)
         State::Instance().currentFG->SetFrameCount(frameId);
+}
+
+bool Sl_Inputs_Dx12::reportVulkanResource(const sl::ResourceTag& tag, VkCommandBuffer command, uint32_t frameId)
+{
+    if (!VkwDx12Inputs::Active() || State::Instance().activeFgInput != FGInput::DLSSG ||
+        !Config::Instance()->IsFGEnabled() || !tag.resource || !tag.resource->native ||
+        tag.resource->type != sl::ResourceType::eTex2d) return false;
+    auto fg = State::Instance().currentFG;
+    if (!fg) return false;
+    if (tag.lifecycle == sl::eValidUntilEvaluate &&
+        State::Instance().gameQuirks[GameQuirk::IgnoreValidUntilEvaluateForFG]) return false;
+    State::Instance().dlssgLastFrame = State::Instance().fgLastFrame;
+    CheckForFrame(fg, frameId);
+    VkwDx12Resource input {};
+    if (tag.type == sl::kBufferTypeDepth || tag.type == sl::kBufferTypeHiResDepth ||
+        tag.type == sl::kBufferTypeLinearDepth) input.type = FG_ResourceType::Depth;
+    else if (tag.type == sl::kBufferTypeMotionVectors) input.type = FG_ResourceType::Velocity;
+    else if (tag.type == sl::kBufferTypeHUDLessColor) input.type = FG_ResourceType::HudlessColor;
+    else if (tag.type == sl::kBufferTypeUIColorAndAlpha) input.type = FG_ResourceType::UIColor;
+    else if (tag.type == sl::kBufferTypeBidirectionalDistortionField) input.type = FG_ResourceType::Distortion;
+    else return false;
+    // The bridge copies complete images; nonzero viewports need a separate region-aware implementation.
+    if (tag.extent && (tag.extent.left || tag.extent.top)) return false;
+    input.image = reinterpret_cast<VkImage>(tag.resource->native);
+    input.view = reinterpret_cast<VkImageView>(tag.resource->view);
+    input.format = static_cast<VkFormat>(tag.resource->nativeFormat);
+    input.layout = static_cast<VkImageLayout>(tag.resource->state);
+    input.imageWidth = tag.resource->width;
+    input.imageHeight = tag.resource->height;
+    input.width = tag.extent ? tag.extent.width : input.imageWidth;
+    input.height = tag.extent ? tag.extent.height : input.imageHeight;
+    input.cmdBuffer = command;
+    input.validity = tag.lifecycle == sl::eValidUntilPresent ? FG_ResourceValidity::UntilPresent : FG_ResourceValidity::ValidNow;
+    if (input.validity == FG_ResourceValidity::ValidNow && !command) return false;
+    int index = frameId ? IndexForFrameId(frameId) : -1;
+    if (index < 0) {
+        index = fg->GetIndexWillBeDispatched();
+        if (fg->HasResource(input.type, index)) index = fg->GetIndex();
+    }
+    input.frameIndex = index;
+    if (input.type == FG_ResourceType::Velocity) {
+        mvsWidth = input.width;
+        mvsHeight = input.height;
+    }
+    if (input.type == FG_ResourceType::HudlessColor) fg->SetInterpolationRect(input.width, input.height);
+    return VkwDx12Inputs::SetResource(input);
 }

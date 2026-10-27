@@ -524,9 +524,9 @@ inline ImVec4 LampColor(Lamp kind)
 // A round pilot lamp behind glass in a metal ring. Lit: its colour with the light gathered in the middle and a
 // faint halo. Out: the same glass dark. Only drawn for a state that exists.
 inline void DrawLamp(ImDrawList* draw, const ImVec2& center, float radius, bool lit, bool hovered = false,
-                     bool held = false, Lamp kind = Lamp::Green)
+                     bool held = false, Lamp kind = Lamp::Green, const ImVec4* tint = nullptr)
 {
-    const ImVec4 color = LampColor(kind);
+    const ImVec4 color = tint ? *tint : LampColor(kind);
 
     // Fallout 2: a round phosphor dot; lit it glows on the glass, out it is a dim ring
     if (skin == Skin::Crt)
@@ -814,7 +814,7 @@ inline void DrawWell(ImDrawList* draw, const ImVec2& min, const ImVec2& max, boo
 // Each one takes and returns what the ImGui control it stands in for does, with the same id.
 
 // On/off option: a pilot lamp in a recessed plate with the name of the option. The lamp is the state.
-inline bool Switch(const char* label, bool* value)
+inline bool Switch(const char* label, bool* value, const bool* activity = nullptr, const ImVec4* tint = nullptr)
 {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
 
@@ -849,6 +849,8 @@ inline bool Switch(const char* label, bool* value)
 
     ImGui::RenderNavCursor(bounds, id);
 
+    const bool lit = activity ? *activity : *value;
+    const ImVec4 lampColor = tint ? *tint : LampGreen;
     if (skin == Skin::Flat)
     {
         // A switch: a rounded track, the accent colour when on, with a white knob at its end
@@ -860,7 +862,7 @@ inline bool Switch(const char* label, bool* value)
         const float knobX = *value ? trackMax.x - trackHeight * 0.5f : trackMin.x + trackHeight * 0.5f;
 
         window->DrawList->AddRectFilled(trackMin, trackMax,
-                                        ImGui::GetColorU32(*value ? (hovered ? Shade(LampGreen, 0.92f) : LampGreen) : (hovered ? Metal : MetalDark)),
+                                        ImGui::GetColorU32(lit ? (hovered ? Shade(lampColor, 0.92f) : lampColor) : (hovered ? Metal : MetalDark)),
                                         trackHeight * 0.5f);
         window->DrawList->AddCircleFilled(ImVec2(knobX, (trackMin.y + trackMax.y) * 0.5f), knob, ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, 1.0f)));
     }
@@ -870,7 +872,7 @@ inline bool Switch(const char* label, bool* value)
             DrawWell(window->DrawList, bounds.Min, bounds.Max, hovered);
 
         DrawLamp(window->DrawList, ImVec2(ImFloor(pos.x + height * 0.5f), ImFloor(pos.y + height * 0.5f)),
-                 ImFloor(height * 0.5f) - 2.0f, *value, hovered, held);
+                 ImFloor(height * 0.5f) - 2.0f, lit, hovered, held, activity ? Lamp::Amber : Lamp::Green, tint);
     }
 
     if (labelSize.x > 0.0f)
@@ -880,9 +882,18 @@ inline bool Switch(const char* label, bool* value)
 }
 
 // The on/off control of the theme in use
-inline bool Checkbox(const char* label, bool* value)
+inline bool Checkbox(const char* label, bool* value, const bool* activity = nullptr, const ImVec4* tint = nullptr)
 {
-    return industrial ? Switch(label, value) : ImGui::Checkbox(label, value);
+    if (industrial) return Switch(label, value, activity, tint);
+    if (!activity) return ImGui::Checkbox(label, value);
+    ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(0, 0, 0, 0));
+    const bool changed = ImGui::Checkbox(label, value);
+    ImGui::PopStyleColor();
+    const auto min = ImGui::GetItemRectMin();
+    const float h = ImGui::GetFrameHeight();
+    DrawLamp(ImGui::GetWindowDrawList(), ImVec2(min.x + h * 0.5f, min.y + h * 0.5f),
+             h * 0.5f - 2.f, *activity, ImGui::IsItemHovered(), ImGui::IsItemActive(), Lamp::Amber, tint);
+    return changed;
 }
 
 // The button of the theme in use. Same size as ImGui::Button, the colours pushed for a button apply to its cap.

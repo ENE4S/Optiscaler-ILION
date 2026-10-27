@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "IFGFeature.h"
+#include <with_dx12/vk_xefg_diagnostics.h>
 #include <Config.h>
 #include <low_latency/input/input_common.h>
 
@@ -322,7 +323,13 @@ void IFGFeature::SetResourceReady(FG_ResourceType type, int index)
     _resourceFrame[type] = _frameCount;
 }
 
-UINT IFGFeature::GetInterpolatedFrameCount() const { return _framesToInterpolate < 0 ? 1 : _framesToInterpolate; }
+UINT IFGFeature::GetInterpolatedFrameCount() const
+{
+    // The Vulkan bridge must not report the old synthetic 2x before SDK confirmation.
+    if (VulkanXeFGDiagnostics::FixActive())
+        return VulkanXeFGDiagnostics::ReportedGeneratedFrames();
+    return _framesToInterpolate < 0 ? 1 : _framesToInterpolate;
+}
 
 int IFGFeature::GetMaxInterpolationCount() const { return _maxInterpolationCount; }
 

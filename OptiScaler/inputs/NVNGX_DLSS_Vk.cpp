@@ -1,4 +1,5 @@
 #include "pch.h"
+#include <inputs/FG/Upscaler_Inputs_VkwDx12.h>
 #include "Util.h"
 #include "Config.h"
 #include "resource.h"
@@ -1058,6 +1059,7 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_VULKAN_EvaluateFeature(VkCommandBuffer 
 
     deviceContext = VkContexts[handleId].feature.get();
     state.currentFeature = deviceContext;
+    UpscalerInputsVkwDx12::UpscaleStart(InCmdList, InParameters, deviceContext);
 
     auto upscaleResult = deviceContext->Evaluate(InCmdList, InParameters);
 

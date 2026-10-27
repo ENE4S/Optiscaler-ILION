@@ -1,4 +1,5 @@
 #include "pch.h"
+#include <dlssnr/amd/AmdBridge.h>
 #include "Util.h"
 #include "Config.h"
 
@@ -1088,7 +1089,25 @@ static NVSDK_NGX_Result TryEvaluateOptiFeature(ID3D12GraphicsCommandList* InCmdL
     bool evalSuccess = false;
     {
         ScopedSkipHeapCapture skip {};
+        using namespace DlssNr::AmdBridge;
+        const auto choice = ChosenRuntime();
+        const bool configured = cfg.DlssNrEnabled.value_or_default();
+        const bool before = cfg.DlssNrRunBeforeSr.value_or_default();
+        const bool daniel = configured && HasFiles() && DanielWeightsPresent();
+        const bool lmxxf = configured && LmxxfReady();
+        const bool ready = configured && (choice == NeuralRuntime::Daniel ? daniel
+            : choice == NeuralRuntime::Lmxxf ? lmxxf : (daniel != lmxxf));
+        const bool canRun = ready && (!BackendActive() || choice == NeuralRuntime::Unchosen || ActiveRuntime() == choice);
+        if (canRun && before && feature->GetUpscalerType() != Upscaler::DLSSD)
+            Before(InCmdList, InParameters, nullptr);
         evalSuccess = feature->Evaluate(InCmdList, InParameters);
+        Restore(InParameters);
+        if (canRun && !before && evalSuccess)
+            After(InCmdList, InParameters, nullptr);
+        if (configured && !evalSuccess) {
+            CancelActivity(InCmdList);
+            UpscalerSkipped();
+        }
 
         // Resource tracking
         UpscalerInputsDx12::UpscaleEnd(InCmdList, InParameters, feature);

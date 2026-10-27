@@ -1,6 +1,7 @@
 #pragma once
 #include "SysUtils.h"
 #include <sl.h>
+#include <vulkan/vulkan.h>
 #include <framegen/IFGFeature_Dx12.h>
 
 class Sl_Inputs_Dx12
@@ -26,6 +27,7 @@ class Sl_Inputs_Dx12
   public:
     bool setConstants(const sl::Constants& constants, uint32_t frameId);
     bool evaluateState();
+    bool reportVulkanResource(const sl::ResourceTag& tag, VkCommandBuffer command, uint32_t frameId);
     bool reportResource(const sl::ResourceTag& tag, ID3D12GraphicsCommandList* cmdBuffer, uint32_t frameId);
     void reportEngineType(sl::EngineType type) { engineType = type; };
     bool dispatchFG();

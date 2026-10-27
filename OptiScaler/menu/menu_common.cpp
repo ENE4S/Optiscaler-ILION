@@ -1,4 +1,7 @@
-#include "pch.h"
+﻿#include "pch.h"
+#include <dlssnr/amd/AmdBridge.h>
+#include <dlssnr/amd/RuntimeCaps.h>
+#include <dlssnr/lmxxf/LmxxfBackend.h>
 #include "menu_common.h"
 
 #include "input/input_system.h"
@@ -9,6 +12,7 @@
 
 #include <proxies/XeSS_Proxy.h>
 #include <proxies/XeFG_Proxy.h>
+#include <with_dx12/vk_with_dx12_sc.h>
 #include <proxies/FfxApi_Proxy.h>
 #include <upscalers/ffx/FFXFeature.h>
 #include <fsr4/FSR4Comparison.h>
@@ -614,7 +618,7 @@ static std::string UpscalerLabel(IFeature* feature)
     // ILION: native Vulkan FFX running FSR 4 is the AMD Vulkan driver's: directly (ILION's provider) or handed over by
     // amd_fidelityfx_vk.dll
     if (type == Upscaler::FFX && State::Instance().api == Vulkan && feature->Version().major >= 4)
-        return "FSR " + version + (FSR4DriverProviderVk::InUse() ? " · VK" : " · VK (SDK)");
+        return "FSR " + version + (FSR4DriverProviderVk::InUse() ? " \xC2\xB7 VK" : " \xC2\xB7 VK (SDK)");
 
     if (RunsSwitchedFfx(type))
     {
@@ -623,7 +627,7 @@ static std::string UpscalerLabel(IFeature* feature)
 
         // An AMD driver dll chosen in the selector: what runs is its FSR, with the version its provider created
         if (entry.has_value() && entry->kind == IlionUpscalers::Kind::Provider)
-            return "FSR " + version + " · Driver";
+            return "FSR " + version + " \xC2\xB7 Driver";
 
         // HelixSR: "DLSS 3.7" is what its author says it runs. Shown only when the dll identified as HelixSR by its
         // file is the one the last upscale really executed (SR-DIAG); the version itself can't be checked from here
@@ -649,7 +653,7 @@ static std::string UpscalerLabel(IFeature* feature)
 
             if (index >= 0 && index < (int) versions.ids.size() && (versions.ids[index] & 0x80000000ull) != 0 &&
                 feature->Version().major >= 4)
-                return "FSR " + version + " · Driver (" + Tr("via SDK") + ")";
+                return "FSR " + version + " \xC2\xB7 Driver (" + Tr("via SDK") + ")";
         }
 
         // The default dll, or the game's own: AMD's FSR
@@ -1031,7 +1035,7 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
             const bool direct = FSR4DriverProviderVk::IsAvailable() && vk.ids[i] == FSR4DriverProviderVk::VersionId();
 
             if (direct || number.rfind("4", 0) == 0)
-                vkFsr4.push_back({ (int) i, direct, "FSR " + number + (direct ? " · VK" : " · VK (SDK)") });
+                vkFsr4.push_back({ (int) i, direct, "FSR " + number + (direct ? " \xC2\xB7 VK" : " \xC2\xB7 VK (SDK)") });
             else if (fsr31Index < 0 && strncmp(vk.names[i], "3.1", 3) == 0)
                 fsr31Index = (int) i;
         }
@@ -11167,7 +11171,8 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
     // OptiFG requirements
     auto constexpr optiFgIndex = (uint32_t) FGInput::Upscaler;
-    inputOptions[optiFgIndex].set_disabled(state.swapchainApi == API::Vulkan, "Unsupported API");
+    inputOptions[optiFgIndex].set_disabled(state.swapchainApi == API::Vulkan &&
+        !(state.activeFgOutput == FGOutput::XeFG && VkwDx12SC::Available()), "Unsupported API");
 
     if (!inputOptions[optiFgIndex].disabled && state.activeFgOutput == FGOutput::FSRFG && !FfxApiProxy::IsFGReady() &&
         !ffxInitTried)
@@ -11246,7 +11251,9 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
     // XeFG output requirements
     auto constexpr xefgOutputIndex = (uint32_t) FGOutput::XeFG;
-    outputOptions[xefgOutputIndex].set_disabled(state.swapchainApi == API::Vulkan, "Unsupported API");
+    outputOptions[xefgOutputIndex].set_disabled(state.swapchainApi == API::Vulkan &&
+        (!VkwDx12SC::Available() || (state.activeFgInput != FGInput::Upscaler &&
+         state.activeFgInput != FGInput::DLSSG && state.activeFgInput != FGInput::NoFG)), "Unsupported API");
     // Unsupported FG input selected
     const auto currentInputIndex = (uint32_t) state.activeFgInput;
     if (config->FGInput != FGInput::NoFG && inputOptions.size() > currentInputIndex &&
@@ -18556,6 +18563,167 @@ void MenuCommon::RenderExternalFgTab(RenderMenuContext& ctx)
     }
 }
 
+
+void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
+{
+    using namespace DlssNr::AmdBridge;
+    using namespace DlssNr::RuntimeCaps;
+    using Ilion::Tr;
+    using Ilion::TrL;
+    auto& cfg = *ctx.config;
+    const auto choice = ChosenRuntime();
+    const bool daniel = HasFiles() && DanielWeightsPresent();
+    const bool lmxxf = LmxxfReady();
+    const bool ready = choice == NeuralRuntime::Daniel ? daniel : choice == NeuralRuntime::Lmxxf ? lmxxf : (daniel != lmxxf);
+    const bool restart = BackendActive() && choice != NeuralRuntime::Unchosen && ActiveRuntime() != choice;
+    const bool active = RecentlyActive();
+    const ImVec4 amber(1.f, 0.65f, 0.06f, 1.f);
+    {
+        ScopedCard card;
+        SectionTitle("Neural Rendering");
+        bool enabled = cfg.DlssNrEnabled.value_or_default();
+        ImGui::BeginDisabled((!ready || restart) && !enabled);
+        if (IlionTheme::Checkbox(TrL("Enable Neural Rendering"), &enabled, &active, &amber)) {
+            cfg.DlssNrEnabled = enabled;
+            NoteToggle(enabled, "menu");
+            InvalidateHistory();
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered()) WrappedTooltip("%s", Tr("The amber lamp requires a completed model output on the GPU; enabling NR alone does not light it."));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("%s", Tr(active ? "NR active" : enabled && RuntimeStopped() ? "NR stopped; see technical information" : enabled ? "NR waiting for valid model output" : "NR disabled"));
+        ImGui::PopStyleColor();
+        ImGui::Spacing();
+        ImGui::TextUnformatted(Tr("Runtime"));
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        const char* names[] = { Tr("Choose runtime"), "Daniel", "lmxxf" };
+        const int selected = int(choice);
+        const auto displayed = choice != NeuralRuntime::Unchosen ? choice
+            : ActiveRuntime() != NeuralRuntime::Unchosen ? ActiveRuntime()
+            : daniel != lmxxf ? (daniel ? NeuralRuntime::Daniel : NeuralRuntime::Lmxxf) : NeuralRuntime::Unchosen;
+        const ImVec4 backendRed = ImVec4(1.f, 0.16f, 0.12f, 1.f);
+        const bool open = IlionTheme::BeginCombo("##NrRuntime", names[int(displayed)], 0,
+            displayed == NeuralRuntime::Unchosen ? nullptr : &backendRed);
+        if (open) {
+            for (int n = 0; n < 3; ++n) {
+                if (ImGui::Selectable(names[n], n == selected) && n != selected) {
+                    cfg.DlssNrBackend = std::string(n == 1 ? "daniel" : n == 2 ? "lmxxf" : "");
+                    cfg.DlssNrEnabled = false;
+                    InvalidateHistory();
+                }
+                if (n == selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::Spacing();
+        ImGui::TextUnformatted(Tr("Placement"));
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        const bool before = cfg.DlssNrRunBeforeSr.value_or_default();
+        if (IlionTheme::BeginCombo("##NrPlacement", Tr(before ? "Before Upscaling" : "After Upscaling"))) {
+            for (int n = 0; n < 2; ++n) {
+                if (ImGui::Selectable(Tr(n ? "Before Upscaling" : "After Upscaling"), before == bool(n))) {
+                    cfg.DlssNrRunBeforeSr = bool(n);
+                    InvalidateHistory();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (restart) ImGui::TextWrapped("%s", Tr("Restart the game to change the runtime."));
+        else if (!ready) ImGui::TextWrapped("%s", Tr("Dependencies missing or runtime choice required."));
+        if (before && ctx.currentFeature && ctx.currentFeature->GetUpscalerType() == Upscaler::DLSSD)
+            ImGui::TextWrapped("%s", Tr("Before is unavailable for Ray Reconstruction; select After."));
+    }
+    {
+        ScopedCard card;
+        SectionTitle(Tr("NR settings"));
+        const int columns = ImGui::GetContentRegionAvail().x >= 520.f * ctx.menuResScale ? 2 : 1;
+        if (ImGui::BeginTable("##NrControls", columns, ImGuiTableFlags_SizingStretchSame)) {
+            auto label = [&](const char* text) {
+                ImGui::TableNextColumn();
+                ImGui::TextWrapped("%s", Tr(text));
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                ImGui::PushID(text);
+                // Local slider scope only; preserve the theme's geometry and neighbouring widgets.
+                const auto& style = ImGui::GetStyle();
+                ImGui::PushStyleColor(ImGuiCol_SliderGrab, amber);
+                ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, ImVec4(1.f, 0.80f, 0.22f, 1.f));
+                ImGui::PushStyleColor(ImGuiCol_FrameBg, ImLerp(style.Colors[ImGuiCol_FrameBg], amber, 0.12f));
+                ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImLerp(style.Colors[ImGuiCol_FrameBgHovered], amber, 0.22f));
+                ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImLerp(style.Colors[ImGuiCol_FrameBgActive], amber, 0.32f));
+            };
+            auto slider = [&](const char* text, auto& opt, float lo, float hi) {
+                label(text);
+                float value = opt.value_or_default();
+                if (ImGui::SliderFloat("##Value", &value, lo, hi)) opt = value;
+                ImGui::PopStyleColor(5);
+                ImGui::PopID();
+            };
+            auto integer = [&](const char* text, auto& opt, int lo, int hi) {
+                label(text);
+                int value = int(opt.value_or_default());
+                if (ImGui::SliderInt("##Value", &value, lo, hi))
+                    opt = static_cast<decltype(opt.value_or_default())>(value);
+                ImGui::PopStyleColor(5);
+                ImGui::PopID();
+            };
+            auto toggle = [&](const char* text, auto& opt) {
+                ImGui::TableNextColumn();
+                bool value = opt.value_or_default();
+                if (IlionTheme::Checkbox(TrL(text), &value)) opt = value;
+            };
+            auto supported = [](Cap cap) {
+                if (Menu().id == NeuralRuntime::Lmxxf) {
+                    if (cap == Cap::FullNetwork && Lmxxf::FullNetworkRefused()) return false;
+                    if ((cap == Cap::NativeCharacterMask || cap == Cap::Structure || cap == Cap::CharacterStructure) && Lmxxf::ControlsRefused()) return false;
+                }
+                return Get(cap) == Support::Yes;
+            };
+            ImGui::BeginDisabled(!ready || restart);
+            slider("NR resolution", cfg.AmdNrScale, 0.25f, 2.f);
+            integer("Neural passes", cfg.DlssNrPasses, 1, 3);
+            slider("NR detail", cfg.AmdDetailStrength, 0.f, 1.f);
+            slider("NR colour", cfg.AmdColourStrength, 0.f, 1.f);
+            slider("Temporal stability", cfg.AmdTemporalStability, 0.f, 1.f);
+            integer("Model interleave (0/1 off)", cfg.AmdInterleave, 0, 4);
+            if (ready) {
+                if (supported(Cap::Structure)) slider("Model structure", cfg.DlssNrLocalStructure, 0.f, 2.f);
+                if (supported(Cap::Tone)) slider("Model tone", cfg.AmdNeuralLightingStrength, 0.f, 2.f);
+                if (supported(Cap::CharacterStructure)) slider("Character structure", cfg.DlssNrSkinStructure, 0.f, 2.f);
+                if (supported(Cap::NativeCharacterMask)) toggle("Character mask", cfg.DlssNrAutoMask);
+                if (supported(Cap::FullNetwork)) toggle("Full network", cfg.LmxxfFullNetwork);
+                if (supported(Cap::NetworkHistoryWithoutInterleave)) toggle("Model history", cfg.AmdLmxxfHistory);
+                if (supported(Cap::LmxxfFastMode)) toggle("Fast network", cfg.AmdLmxxfFastMode);
+                if (supported(Cap::AutoExposureSwitch)) toggle("Auto exposure", cfg.AmdLmxxfAutoExposure);
+                if (supported(Cap::HighlightColourGuard)) {
+                    if (Menu().id == NeuralRuntime::Lmxxf) toggle("Highlight colour guard", cfg.AmdLmxxfHighlightChromaGuard);
+                    else toggle("Highlight colour guard", cfg.AmdDanielHighlightGuard);
+                }
+                if (supported(Cap::OutputSmoothing)) slider("Output smoothing", cfg.AmdLmxxfOutputSmooth, 0.f, 1.f);
+                if (supported(Cap::RuntimeKnobs) && DanielKnobsMapped() == 1) {
+                    integer("Network style", cfg.AmdRuntimeStyle, -1, 2);
+                    integer("Tone curve", cfg.AmdToneCurve, -1, 1);
+                    slider("Black lift", cfg.AmdToneLift, -1.f, 0.25f);
+                }
+                if (supported(Cap::DanielFastMode) && DanielFastModeSupported() == 1) toggle("Fast network", cfg.AmdDanielFastMode);
+            }
+            ImGui::EndDisabled();
+            ImGui::EndTable();
+        }
+    }
+    // No DefaultOpen flag: long diagnostics remain collapsed until requested.
+    if (IlionTheme::CollapsingHeader(TrL("Technical information"))) {
+        const auto stats = Stats();
+        ImGui::TextWrapped("%s", Status().c_str());
+        ImGui::TextWrapped(Tr("Daniel DLL: %s / weights: %s"), HasFiles() ? Tr("found") : Tr("missing"), DanielWeightsPresent() ? Tr("found") : Tr("missing"));
+        ImGui::TextWrapped(Tr("lmxxf DLL: %s / assets: %s"), LmxxfRuntimePresent() ? Tr("found") : Tr("missing"), LmxxfAssetsPresent() ? Tr("found") : Tr("missing"));
+        if (const char* name = RuntimeName()) ImGui::TextWrapped(Tr("Daniel: %s"), name);
+        ImGui::TextWrapped(Tr("NR recorded: %llu / model frames: %llu / completed: %llu"), stats.recorded, stats.modelFrames, stats.completedModelFrames);
+        ImGui::TextWrapped("%s", Tr("DX12 experimental. Before preserves render-resolution guides and writes back into the original input; unsupported formats are skipped. After remains the default."));
+        ImGui::TextWrapped("AMDNR by 3zwr1 - https://github.com/3zwr1/AMD-NR---OptiScaler");
+        ImGui::TextWrapped("%s", Tr("Credits: OptiScaler contributors; Dagherbou; wilsjo2; Matheus; TheAutomatic; Daniel Blanco; lmxxf (Kien); RenoDX (clshortfuse). Licenses/AMDNR_NOTICE.txt."));
+    }
+}
+
 void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
 {
     ExternalFg(); // ILION: the search for MFG SUPER MOTION starts with the menu
@@ -18588,15 +18756,16 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
         { "MAIN", "Anti-Ghosting", "Options against ghosting and trails, grouped by the technology they work with.",
           RenderAntiGhostingTab },
         { "MAIN", "Latency & FPS", "Frame limiter, low latency and V-Sync." },
+        { "MAIN", "Neural Rendering", "AMD Neural Rendering.", RenderNeuralRendering },
         { "MAIN", "Graphics", "Colour, sharpness, textures and detail of the picture." },
         { "MAIN", "Overlay", "Real-time metrics over the game: FPS, frame times and hardware sensors." },
         { "MAIN", "Benchmark", "Manual performance tests of the upscaler in use." },
         { "SYSTEM", "Compatibility", "Init flags, hooks, plugins and game specific workarounds." },
         { "ADVANCED", "Menu", "Menu scale, theme and keybinds." },
         { "ADVANCED", "Quirks", "Game specific quirks applied by OptiScaler.",
-+          [](RenderMenuContext& c) { RenderCard(c, RenderQuirksSettings); }, false,
+           [](RenderMenuContext& c) { RenderCard(c, RenderQuirksSettings); }, false,
            // Only a list of texts, the same list is in Help / Status > System. Kept out of the sidebar.
-+          [](RenderMenuContext& c) { return false; } },
+           [](RenderMenuContext& c) { return false; } },
         { "ADVANCED", "Help / Status", "Support info. Filled dot: on or found, hollow dot: off or missing.", nullptr, true },
     };
     // clang-format on

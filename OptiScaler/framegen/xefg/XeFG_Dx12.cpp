@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "XeFG_Dx12.h"
+#include <with_dx12/vk_xefg_diagnostics.h>
 
 #include <hudfix/Hudfix_Dx11.h>
 #include <hudfix/Hudfix_Dx12.h>
@@ -98,6 +99,8 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
             return false;
         }
 
+        if (VulkanXeFGDiagnostics::FixActive())
+            VulkanXeFGDiagnostics::ResetPresentation();
         LOG_INFO("XeFG context created");
         result = XeFGProxy::SetLoggingCallback()(_swapChainContext, XEFG_SWAPCHAIN_LOGGING_LEVEL_DEBUG, xefgLogCallback,
                                                  nullptr);
@@ -301,6 +304,11 @@ bool XeFG_Dx12::CreateSwapchainInternal(IDXGIFactory* factory, ID3D12CommandQueu
 
         xefg_swapchain_properties_t props {};
         auto result = XeFGProxy::GetProperties()(_swapChainContext, &props);
+        if (VulkanXeFGDiagnostics::Enabled()) VulkanXeFGDiagnostics::Record("capacity",
+            "context={:X} requested_x={} admitted_x={} sdk_result={} live_count_export={}",
+            (size_t) _swapChainContext, Config::Instance()->FGXeFGInterpolationCount.value_or_default() + 1,
+            result == XEFG_SWAPCHAIN_RESULT_SUCCESS ? (int) props.maxSupportedInterpolations + 1 : 0,
+            (int) result, XeFGProxy::SetNumInterpolatedFrames() != nullptr);
         if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
         {
             _maxInterpolationCount = props.maxSupportedInterpolations;
@@ -376,6 +384,9 @@ bool XeFG_Dx12::CreateSwapchainInternal(IDXGIFactory* factory, ID3D12CommandQueu
     {
         LOG_WARN("Invalid XeFG interpolation count: {}, max count: {}", intTarget, _maxInterpolationCount);
 
+        if (VulkanXeFGDiagnostics::Enabled()) VulkanXeFGDiagnostics::Record("reduction",
+            "reason=invalid_init_count requested_x={} admitted_x={} invalid_generated={} reduced_to_x=2",
+            Config::Instance()->FGXeFGInterpolationCount.value_or_default() + 1, _maxInterpolationCount + 1, intTarget);
         intTarget = 1;
     }
 
@@ -386,6 +397,10 @@ bool XeFG_Dx12::CreateSwapchainInternal(IDXGIFactory* factory, ID3D12CommandQueu
         params.maxInterpolatedFrames = 1;
 
     params.maxInterpolatedFrames = intTarget;
+    if (VulkanXeFGDiagnostics::Enabled()) VulkanXeFGDiagnostics::Record("init",
+        "context={:X} requested_x={} admitted_x={} init_capacity_x={} live_count_export={} applied_x=unknown reason=capacity_is_not_applied_count",
+        (size_t) _swapChainContext, Config::Instance()->FGXeFGInterpolationCount.value_or_default() + 1,
+        _maxInterpolationCount + 1, intTarget + 1, XeFGProxy::SetNumInterpolatedFrames() != nullptr);
 
     params.initFlags = XEFG_SWAPCHAIN_INIT_FLAG_NONE;
 
@@ -468,6 +483,11 @@ bool XeFG_Dx12::CreateSwapchain1Internal(IDXGIFactory* factory, ID3D12CommandQue
 
         xefg_swapchain_properties_t props {};
         auto result = XeFGProxy::GetProperties()(_swapChainContext, &props);
+        if (VulkanXeFGDiagnostics::Enabled()) VulkanXeFGDiagnostics::Record("capacity",
+            "context={:X} requested_x={} admitted_x={} sdk_result={} live_count_export={}",
+            (size_t) _swapChainContext, Config::Instance()->FGXeFGInterpolationCount.value_or_default() + 1,
+            result == XEFG_SWAPCHAIN_RESULT_SUCCESS ? (int) props.maxSupportedInterpolations + 1 : 0,
+            (int) result, XeFGProxy::SetNumInterpolatedFrames() != nullptr);
         if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
         {
             _maxInterpolationCount = props.maxSupportedInterpolations;
@@ -507,6 +527,9 @@ bool XeFG_Dx12::CreateSwapchain1Internal(IDXGIFactory* factory, ID3D12CommandQue
     {
         LOG_WARN("Invalid XeFG interpolation count: {}, max count: {}", intTarget, _maxInterpolationCount);
 
+        if (VulkanXeFGDiagnostics::Enabled()) VulkanXeFGDiagnostics::Record("reduction",
+            "reason=invalid_init_count requested_x={} admitted_x={} invalid_generated={} reduced_to_x=2",
+            Config::Instance()->FGXeFGInterpolationCount.value_or_default() + 1, _maxInterpolationCount + 1, intTarget);
         intTarget = 1;
     }
 
@@ -517,6 +540,10 @@ bool XeFG_Dx12::CreateSwapchain1Internal(IDXGIFactory* factory, ID3D12CommandQue
         params.maxInterpolatedFrames = 1;
 
     params.maxInterpolatedFrames = intTarget;
+    if (VulkanXeFGDiagnostics::Enabled()) VulkanXeFGDiagnostics::Record("init",
+        "context={:X} requested_x={} admitted_x={} init_capacity_x={} live_count_export={} applied_x=unknown reason=capacity_is_not_applied_count",
+        (size_t) _swapChainContext, Config::Instance()->FGXeFGInterpolationCount.value_or_default() + 1,
+        _maxInterpolationCount + 1, intTarget + 1, XeFGProxy::SetNumInterpolatedFrames() != nullptr);
 
     params.initFlags = XEFG_SWAPCHAIN_INIT_FLAG_NONE;
 
@@ -631,6 +658,8 @@ void XeFG_Dx12::Activate()
 
 void XeFG_Dx12::Deactivate()
 {
+    if (VulkanXeFGDiagnostics::FixActive())
+        VulkanXeFGDiagnostics::ResetPresentation();
     LOG_DEBUG("");
 
     if (_isActive)
@@ -673,6 +702,8 @@ void XeFG_Dx12::Deactivate()
 
 void XeFG_Dx12::DestroyFGContext()
 {
+    if (VulkanXeFGDiagnostics::FixActive())
+        VulkanXeFGDiagnostics::ResetPresentation();
     Deactivate();
 
     if (_fgContext != nullptr)
@@ -703,10 +734,22 @@ bool XeFG_Dx12::Dispatch()
     UINT64 willDispatchFrame = 0;
     auto fIndex = GetDispatchIndex(willDispatchFrame);
     if (fIndex < 0)
+    {
+        if (VulkanXeFGDiagnostics::Enabled()) VulkanXeFGDiagnostics::Record("dispatch_skip",
+            "reason=no_new_frame requested_x={} admitted_x={} applied_backend_raw={} frame={} last_dispatch={}",
+            Config::Instance()->FGXeFGInterpolationCount.value_or_default() + 1, _maxInterpolationCount + 1,
+            _framesToInterpolate, FrameCount(), LastDispatchedFrame());
         return false;
+    }
 
     if (!IsActive() || IsPaused())
+    {
+        if (VulkanXeFGDiagnostics::Enabled()) VulkanXeFGDiagnostics::Record("dispatch_skip",
+            "reason=inactive_or_paused active={} paused={} requested_x={} admitted_x={} applied_backend_raw={}",
+            IsActive(), IsPaused(), Config::Instance()->FGXeFGInterpolationCount.value_or_default() + 1,
+            _maxInterpolationCount + 1, _framesToInterpolate);
         return false;
+    }
 
     LOG_DEBUG("_frameCount: {}, willDispatchFrame: {}, fIndex: {}", _frameCount, willDispatchFrame, fIndex);
 
@@ -715,9 +758,20 @@ bool XeFG_Dx12::Dispatch()
         !_resourceReady[fIndex].contains(FG_ResourceType::Velocity) ||
         !_resourceReady[fIndex].at(FG_ResourceType::Velocity))
     {
+        if (VulkanXeFGDiagnostics::Enabled()) VulkanXeFGDiagnostics::Record("dispatch_skip",
+            "reason=depth_or_velocity_not_ready slot={} depth={} velocity={} requested_x={} admitted_x={} applied_backend_raw={}",
+            fIndex, _resourceReady[fIndex].contains(FG_ResourceType::Depth) && _resourceReady[fIndex].at(FG_ResourceType::Depth),
+            _resourceReady[fIndex].contains(FG_ResourceType::Velocity) && _resourceReady[fIndex].at(FG_ResourceType::Velocity),
+            Config::Instance()->FGXeFGInterpolationCount.value_or_default() + 1, _maxInterpolationCount + 1, _framesToInterpolate);
         LOG_WARN("Depth or Velocity is not ready, skipping");
         return false;
     }
+
+    if (VulkanXeFGDiagnostics::FixActive())
+        VulkanXeFGDiagnostics::Record("dispatch_ready",
+            "frame={} slot={} depth=true velocity=true requested_x={} admitted_x={}",
+            willDispatchFrame, fIndex, Config::Instance()->FGXeFGInterpolationCount.value_or_default() + 1,
+            _maxInterpolationCount + 1);
 
     auto& state = State::Instance();
 
@@ -747,6 +801,10 @@ bool XeFG_Dx12::Dispatch()
     {
         if (Config::Instance()->FGXeFGInterpolationCount.value_or_default() > _maxInterpolationCount)
         {
+            if (VulkanXeFGDiagnostics::Enabled()) VulkanXeFGDiagnostics::Record("reduction",
+                "reason=request_exceeds_sdk_capacity requested_x={} admitted_x={} reduced_to_x={}",
+                Config::Instance()->FGXeFGInterpolationCount.value_or_default() + 1,
+                _maxInterpolationCount + 1, _maxInterpolationCount + 1);
             Config::Instance()->FGXeFGInterpolationCount = _maxInterpolationCount;
             LOG_WARN("Requested interpolation count is higher than max supported, setting to max: {}",
                      _maxInterpolationCount);
@@ -768,6 +826,15 @@ bool XeFG_Dx12::Dispatch()
 
             auto intResult = XeFGProxy::SetNumInterpolatedFrames()(_swapChainContext, targetCount);
 
+            if (VulkanXeFGDiagnostics::Enabled()) VulkanXeFGDiagnostics::Record("apply",
+                "context={:X} requested_x={} effective_request_x={} admitted_x={} target_x={} applied_x={} previous_backend_raw={} sdk_result={} reason={}",
+                (size_t) _swapChainContext, Config::Instance()->FGXeFGInterpolationCount.value_or_default() + 1,
+                Config::Instance()->FGInterpolationCount(Config::Instance()->FGXeFGInterpolationCount.value_or_default()) + 1,
+                _maxInterpolationCount + 1, targetCount + 1,
+                intResult == XEFG_SWAPCHAIN_RESULT_SUCCESS ? std::to_string(targetCount + 1) : "unknown",
+                _framesToInterpolate, (int) intResult,
+                intResult != XEFG_SWAPCHAIN_RESULT_SUCCESS ? "sdk_rejected_count" :
+                (Config::Instance()->FGFollowsGame() ? "follow_game" : "accepted"));
             _framesToInterpolate = targetCount;
 
             if (intResult != XEFG_SWAPCHAIN_RESULT_SUCCESS)
@@ -777,6 +844,11 @@ bool XeFG_Dx12::Dispatch()
             }
         }
     }
+
+    if (XeFGProxy::SetNumInterpolatedFrames() == nullptr)
+        if (VulkanXeFGDiagnostics::Enabled()) VulkanXeFGDiagnostics::Record("apply_unavailable",
+            "reason=missing_live_count_export requested_x={} admitted_x={} backend_raw={} applied_x=unknown",
+            Config::Instance()->FGXeFGInterpolationCount.value_or_default() + 1, _maxInterpolationCount + 1, _framesToInterpolate);
 
     // Workaround for wrong frame limit
     if (state.WAR_xefgRequestFGToggle)
@@ -992,6 +1064,10 @@ bool XeFG_Dx12::Dispatch()
         }
     }
 
+    if (VulkanXeFGDiagnostics::FixActive())
+        VulkanXeFGDiagnostics::Record("dispatch_complete",
+            "frame={} slot={} backend_target_x={} note=dispatch_is_not_present_confirmation",
+            willDispatchFrame, fIndex, _framesToInterpolate < 0 ? 1 : _framesToInterpolate + 1);
     LOG_DEBUG("Result: Ok");
 
     return true;

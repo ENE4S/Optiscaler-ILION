@@ -348,7 +348,8 @@ static HRESULT LocalPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
         if (Util::CheckForRealObject(__FUNCTION__, cq, (IUnknown**) &realQueue))
             cq = realQueue;
 
-        State::Instance().swapchainApi = DX12;
+        State::Instance().swapchainApi =
+            State::Instance().swapchainInteropApi == SwapchainInteropApi::VkwDx12 ? Vulkan : DX12;
 
         if (State::Instance().currentCommandQueue == nullptr)
             State::Instance().currentCommandQueue = cq;
@@ -376,7 +377,8 @@ static HRESULT LocalPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
     XellHooks::update();
 
     // Upscaler GPU time computation
-    if (willPresent && (fg == nullptr || !fg->IsActive() || fg->IsPaused()))
+    if (willPresent && State::Instance().swapchainInteropApi != SwapchainInteropApi::VkwDx12 &&
+        (fg == nullptr || !fg->IsActive() || fg->IsPaused()))
     {
         if (auto currentFeature = State::Instance().currentFeature; currentFeature != nullptr)
         {

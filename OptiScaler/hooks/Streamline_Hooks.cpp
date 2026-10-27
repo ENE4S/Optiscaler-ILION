@@ -1,4 +1,6 @@
 #include <pch.h>
+#include <inputs/FG/VkwDx12_Inputs.h>
+#include <with_dx12/vk_xefg_diagnostics.h>
 
 #include "Streamline_Hooks.h"
 
@@ -465,7 +467,8 @@ sl::Result StreamlineHooks::hkslSetFeatureLoaded(sl::Feature feature, bool loade
 sl::Result StreamlineHooks::hkslSetTag(const sl::ViewportHandle& viewport, const sl::ResourceTag* tags,
                                        uint32_t numTags, sl::CommandBuffer* cmdBuffer)
 {
-    if (renderApi == sl::RenderAPI::eD3D11 || renderApi == sl::RenderAPI::eVulkan)
+    if (renderApi == sl::RenderAPI::eD3D11 ||
+        (renderApi == sl::RenderAPI::eVulkan && !VulkanXeFGDiagnostics::FixActive()))
     {
         LOG_ERROR("hkslSetTag only supports DX12");
         return o_slSetTag(viewport, tags, numTags, cmdBuffer);
@@ -536,7 +539,10 @@ sl::Result StreamlineHooks::hkslSetTag(const sl::ViewportHandle& viewport, const
              tags[i].type == sl::kBufferTypeMotionVectors || tags[i].type == sl::kBufferTypeUIColorAndAlpha ||
              tags[i].type == sl::kBufferTypeBidirectionalDistortionField))
         {
-            State::Instance().slFGInputs.reportResource(tags[i], (ID3D12GraphicsCommandList*) cmdBuffer, 0);
+            if (VkwDx12Inputs::Active())
+                State::Instance().slFGInputs.reportVulkanResource(tags[i], (VkCommandBuffer) cmdBuffer, 0);
+            else
+                State::Instance().slFGInputs.reportResource(tags[i], (ID3D12GraphicsCommandList*) cmdBuffer, 0);
         }
         else if (State::Instance().activeFgInput == FGInput::NvngxFG)
         {
@@ -552,7 +558,8 @@ sl::Result StreamlineHooks::hkslSetTagForFrame(const sl::FrameToken& frame, cons
                                                const sl::ResourceTag* resources, uint32_t numResources,
                                                sl::CommandBuffer* cmdBuffer)
 {
-    if (renderApi == sl::RenderAPI::eD3D11 || renderApi == sl::RenderAPI::eVulkan)
+    if (renderApi == sl::RenderAPI::eD3D11 ||
+        (renderApi == sl::RenderAPI::eVulkan && !VulkanXeFGDiagnostics::FixActive()))
     {
         LOG_ERROR("hkslSetTagForFrame only supports DX12");
         return o_slSetTagForFrame(frame, viewport, resources, numResources, cmdBuffer);
@@ -615,8 +622,10 @@ sl::Result StreamlineHooks::hkslSetTagForFrame(const sl::FrameToken& frame, cons
              resources[i].type == sl::kBufferTypeMotionVectors || resources[i].type == sl::kBufferTypeUIColorAndAlpha ||
              resources[i].type == sl::kBufferTypeBidirectionalDistortionField))
         {
-            State::Instance().slFGInputs.reportResource(resources[i], (ID3D12GraphicsCommandList*) cmdBuffer,
-                                                        (uint32_t) frame);
+            if (VkwDx12Inputs::Active())
+                State::Instance().slFGInputs.reportVulkanResource(resources[i], (VkCommandBuffer) cmdBuffer, (uint32_t) frame);
+            else
+                State::Instance().slFGInputs.reportResource(resources[i], (ID3D12GraphicsCommandList*) cmdBuffer, (uint32_t) frame);
         }
         else if (State::Instance().activeFgInput == FGInput::NvngxFG)
         {
@@ -650,8 +659,10 @@ sl::Result StreamlineHooks::hkslEvaluateFeature(sl::Feature feature, const sl::F
                     tag->type == sl::kBufferTypeMotionVectors || tag->type == sl::kBufferTypeUIColorAndAlpha ||
                     tag->type == sl::kBufferTypeBidirectionalDistortionField)
                 {
-                    State::Instance().slFGInputs.reportResource(*tag, (ID3D12GraphicsCommandList*) cmdBuffer,
-                                                                (uint32_t) frame);
+                    if (VkwDx12Inputs::Active())
+                State::Instance().slFGInputs.reportVulkanResource(*tag, (VkCommandBuffer) cmdBuffer, (uint32_t) frame);
+            else
+                State::Instance().slFGInputs.reportResource(*tag, (ID3D12GraphicsCommandList*) cmdBuffer, (uint32_t) frame);
                 }
             }
         }

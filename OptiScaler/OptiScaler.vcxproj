@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -205,7 +205,7 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
-      <AdditionalDependencies>winhttp.lib;WindowsApp.lib;Dbghelp.lib;dxgi.lib;d3d11.lib;d3d12.lib;vulkan-1.lib;dxguid.lib;freetype.lib;ffx_fsr2_api_x64d.lib;ffx_fsr2_api_dx11_x64d.lib;ffx_fsr2_api_dx12_x64d.lib;ffx_fsr2_api_vk_x64d.lib;ffx_fsr2_212_api_dx12_x64d.lib;ffx_fsr2_212_api_vk_x64d.lib;ffx_fsr2_212_api_x64d.lib;d3dcompiler.lib;ffx_backend_dx11_x64d.lib;ffx_fsr3_x64d.lib;ffx_fsr3upscaler_x64d.lib;ffx_opticalflow_x64d.lib;ffx_frameinterpolation_x64d.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>bcrypt.lib;psapi.lib;winhttp.lib;WindowsApp.lib;Dbghelp.lib;dxgi.lib;d3d11.lib;d3d12.lib;vulkan-1.lib;dxguid.lib;freetype.lib;ffx_fsr2_api_x64d.lib;ffx_fsr2_api_dx11_x64d.lib;ffx_fsr2_api_dx12_x64d.lib;ffx_fsr2_api_vk_x64d.lib;ffx_fsr2_212_api_dx12_x64d.lib;ffx_fsr2_212_api_vk_x64d.lib;ffx_fsr2_212_api_x64d.lib;d3dcompiler.lib;ffx_backend_dx11_x64d.lib;ffx_fsr3_x64d.lib;ffx_fsr3upscaler_x64d.lib;ffx_opticalflow_x64d.lib;ffx_frameinterpolation_x64d.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ModuleDefinitionFile>Source.def</ModuleDefinitionFile>
       <DelayLoadDLLs>vulkan-1.dll;dxgi.dll;d3d12.dll;D3DCOMPILER_47.dll</DelayLoadDLLs>
       <StackReserveSize>
@@ -242,7 +242,7 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>false</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
-      <AdditionalDependencies>winhttp.lib;WindowsApp.lib;Dbghelp.lib;dxgi.lib;d3d11.lib;d3d12.lib;vulkan-1.lib;dxguid.lib;freetype.lib;ffx_fsr2_api_x64.lib;ffx_fsr2_api_dx11_x64.lib;ffx_fsr2_api_dx12_x64.lib;ffx_fsr2_api_vk_x64.lib;ffx_fsr2_212_api_dx12_x64.lib;ffx_fsr2_212_api_vk_x64.lib;ffx_fsr2_212_api_x64.lib;d3dcompiler.lib;ffx_backend_dx11_x64.lib;ffx_fsr3_x64.lib;ffx_frameinterpolation_x64.lib;ffx_fsr3upscaler_x64.lib;ffx_opticalflow_x64.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>bcrypt.lib;psapi.lib;winhttp.lib;WindowsApp.lib;Dbghelp.lib;dxgi.lib;d3d11.lib;d3d12.lib;vulkan-1.lib;dxguid.lib;freetype.lib;ffx_fsr2_api_x64.lib;ffx_fsr2_api_dx11_x64.lib;ffx_fsr2_api_dx12_x64.lib;ffx_fsr2_api_vk_x64.lib;ffx_fsr2_212_api_dx12_x64.lib;ffx_fsr2_212_api_vk_x64.lib;ffx_fsr2_212_api_x64.lib;d3dcompiler.lib;ffx_backend_dx11_x64.lib;ffx_fsr3_x64.lib;ffx_frameinterpolation_x64.lib;ffx_fsr3upscaler_x64.lib;ffx_opticalflow_x64.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ModuleDefinitionFile>Source.def</ModuleDefinitionFile>
       <DelayLoadDLLs>vulkan-1.dll;dxgi.dll;d3d12.dll;D3DCOMPILER_47.dll</DelayLoadDLLs>
       <AdditionalOptions>/ignore:4099</AdditionalOptions>
@@ -296,7 +296,7 @@ copy NUL "$(SolutionDir)x64\Release\a\!! EXTRACT ALL FILES TO GAME FOLDER !!" /Y
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
-      <AdditionalDependencies>winhttp.lib;WindowsApp.lib;Dbghelp.lib;dxgi.lib;d3d11.lib;d3d12.lib;vulkan-1.lib;dxguid.lib;freetype.lib;ffx_fsr2_api_x64.lib;ffx_fsr2_api_dx11_x64.lib;ffx_fsr2_api_dx12_x64.lib;ffx_fsr2_api_vk_x64.lib;ffx_fsr2_212_api_dx12_x64.lib;ffx_fsr2_212_api_vk_x64.lib;ffx_fsr2_212_api_x64.lib;d3dcompiler.lib;ffx_backend_dx11_x64.lib;ffx_fsr3_x64.lib;ffx_frameinterpolation_x64.lib;ffx_fsr3upscaler_x64.lib;ffx_opticalflow_x64.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>bcrypt.lib;psapi.lib;winhttp.lib;WindowsApp.lib;Dbghelp.lib;dxgi.lib;d3d11.lib;d3d12.lib;vulkan-1.lib;dxguid.lib;freetype.lib;ffx_fsr2_api_x64.lib;ffx_fsr2_api_dx11_x64.lib;ffx_fsr2_api_dx12_x64.lib;ffx_fsr2_api_vk_x64.lib;ffx_fsr2_212_api_dx12_x64.lib;ffx_fsr2_212_api_vk_x64.lib;ffx_fsr2_212_api_x64.lib;d3dcompiler.lib;ffx_backend_dx11_x64.lib;ffx_fsr3_x64.lib;ffx_frameinterpolation_x64.lib;ffx_fsr3upscaler_x64.lib;ffx_opticalflow_x64.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ModuleDefinitionFile>Source.def</ModuleDefinitionFile>
       <DelayLoadDLLs>vulkan-1.dll;dxgi.dll;d3d12.dll;D3DCOMPILER_47.dll</DelayLoadDLLs>
       <AdditionalOptions>/ignore:4099</AdditionalOptions>
@@ -912,10 +912,20 @@ copy NUL "$(SolutionDir)x64\Release\a\!! EXTRACT ALL FILES TO GAME FOLDER !!" /Y
     <None Include="shaders\magnifier\precompile\Magnifier_Shader_Vk.spv" />
     <None Include="Source.def" />
   </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="with_dx12\vk_with_dx12_sc.cpp" />
+    <ClCompile Include="inputs\FG\VkwDx12_Inputs.cpp" />
+    <ClCompile Include="inputs\FG\Upscaler_Inputs_VkwDx12.cpp" />
+    <ClInclude Include="with_dx12\vk_with_dx12_sc.h" />
+    <ClInclude Include="with_dx12\vk_with_dx12_device.h" />
+    <ClInclude Include="inputs\FG\VkwDx12_Inputs.h" />
+    <ClInclude Include="inputs\FG\VkwDx12_Resource.h" />
+    <ClInclude Include="inputs\FG\Upscaler_Inputs_VkwDx12.h" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
   <Target Name="CheckNvidiaDlssSdk" BeforeTargets="PrepareForBuild">
     <Error Condition="!Exists('$(NvidiaDlssSdkInclude)\nvsdk_ngx.h')" Text="The NVIDIA DLSS SDK headers were not found in '$(NvidiaDlssSdkInclude)'. They are not part of this repository. Copy the include folder of https://github.com/NVIDIA/DLSS at tag v310.1.0 there, or set NvidiaDlssSdkInclude to where it is. See README.md." />
   </Target>
-</Project>
+<ItemGroup><ClCompile Include="dlssnr/amd/AmdBridge.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader><ExceptionHandling>Sync</ExceptionHandling></ClCompile><ClCompile Include="dlssnr/amd/AmdPreSr.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader><ExceptionHandling>Sync</ExceptionHandling></ClCompile><ClCompile Include="dlssnr/lmxxf/LmxxfBackend.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader><ExceptionHandling>Sync</ExceptionHandling></ClCompile></ItemGroup><ItemGroup><ClInclude Include="dlssnr\DlssNr_Capture.h" /><ClInclude Include="dlssnr\amd\AmdBridge.h" /><ClInclude Include="dlssnr\amd\AmdLayout.h" /><ClInclude Include="dlssnr\amd\AmdPreSr.h" /><ClInclude Include="dlssnr\amd\AutoExposureHlsl.h" /><ClInclude Include="dlssnr\amd\BridgeRules.h" /><ClInclude Include="dlssnr\amd\ColorEncoding.h" /><ClInclude Include="dlssnr\amd\ComIdentity.h" /><ClInclude Include="dlssnr\amd\DetailColourMix.h" /><ClInclude Include="dlssnr\amd\DynamicNr.h" /><ClInclude Include="dlssnr\amd\EditShapeRules.h" /><ClInclude Include="dlssnr\amd\GpuSupportRules.h" /><ClInclude Include="dlssnr\amd\GraphicsSnapshot.h" /><ClInclude Include="dlssnr\amd\GraphicsSnapshotHooks.h" /><ClInclude Include="dlssnr\amd\Interleave.h" /><ClInclude Include="dlssnr\amd\InterleavePacing.h" /><ClInclude Include="dlssnr\amd\NrCompose.h" /><ClInclude Include="dlssnr\amd\NrControls.h" /><ClInclude Include="dlssnr\amd\RetirementDiagnostics.h" /><ClInclude Include="dlssnr\amd\RuntimeCaps.h" /><ClInclude Include="dlssnr\amd\RuntimeHostLoad.h" /><ClInclude Include="dlssnr\amd\RuntimeNotification.h" /><ClInclude Include="dlssnr\amd\SubmissionState.h" /><ClInclude Include="dlssnr\amd\SystemCompiler.h" /><ClInclude Include="dlssnr\amd\TemporalStability.h" /><ClInclude Include="dlssnr\lmxxf\LateSubmitGrace.h" /><ClInclude Include="dlssnr\lmxxf\LmxxfBackend.h" /><ClInclude Include="dlssnr\lmxxf\LmxxfTierPolicy.h" /><ClInclude Include="dlssnr\lmxxf\runtime\LmxxfNrApi.h" /><ClInclude Include="dlssnr\lmxxf\runtime\native_device_identity.h" /></ItemGroup></Project>

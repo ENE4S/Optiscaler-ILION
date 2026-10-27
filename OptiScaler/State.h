@@ -110,6 +110,7 @@ enum class SwapchainInteropApi : uint32_t
 {
     None,
     Dx11wDx12,
+    VkwDx12, // Experimental Vulkan presentation through the existing XeFG_Dx12 backend
 };
 
 enum class ColorTransfer : uint32_t

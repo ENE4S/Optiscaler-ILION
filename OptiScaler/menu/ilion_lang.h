@@ -25,6 +25,8 @@ enum class Lang : int
 {
     ES = 0,
     EN = 1,
+    PT = 2, // ILION dev.50
+    RU = 3, // ILION dev.50
 };
 
 inline std::atomic<int> g_lang { (int) Lang::ES };
@@ -32,9 +34,33 @@ inline std::atomic<int> g_lang { (int) Lang::ES };
 inline Lang CurrentLang() { return (Lang) g_lang.load(std::memory_order_relaxed); }
 inline void SetLang(Lang lang) { g_lang.store((int) lang, std::memory_order_relaxed); }
 
-// Spanish unless the config says English
-inline Lang ParseLang(const std::string& code) { return _stricmp(code.c_str(), "en") == 0 ? Lang::EN : Lang::ES; }
-inline const char* LangCode(Lang lang) { return lang == Lang::EN ? "en" : "es"; }
+// Spanish unless the config names another language: a missing, "auto" or unknown value is Spanish, never the
+// language of Windows
+inline Lang ParseLang(const std::string& code)
+{
+    if (_stricmp(code.c_str(), "en") == 0)
+        return Lang::EN;
+    if (_stricmp(code.c_str(), "pt") == 0)
+        return Lang::PT;
+    if (_stricmp(code.c_str(), "ru") == 0)
+        return Lang::RU;
+    return Lang::ES;
+}
+
+inline const char* LangCode(Lang lang)
+{
+    switch (lang)
+    {
+    case Lang::EN:
+        return "en";
+    case Lang::PT:
+        return "pt";
+    case Lang::RU:
+        return "ru";
+    default:
+        return "es";
+    }
+}
 
 struct Translation
 {
@@ -2292,41 +2318,104 @@ inline constexpr Translation kSpanish[] = {
     { "Stop##ExtFg", "Detener" },
     { "Could not start", "No se pudo iniciar" },
     { "Stop and start again to apply the generator or the window mode.",
-      "Detén e inicia de nuevo para aplicar el generador o el modo de ventana." },
+      "Detén e inicia de nuevo para aplicar el generador o el modo de ventana." },
+    // ILION dev.50: neural monitor and NR states
+    { "Not available: Neural Rendering needs DirectX 12", "No disponible: Neural Rendering necesita DirectX 12" },
+    { "Not available: Neural Rendering needs an AMD Radeon GPU", "No disponible: Neural Rendering necesita una GPU AMD Radeon" },
+    { "Backend not available: runtime files missing or runtime choice required", "Backend no disponible: faltan archivos del runtime o hay que elegir un runtime" },
+    { "Disabled (available)", "Desactivado (disponible)" },
+    { "Error: the NR runtime stopped; see technical information", "Error: el runtime de NR se detuvo; ver información técnica" },
+    { "Active and processing", "Activo y procesando" },
+    { "Waiting for the upscaler: NR runs on an OptiScaler upscaler frame", "Esperando al escalador: NR se ejecuta sobre un fotograma del escalador de OptiScaler" },
+    { "Starting: waiting for the first model output", "Iniciando: esperando la primera salida del modelo" },
+    { "NEURAL MONITOR", "MONITOR NEURONAL" },
+    { "STARTING", "INICIANDO" },
+    { "NO DATA", "SIN DATOS" },
+    { "BACKEND", "BACKEND" },
+    { "POSITION", "POSICIÓN" },
+    { "BEFORE UPSCALING", "ANTES DEL ESCALADO" },
+    { "AFTER UPSCALING", "DESPUÉS DEL ESCALADO" },
+    { "NR INPUT", "ENTRADA NR" },
+    { "NETWORK", "RED" },
+    { "NR OUTPUT", "SALIDA NR" },
+    { "NR GPU TIME", "TIEMPO GPU NR" },
+    { "PROCESSING", "PROCESANDO" },
+    { "DISABLED", "DESACTIVADO" },
+    { "NOT AVAILABLE", "NO DISPONIBLE" },
+    { "STATE", "ESTADO" },
+    { "GPU time of the neural network per job (HIP, reported by the lmxxf runtime), mean of its last statistics window. Frame Generation is not included.", "Tiempo GPU de la red neuronal por trabajo (HIP, informado por el runtime lmxxf), media de su última ventana de estadísticas. No incluye Frame Generation." },
+    { "GPU time the neural pass takes on the game's queue (two D3D12 timestamps around it, read when its frame has finished, no waits), mean of the last 60 model frames. Frame Generation is not included.", "Tiempo GPU que ocupa la pasada neuronal en la cola del juego (dos marcas de tiempo D3D12 a su alrededor, leídas cuando su fotograma ya terminó, sin esperas), media de los últimos 60 fotogramas del modelo. No incluye Frame Generation." },
 };
 
+} // namespace Ilion
+
+// ILION dev.50: Portuguese and Russian, keyed by the English text like kSpanish
+#include "ilion_lang_pt.h"
+#include "ilion_lang_ru.h"
+
+namespace Ilion
+{
 struct TranslationEntry
 {
-    const char* es = nullptr;
+    const char* es = nullptr; // the text in the table's language
     std::string label;
 };
 
+// One table per language, built once on first use: text and "text###english" for widget labels
+inline std::unordered_map<std::string_view, TranslationEntry> BuildTable(const Translation* entries, size_t count)
+{
+    std::unordered_map<std::string_view, TranslationEntry> result;
+    result.reserve(count);
+
+    for (size_t i = 0; i < count; i++)
+        result[entries[i].en] = { entries[i].es, std::string(entries[i].es) + "###" + entries[i].en };
+
+    return result;
+}
+
 inline const std::unordered_map<std::string_view, TranslationEntry>& SpanishTable()
 {
-    static const std::unordered_map<std::string_view, TranslationEntry> table = []
-    {
-        std::unordered_map<std::string_view, TranslationEntry> result;
-        result.reserve(std::size(kSpanish));
-
-        for (const auto& translation : kSpanish)
-            result[translation.en] = { translation.es, std::string(translation.es) + "###" + translation.en };
-
-        return result;
-    }();
-
+    static const auto table = BuildTable(kSpanish, std::size(kSpanish));
     return table;
 }
 
-// Text in the selected language, the English text itself when there's no translation
+inline const std::unordered_map<std::string_view, TranslationEntry>& PortugueseTable()
+{
+    static const auto table = BuildTable(kPortuguese, std::size(kPortuguese));
+    return table;
+}
+
+inline const std::unordered_map<std::string_view, TranslationEntry>& RussianTable()
+{
+    static const auto table = BuildTable(kRussian, std::size(kRussian));
+    return table;
+}
+
+// The entry for the selected language: Portuguese or Russian first, Spanish when they lack it; nullptr = keep English
+inline const TranslationEntry* FindEntry(const char* english)
+{
+    const Lang lang = CurrentLang();
+
+    if (lang == Lang::PT || lang == Lang::RU)
+    {
+        const auto& own = lang == Lang::PT ? PortugueseTable() : RussianTable();
+        if (const auto it = own.find(english); it != own.end())
+            return &it->second;
+    }
+
+    const auto& spanish = SpanishTable();
+    const auto it = spanish.find(english);
+    return it != spanish.end() ? &it->second : nullptr;
+}
+
+// Text in the selected language; Spanish when the language lacks it, the English text when no table has it
 inline const char* Tr(const char* english)
 {
     if (english == nullptr || CurrentLang() == Lang::EN)
         return english;
 
-    const auto& table = SpanishTable();
-    const auto it = table.find(english);
-
-    return it != table.end() ? it->second.es : english;
+    const TranslationEntry* entry = FindEntry(english);
+    return entry != nullptr ? entry->es : english;
 }
 
 // Same for widget labels, the ImGui id stays the English label
@@ -2335,10 +2424,20 @@ inline const char* TrL(const char* english)
     if (english == nullptr || CurrentLang() == Lang::EN)
         return english;
 
-    const auto& table = SpanishTable();
-    const auto it = table.find(english);
+    const TranslationEntry* entry = FindEntry(english);
+    return entry != nullptr ? entry->label.c_str() : english;
+}
 
-    return it != table.end() ? it->second.label.c_str() : english;
+// The text of the selected language's own table only (Portuguese / Russian), nullptr when it has none
+inline const char* TrOwn(const char* english)
+{
+    const Lang lang = CurrentLang();
+    if (english == nullptr || (lang != Lang::PT && lang != Lang::RU))
+        return nullptr;
+
+    const auto& own = lang == Lang::PT ? PortugueseTable() : RussianTable();
+    const auto it = own.find(english);
+    return it != own.end() ? it->second.es : nullptr;
 }
 } // namespace Ilion
 

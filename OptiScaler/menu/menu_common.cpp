@@ -9068,58 +9068,49 @@ static void RenderModeSelector(decltype(Config::Instance()) config)
     }
 }
 
-// ES | EN, applies right away and is written to the ini right away, on its own
+// ILION dev.50: the language of the menu, a small list at the top right. Español first and the default; applies at
+// once and is written to the ini right away, on its own. Each language is named in itself.
 static void RenderLanguageSelector(decltype(Config::Instance()) config)
 {
-    const auto current = Ilion::CurrentLang();
-    const auto& style = ImGui::GetStyle();
-
-    // Industrial theme: two square keys of the same size, the letters in the middle. Classic theme: the bare
-    // letters, as always.
-    const bool keys = IlionTheme::industrial;
-    const ImVec2 keySize =
-        IlionTheme::SelectorKeySize((std::max)(ImGui::CalcTextSize("ES").x, ImGui::CalcTextSize("EN").x), true);
-
-    const float width = (keys ? keySize.x * 2.0f : ImGui::CalcTextSize("ES").x + ImGui::CalcTextSize("EN").x) +
-                        ImGui::CalcTextSize("|").x + style.ItemSpacing.x * 2.0f;
-
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - width);
-
-    const auto languageButton = [&](const char* label, Ilion::Lang lang)
+    struct Choice
     {
-        const ImVec2 textSize = ImGui::CalcTextSize(label);
-        const ImVec2 size = keys ? keySize : textSize;
-        const ImVec2 pos = ImGui::GetCursorScreenPos();
-
-        ImGui::PushID(label);
-        const bool clicked = ImGui::InvisibleButton("##Language", size);
-        ImGui::PopID();
-
-        const bool highlighted = current == lang || ImGui::IsItemHovered();
-
-        if (keys)
-        {
-            IlionTheme::DrawSelectorKey(ImGui::GetWindowDrawList(), ImRect(pos, ImVec2(pos.x + size.x, pos.y + size.y)),
-                                        current == lang, ImGui::IsItemHovered());
-        }
-
-        ImGui::GetWindowDrawList()->AddText(
-            ImVec2(std::floor(pos.x + (size.x - textSize.x) * 0.5f), std::floor(pos.y + (size.y - textSize.y) * 0.5f)),
-            ImGui::GetColorU32(highlighted ? ImGuiCol_Text : ImGuiCol_TextDisabled), label);
-
-        if (clicked && current != lang)
-        {
-            config->MenuLanguage = std::string(Ilion::LangCode(lang));
-            Ilion::SetLang(lang);
-            config->SaveMenuPreferences();
-        }
+        Ilion::Lang lang;
+        const char* name;
+    };
+    static const Choice choices[] = {
+        { Ilion::Lang::ES, "Espa\xC3\xB1ol" },
+        { Ilion::Lang::PT, "Portugu\xC3\xAAs" },
+        { Ilion::Lang::RU, "\xD0\xA0\xD1\x83\xD1\x81\xD1\x81\xD0\xBA\xD0\xB8\xD0\xB9" },
+        { Ilion::Lang::EN, "English" },
     };
 
-    languageButton("ES", Ilion::Lang::ES);
-    ImGui::SameLine();
-    IlionTheme::SelectorBar(keys ? keySize.y : 0.0f);
-    ImGui::SameLine();
-    languageButton("EN", Ilion::Lang::EN);
+    const auto current = Ilion::CurrentLang();
+    const char* preview = choices[0].name;
+    float widest = 0.0f;
+    for (const auto& c : choices)
+    {
+        widest = std::max(widest, ImGui::CalcTextSize(c.name).x);
+        if (c.lang == current)
+            preview = c.name;
+    }
+
+    const float width = std::floor(widest + ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x * 4.0f);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - width));
+    ImGui::SetNextItemWidth(width);
+
+    if (IlionTheme::BeginCombo("##IlionLanguage", preview))
+    {
+        for (const auto& c : choices)
+        {
+            if (ImGui::Selectable(c.name, c.lang == current) && c.lang != current)
+            {
+                config->MenuLanguage = std::string(Ilion::LangCode(c.lang));
+                Ilion::SetLang(c.lang);
+                config->SaveMenuPreferences();
+            }
+        }
+        ImGui::EndCombo();
+    }
 }
 
 void MenuCommon::RenderMainMenuHeaderMessages(RenderMenuContext& ctx)
@@ -10329,7 +10320,12 @@ static FgCrtData GatherFgCrt(State& state)
 // Short words of the screen in the language of the menu
 static const char* FgCrtWord(const char* english, const char* spanish)
 {
-    return Ilion::CurrentLang() == Ilion::Lang::EN ? english : spanish;
+    // ILION dev.50: Portuguese and Russian from their own tables, Spanish when they lack the word
+    if (Ilion::CurrentLang() == Ilion::Lang::EN)
+        return english;
+    if (const char* own = Ilion::TrOwn(english))
+        return own;
+    return spanish;
 }
 
 // Draws the CRT: a thin metal bezel with four screws, the dark recess, the deep green curved glass, then the text
@@ -20847,6 +20843,31 @@ void MenuCommon::Init(HWND InHwnd, bool isUWP)
         ImFontAtlas* atlas = io.Fonts;
         atlas->Clear();
 
+        // ILION dev.50: Russian and Portuguese. ImGui 1.92 loads each glyph from the whole font when it is first drawn
+        // (the DX11, DX12 and Vulkan renderers have dynamic textures), so no range is needed; a Windows font is merged
+        // into every face for the glyphs it lacks, Cyrillic among them (only those: a merged font never replaces a
+        // glyph the first one has).
+        // Merges a Windows font into the font added just before it, for the glyphs that font lacks
+        const auto mergeWindowsFont = [&](ImFont* font, const wchar_t* file) -> ImFont*
+        {
+            wchar_t windows[MAX_PATH] = {};
+
+            if (font != nullptr && GetWindowsDirectoryW(windows, MAX_PATH) != 0)
+            {
+                const auto path = std::filesystem::path(windows) / L"Fonts" / file;
+                std::error_code ec;
+
+                if (std::filesystem::exists(path, ec))
+                {
+                    ImFontConfig merge;
+                    merge.MergeMode = true;
+                    atlas->AddFontFromFileTTF(wstring_to_string(path.wstring()).c_str(), fontSize, &merge);
+                }
+            }
+
+            return font;
+        };
+
         // This automatically becomes the next default font
         ImFontConfig fontConfig;
 
@@ -20864,6 +20885,7 @@ void MenuCommon::Init(HWND InHwnd, bool isUWP)
             io.FontDefault = atlas->AddFontFromMemoryCompressedBase85TTF(hack_compressed_compressed_data_base85,
                                                                          fontSize, &fontConfig);
         }
+        mergeWindowsFont(io.FontDefault, L"consola.ttf");
 
         // Fonts of the Fallout and Light themes, from the fonts Windows already has: nothing is shipped with ILION.
         // A terminal face for Fallout, a plain sans-serif for Light. Without one the theme keeps the menu's font.
@@ -20889,44 +20911,27 @@ void MenuCommon::Init(HWND InHwnd, bool isUWP)
             return nullptr;
         };
 
-        IlionTheme::terminalFont = systemFont({ L"lucon.ttf", L"consola.ttf" });
-        IlionTheme::modernFont = systemFont({ L"bahnschrift.ttf", L"segoeui.ttf", L"arial.ttf" });
+        IlionTheme::terminalFont = mergeWindowsFont(systemFont({ L"lucon.ttf", L"consola.ttf" }), L"consola.ttf");
+        IlionTheme::modernFont =
+            mergeWindowsFont(systemFont({ L"bahnschrift.ttf", L"segoeui.ttf", L"arial.ttf" }), L"segoeui.ttf");
         // Fallout 2: its own two fonts (SIL OFL, in the dll), Consolas merged into each for the signs they lack
-        const auto withFallback = [&](ImFont* font) -> ImFont*
-        {
-            wchar_t windows[MAX_PATH] = {};
-
-            if (font != nullptr && GetWindowsDirectoryW(windows, MAX_PATH) != 0)
-            {
-                const auto path = std::filesystem::path(windows) / L"Fonts" / L"consola.ttf";
-                std::error_code ec;
-
-                if (std::filesystem::exists(path, ec))
-                {
-                    ImFontConfig merge;
-                    merge.MergeMode = true;
-                    atlas->AddFontFromFileTTF(wstring_to_string(path.wstring()).c_str(), fontSize, &merge);
-                }
-            }
-
-            return font;
-        };
+        const auto withFallback = [&](ImFont* font) -> ImFont* { return mergeWindowsFont(font, L"consola.ttf"); };
 
         {
             ImFontConfig textConfig;
             textConfig.RasterizerMultiply = 1.25f; // a thin face, a little brighter reads better on the glass
-            IlionTheme::crtFont = withFallback(
-                atlas->AddFontFromMemoryCompressedBase85TTF(sharetechmono_compressed_compressed_data_base85, fontSize, &textConfig));
+            IlionTheme::crtFont = withFallback(atlas->AddFontFromMemoryCompressedBase85TTF(
+                sharetechmono_compressed_compressed_data_base85, fontSize, &textConfig));
         }
         {
             ImFontConfig titleConfig;
-            IlionTheme::crtTitleFont = withFallback(
-                atlas->AddFontFromMemoryCompressedBase85TTF(russoone_compressed_compressed_data_base85, fontSize, &titleConfig));
+            IlionTheme::crtTitleFont = withFallback(atlas->AddFontFromMemoryCompressedBase85TTF(
+                russoone_compressed_compressed_data_base85, fontSize, &titleConfig));
         }
 
         // Without them the system faces, as before
         if (IlionTheme::crtFont == nullptr)
-            IlionTheme::crtFont = systemFont({ L"consola.ttf", L"lucon.ttf" });
+            IlionTheme::crtFont = mergeWindowsFont(systemFont({ L"consola.ttf", L"lucon.ttf" }), L"consola.ttf");
     }
 
     if (!Config::Instance()->OverlayMenu.value_or_default())

@@ -68,6 +68,8 @@ Nvngx_HelixSR::Install Nvngx_HelixSR::FindInstall()
         install.dll = path;
         install.fgKernels = fs::is_directory(path.parent_path() / L"helixsr-fg", ec);
         install.preset = ReadPreset(path.parent_path() / L"helixsr.ini");
+        const auto lite = path.parent_path() / L"helixsr-fg" / L"310.9.16";
+        install.liteFiles = fs::is_regular_file(lite / L"nvngx_dlssg.dll", ec) && fs::is_regular_file(lite / L"hxfg_data.bin", ec);
         break;
     }
     return install;

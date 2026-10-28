@@ -101,6 +101,7 @@ template <typename T> struct MenuOption
     std::string tooltip;
     bool disabled = false;
     bool hidden = false;
+    std::string accent; // ILION dev.51-exp4: a part of the label drawn in radioactive orange (empty = none)
 
     MenuOption& set_disabled(bool condition, const std::string& reason = "")
     {

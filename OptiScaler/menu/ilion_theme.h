@@ -3,6 +3,7 @@
 #include <imgui/imgui.h>
 #include <imgui/imgui_internal.h>
 
+#include <cstring>
 #include <initializer_list>
 #include <string>
 
@@ -177,6 +178,26 @@ inline ImVec4 TextTitle { 0.760f, 0.800f, 0.620f, 1.0f };
 inline ImVec4 LampGreen { 0.224f, 1.000f, 0.078f, 1.0f }; // #39FF14
 inline ImVec4 LampGreenDim { 0.150f, 0.520f, 0.090f, 1.0f };
 inline ImVec4 LampAmber { 1.000f, 0.690f, 0.000f, 1.0f };
+// ILION dev.51-exp4: radioactive orange, the accent of NVIDIA FG Lite's name in the frame generation selector
+inline ImVec4 RadioactiveOrange { 1.000f, 0.480f, 0.020f, 1.0f };
+
+// Text with its first `accent` part in another colour, drawn at pos (the whole text in `colour` when it has no such part)
+inline void AddTextAccent(ImDrawList* draw, ImVec2 pos, ImU32 colour, const char* text, const char* accent, ImU32 accentColour)
+{
+    const char* at = accent != nullptr && *accent != 0 ? std::strstr(text, accent) : nullptr;
+    if (at == nullptr)
+    {
+        draw->AddText(pos, colour, text);
+        return;
+    }
+
+    const char* end = at + std::strlen(accent);
+    draw->AddText(pos, colour, text, at);
+    pos.x += ImGui::CalcTextSize(text, at).x;
+    draw->AddText(pos, accentColour, at, end);
+    pos.x += ImGui::CalcTextSize(at, end).x;
+    draw->AddText(pos, colour, end);
+}
 inline ImVec4 LampRed { 0.800f, 0.000f, 0.000f, 1.0f }; // #CC0000
 inline ImVec4 RedDim { 0.400f, 0.060f, 0.050f, 1.0f };
 inline ImVec4 RedLit { 0.580f, 0.080f, 0.060f, 1.0f };
@@ -1233,10 +1254,29 @@ inline bool SliderInt(const char* label, int* value, int min, int max, const cha
 // it would write as the selected value is written here instead, the list it opens is its own.
 // previewColour (optional, ILION): the colour of the chosen value only, e.g. the FSR 4 model in radioactive yellow;
 // the label and the field keep the theme's
-inline bool BeginCombo(const char* label, const char* preview, ImGuiComboFlags flags = 0, const ImVec4* previewColour = nullptr)
+// accent / accentColour (dev.51-exp4): a part of the preview drawn in another colour
+inline bool BeginCombo(const char* label, const char* preview, ImGuiComboFlags flags = 0, const ImVec4* previewColour = nullptr,
+                       const char* accent = nullptr, const ImVec4* accentColour = nullptr)
 {
+    const bool accented = accent != nullptr && accentColour != nullptr && preview != nullptr && std::strstr(preview, accent);
+
     if (!industrial)
     {
+        if (accented && (flags & ImGuiComboFlags_CustomPreview) == 0)
+        {
+            const bool open = ImGui::BeginCombo(label, "", flags | ImGuiComboFlags_CustomPreview);
+
+            if (ImGui::BeginComboPreview())
+            {
+                const ImU32 base = ImGui::GetColorU32(previewColour != nullptr ? *previewColour : ImGui::GetStyleColorVec4(ImGuiCol_Text));
+                AddTextAccent(ImGui::GetWindowDrawList(), ImGui::GetCursorScreenPos(), base, preview, accent,
+                              ImGui::GetColorU32(*accentColour));
+                ImGui::EndComboPreview();
+            }
+
+            return open;
+        }
+
         if (previewColour == nullptr || preview == nullptr)
             return ImGui::BeginCombo(label, preview, flags);
 
@@ -1280,8 +1320,9 @@ inline bool BeginCombo(const char* label, const char* preview, ImGuiComboFlags f
     DrawWell(window->DrawList, min, fieldMax, hovered);
 
     window->DrawList->PushClipRect(ImVec2(min.x + 2.0f, min.y), ImVec2(fieldMax.x - 2.0f, fieldMax.y), true);
-    window->DrawList->AddText(ImVec2(min.x + style.FramePadding.x, min.y + style.FramePadding.y),
-                              ImGui::GetColorU32(previewColour != nullptr ? *previewColour : LampGreen), preview);
+    AddTextAccent(window->DrawList, ImVec2(min.x + style.FramePadding.x, min.y + style.FramePadding.y),
+                  ImGui::GetColorU32(previewColour != nullptr ? *previewColour : LampGreen), preview,
+                  accented ? accent : nullptr, accented ? ImGui::GetColorU32(*accentColour) : 0);
     window->DrawList->PopClipRect();
 
     DrawKey(window->DrawList, ImRect(ImVec2(fieldMax.x, min.y), ImVec2(min.x + width, min.y + height)),

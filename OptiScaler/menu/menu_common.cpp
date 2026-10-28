@@ -1543,10 +1543,12 @@ static int FgLiteShaderModel66()
 static void WrappedText(const ImVec4& colour, const char* text);
 
 // The short state under the selector while NVIDIA FG Lite is chosen
+// Under the selector while NVIDIA FG Lite is chosen: only what keeps it from running as Lite (what is loaded is on the
+// FG screen)
 static void DrawFgLiteState()
 {
     const auto& install = FgLiteInstall();
-    const ImVec4 warn = IlionTheme::LampAmber, ok = IlionTheme::LampGreen;
+    const ImVec4 warn = IlionTheme::LampAmber;
     if (install.dll.empty())
     {
         WrappedText(warn, Tr("NVIDIA FG Lite: HelixSR 2.0.0 frame generation not found. Install HelixSR 2.0.0 with "
@@ -1554,12 +1556,10 @@ static void DrawFgLiteState()
                              "doesn't include it"));
         return;
     }
-    const uint32_t version = Nvngx_HelixSR::LoadedVersion();
-    WrappedText(version > 0 ? ok : IlionTheme::TextDim,
-                version > 0 ? StrFmt(Tr("NVIDIA FG Lite loaded (HelixSR NGX FG version %u)"), version).c_str()
-                            : Tr("NVIDIA FG Lite found: it loads when the game turns DLSS frame generation on"));
     if (!install.fgKernels)
         WrappedText(warn, Tr("No helixsr-fg folder next to HelixSR's DLL: run HelixSR's setup with frame generation"));
+    else if (install.lite() && !install.liteFiles)
+        WrappedText(warn, Tr("helixsr-fg\\310.9.16 is incomplete: HelixSR runs the full mode (310.3), not Lite"));
     if (!install.lite()) {
         WrappedText(warn, StrFmt(Tr("helixsr.ini asks for the %s mode, not Lite"), install.preset.c_str()).c_str());
         if (IlionTheme::Button(TrL("Use FG Lite##FgLite")))
@@ -1567,8 +1567,6 @@ static void DrawFgLiteState()
     }
     if (FgLiteShaderModel66() == 0)
         WrappedText(warn, Tr("This GPU's driver has no shader model 6.6: HelixSR frame generation can't run on it"));
-    WrappedText(IlionTheme::TextDim, Tr("Needs a DirectX 12 game with DLSS frame generation turned on in the game. One "
-                                        "generated frame. Changes apply at the next game start"));
 }
 
 // generatedFrames: frames generated per rendered one in the last DLSSG evaluation, 0 when there is none
@@ -2716,17 +2714,20 @@ void MenuCommon::PopulateCombo(const std::string& name, TStorage& currentValue,
 
     // Find the label for the currently selected item
     std::string preview = Tr("Unknown");
+    std::string previewAccent;
     for (const auto& opt : options)
     {
         if (opt.value == currentVal)
         {
             preview = opt.label;
+            previewAccent = opt.accent;
             break;
         }
     }
 
     // ILION: names, options and their tips in the language of the menu, the English label stays the id
-    if (IlionTheme::BeginCombo(TrL(name.c_str()), Tr(preview.c_str())))
+    if (IlionTheme::BeginCombo(TrL(name.c_str()), Tr(preview.c_str()), 0, nullptr,
+                               previewAccent.empty() ? nullptr : previewAccent.c_str(), &IlionTheme::RadioactiveOrange))
     {
         for (const auto& opt : options)
         {
@@ -2737,8 +2738,21 @@ void MenuCommon::PopulateCombo(const std::string& name, TStorage& currentValue,
                 ImGui::BeginDisabled();
 
             bool isSelected = (currentVal == opt.value);
-            if (ImGui::Selectable(TrL(opt.label.c_str()), isSelected))
-                currentValue = opt.value;
+            if (opt.accent.empty())
+            {
+                if (ImGui::Selectable(TrL(opt.label.c_str()), isSelected))
+                    currentValue = opt.value;
+            }
+            else
+            {
+                // ILION dev.51-exp4: the same item with a part of its name in radioactive orange
+                const char* text = Tr(opt.label.c_str());
+                const ImVec2 textPos = ImGui::GetCursorScreenPos();
+                if (ImGui::Selectable(("##" + opt.label).c_str(), isSelected, 0, ImVec2(0.0f, ImGui::CalcTextSize(text).y)))
+                    currentValue = opt.value;
+                IlionTheme::AddTextAccent(ImGui::GetWindowDrawList(), textPos, ImGui::GetColorU32(ImGuiCol_Text), text,
+                                          opt.accent.c_str(), ImGui::GetColorU32(IlionTheme::RadioactiveOrange));
+            }
 
             // Show tooltip for the individual item if it exists
             if (!opt.tooltip.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
@@ -10315,6 +10329,23 @@ static FgCrtData GatherFgCrt(State& state)
         d.status = 1;
     }
 
+    // ILION dev.51-exp4: NVIDIA FG Lite, from what is really loaded: the HelixSR DLL ILION loaded (or would load), the
+    // mode HelixSR runs (light 310.9.16 or full 310.3, from helixsr.ini and the files it needs) and its version
+    if (nvngxOutput && nvngx == FGNvngxReplacement::HelixSR)
+    {
+        const auto& install = FgLiteInstall();
+        d.engine = install.runsLite() ? "NVIDIA FG Lite" : "NVIDIA FG";
+        if (!install.dll.empty())
+        {
+            d.variant = install.runsLite() ? "310.9.16" : "310.3";
+            d.file = wstring_to_string(install.dll.filename().wstring());
+            d.version = FileVersionText(install.dll.wstring());
+            if (d.version == "-" && Nvngx_HelixSR::LoadedVersion() > 0)
+                d.version = StrFmt("NGX FG %u", Nvngx_HelixSR::LoadedVersion());
+        }
+        return d;
+    }
+
     if (nvngxOutput)
     {
         // DLSS Enabler and the other DLSSG replacements: their own dll and the version they report, never an .asi
@@ -11433,6 +11464,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
     nvngxOptions[fgNvngxHelixIndex].set_disabled(state.swapchainApi == API::Vulkan, "Unsupported API");
     nvngxOptions[fgNvngxHelixIndex].set_disabled(FgLiteInstall().dll.empty(),
                                                  "Missing HelixSR-fsrfg\\amd_fidelityfx_dx12.dll (HelixSR 2.0.0)");
+    nvngxOptions[fgNvngxHelixIndex].accent = "FG Lite";
 
     // TODO: Automatically switch to any other option
 

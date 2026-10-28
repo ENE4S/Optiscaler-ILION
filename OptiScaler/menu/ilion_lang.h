@@ -2400,14 +2400,12 @@ inline constexpr Translation kSpanish[] = {
     { "Room to spare, but the step above missed this target less than 5 min ago: it stays", "Hay margen, pero el paso superior no cumplió este objetivo hace menos de 5 min: se mantiene" },
     { "NR resolution set to %d%%: adaptive NR works from 100%% down, so it doesn't use more than 100%%", "Resolución NR fijada en %d%%: el NR adaptativo trabaja del 100%% hacia abajo, así que no pasa del 100%%" },
     { "NVIDIA FG Lite: HelixSR 2.0.0 frame generation not found. Install HelixSR 2.0.0 with frame generation for this game (HelixSR-fsrfg folder next to the game's .exe). ILION doesn't include it", "NVIDIA FG Lite: no se encuentra la generación de fotogramas de HelixSR 2.0.0. Instala HelixSR 2.0.0 con generación de fotogramas para este juego (carpeta HelixSR-fsrfg junto al .exe del juego). ILION no la incluye" },
-    { "NVIDIA FG Lite loaded (HelixSR NGX FG version %u)", "NVIDIA FG Lite cargado (versión NGX FG de HelixSR %u)" },
-    { "NVIDIA FG Lite found: it loads when the game turns DLSS frame generation on", "NVIDIA FG Lite encontrado: se carga cuando el juego activa la generación de fotogramas DLSS" },
     { "No helixsr-fg folder next to HelixSR's DLL: run HelixSR's setup with frame generation", "No hay carpeta helixsr-fg junto a la DLL de HelixSR: ejecuta la instalación de HelixSR con generación de fotogramas" },
     { "helixsr.ini asks for the %s mode, not Lite", "helixsr.ini pide el modo %s, no Lite" },
     { "Use FG Lite##FgLite", "Usar FG Lite" },
     { "This GPU's driver has no shader model 6.6: HelixSR frame generation can't run on it", "El controlador de esta GPU no tiene shader model 6.6: la generación de fotogramas de HelixSR no puede funcionar en ella" },
-    { "Needs a DirectX 12 game with DLSS frame generation turned on in the game. One generated frame. Changes apply at the next game start", "Necesita un juego DirectX 12 con la generación de fotogramas DLSS activada en el juego. Un fotograma generado. Los cambios se aplican al reiniciar el juego" },
     { "NVIDIA's DLSS frame generation, light mode (310.9.16), run by HelixSR 2.0.0 on GPUs that are not NVIDIA's\n\nInstall HelixSR 2.0.0 with frame generation yourself: its setup builds NVIDIA's parts on your PC\nILION includes none of it. DirectX 12 games with DLSS frame generation. One generated frame", "Generación de fotogramas DLSS de NVIDIA, modo ligero (310.9.16), ejecutada por HelixSR 2.0.0 en GPU que no son de NVIDIA\n\nInstala tú HelixSR 2.0.0 con generación de fotogramas: su instalación construye las partes de NVIDIA en tu PC\nILION no incluye nada de ello. Juegos DirectX 12 con generación de fotogramas DLSS. Un fotograma generado" },
+    { "helixsr-fg\\310.9.16 is incomplete: HelixSR runs the full mode (310.3), not Lite", "helixsr-fg\\310.9.16 está incompleta: HelixSR usa el modo completo (310.3), no Lite" },
 };
 
 } // namespace Ilion

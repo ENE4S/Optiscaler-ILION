@@ -27,7 +27,11 @@ class Nvngx_HelixSR : public Nvngx_DllProxy
         std::filesystem::path dll;  // the DLL that would be loaded, empty when none was found
         bool fgKernels = false;     // a helixsr-fg folder next to it (what the setup built for frame generation)
         std::string preset;         // helixsr.ini [DlssFrameGeneration] Preset as written ("" = default, light)
+        bool liteFiles = false;     // helixsr-fg\310.9.16 has nvngx_dlssg.dll and hxfg_data.bin (the light mode's files)
         bool lite() const { return preset.empty() || _stricmp(preset.c_str(), "c") == 0; }
+        // What HelixSR runs: the light mode (310.9.16) when asked for and its files are there, else the full one
+        // (310.3), as HelixSR itself decides ("preset C not available ... 310.3 (full) instead" in helixsr.log)
+        bool runsLite() const { return lite() && liteFiles; }
     };
     static Install FindInstall();
     // Writes [DlssFrameGeneration] Preset = c into the helixsr.ini next to that DLL (NVIDIA FG Lite). False on failure

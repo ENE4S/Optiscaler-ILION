@@ -912,6 +912,16 @@ VkResult VkwDx12SC::CreateRealSwapchain(const VkSwapchainCreateInfoKHR* pCreateI
     return VK_SUCCESS;
 }
 
+// ILION dev.53: the FG swapchain's back buffers. They don't follow the game's Vulkan images (the bridge copies each
+// presented image into whatever back buffer is current): XeMFG needs room for a batch of generated frames, else its
+// flip queue can't pace them (NMS, 2026-10-25: 3 buffers for 5 outputs, "native_chain_too_small", sdk pacing only).
+// MFG Unlocker can't raise them itself here: the factory it would hook is ReShade's / Streamline's
+static UINT FGSwapchainBuffers(size_t gameImages)
+{
+    const UINT wanted = (UINT) std::clamp(Config::Instance()->XeMfgVulkanBuffers.value_or_default(), 3, 16);
+    return std::clamp(std::max((UINT) gameImages, wanted), 2u, 16u); // 16: DXGI's maximum, the menu draws on 16
+}
+
 bool VkwDx12SC::CreateFGSwapchain()
 {
     DXGI_SWAP_CHAIN_DESC desc {};
@@ -920,7 +930,7 @@ bool VkwDx12SC::CreateFGSwapchain()
     desc.BufferDesc.Format = _dxgiFormat;
     desc.SampleDesc.Count = 1;
     desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    desc.BufferCount = std::clamp((UINT) _swapchainImages.size(), 2u, 16u);
+    desc.BufferCount = FGSwapchainBuffers(_swapchainImages.size());
     desc.OutputWindow = _hwnd;
     desc.Windowed = TRUE;
     desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
@@ -969,7 +979,7 @@ bool VkwDx12SC::ResizeFGSwapchain()
     DXGI_SWAP_CHAIN_DESC1 desc {};
     _fgSwapChain->GetDesc1(&desc);
 
-    const auto count = std::clamp((UINT) _swapchainImages.size(), 2u, 16u);
+    const auto count = FGSwapchainBuffers(_swapchainImages.size());
 
     if (desc.Width == _extent.width && desc.Height == _extent.height && desc.Format == _dxgiFormat &&
         desc.BufferCount == count)

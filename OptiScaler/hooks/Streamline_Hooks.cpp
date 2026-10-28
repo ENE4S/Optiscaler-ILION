@@ -468,7 +468,7 @@ sl::Result StreamlineHooks::hkslSetTag(const sl::ViewportHandle& viewport, const
                                        uint32_t numTags, sl::CommandBuffer* cmdBuffer)
 {
     if (renderApi == sl::RenderAPI::eD3D11 ||
-        (renderApi == sl::RenderAPI::eVulkan && !VulkanXeFGDiagnostics::FixActive()))
+        (renderApi == sl::RenderAPI::eVulkan && !VulkanXeFGDiagnostics::StreamlineTagsActive()))
     {
         LOG_ERROR("hkslSetTag only supports DX12");
         return o_slSetTag(viewport, tags, numTags, cmdBuffer);
@@ -559,7 +559,7 @@ sl::Result StreamlineHooks::hkslSetTagForFrame(const sl::FrameToken& frame, cons
                                                sl::CommandBuffer* cmdBuffer)
 {
     if (renderApi == sl::RenderAPI::eD3D11 ||
-        (renderApi == sl::RenderAPI::eVulkan && !VulkanXeFGDiagnostics::FixActive()))
+        (renderApi == sl::RenderAPI::eVulkan && !VulkanXeFGDiagnostics::StreamlineTagsActive()))
     {
         LOG_ERROR("hkslSetTagForFrame only supports DX12");
         return o_slSetTagForFrame(frame, viewport, resources, numResources, cmdBuffer);

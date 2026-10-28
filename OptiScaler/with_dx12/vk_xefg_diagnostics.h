@@ -19,13 +19,19 @@ inline bool Enabled()
            state.activeFgOutput == FGOutput::XeFG;
 }
 
-// Keep the functional exception restricted to the tested Streamline/ASI bridge.
+// The multiplier shown is the one XeFG's SDK confirms it presented (xefgSwapChainGetLastPresentStatus), for any XeFG
+// through the Vulkan bridge and both of its inputs. ILION dev.53: it no longer depends on the name of the XeMFG folder
+// ("dashdogy-v1.7.0") nor on the DLSSG input; a plain XeFG (no XeMFG) reports what it presents too
 inline bool FixActive()
 {
     const auto& state = State::Instance();
-    return Enabled() && state.swapchainApi == Vulkan && state.activeFgInput == FGInput::DLSSG &&
-           Config::Instance()->XeMfgVariant.value_or(L"") == L"dashdogy-v1.7.0";
+    return Enabled() && state.swapchainApi == Vulkan &&
+           (state.activeFgInput == FGInput::DLSSG || state.activeFgInput == FGInput::Upscaler);
 }
+
+// The game's Streamline tags (Vulkan resources) feed the bridge only with the DLSSG input: with the Upscaler input
+// the inputs come from the upscaler, and taking the tags too would feed it twice
+inline bool StreamlineTagsActive() { return FixActive() && State::Instance().activeFgInput == FGInput::DLSSG; }
 
 inline std::atomic<unsigned> reportedGeneratedFrames { 0 };
 inline void ResetPresentation() { reportedGeneratedFrames.store(0, std::memory_order_relaxed); }

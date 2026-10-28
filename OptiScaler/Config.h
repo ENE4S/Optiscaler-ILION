@@ -670,6 +670,9 @@ class Config
     // ILION dev.50: the XeMFG Vulkan bridge (with_dx12/vk_with_dx12_sc) is suspended; it runs only when this is true,
     // never because an FGOutput=XeFG came with the ini
     CustomOptional<bool> XeMfgVulkanExperimental { false };
+    // ILION dev.53: back buffers of the bridge's D3D12 FG swapchain (Vulkan games), 3-16. XeMFG's flip queue paces a
+    // batch of generated frames only when the chain has room for it (MFG Unlocker: "native_chain_too_small" with 3)
+    CustomOptional<int> XeMfgVulkanBuffers { 8 };
     CustomOptional<bool> LoadSpecialK { false };
     CustomOptional<bool> LoadReShade { false };
     CustomOptional<std::string, NoDefault> ReShadeAddedEffects; // ILION: effects added to the ReShade panel, "file|technique;..."

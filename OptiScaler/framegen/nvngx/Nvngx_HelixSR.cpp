@@ -12,7 +12,8 @@ namespace fs = std::filesystem;
 
 static std::atomic<uint32_t> loadedVersion { 0 };
 
-// Where HelixSR 2.0.0 puts its DLL (next to the game's .exe or this DLL), then an older install's helixsr.dll
+// Where HelixSR 2.0.0 puts its DLL (next to the game's .exe or this DLL). dev.52: no HelixSR\helixsr.dll any more: in
+// HelixSR 3.x that file is HLX DLSS, an upscaler, and HelixSR's frame generation only exists in 2.0.0's FidelityFX DLL
 static std::vector<fs::path> Candidates()
 {
     const auto exeDir = Util::ExePath().parent_path();
@@ -23,8 +24,6 @@ static std::vector<fs::path> Candidates()
     if (const auto main = Config::Instance()->MainDllPath.value_or(L""); !main.empty())
         list.push_back(fs::path(main) / L"HelixSR-fsrfg" / L"amd_fidelityfx_dx12.dll");
 
-    list.push_back(dllDir / L"HelixSR" / L"helixsr.dll");
-    list.push_back(exeDir / L"HelixSR" / L"helixsr.dll");
     return list;
 }
 
@@ -116,12 +115,11 @@ void Nvngx_HelixSR::LoadLibraries()
             continue;
         }
 
-        // HelixSR's FidelityFX DLL serves DLSS frame generation only when it says so; an older helixsr.dll has no
-        // such export and is taken as it is (HelixSR Scaler does the same)
+        // A DLL serves DLSS frame generation only when it says so (HelixSR_NgxFgVersion); anything else, an upscaler
+        // included, is refused before any of its NGX entry points is taken
         using VersionFn = uint32_t (*)();
         const auto version = (VersionFn) GetProcAddress(module, "HelixSR_NgxFgVersion");
-        const bool legacy = _wcsicmp(path.filename().c_str(), L"helixsr.dll") == 0;
-        if (!legacy && (version == nullptr || version() < 1))
+        if (version == nullptr || version() < 1)
         {
             LOG_WARN("NVIDIA FG Lite: {} doesn't serve DLSS frame generation (no HelixSR_NgxFgVersion)",
                      wstring_to_string(path.wstring()));
@@ -130,7 +128,7 @@ void Nvngx_HelixSR::LoadLibraries()
         }
 
         dll = module;
-        loadedVersion = version != nullptr ? version() : 1;
+        loadedVersion = version();
         LOG_INFO("NVIDIA FG Lite: HelixSR frame generation from {} (NGX FG version {})",
                  wstring_to_string(path.wstring()), loadedVersion.load());
         break;

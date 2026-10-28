@@ -9,7 +9,7 @@
 // HelixSR's own DLL on GPUs that are not NVIDIA's. ILION ships none of it: the user installs HelixSR 2.0.0, whose setup
 // builds the NVIDIA parts on their PC (they are for that PC only). The loading follows HelixSR Scaler 1.1.0
 // (github.com/lonewolf0622/HelixSR-Scaler, GPL-3.0): HelixSR-fsrfg\amd_fidelityfx_dx12.dll exporting
-// HelixSR_NgxFgVersion, or an older install's HelixSR\helixsr.dll. DirectX 12 only, one generated frame.
+// HelixSR_NgxFgVersion (required: dev.52). DirectX 12 only, one generated frame.
 class Nvngx_HelixSR : public Nvngx_DllProxy
 {
   protected:

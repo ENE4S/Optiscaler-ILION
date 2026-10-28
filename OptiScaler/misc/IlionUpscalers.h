@@ -72,6 +72,8 @@ struct Entry
     std::string problem;
     // Next to a HelixSR dll: AMD's FSR that HelixSR lists after itself (its "forwarding")
     bool forwardsToAmd = false;
+    // ILION dev.52: HLX FSR 4 (HelixSR 3.x, AMD's FSR 4 network on HelixSR's own pipeline), family HelixSR
+    bool hlx = false;
     // FSR 4: AMD's own dll (its AMD signature verifies), which keeps AMD's hardware rules. Community builds don't
     bool amdOfficial = false;
     // Found in a folder of an older install
@@ -122,6 +124,59 @@ inline bool HasHelixNetwork(const std::wstring& path)
     char marker[8] = {};
 
     return file.read(marker, sizeof marker) && memcmp(marker, "HXSRNET1", 8) == 0;
+}
+
+// ILION dev.52: HLX FSR 4's dll (HelixSR 3.x) ends with a 32 byte trailer carrying "HLXFSR4D", not HelixSR's "HXSRNET1"
+inline bool HasHlxFsr4(const std::wstring& path)
+{
+    std::ifstream file(std::filesystem::path(path), std::ios::binary);
+    if (!file)
+        return false;
+
+    file.seekg(-32, std::ios::end);
+    char trailer[32] = {};
+
+    return file.read(trailer, sizeof trailer) && std::search(trailer, trailer + sizeof trailer, "HLXFSR4", "HLXFSR4" + 7) !=
+                                                       trailer + sizeof trailer;
+}
+
+// The runtime HLX FSR 4 says it runs, from its HLX_FSR.log next to the dll: "int8p-m-std-k03" from "own runtime active:
+// int8p-m-std-k03 (tier 9) ...". fallback: the last start line says it gave the upscale to AMD's FSR instead. Empty when
+// the log has no such line yet
+struct HlxRuntime
+{
+    std::string runtime;
+    bool fallback = false;
+};
+
+inline HlxRuntime ReadHlxRuntime(const std::wstring& dllPath)
+{
+    HlxRuntime result;
+    std::ifstream log(std::filesystem::path(dllPath).parent_path() / L"HLX_FSR.log");
+    std::string line;
+
+    while (std::getline(log, line))
+    {
+        std::string lower = line;
+        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+
+        if (const auto at = line.find("own runtime active:"); at != std::string::npos)
+        {
+            auto runtime = line.substr(at + strlen("own runtime active:"));
+            runtime.erase(0, runtime.find_first_not_of(' '));
+            runtime = runtime.substr(0, runtime.find_first_of(" ,("));
+            result.runtime = runtime;
+            result.fallback = false;
+        }
+        else if (lower.find("hlx") != std::string::npos && (lower.find("instead") != std::string::npos ||
+                                                             lower.find("fallback") != std::string::npos ||
+                                                             lower.find("falls back") != std::string::npos))
+        {
+            result.fallback = true;
+        }
+    }
+
+    return result;
 }
 
 // The file holds this text somewhere (read in chunks, nothing is loaded)
@@ -275,6 +330,13 @@ inline Entry FfxEntry(const std::wstring& key, const std::filesystem::path& dll,
         entry.display = "FSR 4 · " + folder;
         entry.detail.clear();
     }
+    else if (HasHlxFsr4(entry.path))
+    {
+        // ILION dev.52: HLX FSR 4 put among FSR 4 builds; it is HelixSR's, not a build of AMD's dll
+        entry.family = Family::HelixSR;
+        entry.hlx = true;
+        entry.display = "HLX FSR 4";
+    }
     else if (HasHelixNetwork(entry.path))
     {
         entry.family = Family::HelixSR;
@@ -328,7 +390,10 @@ inline void AddHelix(const std::filesystem::path& folder, const std::wstring& ke
         if (!std::filesystem::exists(path, ec))
             continue;
 
-        if (!HasHelixNetwork(path.wstring()))
+        // ILION dev.52: HLX FSR 4 (HelixSR 3.x) ships as amd_fidelityfx_upscaler_dx12.dll with its own marker
+        const bool hlx = HasHlxFsr4(path.wstring());
+
+        if (!hlx && !HasHelixNetwork(path.wstring()))
         {
             // The mistakes this folder invites, said plainly instead of loading something else
             if (entry.problem.empty())
@@ -350,6 +415,9 @@ inline void AddHelix(const std::filesystem::path& folder, const std::wstring& ke
         entry.path = path.wstring();
         entry.fileVersion = FileVersionOf(entry.path);
         entry.problem.clear();
+        entry.hlx = hlx;
+        if (hlx)
+            entry.display = "HLX FSR 4";
 
         // Only the name of the main FFX dll can be mixed up once loaded (OptiScaler hooks that module; HelixSR's setup
         // gives its copy its own name for that reason). Upscaler dlls of that name are loaded side by side already:
@@ -363,7 +431,7 @@ inline void AddHelix(const std::filesystem::path& folder, const std::wstring& ke
     }
 
     // ILION: builds of HelixSR told apart by the version in their file ("HelixSR 1.9.3"), not by the folder name
-    if (entry.valid && !entry.fileVersion.empty())
+    if (entry.valid && !entry.fileVersion.empty() && !entry.hlx)
         entry.display = "HelixSR " + entry.fileVersion;
 
     if (!entry.path.empty())

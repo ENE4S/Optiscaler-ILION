@@ -401,6 +401,7 @@ class State
 
     bool isShuttingDown = false;
     std::set<PVOID> modulesToFree;
+    std::mutex modulesToFreeMutex; // OptiScaler 83e18f1a: FreeLibrary runs on any thread
 
     // menu warnings
     bool fgSettingsChanged = false;

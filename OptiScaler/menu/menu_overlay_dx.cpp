@@ -16,7 +16,8 @@
 #include <misc/IlionCapture.h>
 
 // menu
-static int const NUM_BACK_BUFFERS = 8;
+// Sized for the largest swapchain DXGI allows, the menu can draw on chains created by other layers (OptiScaler d06f31e9)
+static int const NUM_BACK_BUFFERS = 16; // DXGI_MAX_SWAP_CHAIN_BUFFERS
 static int const SRV_HEAP_SIZE = 64;
 static bool _dx11Device = false;
 static bool _dx12Device = false;
@@ -93,6 +94,12 @@ static void CreateRenderTargetDx12(ID3D12Device* device, IDXGISwapChain* pSwapCh
     if (hr != S_OK)
     {
         LOG_ERROR("pSwapChain->GetDesc: {0:X}", (unsigned long) hr);
+        return;
+    }
+
+    if (sd.BufferCount > NUM_BACK_BUFFERS)
+    {
+        LOG_ERROR("Swapchain has {} buffers, menu supports {}", sd.BufferCount, NUM_BACK_BUFFERS);
         return;
     }
 
@@ -469,12 +476,19 @@ static void RenderImGui_DX12(IDXGISwapChain* pSwapChainPlain)
         {
             _showRenderImGuiDebugOnce = true;
 
+            UINT backBufferIdx = pSwapChain->GetCurrentBackBufferIndex();
+
+            if (backBufferIdx >= NUM_BACK_BUFFERS || !g_mainRenderTargetResource[backBufferIdx])
+            {
+                pSwapChain->Release();
+                return;
+            }
+
             ImGui_ImplDX12_NewFrame();
 
             // Finishes a capture whose copy the GPU has completed, never waits
             IlionCapture::Poll();
 
-            UINT backBufferIdx = pSwapChain->GetCurrentBackBufferIndex();
 
             // Blur textures are only created once the menu is opened, menu decides if they are used
             bool blurReady = false;

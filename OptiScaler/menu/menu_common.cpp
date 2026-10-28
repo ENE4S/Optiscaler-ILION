@@ -643,7 +643,21 @@ static std::string UpscalerLabel(IFeature* feature)
                 FfxApiProxy::SrDiagDescribeModule(active.module, &activePath);
 
             if (IlionUpscalers::SamePath(activePath, entry->path))
+            {
+                // ILION dev.52: HLX FSR 4 runs AMD's FSR 4 network on HelixSR's pipeline; its log says which runtime
+                // started, or that it gave the upscale to AMD's FSR
+                if (entry->hlx)
+                {
+                    const auto hlxRuntime = IlionUpscalers::ReadHlxRuntime(entry->path);
+                    return EntryName(*entry) + (hlxRuntime.fallback ? " \xC2\xB7 AMD (fallback)" : "");
+                }
+
                 return EntryName(*entry) + " (DLSS 3.7)";
+            }
+
+            // ILION dev.52: a HelixSR dll is chosen but another one ran the upscale: not the driver, whatever its
+            // provider id says (HLX FSR 4's id was taken for "Driver (via SDK)")
+            return EntryName(*entry);
         }
 
         // An AMD dll can hand the upscale to the AMD driver's provider: the provider picked in its FFX list is an
@@ -1406,7 +1420,17 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
                                               "starts HelixSR's own provider.");
 
             // What is checked and what is only stated, kept apart
-            if (entry.family == IlionUpscalers::Family::HelixSR)
+            if (entry.family == IlionUpscalers::Family::HelixSR && entry.hlx)
+            {
+                tip += std::string("\n") + Tr("Identified as HLX FSR 4 by its file. While upscaling, ILION also checks "
+                                              "that this dll is the one running.");
+                const auto hlxRuntime = IlionUpscalers::ReadHlxRuntime(entry.path);
+                if (!hlxRuntime.runtime.empty())
+                    tip += std::string("\n") + StrFmt(Tr("Runtime in its log: %s"), hlxRuntime.runtime.c_str());
+                if (hlxRuntime.fallback)
+                    tip += std::string("\n") + Tr("Its log says it gave the upscale to AMD's FSR");
+            }
+            else if (entry.family == IlionUpscalers::Family::HelixSR)
                 tip += std::string("\n") + Tr("Identified as HelixSR by its file. While upscaling, ILION also checks "
                                               "that this dll is the one running.\nDLSS 3.7: the version its author "
                                               "states, it can't be verified from ILION.");

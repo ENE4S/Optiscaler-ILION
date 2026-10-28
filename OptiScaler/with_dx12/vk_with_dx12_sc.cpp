@@ -948,7 +948,10 @@ bool VkwDx12SC::CreateFGSwapchain()
 
     {
         ScopedVulkanCreatingSC skipFGSCCreation {}; // ILION already bypasses DXGI FG wrapping in this scope
+        // ILION dev.53: XeFG's own chain, created inside this call, gets the same back buffers
+        State::Instance().vkwDx12FGBuffers = desc.BufferCount;
         result = FGHooks::CreateSwapChain(_factory, _dx12Queue, &desc, &swapchain);
+        State::Instance().vkwDx12FGBuffers = 0;
     }
 
     if (FAILED(result) || swapchain == nullptr)

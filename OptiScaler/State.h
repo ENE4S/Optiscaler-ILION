@@ -356,6 +356,9 @@ class State
 
     // Vulkan stuff
     bool vulkanCreatingSC = false;
+    // ILION dev.53: the Vulkan bridge (VkwDx12SC) is creating its D3D12 FG swapchain: XeFG's own chain gets this many
+    // back buffers (0 = untouched), see DxgiFactoryHooks::CreateSwapChainForHwnd
+    UINT vkwDx12FGBuffers = 0;
     bool creatingD3DDevice = false;
     bool vulkanSkipHooks = false;
     VkInstance VulkanInstance = nullptr;

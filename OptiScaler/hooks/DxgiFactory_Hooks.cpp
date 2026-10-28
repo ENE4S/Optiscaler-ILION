@@ -769,8 +769,19 @@ HRESULT DxgiFactoryHooks::CreateSwapChainForHwnd(IDXGIFactory2* realFactory, IUn
             ScopedSkipDxgiLoadChecks skipDxgiLoadChecks {};
             ScopedSkipParentWrapping skipParentWrapping {};
 
-            result = o_CreateSwapChainForHwnd(realFactory, pDevice, hWnd, pDesc, pFullscreenDesc, pRestrictToOutput,
-                                              ppSwapChain);
+            // ILION dev.53: XeFG sizing its own chain for the Vulkan bridge: room for a batch of generated frames,
+            // which MFG Unlocker's flip queue needs to pace them (it can't raise it itself through a hooked factory)
+            DXGI_SWAP_CHAIN_DESC1 bridgeDesc {};
+            const auto buffers = State::Instance().vkwDx12FGBuffers;
+            if (buffers != 0 && pDesc != nullptr && pDesc->BufferCount < buffers)
+            {
+                bridgeDesc = *pDesc;
+                bridgeDesc.BufferCount = buffers;
+                LOG_INFO("Vulkan XeFG bridge: XeFG's swapchain {} -> {} buffers", pDesc->BufferCount, buffers);
+            }
+
+            result = o_CreateSwapChainForHwnd(realFactory, pDevice, hWnd, bridgeDesc.BufferCount != 0 ? &bridgeDesc : pDesc,
+                                              pFullscreenDesc, pRestrictToOutput, ppSwapChain);
         }
 
         if (firstCall)

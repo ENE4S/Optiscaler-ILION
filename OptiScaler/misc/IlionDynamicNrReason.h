@@ -22,7 +22,8 @@ enum class Reason : int
     AtMinimum,    // over the target at the lowest step: the network can't get smaller
     WaitingRoom,  // room to spare: a step up comes after 5 s with room
     UpBlocked,    // room to spare, but a step up could not hold a moment ago: up-steps wait 60 s
-    Held          // lmxxf reached its change cap this session: no more changes until the game restarts
+    Held,         // lmxxf reached its change cap this session: no more changes until the game restarts
+    StepAboveFails // room to spare, but the step above was over this target not long ago (dev.51-exp2: 5 min)
 };
 
 inline Reason Explain(const DlssNr::DynamicNr::Controller& c, unsigned long long t, bool settling, int targetFps,
@@ -53,7 +54,11 @@ inline Reason Explain(const DlssNr::DynamicNr::Controller& c, unsigned long long
         return c.step >= Controller::kLast ? Reason::AtMinimum : Reason::Lowering;
 
     if (room && c.step > first)
+    {
+        if (c.StepFails(c.step - 1, t, target))
+            return Reason::StepAboveFails;
         return t < c.upBlockedUntil ? Reason::UpBlocked : Reason::WaitingRoom;
+    }
 
     return c.step <= first ? Reason::MetAtMaximum : Reason::Met;
 }
@@ -81,6 +86,8 @@ inline const char* Name(Reason r)
         return "room to spare, up-steps blocked 60 s after one that could not hold";
     case Reason::Held:
         return "held: lmxxf change cap reached this session";
+    case Reason::StepAboveFails:
+        return "room to spare, but the step above missed this target less than 5 min ago: stays";
     }
     return "?";
 }

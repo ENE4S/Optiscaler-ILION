@@ -34,6 +34,7 @@
 #include <proxies/Streamline_Proxy.h>
 
 #include <framegen/nvngx/Nvngx_FG.h>
+#include <framegen/nvngx/Nvngx_HelixSR.h>
 #include <framegen/reprojection/Reprojection_Dx12.h>
 
 #include <nvapi/fakenvapi.h>
@@ -1500,9 +1501,74 @@ static const char* NvngxFgName(FGNvngxReplacement provider)
         return "FFX";
     case FGNvngxReplacement::Combo:
         return "Combo";
+    case FGNvngxReplacement::HelixSR:
+        return "FG Lite";
     default:
         return nullptr;
     }
+}
+
+// ILION dev.51-exp2: NVIDIA FG Lite (HelixSR 2.0.0's frame generation): what is installed, read from the files every
+// two seconds at most; nothing is loaded by the menu
+static const Nvngx_HelixSR::Install& FgLiteInstall()
+{
+    static Nvngx_HelixSR::Install install;
+    static ULONGLONG checked = 0;
+    if (const ULONGLONG now = GetTickCount64(); checked == 0 || now - checked > 2000)
+    {
+        install = Nvngx_HelixSR::FindInstall();
+        checked = now;
+    }
+    return install;
+}
+
+// Shader model 6.6 on the game's device (HelixSR 2.0.0 builds its frame generation shaders for it); -1 unknown
+static int FgLiteShaderModel66()
+{
+    static int answer = -1;
+    if (answer == -1)
+    {
+        if (auto* device = State::Instance().currentD3D12Device; device != nullptr)
+        {
+            D3D12_FEATURE_DATA_SHADER_MODEL sm { D3D_SHADER_MODEL_6_6 };
+            answer = SUCCEEDED(device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &sm, sizeof(sm))) &&
+                             sm.HighestShaderModel >= D3D_SHADER_MODEL_6_6
+                         ? 1
+                         : 0;
+        }
+    }
+    return answer;
+}
+
+static void WrappedText(const ImVec4& colour, const char* text);
+
+// The short state under the selector while NVIDIA FG Lite is chosen
+static void DrawFgLiteState()
+{
+    const auto& install = FgLiteInstall();
+    const ImVec4 warn = IlionTheme::LampAmber, ok = IlionTheme::LampGreen;
+    if (install.dll.empty())
+    {
+        WrappedText(warn, Tr("NVIDIA FG Lite: HelixSR 2.0.0 frame generation not found. Install HelixSR 2.0.0 with "
+                             "frame generation for this game (HelixSR-fsrfg folder next to the game's .exe). ILION "
+                             "doesn't include it"));
+        return;
+    }
+    const uint32_t version = Nvngx_HelixSR::LoadedVersion();
+    WrappedText(version > 0 ? ok : IlionTheme::TextDim,
+                version > 0 ? StrFmt(Tr("NVIDIA FG Lite loaded (HelixSR NGX FG version %u)"), version).c_str()
+                            : Tr("NVIDIA FG Lite found: it loads when the game turns DLSS frame generation on"));
+    if (!install.fgKernels)
+        WrappedText(warn, Tr("No helixsr-fg folder next to HelixSR's DLL: run HelixSR's setup with frame generation"));
+    if (!install.lite()) {
+        WrappedText(warn, StrFmt(Tr("helixsr.ini asks for the %s mode, not Lite"), install.preset.c_str()).c_str());
+        if (IlionTheme::Button(TrL("Use FG Lite##FgLite")))
+            Nvngx_HelixSR::UseLite(install);
+    }
+    if (FgLiteShaderModel66() == 0)
+        WrappedText(warn, Tr("This GPU's driver has no shader model 6.6: HelixSR frame generation can't run on it"));
+    WrappedText(IlionTheme::TextDim, Tr("Needs a DirectX 12 game with DLSS frame generation turned on in the game. One "
+                                        "generated frame. Changes apply at the next game start"));
 }
 
 // generatedFrames: frames generated per rendered one in the last DLSSG evaluation, 0 when there is none
@@ -8231,6 +8297,10 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
             {
                 fgText = formatFg("Combo", Nvngx_FG::getMaxFakeFramesCount());
             }
+            else if (activeNvngxFg == FGNvngxReplacement::HelixSR)
+            {
+                fgText = formatFg("FG Lite", Nvngx_FG::getMaxFakeFramesCount());
+            }
             else if (state.activeFgOutput == FGOutput::DLSSG && fg)
             {
                 fgText = formatFg("DLSSG", fg->GetMaxInterpolationCount());
@@ -11310,6 +11380,10 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                                                       "FFX used for the middle fake frame, Enabler for the rest\n\n"
                                                       "2x - FFX\n3x - Enabler\n4x - FFX + Enabler\n5x - Enabler\n6x - FFX + Enabler\n\n"
                                                       "Due to pacing, only odd number of fake frames are able to use FFX"},
+        { FGNvngxReplacement::HelixSR, "NVIDIA FG Lite (experimental)",
+          "NVIDIA's DLSS frame generation, light mode (310.9.16), run by HelixSR 2.0.0 on GPUs that are not NVIDIA's\n\n"
+          "Install HelixSR 2.0.0 with frame generation yourself: its setup builds NVIDIA's parts on your PC\n"
+          "ILION includes none of it. DirectX 12 games with DLSS frame generation. One generated frame" },
     };
 
     // clang-format on
@@ -11353,6 +11427,12 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
     nvngxOptions[fgNvngxComboIndex].set_disabled(
         !FfxApiProxy::IsFGReady(false) || !state.artursFgFileAvailable,
         "Missing amd_fidelityfx_framegeneration_dx12.dll\nor missing dlss-enabler-headless.dll");
+
+    // ILION dev.51-exp2: NVIDIA FG Lite needs HelixSR 2.0.0's frame generation DLL and DirectX 12
+    auto constexpr fgNvngxHelixIndex = (uint32_t) FGNvngxReplacement::HelixSR;
+    nvngxOptions[fgNvngxHelixIndex].set_disabled(state.swapchainApi == API::Vulkan, "Unsupported API");
+    nvngxOptions[fgNvngxHelixIndex].set_disabled(FgLiteInstall().dll.empty(),
+                                                 "Missing HelixSR-fsrfg\\amd_fidelityfx_dx12.dll (HelixSR 2.0.0)");
 
     // TODO: Automatically switch to any other option
 
@@ -11400,6 +11480,8 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                 ImGui::SetNextItemWidth(std::max(ImGui::GetFontSize() * 8.0f, ImGui::GetContentRegionAvail().x - selectorLabel));
                 PopulateCombo(TrL("FG Nvngx"), config->FGNvngxReplacement, nvngxOptions);
                 ShowTooltip("What backend to use instead of the real DLSSG");
+                if (config->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::HelixSR)
+                    DrawFgLiteState();
             }
             else
             {
@@ -11417,6 +11499,8 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                 ImGui::SetNextItemWidth(std::max(ImGui::GetFontSize() * 8.0f, ImGui::GetContentRegionAvail().x - selectorLabel));
                 PopulateCombo(TrL("FG Nvngx Replacement"), config->FGNvngxReplacement, nvngxOptions);
                 ShowTooltip("What backend to use instead of the real DLSSG");
+                if (config->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::HelixSR)
+                    DrawFgLiteState();
             }
 
             ImGui::EndTable();
@@ -18812,8 +18896,9 @@ static void DrawNrMonitor(IFeature* feature, const NrUiStatus& status, bool befo
     const ImVec4 cyan(0.30f, 0.85f, 1.00f, 1.0f);     // technical details: electric cyan
     const ImVec4 amber(1.00f, 0.72f, 0.12f, 1.0f);    // cost 30 to 40 ms, starting
     const ImVec4 hot(1.00f, 0.52f, 0.10f, 1.0f);      // cost 40 ms and more: a high cost, not an error
-    const ImVec4 red(1.00f, 0.25f, 0.22f, 1.0f);      // errors only
     const ImVec4 dim(0.24f, 0.50f, 0.32f, 1.0f);      // no data, off
+    const ImVec4 online(1.00f, 0.16f, 0.22f, 1.0f);   // ONLINE: a lit red lamp (dev.51-exp2); errors blink in orange
+    const ImVec4 radioactive(0.86f, 1.00f, 0.10f, 1.0f); // sizes and position: radioactive yellow-green
 
     // A thin dark rim, then the glass set into it: almost black, darker towards every edge
     const float rounding = std::floor(fs * 0.5f);
@@ -18880,8 +18965,10 @@ static void DrawNrMonitor(IFeature* feature, const NrUiStatus& status, bool befo
                            : status.state == NrUiState::Starting || status.state == NrUiState::NoUpscaler
                                ? Tr("STARTING")
                                : "OFFLINE";
-    const ImVec4 lampColour = status.state == NrUiState::Active ? phosphor
-                              : status.state == NrUiState::Error ? red
+    // An error blinks (twice a second) so it never reads as the steady red ONLINE lamp
+    const bool blinkOn = (GetTickCount64() / 500) % 2 == 0;
+    const ImVec4 lampColour = status.state == NrUiState::Active ? online
+                              : status.state == NrUiState::Error ? (blinkOn ? hot : dim)
                               : status.state == NrUiState::Starting || status.state == NrUiState::NoUpscaler ? amber
                                                                                                              : dim;
     const float lampTextW = widthOf(mono, fs, lampText);
@@ -18933,8 +19020,11 @@ static void DrawNrMonitor(IFeature* feature, const NrUiStatus& status, bool befo
             const float barY = valueY + bigPx * 0.42f, barH = std::floor(fs * 0.45f);
             draw->AddRectFilled(ImVec2(barX, barY), ImVec2(barX + barW, barY + barH), col(0, 0, 0, 0.60f), 2.0f);
             const float filled = barW * std::clamp(ms / 50.f, 0.0f, 1.0f);
-            draw->AddRectFilled(ImVec2(barX, barY), ImVec2(barX + filled, barY + barH),
-                                ImGui::GetColorU32(ImVec4(costColour.x, costColour.y, costColour.z, 0.85f)), 2.0f);
+            // Lit bar: its own glow around it, full colour, a bright line along its top
+            draw->AddRectFilled(ImVec2(barX - 1.0f, barY - 1.5f), ImVec2(barX + filled + 1.0f, barY + barH + 1.5f),
+                                ImGui::GetColorU32(ImVec4(costColour.x, costColour.y, costColour.z, 0.25f)), 3.0f);
+            draw->AddRectFilled(ImVec2(barX, barY), ImVec2(barX + filled, barY + barH), ImGui::GetColorU32(costColour), 2.0f);
+            draw->AddLine(ImVec2(barX + 1.0f, barY + 1.0f), ImVec2(barX + filled - 1.0f, barY + 1.0f), col(1.0f, 1.0f, 0.90f, 0.55f), 1.0f);
             draw->AddRect(ImVec2(barX, barY), ImVec2(barX + barW, barY + barH), col(label.x, label.y, label.z, 0.35f), 2.0f);
             for (const float mark : { 20.f, 30.f, 40.f })
             {
@@ -18962,13 +19052,13 @@ static void DrawNrMonitor(IFeature* feature, const NrUiStatus& status, bool befo
 
     const float half = std::floor((span - g2) * 0.5f);
     cell(x0, x0 + half, Tr("BACKEND"), reading.backend, reading.backendLive ? phosphor : yellow, !reading.backend.empty());
-    cell(x0 + half + g2, x1, Tr("POSITION"), before ? Tr("BEFORE UPSCALING") : Tr("AFTER UPSCALING"), yellow, true);
+    cell(x0 + half + g2, x1, Tr("POSITION"), before ? Tr("BEFORE UPSCALING") : Tr("AFTER UPSCALING"), radioactive, true);
     y += cellH;
 
     const float third = std::floor((span - g2 * 2.0f) / 3.0f);
-    cell(x0, x0 + third, Tr("NR INPUT"), size(reading.inW, reading.inH), cyan, reading.inW > 0);
-    cell(x0 + third + g2, x0 + third * 2.0f + g2, Tr("NETWORK"), size(reading.netW, reading.netH), yellow, reading.netW > 0);
-    cell(x0 + (third + g2) * 2.0f, x1, Tr("NR OUTPUT"), size(reading.outW, reading.outH), cyan, reading.outW > 0);
+    cell(x0, x0 + third, Tr("NR INPUT"), size(reading.inW, reading.inH), radioactive, reading.inW > 0);
+    cell(x0 + third + g2, x0 + third * 2.0f + g2, Tr("NETWORK"), size(reading.netW, reading.netH), radioactive, reading.netW > 0);
+    cell(x0 + (third + g2) * 2.0f, x1, Tr("NR OUTPUT"), size(reading.outW, reading.outH), radioactive, reading.outW > 0);
     y += cellH;
     division(y - std::floor(fs * 0.1f));
     y += gap;
@@ -18982,7 +19072,8 @@ static void DrawNrMonitor(IFeature* feature, const NrUiStatus& status, bool befo
                                                                     : Tr("NOT AVAILABLE");
     const std::string stateLine = std::string(Tr("STATE")) + "  ";
     text(mono, labelPx, ImVec2(x0, y + std::floor(fs * 0.1f)), label, stateLine.c_str());
-    text(mono, fs, ImVec2(x0 + widthOf(mono, labelPx, stateLine.c_str()), y), lampColour, stateWord);
+    text(mono, fs, ImVec2(x0 + widthOf(mono, labelPx, stateLine.c_str()), y),
+         status.state == NrUiState::Active ? phosphor : lampColour, stateWord);
 
     draw->PopClipRect();
 
@@ -19115,7 +19206,21 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
         const double fpsNow = dyn.averageMs > 0.0 ? 1000.0 / dyn.averageMs : 0.0;
         if (dynamic) {
             using IlionDynamicNr::Reason;
-            const Reason reason = (Reason) dyn.reason;
+            // ILION dev.51-exp2: a reason is shown once it has held 1 s. The average sits on a threshold for a while
+            // (17.5 / 18.0 ms at 60 FPS in Cyberpunk) and the lines changed text, colour and height every few frames:
+            // the panel shook. The controller acts on its own timers, not on this
+            static Reason shownReason = Reason::Measuring, candidateReason = Reason::Measuring;
+            static ULONGLONG candidateSince = 0;
+            const ULONGLONG nowTick = GetTickCount64();
+            const Reason liveReason = (Reason) dyn.reason;
+            if (liveReason == shownReason)
+                candidateReason = liveReason;
+            else if (liveReason != candidateReason) {
+                candidateReason = liveReason;
+                candidateSince = nowTick;
+            } else if (nowTick - candidateSince >= 1000)
+                shownReason = liveReason;
+            const Reason reason = shownReason;
             if (!dyn.running) {
                 WrappedText(IlionTheme::TextDim, Tr("Waiting for NR frames"));
             } else {
@@ -19152,6 +19257,9 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
                                  pct(dyn.scale));
                     whyColour = IlionTheme::LampAmber;
                     break;
+                case Reason::StepAboveFails:
+                    why = Tr("Room to spare, but the step above missed this target less than 5 min ago: it stays");
+                    break;
                 default:
                     why = Tr("Measuring the frame time");
                     break;
@@ -19184,6 +19292,10 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
                 ImGui::Spacing();
                 ImGui::Text(Tr("NR resolution: now %d%%, maximum %d%%, minimum %d%%"), pct(dyn.scale), pct(dyn.ceiling),
                             pct(dyn.floor));
+                if (dyn.configured > dyn.ceiling + 0.001f)
+                    WrappedText(IlionTheme::TextDim,
+                                StrFmt(Tr("NR resolution set to %d%%: adaptive NR works from 100%% down, so it doesn't use "
+                                          "more than 100%%"), pct(dyn.configured)).c_str());
                 ImGui::Text(Tr("Average frame: %.1f ms, target %.1f ms"), dyn.averageMs, dyn.targetMs);
                 ImGui::Text(Tr("Changes this session: %u"), dyn.changes);
                 if (dyn.upBlocked)

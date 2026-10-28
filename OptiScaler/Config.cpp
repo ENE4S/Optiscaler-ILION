@@ -176,6 +176,8 @@ LmxxfFullNetwork.set_from_config(readBool("DlssNr", "LmxxfFullNetwork"));
                     FGNvngxReplacement.set_from_config(FGNvngxReplacement::FFX);
                 else if (lstrcmpiA(FGNvngxReplacementString.value().c_str(), "combo") == 0)
                     FGNvngxReplacement.set_from_config(FGNvngxReplacement::Combo);
+                else if (lstrcmpiA(FGNvngxReplacementString.value().c_str(), "helixsr") == 0)
+                    FGNvngxReplacement.set_from_config(FGNvngxReplacement::HelixSR);
             }
 
             if (auto forceXell = readBool("fakenvapi", "ForceXeLL"); forceXell.has_value() && forceXell.value())
@@ -1086,6 +1088,8 @@ bool Config::SaveIni()
                 FGNvngxReplacementString = "FFX";
             else if (FGNvngxReplacementHeld.value() == FGNvngxReplacement::Combo)
                 FGNvngxReplacementString = "Combo";
+            else if (FGNvngxReplacementHeld.value() == FGNvngxReplacement::HelixSR)
+                FGNvngxReplacementString = "HelixSR";
         }
         ini.SetValue("FrameGen", "FGNvngxReplacement", FGNvngxReplacementString.c_str());
 

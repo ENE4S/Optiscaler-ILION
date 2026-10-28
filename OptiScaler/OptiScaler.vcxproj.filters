@@ -1580,6 +1580,9 @@
     <ClCompile Include="framegen\nvngx\Nvngx_Nukems.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="framegen\nvngx\Nvngx_HelixSR.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="framegen\nvngx\Nvngx_DllProxy.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

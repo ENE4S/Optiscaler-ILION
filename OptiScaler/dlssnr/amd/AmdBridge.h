@@ -164,7 +164,8 @@ struct DynamicNrReadout
 {
     bool running = false;
     float scale = 1.f;       // the NR scale it hands the backend this frame
-    float ceiling = 1.f;     // the manual NR resolution (the maximum)
+    float ceiling = 1.f;     // the highest scale it uses: the manual NR resolution, 100% at most (its steps start there)
+    float configured = 1.f;  // the manual NR resolution as set (ILION dev.51-exp2: above 100% it is not reached)
     float floor = 0.5f;      // its lowest step
     double averageMs = 0.0;  // its frame time average (real frames, the ones NR runs on)
     double targetMs = 0.0;   // 1000 / target FPS

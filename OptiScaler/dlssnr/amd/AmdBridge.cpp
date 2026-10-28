@@ -1965,7 +1965,8 @@ static bool Run(ID3D12GraphicsCommandList* cmd, NVSDK_NGX_Parameter* params, ID3
             DynamicNrReadout r;
             r.running = true;
             r.scale = sessionScale;
-            r.ceiling = Config::Instance()->AmdNrScale.value_or_default();
+            r.configured = Config::Instance()->AmdNrScale.value_or_default();
+            r.ceiling = (std::min)(r.configured, DlssNr::DynamicNr::Controller::kSteps[0]);
             r.floor = (std::min)(DlssNr::DynamicNr::Controller::kSteps[DlssNr::DynamicNr::Controller::kLast], r.ceiling);
             r.averageMs = dynamicNr.emaMs;
             r.targetMs = 1000.0 / std::clamp(Config::Instance()->AmdDynamicTargetFps.value_or_default(), 30, 240);
@@ -1973,7 +1974,7 @@ static bool Run(ID3D12GraphicsCommandList* cmd, NVSDK_NGX_Parameter* params, ID3
             r.held = capChanges && dynamicNr.changes >= DlssNr::DynamicNr::Controller::kLmxxfChangeCap;
             r.upBlocked = dynamicNr.upBlockedUntil > t;
             r.targetFps = std::clamp(Config::Instance()->AmdDynamicTargetFps.value_or_default(), 30, 240);
-            const auto reason = IlionDynamicNr::Explain(dynamicNr, t, settling, r.targetFps, r.ceiling, r.held);
+            const auto reason = IlionDynamicNr::Explain(dynamicNr, t, settling, r.targetFps, r.configured, r.held);
             r.reason = (int) reason;
 
             // ILION dev.51-exp: a profile (target) change is logged with what the controller had, and again 3 s later
@@ -1984,9 +1985,9 @@ static bool Run(ID3D12GraphicsCommandList* cmd, NVSDK_NGX_Parameter* params, ID3
             {
                 char line[256];
                 snprintf(line, sizeof line, "real frames %.1f FPS (average %.2f ms, target %.2f ms), NR scale %d%% "
-                         "(maximum %d%%, minimum %d%%), changes %u: %s",
+                         "(maximum %d%%, set %d%%, minimum %d%%), changes %u: %s",
                          r.averageMs > 0.0 ? 1000.0 / r.averageMs : 0.0, r.averageMs, r.targetMs,
-                         (int) std::lround(r.scale * 100.f), (int) std::lround(r.ceiling * 100.f),
+                         (int) std::lround(r.scale * 100.f), (int) std::lround(r.ceiling * 100.f), (int) std::lround(r.configured * 100.f),
                          (int) std::lround(r.floor * 100.f), r.changes, IlionDynamicNr::Name(reason));
                 return std::string(line);
             };

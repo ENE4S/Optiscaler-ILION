@@ -9,6 +9,7 @@
 #include "IFGNvngx.h"
 #include "Nvngx_Nukems.h"
 #include "Nvngx_Arturs.h"
+#include "Nvngx_HelixSR.h"
 #include "Nvngx_FFX.h"
 #include "Nvngx_Combo.h"
 #include <imgui/ImGuiNotify.hpp>
@@ -39,8 +40,25 @@ IFGNvngx* Nvngx_FG::getProvider()
         _provider = std::make_unique<Nvngx_Combo>();
         break;
 
+    case FGNvngxReplacement::HelixSR:
+        _provider = std::make_unique<Nvngx_HelixSR>();
+        break;
+
     case FGNvngxReplacement::None:
     default:
+        return nullptr;
+    }
+
+    // ILION dev.51-exp2: NVIDIA FG Lite is never replaced by another generator without the user knowing: when HelixSR's
+    // frame generation can't be loaded, DLSSG stays off and the menu says why
+    if (selectedProvider == FGNvngxReplacement::HelixSR && !_provider->isDx12Available())
+    {
+        LOG_ERROR("NVIDIA FG Lite is not available (HelixSR 2.0.0 frame generation not found): no fallback");
+        ImGui::InsertNotification(
+            { ImGuiToastType::Error, 20000, "NVIDIA FG Lite is not available.\nHelixSR 2.0.0 frame generation not found." });
+        Config::Instance()->FGNvngxReplacement.set_volatile_value(FGNvngxReplacement::None);
+        State::Instance().activeFgNvngx = FGNvngxReplacement::None;
+        _provider.reset();
         return nullptr;
     }
 
@@ -278,9 +296,19 @@ NVSDK_NGX_Result Nvngx_FG::D3D12_CreateFeature(ID3D12GraphicsCommandList* InCmdL
 
     auto proxyHandle = new Nvngx_FG_Handle(lastIdCreated++ + NVNGX_PROVIDER_ID_OFFSET);
 
-    std::scoped_lock lock(proxyHandle->handleMutex);
+    NVSDK_NGX_Result result;
+    {
+        std::scoped_lock lock(proxyHandle->handleMutex);
+        result = provider->D3D12_CreateFeature(InCmdList, InFeatureID, InParameters, &proxyHandle->nativeHandle);
+    }
 
-    auto result = provider->D3D12_CreateFeature(InCmdList, InFeatureID, InParameters, &proxyHandle->nativeHandle);
+    // ILION dev.51-exp2 (as HelixSR Scaler 1.1.0): a feature the provider refused gives the game no handle
+    if (result != NVSDK_NGX_Result_Success)
+    {
+        delete proxyHandle;
+        *OutHandle = nullptr;
+        return result;
+    }
 
     *OutHandle = (NVSDK_NGX_Handle*) proxyHandle;
 

@@ -82,6 +82,7 @@ enum class FGNvngxReplacement : uint32_t
     Arturs,
     FFX,
     Combo,
+    HelixSR, // ILION dev.51-exp2: NVIDIA FG Lite, HelixSR 2.0.0's frame generation (framegen/nvngx/Nvngx_HelixSR.h)
 };
 
 enum class WorkingMode : uint32_t

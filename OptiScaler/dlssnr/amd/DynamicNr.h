@@ -23,6 +23,20 @@ struct Controller
     static constexpr unsigned long long kDownDwellMs = 1500, kUpHeadroomMs = 5000, kBounceWindowMs = 10000,
                                         kBounceBlockMs = 60000;
     static constexpr unsigned kLmxxfChangeCap = 12; // only while lmxxf leaks per rebuild (no import pool)
+    // ILION dev.51-exp2: a step left because it was over the target is remembered with the frame time it had, for
+    // kFailMemoryMs. A step up into it waits while that time is over the current target: with lmxxf the network
+    // works at fixed sizes, so one step can cost far more than the 15% room foresees (Cyberpunk, RX 7900 XTX: 50% ->
+    // 58% took the frame from 18 ms to 28-32 ms). Without this the up-step was tried again every 60 s and at every
+    // profile change, two rebuilds and a visible hitch each time.
+    static constexpr unsigned long long kFailMemoryMs = 300000;
+    double failedMs[kLast + 1] = {};
+    unsigned long long failedAt[kLast + 1] = {};
+
+    // The step above `s` was left over a target this one also misses, not long ago
+    bool StepFails(int s, unsigned long long t, double target) const
+    {
+        return s >= 0 && s <= kLast && failedAt[s] != 0 && t - failedAt[s] < kFailMemoryMs && failedMs[s] > target * 1.08;
+    }
     int step = 0;
     double emaMs = 0;
     unsigned long long lastChange = 0, headroomSince = 0, upBlockedUntil = 0;
@@ -65,10 +79,13 @@ struct Controller
                 // A step down soon after a step up: the up-step could not hold. Block up-steps for a while.
                 if (lastWasUp && t - lastChange < kBounceWindowMs)
                     upBlockedUntil = t + kBounceBlockMs;
+                failedMs[step] = emaMs; // ILION dev.51-exp2
+                failedAt[step] = t;
                 ++step;
                 lastWasUp = false;
             }
-            else if (room && step > first && t - headroomSince >= kUpHeadroomMs && t >= upBlockedUntil)
+            else if (room && step > first && t - headroomSince >= kUpHeadroomMs && t >= upBlockedUntil &&
+                     !StepFails(step - 1, t, target))
             {
                 --step;
                 lastWasUp = true;

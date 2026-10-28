@@ -702,6 +702,7 @@ copy NUL "$(SolutionDir)x64\Release\a\!! EXTRACT ALL FILES TO GAME FOLDER !!" /Y
     <ClCompile Include="nvapi\fakenvapi\nvapi_calls.cpp" />
     <ClCompile Include="framegen\nvngx\Nvngx_FFX.cpp" />
     <ClCompile Include="framegen\nvngx\Nvngx_Nukems.cpp" />
+    <ClCompile Include="framegen\nvngx\Nvngx_HelixSR.cpp" />
     <ClCompile Include="framegen\nvngx\Nvngx_Arturs.cpp" />
     <ClCompile Include="NVNGX_Parameter.cpp" />
     <ClCompile Include="framegen\nvngx\Nvngx_DllProxy.cpp" />

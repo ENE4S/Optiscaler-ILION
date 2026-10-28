@@ -171,6 +171,8 @@ struct DynamicNrReadout
     unsigned changes = 0;    // scale changes this session
     bool held = false;       // lmxxf change cap reached: no more changes until the game restarts
     bool upBlocked = false;  // a step up could not hold: up-steps wait
+    int targetFps = 0;       // the target it worked with on that frame
+    int reason = 0;          // IlionDynamicNr::Reason (misc/IlionDynamicNrReason.h): why it keeps, lowers or raises
 };
 DynamicNrReadout DynamicNrState();
 } // namespace DlssNr::AmdBridge

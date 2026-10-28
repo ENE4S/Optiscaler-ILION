@@ -524,8 +524,10 @@ static HRESULT LocalPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
     if (cq != nullptr)
         IlionLatency::AfterPresent(pSwapChain, presentResult);
 
-    // ILION latency regulator: holds the game here until the GPU is close enough behind (DX12 only, no FG, no bridge)
-    if (IlionRegulator::CurrentLevel() != IlionRegulator::Off)
+    // ILION latency regulator: holds the game here until the GPU is close enough behind (DX12 only, no FG, no bridge).
+    // While the overlay shows ILION's latency it also measures the GPU queue, with the regulator off too (no wait then)
+    const bool regulatorMeasures = IlionLatency::Enabled();
+    if (IlionRegulator::CurrentLevel() != IlionRegulator::Off || regulatorMeasures)
     {
         if (cq == nullptr)
             IlionRegulator::Skip(isD3D11 ? IlionRegulator::Status::NotSupported : IlionRegulator::Status::NoFrames);
@@ -536,7 +538,7 @@ static HRESULT LocalPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
                  (fg == nullptr && State::Instance().activeFgOutput != FGOutput::NoFG))
             IlionRegulator::Skip(IlionRegulator::Status::FrameGeneration);
         else if (willPresent)
-            IlionRegulator::AfterPresent(cq);
+            IlionRegulator::AfterPresent(cq, regulatorMeasures);
     }
 
     if (presentResult == S_OK)

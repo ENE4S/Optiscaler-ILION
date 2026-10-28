@@ -1822,5 +1822,17 @@ inline constexpr Translation kRussian[] = {
     { "Changes this session: %u", "Изменений за сессию: %u" },
     { "A step up could not hold: up-steps wait 60 s", "Повышение не удержалось: повышения ждут 60 с" },
     { "With FG: partial figure, not end-to-end", "С FG: частичное значение, не от начала до конца" },
+    { "Target met at the maximum NR resolution: nothing to change", "Цель достигнута на максимальном разрешении NR: менять нечего" },
+    { "Target met: keeps this resolution, too little room to go back up", "Цель достигнута: разрешение сохраняется, запаса для повышения мало" },
+    { "Below the target: lowering the network one step", "Ниже цели: сеть снижается на один шаг" },
+    { "At the minimum (%d%%): the game can't reach %d FPS even so", "На минимуме (%d%%): игра не достигает %d FPS даже так" },
+    { "Room to spare: going up one step after 5 s", "Есть запас: повышение на шаг через 5 с" },
+    { "Room to spare, but the last step up didn't hold: up-steps wait 60 s", "Запас есть, но последнее повышение не удержалось: повышения ждут 60 с" },
+    { "Measuring the frame time", "Измерение времени кадра" },
+    { "GPU queue", "Очередь GPU" },
+    { "%.1f frames", "%.1f кадра" },
+    { "Regulator wait (in Reflex)", "Ожидание регулятора (в Reflex)" },
+    { "OptiScaler's Reflex timings: the frame report of Reflex or fakenvapi. With fakenvapi only its CPU times are real: Frame markers (CPU) goes from the first to the last marker of one frame on the CPU. It includes neither the GPU queue nor the screen, so it is not comparable with ILION's latency. With ILION's latency regulator on it also contains the regulator's wait, which happens inside Present", "Тайминги Reflex в OptiScaler: отчёт о кадре от Reflex или fakenvapi. С fakenvapi реальны только времена CPU: «Маркеры кадра (CPU)» — от первого до последнего маркера одного кадра на CPU. Не включает очередь GPU и экран, поэтому несравнимо с задержкой ILION. При включённом регуляторе задержки ILION включает и его ожидание, которое происходит внутри Present" },
+    { "ILION's latency, DirectX 12, a partial figure: from the game's simulation start to the refresh that shows the frame, or to the end of the GPU work when the refresh can't be known. Not included: the time an input waits for the next simulation start (up to one frame), the mouse and the monitor. CPU: simulation start to Present. Present to GPU end: includes frames waiting in the queue. GPU queue: frames the GPU had not finished when Present returned. The latency regulator's wait comes after Present and before the next simulation start, so no frame's figure contains it; Reflex's frame markers do. With frame generation the figure is not end-to-end. With Neural Rendering the GPU part includes the queue waiting for the network (HIP)", "Задержка ILION, DirectX 12, частичное значение: от начала симуляции игры до обновления экрана, показывающего кадр, или до конца работы GPU, если обновление узнать нельзя. Не включает: время, которое ввод ждёт следующего начала симуляции (до одного кадра), мышь и монитор. CPU: от начала симуляции до Present. От Present до конца GPU: включает кадры, ждущие в очереди. Очередь GPU: кадры, которые GPU не закончил, когда Present вернул управление. Ожидание регулятора задержки происходит после Present и до следующего начала симуляции, поэтому не входит ни в один кадр; маркеры Reflex его включают. С генерацией кадров значение не от начала до конца. С Neural Rendering часть GPU включает ожидание очередью сети (HIP)" },
 };
 } // namespace Ilion

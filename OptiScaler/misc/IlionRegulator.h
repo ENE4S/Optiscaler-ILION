@@ -11,6 +11,13 @@
 //             but the GPU waits while the CPU prepares the next frame, so it costs frame rate.
 // Per frame: one Signal and, only when the GPU is behind, one wait (100 ms at most, never blocks the game for good).
 // Off with frame generation (its presents are paced by the generator), DX11, DXVK and the DX11/Vulkan over DX12 bridges.
+//
+// Where the wait lands (dev.51-exp): inside the game's Present call of frame N, after the real Present. So Reflex's
+// frame markers (CPU), which end at PRESENT_END, contain it; ILION's latency of frame N ends its CPU part at the
+// Present call, and frame N+1 starts at its SIMULATION_START after the wait: no ILION frame contains it.
+// Queue depth (dev.51-exp): with the same fence, the frames the GPU has not finished when the game gets its thread
+// back from Present (after the wait), this one included. Measured also with the regulator off while the overlay shows ILION's latency (a Signal, never a wait), so
+// Off can be compared with Balanced and Maximum.
 
 #include <d3d12.h>
 
@@ -48,9 +55,12 @@ inline ID3D12Device* device = nullptr;      // identity only, not held
 inline ID3D12Fence* fence = nullptr;
 inline HANDLE event = nullptr;
 inline uint64_t value = 0;
-inline uint64_t lastSeen = 0; // QPC of the last regulated Present
+inline uint64_t lastSeen = 0; // QPC of the last measured Present
+inline int lastLevel = -1;    // a level change starts the means again
 inline std::atomic<int> state { (int) Status::NoFrames };
-inline std::atomic<float> waitMs { 0.0f }; // mean time the CPU was held per frame
+inline std::atomic<float> waitMs { 0.0f };      // mean time the CPU was held per frame
+inline std::atomic<float> queueFrames { -1.0f }; // mean frames not finished by the GPU at Present, -1 = not measured
+inline std::atomic<uint64_t> measuredAt { 0 };   // QPC of the last measured Present
 
 inline uint64_t Qpc()
 {
@@ -92,24 +102,30 @@ inline int CurrentLevel()
 inline void Skip(Status why)
 {
     detail::state.store((int) why, std::memory_order_relaxed);
+    detail::queueFrames.store(-1.0f, std::memory_order_relaxed);
 }
 
-// Right after the game's Present on a DirectX 12 swapchain, before returning to the game
-inline void AfterPresent(ID3D12CommandQueue* presentQueue)
+// Right after the game's Present on a DirectX 12 swapchain, before returning to the game. measure: the overlay shows
+// ILION's latency, so the queue depth is measured even with the regulator off (then nothing waits)
+inline void AfterPresent(ID3D12CommandQueue* presentQueue, bool measure)
 {
     using namespace detail;
 
     const int level = CurrentLevel();
 
     if (level == Off)
-    {
         state.store((int) Status::Off, std::memory_order_relaxed);
+
+    if (level == Off && !measure)
+    {
+        queueFrames.store(-1.0f, std::memory_order_relaxed);
         return;
     }
 
     if (presentQueue == nullptr)
     {
-        state.store((int) Status::NoFrames, std::memory_order_relaxed);
+        if (level != Off)
+            state.store((int) Status::NoFrames, std::memory_order_relaxed);
         return;
     }
 
@@ -118,7 +134,8 @@ inline void AfterPresent(ID3D12CommandQueue* presentQueue)
     ID3D12Device* presentDevice = nullptr;
     if (presentQueue->GetDevice(IID_PPV_ARGS(&presentDevice)) != S_OK || presentDevice == nullptr)
     {
-        state.store((int) Status::Failed, std::memory_order_relaxed);
+        if (level != Off)
+            state.store((int) Status::Failed, std::memory_order_relaxed);
         return;
     }
     presentDevice->Release(); // the queue keeps the device alive
@@ -131,7 +148,8 @@ inline void AfterPresent(ID3D12CommandQueue* presentQueue)
         if (presentDevice->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)) != S_OK)
         {
             fence = nullptr;
-            state.store((int) Status::Failed, std::memory_order_relaxed);
+            if (level != Off)
+                state.store((int) Status::Failed, std::memory_order_relaxed);
             return;
         }
 
@@ -144,36 +162,62 @@ inline void AfterPresent(ID3D12CommandQueue* presentQueue)
 
     if (event == nullptr || presentQueue->Signal(fence, value + 1) != S_OK)
     {
-        state.store((int) Status::Failed, std::memory_order_relaxed);
+        if (level != Off)
+            state.store((int) Status::Failed, std::memory_order_relaxed);
         return;
     }
 
     value++;
 
-    // Frames allowed in flight after this one: Balanced lets one more stay queued
-    const uint64_t inFlight = level == Maximum ? 1 : 2;
-    const uint64_t target = value >= inFlight ? value - (inFlight - 1) : 0;
-
     const uint64_t start = Qpc();
-    double heldMs = 0.0;
 
-    if (target > 0 && fence->GetCompletedValue() < target && fence->SetEventOnCompletion(target, event) == S_OK)
+    const uint64_t completed = fence->GetCompletedValue();
+
+    double heldMs = 0.0;
+    if (level != Off)
     {
-        WaitForSingleObject(event, 100);
-        heldMs = (double) (Qpc() - start) * 1000.0 / (double) QpcFrequency();
+        // Frames allowed in flight after this one: Balanced lets one more stay queued
+        const uint64_t inFlight = level == Maximum ? 1 : 2;
+        const uint64_t target = value >= inFlight ? value - (inFlight - 1) : 0;
+
+        if (target > 0 && completed < target && fence->SetEventOnCompletion(target, event) == S_OK)
+        {
+            WaitForSingleObject(event, 100);
+            heldMs = (double) (Qpc() - start) * 1000.0 / (double) QpcFrequency();
+        }
     }
 
-    // Mean over about half a second of frames; a pause of the game starts it again
-    const bool fresh = lastSeen == 0 || start - lastSeen > QpcFrequency();
-    lastSeen = start;
-    const float previous = waitMs.load(std::memory_order_relaxed);
-    waitMs.store(fresh ? (float) heldMs : previous * 0.95f + (float) heldMs * 0.05f, std::memory_order_relaxed);
+    // Frames the GPU has not finished when the game gets its thread back, this one included (after the wait; the
+    // first frames after a new fence count only what this fence has seen)
+    const uint64_t done = fence->GetCompletedValue();
+    const double depth = done >= value ? 0.0 : (double) (value - done);
 
-    state.store((int) Status::Active, std::memory_order_relaxed);
+    // Means over about half a second of frames; a pause of the game or a level change starts them again
+    const bool fresh = lastSeen == 0 || start - lastSeen > QpcFrequency() || level != lastLevel;
+    lastSeen = start;
+    lastLevel = level;
+    const float previousWait = waitMs.load(std::memory_order_relaxed);
+    waitMs.store(fresh ? (float) heldMs : previousWait * 0.95f + (float) heldMs * 0.05f, std::memory_order_relaxed);
+    const float previousDepth = queueFrames.load(std::memory_order_relaxed);
+    queueFrames.store(fresh || previousDepth < 0.0f ? (float) depth : previousDepth * 0.95f + (float) depth * 0.05f,
+                      std::memory_order_relaxed);
+    measuredAt.store(start, std::memory_order_relaxed);
+
+    if (level != Off)
+        state.store((int) Status::Active, std::memory_order_relaxed);
 }
 
 inline Status CurrentState() { return (Status) detail::state.load(std::memory_order_relaxed); }
 
 // Mean CPU wait per frame in ms, only meaningful while Active
 inline float MeanWaitMs() { return detail::waitMs.load(std::memory_order_relaxed); }
+
+// Mean frames the GPU had not finished when Present returned to the game (this one included), -1 when not measured in the last second
+inline float MeanQueueFrames()
+{
+    const uint64_t at = detail::measuredAt.load(std::memory_order_relaxed);
+    if (at == 0 || detail::Qpc() - at > detail::QpcFrequency())
+        return -1.0f;
+    return detail::queueFrames.load(std::memory_order_relaxed);
+}
 } // namespace IlionRegulator

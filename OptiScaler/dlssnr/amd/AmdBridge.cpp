@@ -8,6 +8,7 @@
 #include "ComIdentity.h" // SameD3D12Device (the device gate, 0.3.3.2)
 #include "BridgeRules.h" // (0.3.4) the settle rule (P10) and the self-TerminateProcess stamp rule (P22), pure
 #include "DynamicNr.h"
+#include <misc/IlionDynamicNrReason.h> // ILION dev.51-exp: the controller's reason, for the menu and the log
 #include "GpuSupportRules.h" // (0.3.4) the GPU table and the APU defaults (pure, tests\034)
 #include <dlssnr/lmxxf/LmxxfBackend.h>
 #include <dlssnr/lmxxf/LmxxfTierPolicy.h> // (0.3.4) LmxxfTierSnapDefault (pure)
@@ -1971,6 +1972,38 @@ static bool Run(ID3D12GraphicsCommandList* cmd, NVSDK_NGX_Parameter* params, ID3
             r.changes = dynamicNr.changes;
             r.held = capChanges && dynamicNr.changes >= DlssNr::DynamicNr::Controller::kLmxxfChangeCap;
             r.upBlocked = dynamicNr.upBlockedUntil > t;
+            r.targetFps = std::clamp(Config::Instance()->AmdDynamicTargetFps.value_or_default(), 30, 240);
+            const auto reason = IlionDynamicNr::Explain(dynamicNr, t, settling, r.targetFps, r.ceiling, r.held);
+            r.reason = (int) reason;
+
+            // ILION dev.51-exp: a profile (target) change is logged with what the controller had, and again 3 s later
+            // with what it decided. amd_bridge.log
+            static int loggedTarget = 0;
+            static ULONGLONG decisionLogAt = 0;
+            const auto describe = [&]
+            {
+                char line[256];
+                snprintf(line, sizeof line, "real frames %.1f FPS (average %.2f ms, target %.2f ms), NR scale %d%% "
+                         "(maximum %d%%, minimum %d%%), changes %u: %s",
+                         r.averageMs > 0.0 ? 1000.0 / r.averageMs : 0.0, r.averageMs, r.targetMs,
+                         (int) std::lround(r.scale * 100.f), (int) std::lround(r.ceiling * 100.f),
+                         (int) std::lround(r.floor * 100.f), r.changes, IlionDynamicNr::Name(reason));
+                return std::string(line);
+            };
+            if (r.targetFps != loggedTarget)
+            {
+                if (loggedTarget != 0)
+                    LogLine("Adaptive NR: target " + std::to_string(loggedTarget) + " -> " + std::to_string(r.targetFps) +
+                            " FPS; " + describe());
+                loggedTarget = r.targetFps;
+                decisionLogAt = t + 3000;
+            }
+            else if (decisionLogAt != 0 && t >= decisionLogAt)
+            {
+                decisionLogAt = 0;
+                LogLine("Adaptive NR: " + std::to_string(r.targetFps) + " FPS target, 3 s later; " + describe());
+            }
+
             std::scoped_lock lock(dynamicReadoutLock);
             dynamicReadout = r;
             dynamicReadoutTick = t;

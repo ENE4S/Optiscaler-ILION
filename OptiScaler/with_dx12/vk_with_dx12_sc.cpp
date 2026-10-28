@@ -693,6 +693,8 @@ bool VkwDx12SC::Init(const VkSwapchainCreateInfoKHR* pCreateInfo, const VkAlloca
     _swapchainFormat = pCreateInfo->imageFormat;
     _colorSpace = pCreateInfo->imageColorSpace;
     _gamePresentMode = pCreateInfo->presentMode;
+    VulkanXeFGDiagnostics::Record("game_present_mode", "mode={} sync_interval={} tearing_flag={} tearing_supported={}",
+                                  (int) _gamePresentMode, SyncInterval(), PresentFlags() != 0, _tearingSupported);
     _extent = pCreateInfo->imageExtent;
 
     if (!CreateDx12Objects() || !CreateSyncObjects())
@@ -904,6 +906,8 @@ VkResult VkwDx12SC::CreateRealSwapchain(const VkSwapchainCreateInfoKHR* pCreateI
     _swapchain = swapchain;
     _swapchainFormat = pCreateInfo->imageFormat;
     _gamePresentMode = pCreateInfo->presentMode;
+    VulkanXeFGDiagnostics::Record("game_present_mode", "mode={} sync_interval={} tearing_flag={} tearing_supported={}",
+                                  (int) _gamePresentMode, SyncInterval(), PresentFlags() != 0, _tearingSupported);
     _extent = pCreateInfo->imageExtent;
 
     LOG_DEBUG("Hidden window swapchain {:X}: {}x{}, {} images, present mode {}", (size_t) swapchain, _extent.width,
@@ -1565,7 +1569,9 @@ UINT VkwDx12SC::SyncInterval() const
 
 UINT VkwDx12SC::PresentFlags() const
 {
-    return _gamePresentMode == VK_PRESENT_MODE_IMMEDIATE_KHR && (_fgFlags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING) != 0
-               ? DXGI_PRESENT_ALLOW_TEARING
-               : 0;
+    // ILION dev.53: any mode that doesn't wait for the refresh (V-Sync off in the game: IMMEDIATE, or MAILBOX, which
+    // many games use for it) presents with tearing allowed. Present(0) without it stays capped at the refresh in a
+    // flip-model chain, and XeFG then had to throttle the game to refresh / multiplier (NMS: 165 Hz, 5x, 33 FPS)
+    const bool uncapped = _gamePresentMode == VK_PRESENT_MODE_IMMEDIATE_KHR || _gamePresentMode == VK_PRESENT_MODE_MAILBOX_KHR;
+    return uncapped && (_fgFlags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING) != 0 ? DXGI_PRESENT_ALLOW_TEARING : 0;
 }

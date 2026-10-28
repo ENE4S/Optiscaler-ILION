@@ -958,9 +958,11 @@ bool VkwDx12SC::CreateFGSwapchain()
         State::Instance().vkwDx12FGBuffers = 0;
     }
 
+    // ILION dev.54: no bridge without its chain (the overlay, the cost panel and the V-Sync card follow this state)
     if (FAILED(result) || swapchain == nullptr)
     {
         LOG_ERROR("Can't create the FG swapchain: {:X}", (UINT) result);
+        bridgeState.swapchainInteropApi = SwapchainInteropApi::None;
         return false;
     }
 
@@ -968,7 +970,10 @@ bool VkwDx12SC::CreateFGSwapchain()
     swapchain->Release();
 
     if (_fgSwapChain == nullptr)
+    {
+        bridgeState.swapchainInteropApi = SwapchainInteropApi::None;
         return false;
+    }
 
     auto& state = State::Instance();
     state.currentSwapchainDesc = desc;

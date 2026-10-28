@@ -4,6 +4,7 @@
 #include <atomic>
 #include <Util.h>
 #include <fstream>
+#include <filesystem>
 #include <format>
 #include <utility>
 #include <map>
@@ -71,9 +72,17 @@ void Record(const char* event, std::format_string<Args...> format, Args&&... arg
             utc.wMilliseconds, GetCurrentProcessId(), event, std::format(format, std::forward<Args>(args)...));
         spdlog::info("{}", line);
         OutputDebugStringA((line + "\n").c_str());
-        // Independent of the user's general logging setting. Append, never truncate.
-        std::ofstream output(Util::DllPath().parent_path() / L"ILION-XeMFG-Vulkan-diagnostic.log",
-                             std::ios::app);
+        // Independent of the user's general logging setting. Append, never truncate; ILION dev.54: past 4 MB the file
+        // becomes .old (replacing the previous one), so a long session doesn't keep growing it
+        const auto path = Util::DllPath().parent_path() / L"ILION-XeMFG-Vulkan-diagnostic.log";
+        std::error_code ec;
+        if (std::filesystem::file_size(path, ec) > 4u * 1024u * 1024u && !ec)
+        {
+            auto old = path;
+            old += L".old";
+            std::filesystem::rename(path, old, ec);
+        }
+        std::ofstream output(path, std::ios::app);
         output << line << '\n';
     }
     catch (...) {} // A diagnostic failure must not affect rendering.

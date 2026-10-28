@@ -10848,11 +10848,16 @@ static void UpdateMfgCost(State& state, double nowMs)
 
     const double presented = frames[S::Presents] * 1000.0 / elapsed;
 
+    // ILION dev.54: with the Vulkan XeFG bridge the presents ILION sees are the game's own Vulkan ones (real frames);
+    // XeFG presents on its D3D12 chain, and its SDK confirms how many frames it presented per real one
+    const bool bridged = VulkanXeFGDiagnostics::FixActive();
+    const unsigned confirmedGenerated = bridged ? VulkanXeFGDiagnostics::ReportedGeneratedFrames() : 0;
+
     if (generating)
     {
         if (m.source < 0)
         {
-            for (int i = S::Upscaler; i < S::Presents && m.source < 0; i++)
+            for (int i = S::Upscaler; i < (bridged ? S::SourceCount : S::Presents) && m.source < 0; i++)
             {
                 if (frames[i] > 0.0)
                     m.source = i;
@@ -10861,7 +10866,11 @@ static void UpdateMfgCost(State& state, double nowMs)
 
         m.unmeasurable = m.source < 0;
         m.current = m.source >= 0 ? frames[m.source] * 1000.0 / elapsed : 0.0;
-        m.total = m.current > 0.0 && presented >= m.current * (m.multiplier > 1 ? 1.25 : 1.0) ? presented : 0.0;
+
+        if (bridged)
+            m.total = m.current > 0.0 && confirmedGenerated > 0 ? presented * (double) (confirmedGenerated + 1) : 0.0;
+        else
+            m.total = m.current > 0.0 && presented >= m.current * (m.multiplier > 1 ? 1.25 : 1.0) ? presented : 0.0;
     }
     else
     {
@@ -15877,8 +15886,9 @@ void MenuCommon::RenderVsyncSettings(RenderMenuContext& ctx)
     auto& currentFeature = ctx.currentFeature;
     auto& menuResScale = ctx.menuResScale;
 
-    // DX11 & DX12 -----------------------------
-    if (state.swapchainApi != Vulkan)
+    // DX11 & DX12; Vulkan through the XeFG bridge too (ILION dev.54): its D3D12 chain presents with these settings, and
+    // games that ask Vulkan FIFO with V-Sync off (No Man's Sky) need V-Sync Off here to go past the refresh rate
+    if (state.swapchainApi != Vulkan || state.swapchainInteropApi == SwapchainInteropApi::VkwDx12)
     {
         // V-SYNC -----------------------------
         SectionTitle("V-Sync Settings");

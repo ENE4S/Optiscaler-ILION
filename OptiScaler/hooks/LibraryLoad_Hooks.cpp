@@ -27,6 +27,7 @@
 #include <hooks/Vulkan_Hooks.h>
 #include <hooks/Gdi32_Hooks.h>
 #include <hooks/Streamline_Hooks.h>
+#include <framegen/nvngx/Nvngx_HelixSR.h>
 
 #include <fsr4/FSR4ModelSelection.h>
 #include <fsr4/FSR4Upgrade.h>
@@ -61,6 +62,16 @@ HMODULE LibraryLoadHooks::LoadLibraryCheckW(std::wstring libName, LPCWSTR lpLibF
 #ifdef LOG_LIB_OPERATIONS
     LOG_TRACE("{}", libNameA);
 #endif
+
+    // ILION dev.51-exp3: NVIDIA FG Lite. HelixSR's frame generation loads NVIDIA's NGX core (helixsr-fg\_nvngx.dll) by
+    // its full path; answering that with this DLL made HelixSR call ILION, which called HelixSR again, and the game
+    // hung at start (Cyberpunk: "ngx: init (ext)"). Files under HelixSR's folder load as they are, as HelixSR Scaler does
+    if (const auto helixFolder = Nvngx_HelixSR::LoadedFolder();
+        !helixFolder.empty() && Util::IsSubpath(std::filesystem::path(libName), helixFolder))
+    {
+        LOG_INFO("{} is HelixSR's (NVIDIA FG Lite): loaded as it is", libNameA);
+        return nullptr;
+    }
 
     // C:\\Path\\like\\this.dll
     auto path = std::filesystem::path(libName).lexically_normal();

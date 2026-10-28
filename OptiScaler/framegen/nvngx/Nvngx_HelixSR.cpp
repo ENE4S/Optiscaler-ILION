@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <fstream>
+#include <mutex>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -82,6 +83,15 @@ bool Nvngx_HelixSR::UseLite(const Install& install)
 
 uint32_t Nvngx_HelixSR::LoadedVersion() { return loadedVersion.load(); }
 
+static std::mutex folderLock;
+static fs::path loadedFolder;
+
+fs::path Nvngx_HelixSR::LoadedFolder()
+{
+    std::scoped_lock lock(folderLock);
+    return loadedFolder;
+}
+
 void Nvngx_HelixSR::LoadLibraries()
 {
     // The loader's own LoadLibrary: OptiScaler's hooks would hand a FidelityFX name to its own FFX handling
@@ -90,6 +100,12 @@ void Nvngx_HelixSR::LoadLibraries()
     {
         if (!fs::is_regular_file(path, ec))
             continue;
+
+        // Set before the load: HelixSR's DLL can load its helixsr-fg files while it starts
+        {
+            std::scoped_lock lock(folderLock);
+            loadedFolder = path.parent_path().lexically_normal();
+        }
 
         HMODULE module = NtdllProxy::LoadLibraryExW_Ldr(path.c_str(), NULL, 0);
         if (module == nullptr)

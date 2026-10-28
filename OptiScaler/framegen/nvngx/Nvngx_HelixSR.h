@@ -35,4 +35,9 @@ class Nvngx_HelixSR : public Nvngx_DllProxy
 
     // The version the loaded DLL reports (HelixSR_NgxFgVersion), 0 when none is loaded
     static uint32_t LoadedVersion();
+
+    // ILION dev.51-exp3: the folder of the HelixSR DLL being loaded or loaded (empty before). Files under it load as
+    // they are (LibraryLoad_Hooks): HelixSR loads NVIDIA's NGX core (helixsr-fg\_nvngx.dll) by its full path, and
+    // ILION answering that with itself made HelixSR call ILION in a loop, the game hung at start
+    static std::filesystem::path LoadedFolder();
 };

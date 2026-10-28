@@ -975,6 +975,19 @@ int DanielFastModeSupported()
 int DanielFastModeRuntimeOwn() { return AmdPreSr::RuntimeOwnQuality(); }
 // Every backend setting, read from the config. Shared by the pre-SR bridge (Before) and
 // final image mode, so the two never disagree about what a slider means.
+// ILION dev.51: the dynamic NR controller's last state, for the menu (AmdBridge.h, DynamicNrState)
+static std::mutex dynamicReadoutLock;
+static DynamicNrReadout dynamicReadout;
+static unsigned long long dynamicReadoutTick = 0;
+
+DynamicNrReadout DynamicNrState()
+{
+    std::scoped_lock lock(dynamicReadoutLock);
+    DynamicNrReadout r = dynamicReadout;
+    r.running = dynamicReadoutTick != 0 && GetTickCount64() - dynamicReadoutTick < 1000;
+    return r;
+}
+
 static AmdPreSr::Settings BuildSettings(float sessionScale)
 {
     const auto& cfg = *Config::Instance();
@@ -1946,6 +1959,22 @@ static bool Run(ID3D12GraphicsCommandList* cmd, NVSDK_NGX_Parameter* params, ID3
                                         Config::Instance()->AmdNrScale.value_or_default(), capChanges, dynLog);
         if (!dynLog.empty())
             LogLine(dynLog);
+        // ILION dev.51: a copy for the menu (DynamicNrState); the controller and its result are unchanged
+        {
+            DynamicNrReadout r;
+            r.running = true;
+            r.scale = sessionScale;
+            r.ceiling = Config::Instance()->AmdNrScale.value_or_default();
+            r.floor = (std::min)(DlssNr::DynamicNr::Controller::kSteps[DlssNr::DynamicNr::Controller::kLast], r.ceiling);
+            r.averageMs = dynamicNr.emaMs;
+            r.targetMs = 1000.0 / std::clamp(Config::Instance()->AmdDynamicTargetFps.value_or_default(), 30, 240);
+            r.changes = dynamicNr.changes;
+            r.held = capChanges && dynamicNr.changes >= DlssNr::DynamicNr::Controller::kLmxxfChangeCap;
+            r.upBlocked = dynamicNr.upBlockedUntil > t;
+            std::scoped_lock lock(dynamicReadoutLock);
+            dynamicReadout = r;
+            dynamicReadoutTick = t;
+        }
     }
     const float requestedScale=sessionScale;
     const auto now=GetTickCount64();

@@ -1812,5 +1812,15 @@ inline constexpr Translation kRussian[] = {
     { "Target: %d FPS", "Цель: %d FPS" },
     { "Target %d FPS. The NR resolution below is the maximum: when the game can't hold the target the network steps down to 50%% at most, and goes back up after 5 s with room to spare. No test runs: it follows the frame time while you play", "Цель %d FPS. Разрешение NR ниже — максимум: когда игра не держит цель, сеть ступенчато снижается максимум до 50%%, и снова растёт через 5 с при запасе. Без тестов: следит за временем кадра во время игры" },
     { "lmxxf: each step rebuilds the network for a moment. When its runtime needs it, the steps stop after 12 changes in a session", "lmxxf: каждый шаг на мгновение перестраивает сеть. Если рантайму это нужно, шаги прекращаются после 12 изменений за сессию" },
+    { "Waiting for NR frames", "Ожидание кадров NR" },
+    { "Held at %d%%: lmxxf reached its 12 changes this session. Restart the game to adapt again", "Зафиксировано на %d%%: lmxxf исчерпал 12 изменений за сессию. Перезапустите игру, чтобы адаптация снова работала" },
+    { "At the minimum (%d%%): %.0f FPS, the game can't reach %d FPS even so", "На минимуме (%d%%): %.0f FPS, игра не достигает %d FPS даже так" },
+    { "NR resolution now %d%%, %.0f FPS, target %d", "Разрешение NR сейчас %d%%, %.0f FPS, цель %d" },
+    { "The frame time is the one of the real frames NR runs on: frames made by frame generation don't count. The NETWORK cell of the neural monitor shows the network size in use", "Время кадра берётся по реальным кадрам, на которых работает NR: кадры генерации кадров не учитываются. Ячейка СЕТЬ нейромонитора показывает используемый размер сети" },
+    { "NR resolution: now %d%%, maximum %d%%, minimum %d%%", "Разрешение NR: сейчас %d%%, максимум %d%%, минимум %d%%" },
+    { "Average frame: %.1f ms, target %.1f ms", "Средний кадр: %.1f мс, цель %.1f мс" },
+    { "Changes this session: %u", "Изменений за сессию: %u" },
+    { "A step up could not hold: up-steps wait 60 s", "Повышение не удержалось: повышения ждут 60 с" },
+    { "With FG: partial figure, not end-to-end", "С FG: частичное значение, не от начала до конца" },
 };
 } // namespace Ilion

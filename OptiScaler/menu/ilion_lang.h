@@ -2375,6 +2375,16 @@ inline constexpr Translation kSpanish[] = {
     { "Target: %d FPS", "Objetivo: %d FPS" },
     { "Target %d FPS. The NR resolution below is the maximum: when the game can't hold the target the network steps down to 50%% at most, and goes back up after 5 s with room to spare. No test runs: it follows the frame time while you play", "Objetivo %d FPS. La resolución NR de abajo es el máximo: cuando el juego no mantiene el objetivo, la red baja por pasos hasta el 50%% como mucho, y vuelve a subir tras 5 s con margen. Sin pruebas: sigue el tiempo de fotograma mientras juegas" },
     { "lmxxf: each step rebuilds the network for a moment. When its runtime needs it, the steps stop after 12 changes in a session", "lmxxf: cada paso reconstruye la red un instante. Cuando su runtime lo necesita, los pasos se detienen tras 12 cambios en una sesión" },
+    { "Waiting for NR frames", "Esperando fotogramas de NR" },
+    { "Held at %d%%: lmxxf reached its 12 changes this session. Restart the game to adapt again", "Retenido en %d%%: lmxxf alcanzó sus 12 cambios en esta sesión. Reinicia el juego para que vuelva a adaptarse" },
+    { "At the minimum (%d%%): %.0f FPS, the game can't reach %d FPS even so", "En el mínimo (%d%%): %.0f FPS, el juego no llega a %d FPS ni así" },
+    { "NR resolution now %d%%, %.0f FPS, target %d", "Resolución NR ahora %d%%, %.0f FPS, objetivo %d" },
+    { "The frame time is the one of the real frames NR runs on: frames made by frame generation don't count. The NETWORK cell of the neural monitor shows the network size in use", "El tiempo de fotograma es el de los fotogramas reales en los que funciona NR: los fotogramas creados por la generación de fotogramas no cuentan. La celda RED del monitor neuronal muestra el tamaño de red en uso" },
+    { "NR resolution: now %d%%, maximum %d%%, minimum %d%%", "Resolución NR: ahora %d%%, máximo %d%%, mínimo %d%%" },
+    { "Average frame: %.1f ms, target %.1f ms", "Fotograma medio: %.1f ms, objetivo %.1f ms" },
+    { "Changes this session: %u", "Cambios en esta sesión: %u" },
+    { "A step up could not hold: up-steps wait 60 s", "Una subida no se sostuvo: las subidas esperan 60 s" },
+    { "With FG: partial figure, not end-to-end", "Con FG: cifra parcial, no de extremo a extremo" },
 };
 
 } // namespace Ilion

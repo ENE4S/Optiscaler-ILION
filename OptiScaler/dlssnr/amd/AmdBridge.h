@@ -158,6 +158,21 @@ std::string ForeignStandalone();
 std::string SessionHeader();
 // VER_PRODUCT_NAME: "AMD-NR v<ver> / OptiScaler v<ver> (<build stamp>)".
 const char* ProductName();
+// ILION dev.51: what the dynamic NR resolution controller (DynamicNr.h, [DlssNr] AmdDynamicRes) is doing, for the
+// menu. A copy of its state after its last frame; reading it changes nothing. running = it ran in the last second.
+struct DynamicNrReadout
+{
+    bool running = false;
+    float scale = 1.f;       // the NR scale it hands the backend this frame
+    float ceiling = 1.f;     // the manual NR resolution (the maximum)
+    float floor = 0.5f;      // its lowest step
+    double averageMs = 0.0;  // its frame time average (real frames, the ones NR runs on)
+    double targetMs = 0.0;   // 1000 / target FPS
+    unsigned changes = 0;    // scale changes this session
+    bool held = false;       // lmxxf change cap reached: no more changes until the game restarts
+    bool upBlocked = false;  // a step up could not hold: up-steps wait
+};
+DynamicNrReadout DynamicNrState();
 } // namespace DlssNr::AmdBridge
 
 namespace AmdPreSr

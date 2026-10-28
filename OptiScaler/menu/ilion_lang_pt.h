@@ -1812,5 +1812,15 @@ inline constexpr Translation kPortuguese[] = {
     { "Target: %d FPS", "Alvo: %d FPS" },
     { "Target %d FPS. The NR resolution below is the maximum: when the game can't hold the target the network steps down to 50%% at most, and goes back up after 5 s with room to spare. No test runs: it follows the frame time while you play", "Alvo %d FPS. A resolução NR abaixo é o máximo: quando o jogo não mantém o alvo, a rede desce em passos até 50%% no máximo, e volta a subir após 5 s com folga. Sem testes: acompanha o tempo de quadro enquanto você joga" },
     { "lmxxf: each step rebuilds the network for a moment. When its runtime needs it, the steps stop after 12 changes in a session", "lmxxf: cada passo reconstrói a rede por um instante. Quando o runtime precisa, os passos param após 12 mudanças numa sessão" },
+    { "Waiting for NR frames", "Aguardando quadros do NR" },
+    { "Held at %d%%: lmxxf reached its 12 changes this session. Restart the game to adapt again", "Retido em %d%%: o lmxxf atingiu suas 12 mudanças nesta sessão. Reinicie o jogo para voltar a adaptar" },
+    { "At the minimum (%d%%): %.0f FPS, the game can't reach %d FPS even so", "No mínimo (%d%%): %.0f FPS, o jogo não chega a %d FPS mesmo assim" },
+    { "NR resolution now %d%%, %.0f FPS, target %d", "Resolução NR agora %d%%, %.0f FPS, alvo %d" },
+    { "The frame time is the one of the real frames NR runs on: frames made by frame generation don't count. The NETWORK cell of the neural monitor shows the network size in use", "O tempo de quadro é o dos quadros reais em que o NR funciona: os quadros criados pela geração de quadros não contam. A célula REDE do monitor neural mostra o tamanho de rede em uso" },
+    { "NR resolution: now %d%%, maximum %d%%, minimum %d%%", "Resolução NR: agora %d%%, máximo %d%%, mínimo %d%%" },
+    { "Average frame: %.1f ms, target %.1f ms", "Quadro médio: %.1f ms, alvo %.1f ms" },
+    { "Changes this session: %u", "Mudanças nesta sessão: %u" },
+    { "A step up could not hold: up-steps wait 60 s", "Uma subida não se manteve: as subidas esperam 60 s" },
+    { "With FG: partial figure, not end-to-end", "Com FG: valor parcial, não de ponta a ponta" },
 };
 } // namespace Ilion

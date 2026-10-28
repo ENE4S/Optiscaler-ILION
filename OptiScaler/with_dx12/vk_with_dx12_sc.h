@@ -101,7 +101,15 @@ class VkwDx12SC
 
     // The game's handle, a real swapchain on the hidden window
     VkSwapchainKHR _swapchain = VK_NULL_HANDLE;
-    std::vector<VkSwapchainKHR> _retired;
+    // ILION dev.52 (dashdogy a12fcb7f): a swapchain the game recreated keeps the semaphores of the presents made to it,
+    // the presentation engine may still wait on them until the game destroys it
+    struct Retired
+    {
+        VkSwapchainKHR swapchain = VK_NULL_HANDLE;
+        std::vector<VkSemaphore> presentSemaphores;
+    };
+    std::vector<Retired> _retired;
+    std::vector<VkSemaphore> _swapchainSemaphores; // of presents to _swapchain, beyond its images' current ones
     std::vector<VkImage> _swapchainImages;
     VkFormat _swapchainFormat = VK_FORMAT_UNDEFINED;
     VkFormat _sharedFormat = VK_FORMAT_UNDEFINED;

@@ -2406,6 +2406,9 @@ inline constexpr Translation kSpanish[] = {
     { "This GPU's driver has no shader model 6.6: HelixSR frame generation can't run on it", "El controlador de esta GPU no tiene shader model 6.6: la generación de fotogramas de HelixSR no puede funcionar en ella" },
     { "NVIDIA's DLSS frame generation, light mode (310.9.16), run by HelixSR 2.0.0 on GPUs that are not NVIDIA's\n\nInstall HelixSR 2.0.0 with frame generation yourself: its setup builds NVIDIA's parts on your PC\nILION includes none of it. DirectX 12 games with DLSS frame generation. One generated frame", "Generación de fotogramas DLSS de NVIDIA, modo ligero (310.9.16), ejecutada por HelixSR 2.0.0 en GPU que no son de NVIDIA\n\nInstala tú HelixSR 2.0.0 con generación de fotogramas: su instalación construye las partes de NVIDIA en tu PC\nILION no incluye nada de ello. Juegos DirectX 12 con generación de fotogramas DLSS. Un fotograma generado" },
     { "helixsr-fg\\310.9.16 is incomplete: HelixSR runs the full mode (310.3), not Lite", "helixsr-fg\\310.9.16 está incompleta: HelixSR usa el modo completo (310.3), no Lite" },
+    { "Identified as HLX FSR 4 by its file. While upscaling, ILION also checks that this dll is the one running.", "Identificado como HLX FSR 4 por su archivo. Mientras escala, ILION comprueba además que esta dll es la que se ejecuta." },
+    { "Runtime in its log: %s", "Runtime según su log: %s" },
+    { "Its log says it gave the upscale to AMD's FSR", "Su log dice que cedió el escalado a la FSR de AMD" },
 };
 
 } // namespace Ilion

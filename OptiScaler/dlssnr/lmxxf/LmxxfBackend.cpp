@@ -923,8 +923,12 @@ bool HighlightChromaGuardOn() { return ::Config::Instance()->AmdLmxxfHighlightCh
 bool AutoExposureHighlightCapOn() { return ::Config::Instance()->AmdLmxxfAutoExposureHighlightCap.value_or_default(); }
 // (0.3.4, lmxxf Fast mode) [DlssNr] AmdLmxxfFastMode, default off (LmxxfTierPolicy.h PlanLmxxfFastSize): read the same
 // way, once per Record; a menu toggle acts on the next Record.
-bool FastModeOn() { return ::Config::Instance()->AmdLmxxfFastMode.value_or_default(); }
+// ILION dev.55: Adaptive NR's Smooth profile asks for it while it has lowered the NR resolution (Lmxxf::SetAdaptiveFast)
+std::atomic<bool> adaptiveFast { false };
+bool FastModeOn() { return ::Config::Instance()->AmdLmxxfFastMode.value_or_default() || adaptiveFast.load(); }
 } // namespace
+
+void SetAdaptiveFast(bool on) { adaptiveFast.store(on); }
 
 // Two layouts are accepted, both next to the game exe:
 //   lmxxf's own package:   DLSS5-AMD\native-game-tiled-assets  (weights + HLSL at the root, HIP\gfx1201\*.hsaco)

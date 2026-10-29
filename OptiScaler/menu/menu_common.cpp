@@ -18444,8 +18444,11 @@ static void RenderAfmfSegment(float scale, const ImVec4& warnColour, bool superM
     ImGui::BeginDisabled(!ready || !s.supported || s.liveBusy);
     if (IlionTheme::LampButton(action, on ? IlionTheme::Lamp::Red : IlionTheme::Lamp::Green))
     {
-        afmf.ToggleLive();
-        LOG_INFO("AFMF: AMD key {} sent to switch it {}", IlionAfmf::ToggleHotkeyText(), on ? "off" : "on");
+        // ILION dev.55: AMD's key does nothing while AFMF is off in Adrenalin: turning it on switches that on first
+        const bool enableDriverFirst = !on && !s.enabled;
+        afmf.ToggleLive(!on, enableDriverFirst);
+        LOG_INFO("AFMF: AMD key {} sent to switch it {}{}", IlionAfmf::ToggleHotkeyText(), on ? "off" : "on",
+                 enableDriverFirst ? " (AFMF turned on in the driver first)" : "");
     }
     ImGui::EndDisabled();
 
@@ -19240,9 +19243,10 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
         const char* labels[] = { "Off", "Quality", "Balanced", "Smooth" };
         const char* tips[] = {
             "NR always runs at the NR resolution set below",
-            "Aims at 40 FPS: the network gets smaller only when the game can't hold them",
-            "Aims at 50 FPS: the network gets smaller only when the game can't hold them",
-            "Aims at 60 FPS: the network gets smaller only when the game can't hold them"
+            // ILION dev.55: each profile has its own lowest NR resolution (IlionDynamicNr::ProfileFor)
+            "Image first: aims at 40 FPS and keeps the NR resolution at 85% or more",
+            "Aims at 50 FPS: the NR resolution goes down to 58% at most",
+            "FPS first: aims at 60 FPS, goes down to 50% and runs lmxxf's Fast network while lowered"
         };
         int profile = -1; // -1 = a target of the ini or of the slider below
         if (!dynamic)
@@ -19300,8 +19304,9 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
                 // What it runs at and what it measures, then why it keeps, lowers or raises the resolution
                 const bool short_ = reason == Reason::Lowering || reason == Reason::AtMinimum || reason == Reason::Held;
                 WrappedText(short_ ? IlionTheme::LampAmber : IlionTheme::LampGreen,
-                            StrFmt(Tr("NR resolution now %d%%, %.0f FPS, target %d"), pct(dyn.scale), fpsNow,
-                                   dyn.targetFps).c_str());
+                            (StrFmt(Tr("NR resolution now %d%%, %.0f FPS, target %d"), pct(dyn.scale), fpsNow,
+                                    dyn.targetFps) +
+                             (dyn.fast ? std::string(" · ") + Tr("Fast network") : std::string())).c_str());
                 std::string why;
                 ImVec4 whyColour = IlionTheme::TextDim;
                 switch (reason) {
@@ -19316,7 +19321,15 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
                     whyColour = IlionTheme::LampAmber;
                     break;
                 case Reason::AtMinimum:
-                    why = StrFmt(Tr("At the minimum (%d%%): the game can't reach %d FPS even so"), pct(dyn.scale), dyn.targetFps);
+                    // ILION dev.55: the minimum is the profile's; the others go lower
+                    if (dyn.floor > 0.51f)
+                        why = StrFmt(Tr(dyn.floor > 0.8f
+                                            ? "At this profile's minimum (%d%%): the game can't reach %d FPS even so. Balanced or Smooth lower it more"
+                                            : "At this profile's minimum (%d%%): the game can't reach %d FPS even so. Smooth lowers it more"),
+                                     pct(dyn.scale), dyn.targetFps);
+                    else
+                        why = StrFmt(Tr("At the lowest NR resolution (%d%%): the game can't reach %d FPS even so"),
+                                     pct(dyn.scale), dyn.targetFps);
                     whyColour = IlionTheme::LampAmber;
                     break;
                 case Reason::WaitingRoom:

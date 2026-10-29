@@ -1846,5 +1846,11 @@ inline constexpr Translation kRussian[] = {
     { "Identified as HLX FSR 4 by its file. While upscaling, ILION also checks that this dll is the one running.", "Определён как HLX FSR 4 по файлу. Во время масштабирования ILION также проверяет, что работает именно эта dll." },
     { "Runtime in its log: %s", "Рантайм по его журналу: %s" },
     { "Its log says it gave the upscale to AMD's FSR", "По его журналу масштабирование передано FSR от AMD" },
+    { "At this profile's minimum (%d%%): the game can't reach %d FPS even so. Balanced or Smooth lower it more", "На минимуме этого профиля (%d%%): игра не достигает %d FPS даже так. «Баланс» или «Плавность» снижают сильнее" },
+    { "At this profile's minimum (%d%%): the game can't reach %d FPS even so. Smooth lowers it more", "На минимуме этого профиля (%d%%): игра не достигает %d FPS даже так. «Плавность» снижает сильнее" },
+    { "At the lowest NR resolution (%d%%): the game can't reach %d FPS even so", "На самом низком разрешении NR (%d%%): игра не достигает %d FPS даже так" },
+    { "Image first: aims at 40 FPS and keeps the NR resolution at 85% or more", "Приоритет изображения: цель 40 FPS, разрешение NR не ниже 85%" },
+    { "Aims at 50 FPS: the NR resolution goes down to 58% at most", "Цель 50 FPS: разрешение NR снижается не ниже 58%" },
+    { "FPS first: aims at 60 FPS, goes down to 50% and runs lmxxf's Fast network while lowered", "Приоритет FPS: цель 60 FPS, снижение до 50% и быстрая сеть lmxxf при снижении" },
 };
 } // namespace Ilion

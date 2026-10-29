@@ -1939,6 +1939,8 @@ static bool Run(ID3D12GraphicsCommandList* cmd, NVSDK_NGX_Parameter* params, ID3
     // (0.3.4, P10: at once, a scale-only change no longer settles 300 ms), so it must stay rare - this is console-style
     // stepped DRS, not per-frame scaling. The manual NR resolution is the ceiling.
     float sessionScale=Config::Instance()->AmdNrScale.value_or_default();
+    if (!Config::Instance()->AmdDynamicRes.value_or_default())
+        Lmxxf::SetAdaptiveFast(false); // ILION dev.55: Adaptive NR off leaves no Fast step behind
     if (Config::Instance()->AmdDynamicRes.value_or_default())
     {
         // (0.3.3.2 rebuild, #33) Hysteresis and a precise clock: DynamicNr.h has the rules and what they replace.
@@ -1955,9 +1957,14 @@ static bool Run(ID3D12GraphicsCommandList* cmd, NVSDK_NGX_Parameter* params, ID3
         // lmxxf rebuilds leak about 100 MB each unless its runtime reuses its HIP imports (R3); then no cap
         const bool capChanges = activeRuntime.load() == 2 && Lmxxf::ImportPoolState() != 1;
         std::string dynLog;
-        sessionScale = dynamicNr.Update(t, dtMs, settling,
-                                        std::clamp(Config::Instance()->AmdDynamicTargetFps.value_or_default(), 30, 240),
-                                        Config::Instance()->AmdNrScale.value_or_default(), capChanges, dynLog);
+        // ILION dev.55: the profile's lowest NR resolution, and Smooth's Fast step (lmxxf only: danielblnc has no
+        // Fast mode of the same kind)
+        const int dynTarget = std::clamp(Config::Instance()->AmdDynamicTargetFps.value_or_default(), 30, 240);
+        const auto profile = IlionDynamicNr::ProfileFor(dynTarget);
+        const bool allowFast = profile.fast && activeRuntime.load() == 2;
+        sessionScale = dynamicNr.Update(t, dtMs, settling, dynTarget, Config::Instance()->AmdNrScale.value_or_default(),
+                                        capChanges, dynLog, profile.floor, allowFast);
+        Lmxxf::SetAdaptiveFast(dynamicNr.Fast());
         if (!dynLog.empty())
             LogLine(dynLog);
         // ILION dev.51: a copy for the menu (DynamicNrState); the controller and its result are unchanged
@@ -1967,14 +1974,17 @@ static bool Run(ID3D12GraphicsCommandList* cmd, NVSDK_NGX_Parameter* params, ID3
             r.scale = sessionScale;
             r.configured = Config::Instance()->AmdNrScale.value_or_default();
             r.ceiling = (std::min)(r.configured, DlssNr::DynamicNr::Controller::kSteps[0]);
-            r.floor = (std::min)(DlssNr::DynamicNr::Controller::kSteps[DlssNr::DynamicNr::Controller::kLast], r.ceiling);
+            r.floor = (std::min)(profile.floor, r.ceiling);
+            r.fast = dynamicNr.Fast();
+            r.fastAllowed = allowFast;
             r.averageMs = dynamicNr.emaMs;
             r.targetMs = 1000.0 / std::clamp(Config::Instance()->AmdDynamicTargetFps.value_or_default(), 30, 240);
             r.changes = dynamicNr.changes;
             r.held = capChanges && dynamicNr.changes >= DlssNr::DynamicNr::Controller::kLmxxfChangeCap;
             r.upBlocked = dynamicNr.upBlockedUntil > t;
             r.targetFps = std::clamp(Config::Instance()->AmdDynamicTargetFps.value_or_default(), 30, 240);
-            const auto reason = IlionDynamicNr::Explain(dynamicNr, t, settling, r.targetFps, r.configured, r.held);
+            const auto reason = IlionDynamicNr::Explain(dynamicNr, t, settling, r.targetFps, r.configured, r.held,
+                                                        profile.floor, allowFast);
             r.reason = (int) reason;
 
             // ILION dev.51-exp: a profile (target) change is logged with what the controller had, and again 3 s later

@@ -26,8 +26,34 @@ enum class Reason : int
     StepAboveFails // room to spare, but the step above was over this target not long ago (dev.51-exp2: 5 min)
 };
 
+// ILION dev.55: what each Adaptive NR profile allows. They used to differ only in their FPS target, all going down to
+// 50%: where the game can't reach 40 FPS (Cyberpunk with path tracing, RX 7900 XTX) the three ended at 50% with the
+// same FPS. Now each has its own lowest NR resolution, and Smooth with lmxxf runs its Fast mode (the network one size
+// tier lower) on every step below the maximum.
+// A target of the ini or of the Advanced slider that is not a profile's goes down to 50%, as before.
+struct Profile
+{
+    float floor = 0.5f;     // lowest NR resolution
+    bool fast = false;      // lmxxf's Fast mode on every step below the maximum (lmxxf only)
+};
+
+inline Profile ProfileFor(int targetFps)
+{
+    switch (targetFps)
+    {
+    case 40: // Quality
+        return { 0.85f, false };
+    case 50: // Balanced
+        return { 0.58f, false };
+    case 60: // Smooth
+        return { 0.5f, true };
+    default:
+        return {};
+    }
+}
+
 inline Reason Explain(const DlssNr::DynamicNr::Controller& c, unsigned long long t, bool settling, int targetFps,
-                      float ceiling, bool capped)
+                      float ceiling, bool capped, float floor = 0.5f, bool allowFast = false)
 {
     using Controller = DlssNr::DynamicNr::Controller;
 
@@ -51,7 +77,7 @@ inline Reason Explain(const DlssNr::DynamicNr::Controller& c, unsigned long long
         return Reason::Held;
 
     if (over)
-        return c.step >= Controller::kLast ? Reason::AtMinimum : Reason::Lowering;
+        return c.step >= Controller::LastStep(floor, first) ? Reason::AtMinimum : Reason::Lowering;
 
     if (room && c.step > first)
     {
@@ -79,7 +105,7 @@ inline const char* Name(Reason r)
     case Reason::Lowering:
         return "over the target, steps down after 1.5 s over it";
     case Reason::AtMinimum:
-        return "over the target at the minimum, can't go lower";
+        return "over the target at the profile's minimum, can't go lower";
     case Reason::WaitingRoom:
         return "room to spare, steps up after 5 s with room";
     case Reason::UpBlocked:

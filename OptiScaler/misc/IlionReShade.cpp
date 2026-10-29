@@ -8,6 +8,7 @@
 #include <Psapi.h>
 
 #include <Util.h>
+#include <State.h>
 
 #include <algorithm>
 #include <atomic>
@@ -340,9 +341,36 @@ void ApplyRequest(reshade::api::effect_runtime* rt, const Request& r)
     }
 }
 
+// ILION dev.55: with the Vulkan -> D3D12 XeFG bridge ReShade runs twice: once on the game's Vulkan swapchain (a
+// hidden window; the bridge copies its image, effects included, and XeFG interpolates it) and once on the D3D12 chain
+// on screen, which XeFG and MFG Unlocker present. The panel used whichever runtime had presented last, so it often
+// switched effects on in the D3D12 one, and that one overflowed its stack inside ReShade under XeFG's present
+// (No Man's Sky, ReShade 6.8.0 as a Vulkan layer). With the bridge the panel only works on the Vulkan runtime and
+// keeps the other one's effects off.
+bool SkipRuntime(reshade::api::effect_runtime* rt)
+{
+    if (State::Instance().swapchainInteropApi != SwapchainInteropApi::VkwDx12)
+        return false;
+
+    const auto* device = rt != nullptr ? rt->get_device() : nullptr;
+    if (device == nullptr || device->get_api() == reshade::api::device_api::vulkan)
+        return false;
+
+    if (rt->get_effects_state())
+    {
+        rt->set_effects_state(false);
+        LOG_INFO("ILION ReShade: effects off on ReShade's D3D12 runtime of the Vulkan XeFG bridge (they run on the "
+                 "game's Vulkan image)");
+    }
+    return true;
+}
+
 // ReShade's events, on the render thread
 void OnPresent(reshade::api::effect_runtime* rt)
 {
+    if (SkipRuntime(rt))
+        return;
+
     runtime.store(rt);
     lastPresent.store(GetTickCount64());
 

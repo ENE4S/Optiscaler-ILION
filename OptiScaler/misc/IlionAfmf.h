@@ -307,8 +307,12 @@ class Control
             state.live = live;
     }
 
-    // Switches AFMF in the running game at once with AMD's own key, then reads AMD's answer
-    void ToggleLive()
+    // Switches AFMF in the running game at once with AMD's own key, then reads AMD's answer.
+    // ILION dev.55: AMD's key only switches AFMF while it is on in Adrenalin; with it off there AMD answers "AFMF is
+    // off, the game profile is set to ..." and nothing happens (dev.48 to dev.54: they worked while dev.47 had left the
+    // driver's setting on; after a reset of Adrenalin it was off again). To turn it on, the driver's setting is turned
+    // on first (with Anti-Lag, as Adrenalin does), then the key; if AMD then answers off, the key is pressed once more.
+    void ToggleLive(bool wantOn = false, bool enableDriverFirst = false)
     {
         {
             std::lock_guard lock(stateLock);
@@ -319,20 +323,29 @@ class Control
         }
 
         std::thread(
-            [this]
+            [this, wantOn, enableDriverFirst]
             {
                 const auto keys = ParseHotkey(ToggleHotkeyText());
-                const Toast before = ReadToast();
                 std::string message;
                 int live = -1;
 
-                if (keys.empty())
-                    message = "AMD's AFMF key could not be read";
-                else if (!SendHotkey(keys))
-                    message = "the key could not be sent";
-                else
+                if (enableDriverFirst && !keys.empty())
                 {
-                    // AMD's toast comes within about a second
+                    Work((int) Enabled, 1);
+                    Sleep(400); // the service takes the new setting before the key
+                }
+
+                // Presses the key and waits for AMD's toast, about a second
+                const auto pressAndRead = [&]
+                {
+                    const Toast before = ReadToast();
+                    message.clear();
+                    live = -1;
+                    if (!SendHotkey(keys))
+                    {
+                        message = "the key could not be sent";
+                        return;
+                    }
                     for (int i = 0; i < 40; i++)
                     {
                         Sleep(75);
@@ -344,11 +357,22 @@ class Control
                         char text[512] {};
                         WideCharToMultiByte(CP_UTF8, 0, now.title.c_str(), -1, text, sizeof(text) - 1, nullptr, nullptr);
                         message = text;
-                        break;
+                        return;
                     }
+                    message = "AMD Software did not answer (it has to run with its in-game overlay on)";
+                };
 
-                    if (message.empty())
-                        message = "AMD Software did not answer (it has to run with its in-game overlay on)";
+                if (keys.empty())
+                    message = "AMD's AFMF key could not be read";
+                else
+                {
+                    pressAndRead();
+                    // Turned on in the driver just now, the key may have switched the game's AFMF the other way
+                    if (wantOn && enableDriverFirst && live == 0)
+                    {
+                        Sleep(500);
+                        pressAndRead();
+                    }
                 }
 
                 std::lock_guard lock(stateLock);

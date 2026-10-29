@@ -166,7 +166,9 @@ struct DynamicNrReadout
     float scale = 1.f;       // the NR scale it hands the backend this frame
     float ceiling = 1.f;     // the highest scale it uses: the manual NR resolution, 100% at most (its steps start there)
     float configured = 1.f;  // the manual NR resolution as set (ILION dev.51-exp2: above 100% it is not reached)
-    float floor = 0.5f;      // its lowest step
+    float floor = 0.5f;      // its lowest step (ILION dev.55: the profile's)
+    bool fast = false;       // ILION dev.55: on Smooth's Fast step (lmxxf's Fast mode at the lowest resolution)
+    bool fastAllowed = false; // ILION dev.55: the profile has that step (Smooth with lmxxf)
     double averageMs = 0.0;  // its frame time average (real frames, the ones NR runs on)
     double targetMs = 0.0;   // 1000 / target FPS
     unsigned changes = 0;    // scale changes this session

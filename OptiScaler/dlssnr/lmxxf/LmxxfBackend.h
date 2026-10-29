@@ -78,6 +78,9 @@ int TierCapInUse();
 // feeds (1080 / 900 / 720 / 576): the network then runs the next tier down (LmxxfNetworkTier of the working size). For
 // the menu; any thread.
 int FastModeFromTier();
+// ILION dev.55: Adaptive NR's Smooth profile turns Fast mode on while it has lowered the NR resolution, on top of
+// [DlssNr] AmdLmxxfFastMode (either one turns it on). Any thread; the next Record applies it.
+void SetAdaptiveFast(bool on);
 // (0.3.4, P3) Late submission (the game hands a frame's list to ExecuteCommandLists only after the next frame's
 // Evaluate, TLOU II): -1 while the last stats window (600 frames) saw none, else the share of that window's frames that
 // got a fresh network answer, 0..1 (about 0.5 with [DlssNr] AmdLateSubmitGrace on in TLOU II, 0.185 without). For the

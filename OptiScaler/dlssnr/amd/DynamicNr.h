@@ -37,6 +37,21 @@ struct Controller
     {
         return s >= 0 && s <= kLast && failedAt[s] != 0 && t - failedAt[s] < kFailMemoryMs && failedMs[s] > target * 1.08;
     }
+
+    // ILION dev.55: the lowest step a profile allows, from its floor (the lowest scale it may go to: Quality keeps
+    // more of the network than Smooth); never above the ceiling's step
+    static int LastStep(float floor, int first)
+    {
+        int last = first;
+        while (last < kLast && kSteps[last + 1] >= floor - 0.001f)
+            ++last;
+        return last;
+    }
+    // ILION dev.55: with allowFast (Smooth with lmxxf), every step below the ceiling also runs lmxxf's Fast mode, its
+    // network one size tier lower: 100% -> 85% Fast -> ... -> 50% Fast. At the lowest scale the network is often at its
+    // smallest tier already (720 at 1440p), so Fast only helps on the steps above it
+    bool fast = false;
+    bool Fast() const { return fast; }
     int step = 0;
     double emaMs = 0;
     unsigned long long lastChange = 0, headroomSince = 0, upBlockedUntil = 0;
@@ -47,8 +62,10 @@ struct Controller
     // t: a millisecond tick (any clock; only differences are used). dtMs: this frame's time from a precise clock, 0 when
     // unknown. settling: the bridge's settle window (no NR on the frame). ceiling: the manual NR resolution. Returns the
     // NR scale for this frame; `log` gets a line when the step changes, or once when the change cap holds it.
+    // ILION dev.55: floor = the profile's lowest scale (0.5 = every step, as before); allowFast = Fast() on every step
+    // below the ceiling. A profile with a higher floor moves up to it at once.
     float Update(unsigned long long t, double dtMs, bool settling, int targetFps, float ceiling, bool capChanges,
-                 std::string& log)
+                 std::string& log, float floor = 0.5f, bool allowFast = false)
     {
         if (!settling && dtMs > 0 && dtMs < 200) // ignore hitches, pauses and menu time
             emaMs = emaMs > 0 ? emaMs * 0.9 + dtMs * 0.1 : dtMs;
@@ -65,16 +82,21 @@ struct Controller
             ++first;
         if (step < first)
             step = first;
+        const int last = LastStep(floor, first);
+        const int entry = step;
+        const bool entryFast = fast;
+        if (step > last) // ILION dev.55: a profile with a higher floor
+            step = last;
         const bool over = emaMs > target * 1.08, room = emaMs > 0 && emaMs < target * 0.85;
         if (!room)
             headroomSince = 0;
         else if (!headroomSince)
             headroomSince = t;
         const bool capped = capChanges && changes >= kLmxxfChangeCap;
-        const int before = step;
-        if (emaMs > 0 && !settling && !capped && t - lastChange > kDownDwellMs)
+        const int before = entry;
+        if (step == entry && emaMs > 0 && !settling && !capped && t - lastChange > kDownDwellMs)
         {
-            if (over && step < kLast)
+            if (over && step < last)
             {
                 // A step down soon after a step up: the up-step could not hold. Block up-steps for a while.
                 if (lastWasUp && t - lastChange < kBounceWindowMs)
@@ -91,20 +113,22 @@ struct Controller
                 lastWasUp = true;
             }
         }
-        auto pct = [&](int i) { return std::to_string(int(std::lround(100.0 * (std::min)(kSteps[i], ceiling)))); };
-        if (step != before)
+        fast = allowFast && step > first;
+        auto pct = [&](int i, bool f)
+        { return std::to_string(int(std::lround(100.0 * (std::min)(kSteps[i], ceiling)))) + (f ? "% Fast" : "%"); };
+        if (step != before || fast != entryFast)
         {
             lastChange = t;
             headroomSince = 0;
             ++changes;
-            log = "Dynamic NR: " + pct(before) + "% -> " + pct(step) + "% (average " + std::to_string(emaMs).substr(0, 5) +
+            log = "Dynamic NR: " + pct(before, entryFast) + " -> " + pct(step, fast) + " (average " + std::to_string(emaMs).substr(0, 5) +
                   " ms, target " + std::to_string(target).substr(0, 5) + " ms" +
                   (upBlockedUntil > t ? "; a step up could not hold, up-steps wait 60 s" : "") + ")";
         }
         else if (capped && !capSaid)
         {
             capSaid = true;
-            log = "Dynamic NR: held at " + pct(step) + "% for this session after " + std::to_string(changes) +
+            log = "Dynamic NR: held at " + pct(step, fast) + " for this session after " + std::to_string(changes) +
                   " changes - this LmxxfNrRuntime.dll keeps about 100 MB of VRAM and RAM per NR size change until the game "
                   "restarts";
         }

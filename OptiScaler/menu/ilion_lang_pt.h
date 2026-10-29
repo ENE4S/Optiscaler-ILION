@@ -1846,5 +1846,11 @@ inline constexpr Translation kPortuguese[] = {
     { "Identified as HLX FSR 4 by its file. While upscaling, ILION also checks that this dll is the one running.", "Identificado como HLX FSR 4 pelo arquivo. Durante o escalonamento, o ILION também verifica se esta dll é a que está em execução." },
     { "Runtime in its log: %s", "Runtime segundo o log: %s" },
     { "Its log says it gave the upscale to AMD's FSR", "O log dele diz que passou o escalonamento para o FSR da AMD" },
+    { "At this profile's minimum (%d%%): the game can't reach %d FPS even so. Balanced or Smooth lower it more", "No mínimo deste perfil (%d%%): o jogo não chega a %d FPS mesmo assim. Equilibrado ou Fluidez reduzem mais" },
+    { "At this profile's minimum (%d%%): the game can't reach %d FPS even so. Smooth lowers it more", "No mínimo deste perfil (%d%%): o jogo não chega a %d FPS mesmo assim. Fluidez reduz mais" },
+    { "At the lowest NR resolution (%d%%): the game can't reach %d FPS even so", "Na resolução NR mais baixa (%d%%): o jogo não chega a %d FPS mesmo assim" },
+    { "Image first: aims at 40 FPS and keeps the NR resolution at 85% or more", "Prioriza a imagem: mira 40 FPS e mantém a resolução NR em 85% ou mais" },
+    { "Aims at 50 FPS: the NR resolution goes down to 58% at most", "Mira 50 FPS: a resolução NR desce no máximo até 58%" },
+    { "FPS first: aims at 60 FPS, goes down to 50% and runs lmxxf's Fast network while lowered", "Prioriza os FPS: mira 60 FPS, desce até 50% e usa a rede rápida do lmxxf enquanto reduzida" },
 };
 } // namespace Ilion

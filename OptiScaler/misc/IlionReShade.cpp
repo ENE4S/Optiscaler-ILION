@@ -365,6 +365,38 @@ bool SkipRuntime(reshade::api::effect_runtime* rt)
     return true;
 }
 
+// ILION dev.55-r2: with the bridge, switching on an effect ReShade loaded while the game started (its Vulkan swapchain
+// is recreated several times there) sent ReShade into endless recursion inside set_technique_state and the game died of
+// a stack overflow (No Man's Sky, ReShade 6.8.0); effects the panel installed, loaded again by a full reload, switched
+// on fine. So, with the bridge, each runtime the panel works on is fully reloaded first and the panel's changes wait
+// for that reload (5 s at most).
+reshade::api::effect_runtime* reloadedRuntime = nullptr; // render thread only
+uint64_t reloadAskedAt = 0;                              // 0: no reload pending
+
+bool WaitForBridgeReload(reshade::api::effect_runtime* rt)
+{
+    if (State::Instance().swapchainInteropApi != SwapchainInteropApi::VkwDx12)
+        return false;
+
+    const uint64_t now = GetTickCount64();
+    if (rt != reloadedRuntime)
+    {
+        {
+            std::scoped_lock guard(lock);
+            reloadedRuntime = rt;
+            reloadAskedAt = now;
+        }
+        rt->reload_effect_next_frame(nullptr);
+        LOG_INFO("ILION ReShade: full reload of ReShade's Vulkan runtime before the panel changes anything (XeFG bridge)");
+        return true;
+    }
+
+    std::scoped_lock guard(lock);
+    if (reloadAskedAt != 0 && now - reloadAskedAt > 5000)
+        reloadAskedAt = 0;
+    return reloadAskedAt != 0;
+}
+
 // ReShade's events, on the render thread
 void OnPresent(reshade::api::effect_runtime* rt)
 {
@@ -373,6 +405,9 @@ void OnPresent(reshade::api::effect_runtime* rt)
 
     runtime.store(rt);
     lastPresent.store(GetTickCount64());
+
+    if (WaitForBridgeReload(rt))
+        return;
 
     std::vector<Request> todo;
     bool read = false;
@@ -415,13 +450,20 @@ void OnDestroyRuntime(reshade::api::effect_runtime* rt)
         runtime.store(nullptr);
 
     std::scoped_lock guard(lock);
+    if (reloadedRuntime == rt) // ILION dev.55-r2: a new runtime at the same address is reloaded again
+    {
+        reloadedRuntime = nullptr;
+        reloadAskedAt = 0;
+    }
     snapshot.effects.clear();
     dirty = true;
 }
 
-void OnReloadedEffects(reshade::api::effect_runtime*)
+void OnReloadedEffects(reshade::api::effect_runtime* rt)
 {
     std::scoped_lock guard(lock);
+    if (rt == reloadedRuntime)
+        reloadAskedAt = 0; // ILION dev.55-r2: the bridge's reload is done
     dirty = true;
 }
 

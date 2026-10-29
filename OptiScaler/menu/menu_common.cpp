@@ -19243,10 +19243,11 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
         const char* labels[] = { "Off", "Quality", "Balanced", "Smooth" };
         const char* tips[] = {
             "NR always runs at the NR resolution set below",
-            // ILION dev.55: each profile has its own lowest NR resolution (IlionDynamicNr::ProfileFor)
-            "Image first: aims at 40 FPS and keeps the NR resolution at 85% or more",
-            "Aims at 50 FPS: the NR resolution goes down to 58% at most",
-            "FPS first: aims at 60 FPS, goes down to 50% and runs lmxxf's Fast network while lowered"
+            // ILION dev.56: each profile is a ladder of NR resolution, model interval and Fast network
+            // (misc/IlionAdaptiveNr.h)
+            "Image first: aims at 40 FPS. NR resolution 85% or more; interval 2 only as the last step",
+            "Aims at 50 FPS: interval 2 first, then the NR resolution down to 58%",
+            "FPS first: aims at 60 FPS. Interval 2 then 3, lmxxf's Fast network and the NR resolution down to 50%"
         };
         int profile = -1; // -1 = a target of the ini or of the slider below
         if (!dynamic)
@@ -19306,7 +19307,11 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
                 WrappedText(short_ ? IlionTheme::LampAmber : IlionTheme::LampGreen,
                             (StrFmt(Tr("NR resolution now %d%%, %.0f FPS, target %d"), pct(dyn.scale), fpsNow,
                                     dyn.targetFps) +
-                             (dyn.fast ? std::string(" · ") + Tr("Fast network") : std::string())).c_str());
+                             (dyn.interleave > 1 ? std::string(" · ") + StrFmt(Tr("interval %d"), dyn.interleave)
+                                                 : std::string()) +
+                             (dyn.fast ? std::string(" · ") + Tr("Fast network") : std::string()) +
+                             (dyn.levels > 1 ? std::string(" · ") + StrFmt(Tr("level %d of %d"), dyn.level + 1, dyn.levels)
+                                             : std::string())).c_str());
                 std::string why;
                 ImVec4 whyColour = IlionTheme::TextDim;
                 switch (reason) {
@@ -19322,14 +19327,15 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
                     break;
                 case Reason::AtMinimum:
                     // ILION dev.55: the minimum is the profile's; the others go lower
-                    if (dyn.floor > 0.51f)
-                        why = StrFmt(Tr(dyn.floor > 0.8f
-                                            ? "At this profile's minimum (%d%%): the game can't reach %d FPS even so. Balanced or Smooth lower it more"
-                                            : "At this profile's minimum (%d%%): the game can't reach %d FPS even so. Smooth lowers it more"),
-                                     pct(dyn.scale), dyn.targetFps);
+                    // ILION dev.56: the last level of the profile; Balanced and Smooth go further
+                    if (dyn.targetFps == 40)
+                        why = StrFmt(Tr("At this profile's last level: the game can't reach %d FPS even so. Balanced or Smooth lower it more"),
+                                     dyn.targetFps);
+                    else if (dyn.targetFps == 50)
+                        why = StrFmt(Tr("At this profile's last level: the game can't reach %d FPS even so. Smooth lowers it more"),
+                                     dyn.targetFps);
                     else
-                        why = StrFmt(Tr("At the lowest NR resolution (%d%%): the game can't reach %d FPS even so"),
-                                     pct(dyn.scale), dyn.targetFps);
+                        why = StrFmt(Tr("At the cheapest level: the game can't reach %d FPS even so"), dyn.targetFps);
                     whyColour = IlionTheme::LampAmber;
                     break;
                 case Reason::WaitingRoom:

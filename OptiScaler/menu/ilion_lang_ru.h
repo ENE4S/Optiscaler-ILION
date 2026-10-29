@@ -1852,5 +1852,13 @@ inline constexpr Translation kRussian[] = {
     { "Image first: aims at 40 FPS and keeps the NR resolution at 85% or more", "Приоритет изображения: цель 40 FPS, разрешение NR не ниже 85%" },
     { "Aims at 50 FPS: the NR resolution goes down to 58% at most", "Цель 50 FPS: разрешение NR снижается не ниже 58%" },
     { "FPS first: aims at 60 FPS, goes down to 50% and runs lmxxf's Fast network while lowered", "Приоритет FPS: цель 60 FPS, снижение до 50% и быстрая сеть lmxxf при снижении" },
+    { "interval %d", "интервал %d" },
+    { "level %d of %d", "уровень %d из %d" },
+    { "At this profile's last level: the game can't reach %d FPS even so. Balanced or Smooth lower it more", "На последнем уровне профиля: игра не достигает %d FPS даже так. «Баланс» или «Плавность» снижают сильнее" },
+    { "At this profile's last level: the game can't reach %d FPS even so. Smooth lowers it more", "На последнем уровне профиля: игра не достигает %d FPS даже так. «Плавность» снижает сильнее" },
+    { "At the cheapest level: the game can't reach %d FPS even so", "На самом лёгком уровне: игра не достигает %d FPS даже так" },
+    { "Image first: aims at 40 FPS. NR resolution 85% or more; interval 2 only as the last step", "Приоритет изображения: цель 40 FPS. Разрешение NR от 85%; интервал 2 только последним шагом" },
+    { "Aims at 50 FPS: interval 2 first, then the NR resolution down to 58%", "Цель 50 FPS: сначала интервал 2, затем разрешение NR до 58%" },
+    { "FPS first: aims at 60 FPS. Interval 2 then 3, lmxxf's Fast network and the NR resolution down to 50%", "Приоритет FPS: цель 60 FPS. Интервал 2, затем 3, быстрая сеть lmxxf и разрешение NR до 50%" },
 };
 } // namespace Ilion

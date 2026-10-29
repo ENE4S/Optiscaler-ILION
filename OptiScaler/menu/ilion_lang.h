@@ -2415,6 +2415,14 @@ inline constexpr Translation kSpanish[] = {
     { "Image first: aims at 40 FPS and keeps the NR resolution at 85% or more", "Prioriza la imagen: apunta a 40 FPS y mantiene la resolución NR en el 85% o más" },
     { "Aims at 50 FPS: the NR resolution goes down to 58% at most", "Apunta a 50 FPS: la resolución NR baja como mucho al 58%" },
     { "FPS first: aims at 60 FPS, goes down to 50% and runs lmxxf's Fast network while lowered", "Prioriza los FPS: apunta a 60 FPS, baja hasta el 50% y usa la red rápida de lmxxf mientras está reducida" },
+    { "interval %d", "intervalo %d" },
+    { "level %d of %d", "nivel %d de %d" },
+    { "At this profile's last level: the game can't reach %d FPS even so. Balanced or Smooth lower it more", "En el último nivel de este perfil: el juego no llega a %d FPS ni así. Equilibrado o Fluidez bajan más" },
+    { "At this profile's last level: the game can't reach %d FPS even so. Smooth lowers it more", "En el último nivel de este perfil: el juego no llega a %d FPS ni así. Fluidez baja más" },
+    { "At the cheapest level: the game can't reach %d FPS even so", "En el nivel más ligero: el juego no llega a %d FPS ni así" },
+    { "Image first: aims at 40 FPS. NR resolution 85% or more; interval 2 only as the last step", "Prioriza la imagen: apunta a 40 FPS. Resolución NR del 85% o más; intervalo 2 solo como último paso" },
+    { "Aims at 50 FPS: interval 2 first, then the NR resolution down to 58%", "Apunta a 50 FPS: primero intervalo 2, después baja la resolución NR hasta el 58%" },
+    { "FPS first: aims at 60 FPS. Interval 2 then 3, lmxxf's Fast network and the NR resolution down to 50%", "Prioriza los FPS: apunta a 60 FPS. Intervalo 2 y luego 3, red rápida de lmxxf y resolución NR hasta el 50%" },
 };
 
 } // namespace Ilion

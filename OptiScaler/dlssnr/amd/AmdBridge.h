@@ -169,6 +169,9 @@ struct DynamicNrReadout
     float floor = 0.5f;      // its lowest step (ILION dev.55: the profile's)
     bool fast = false;       // ILION dev.55: on Smooth's Fast step (lmxxf's Fast mode at the lowest resolution)
     bool fastAllowed = false; // ILION dev.55: the profile has that step (Smooth with lmxxf)
+    int interleave = 1;      // ILION dev.56: the model interval of the level (1 = every frame)
+    int level = 0;           // ILION dev.56: the level running, 0 = the best image
+    int levels = 1;          // ILION dev.56: the profile's levels
     double averageMs = 0.0;  // its frame time average (real frames, the ones NR runs on)
     double targetMs = 0.0;   // 1000 / target FPS
     unsigned changes = 0;    // scale changes this session

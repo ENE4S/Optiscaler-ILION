@@ -9,6 +9,7 @@
 #include "BridgeRules.h" // (0.3.4) the settle rule (P10) and the self-TerminateProcess stamp rule (P22), pure
 #include "DynamicNr.h"
 #include <misc/IlionDynamicNrReason.h> // ILION dev.51-exp: the controller's reason, for the menu and the log
+#include <misc/IlionAdaptiveNr.h>      // ILION dev.56: Adaptive NR ladders (resolution, interval, Fast network)
 #include "GpuSupportRules.h" // (0.3.4) the GPU table and the APU defaults (pure, tests\034)
 #include <dlssnr/lmxxf/LmxxfBackend.h>
 #include <dlssnr/lmxxf/LmxxfTierPolicy.h> // (0.3.4) LmxxfTierSnapDefault (pure)
@@ -977,6 +978,10 @@ int DanielFastModeRuntimeOwn() { return AmdPreSr::RuntimeOwnQuality(); }
 // Every backend setting, read from the config. Shared by the pre-SR bridge (Before) and
 // final image mode, so the two never disagree about what a slider means.
 // ILION dev.51: the dynamic NR controller's last state, for the menu (AmdBridge.h, DynamicNrState)
+// ILION dev.56: the model interval Adaptive NR's level asks for (1 = none); BuildSettings takes the larger of it and
+// the menu's own
+static std::atomic<int> adaptiveInterleave { 1 };
+
 static std::mutex dynamicReadoutLock;
 static DynamicNrReadout dynamicReadout;
 static unsigned long long dynamicReadoutTick = 0;
@@ -1039,6 +1044,10 @@ static AmdPreSr::Settings BuildSettings(float sessionScale)
         // A hand-edited fractional value in the ini is rounded to the nearest whole
         // cadence rather than being allowed to behave badly.
         s.interleave = il > 1.f ? std::round(std::clamp(il, 2.f, 4.f)) : 0.f;
+        // ILION dev.56: Adaptive NR's level may ask for a longer interval than the menu's (never a shorter one)
+        if (cfg.AmdDynamicRes.value_or_default())
+            if (const int adaptive = adaptiveInterleave.load(); adaptive > 1 && (float) adaptive > s.interleave)
+                s.interleave = (float) (std::min)(adaptive, 4);
         s.interleaveFill = static_cast<UINT>(std::clamp(cfg.AmdInterleaveFill.value_or_default(), 0, 3));
         s.interleaveSharp = cfg.AmdInterleaveSharp.value_or_default();
         s.interleaveDebug = static_cast<UINT>(std::clamp(cfg.AmdInterleaveDebug.value_or_default(), 0, 5));
@@ -1940,11 +1949,16 @@ static bool Run(ID3D12GraphicsCommandList* cmd, NVSDK_NGX_Parameter* params, ID3
     // stepped DRS, not per-frame scaling. The manual NR resolution is the ceiling.
     float sessionScale=Config::Instance()->AmdNrScale.value_or_default();
     if (!Config::Instance()->AmdDynamicRes.value_or_default())
+    {
         Lmxxf::SetAdaptiveFast(false); // ILION dev.55: Adaptive NR off leaves no Fast step behind
+        adaptiveInterleave.store(1);   // ILION dev.56: nor its interval
+    }
     if (Config::Instance()->AmdDynamicRes.value_or_default())
     {
         // (0.3.3.2 rebuild, #33) Hysteresis and a precise clock: DynamicNr.h has the rules and what they replace.
-        static DlssNr::DynamicNr::Controller dynamicNr;
+        // ILION dev.56: the same rules over a ladder of levels per profile (resolution, interval, Fast network):
+        // misc/IlionAdaptiveNr.h
+        static IlionAdaptiveNr::Controller dynamicNr;
         static std::chrono::steady_clock::time_point dynLast {};
         const auto dynNow = std::chrono::steady_clock::now();
         const double dtMs = dynLast.time_since_epoch().count()
@@ -1957,14 +1971,27 @@ static bool Run(ID3D12GraphicsCommandList* cmd, NVSDK_NGX_Parameter* params, ID3
         // lmxxf rebuilds leak about 100 MB each unless its runtime reuses its HIP imports (R3); then no cap
         const bool capChanges = activeRuntime.load() == 2 && Lmxxf::ImportPoolState() != 1;
         std::string dynLog;
-        // ILION dev.55: the profile's lowest NR resolution, and Smooth's Fast step (lmxxf only: danielblnc has no
-        // Fast mode of the same kind)
+        // ILION dev.56: the profile's ladder; the manual NR resolution is its ceiling and the menu's own interval its
+        // lowest interval; Fast only with lmxxf (danielblnc has no Fast mode of the same kind)
         const int dynTarget = std::clamp(Config::Instance()->AmdDynamicTargetFps.value_or_default(), 30, 240);
-        const auto profile = IlionDynamicNr::ProfileFor(dynTarget);
-        const bool allowFast = profile.fast && activeRuntime.load() == 2;
-        sessionScale = dynamicNr.Update(t, dtMs, settling, dynTarget, Config::Instance()->AmdNrScale.value_or_default(),
-                                        capChanges, dynLog, profile.floor, allowFast);
-        Lmxxf::SetAdaptiveFast(dynamicNr.Fast());
+        const bool lmxxfRuns = activeRuntime.load() == 2;
+        const float userIl = Config::Instance()->AmdInterleave.value_or_default();
+        const int userInterleave = userIl > 1.f ? (int) std::round(std::clamp(userIl, 2.f, 4.f)) : 1;
+        const IlionAdaptiveNr::Level levelBefore = dynamicNr.Current();
+        if (dynamicNr.SetLadder(IlionAdaptiveNr::Ladder(IlionAdaptiveNr::ProfileOf(dynTarget),
+                                                        Config::Instance()->AmdNrScale.value_or_default(), userInterleave,
+                                                        lmxxfRuns),
+                                capChanges && dynamicNr.changes >= IlionAdaptiveNr::Controller::kLmxxfChangeCap))
+        {
+            dynamicNr.lastChange = t;
+            ++dynamicNr.changes;
+            LogLine("Adaptive NR: new profile ladder, " + IlionAdaptiveNr::Describe(levelBefore) + " -> " +
+                    IlionAdaptiveNr::Describe(dynamicNr.Current()));
+        }
+        const IlionAdaptiveNr::Level level = dynamicNr.Update(t, dtMs, settling, dynTarget, capChanges, dynLog);
+        sessionScale = level.scale;
+        Lmxxf::SetAdaptiveFast(level.fast);
+        adaptiveInterleave.store(level.interleave);
         if (!dynLog.empty())
             LogLine(dynLog);
         // ILION dev.51: a copy for the menu (DynamicNrState); the controller and its result are unchanged
@@ -1973,18 +2000,20 @@ static bool Run(ID3D12GraphicsCommandList* cmd, NVSDK_NGX_Parameter* params, ID3
             r.running = true;
             r.scale = sessionScale;
             r.configured = Config::Instance()->AmdNrScale.value_or_default();
-            r.ceiling = (std::min)(r.configured, DlssNr::DynamicNr::Controller::kSteps[0]);
-            r.floor = (std::min)(profile.floor, r.ceiling);
-            r.fast = dynamicNr.Fast();
-            r.fastAllowed = allowFast;
+            r.ceiling = (std::min)(r.configured, 1.f);
+            r.floor = dynamicNr.Lowest();
+            r.fast = level.fast;
+            r.fastAllowed = lmxxfRuns;
+            r.interleave = level.interleave;
+            r.levels = (int) dynamicNr.ladder.size();
+            r.level = dynamicNr.step;
             r.averageMs = dynamicNr.emaMs;
             r.targetMs = 1000.0 / std::clamp(Config::Instance()->AmdDynamicTargetFps.value_or_default(), 30, 240);
             r.changes = dynamicNr.changes;
-            r.held = capChanges && dynamicNr.changes >= DlssNr::DynamicNr::Controller::kLmxxfChangeCap;
+            r.held = capChanges && dynamicNr.changes >= IlionAdaptiveNr::Controller::kLmxxfChangeCap;
             r.upBlocked = dynamicNr.upBlockedUntil > t;
             r.targetFps = std::clamp(Config::Instance()->AmdDynamicTargetFps.value_or_default(), 30, 240);
-            const auto reason = IlionDynamicNr::Explain(dynamicNr, t, settling, r.targetFps, r.configured, r.held,
-                                                        profile.floor, allowFast);
+            const auto reason = IlionAdaptiveNr::Explain(dynamicNr, t, settling, r.targetFps, r.held);
             r.reason = (int) reason;
 
             // ILION dev.51-exp: a profile (target) change is logged with what the controller had, and again 3 s later
@@ -1994,10 +2023,11 @@ static bool Run(ID3D12GraphicsCommandList* cmd, NVSDK_NGX_Parameter* params, ID3
             const auto describe = [&]
             {
                 char line[256];
-                snprintf(line, sizeof line, "real frames %.1f FPS (average %.2f ms, target %.2f ms), NR scale %d%% "
-                         "(maximum %d%%, set %d%%, minimum %d%%), changes %u: %s",
-                         r.averageMs > 0.0 ? 1000.0 / r.averageMs : 0.0, r.averageMs, r.targetMs,
-                         (int) std::lround(r.scale * 100.f), (int) std::lround(r.ceiling * 100.f), (int) std::lround(r.configured * 100.f),
+                snprintf(line, sizeof line, "real frames %.1f FPS (average %.2f ms, target %.2f ms), level %d of %d: "
+                         "NR scale %d%% interval %d%s (maximum %d%%, set %d%%, minimum %d%%), changes %u: %s",
+                         r.averageMs > 0.0 ? 1000.0 / r.averageMs : 0.0, r.averageMs, r.targetMs, r.level + 1, r.levels,
+                         (int) std::lround(r.scale * 100.f), r.interleave, r.fast ? " Fast" : "",
+                         (int) std::lround(r.ceiling * 100.f), (int) std::lround(r.configured * 100.f),
                          (int) std::lround(r.floor * 100.f), r.changes, IlionDynamicNr::Name(reason));
                 return std::string(line);
             };

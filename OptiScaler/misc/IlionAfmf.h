@@ -375,6 +375,12 @@ class Control
                     }
                 }
 
+                // ILION dev.56-r2: turning it off also turns the driver's setting off, as turning it on (dev.55) turns
+                // it on: else Adrenalin kept AFMF on for every game, and without an answer from AMD the panel showed
+                // that setting (ON) after "Turn AFMF off"
+                if (!wantOn)
+                    Work((int) Enabled, 0);
+
                 std::lock_guard lock(stateLock);
                 state.liveBusy = false;
                 state.liveMessage = message;

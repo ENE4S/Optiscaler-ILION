@@ -24,7 +24,7 @@
 #define VER_BUILD_NUMBER 1
 
 // Version of this ILION build, the only place it is written: the menu title and the log take it from here
-#define ILION_VERSION_STR "1.2-dev.55-r2"
+#define ILION_VERSION_STR "1.2-dev.55-r3"
 
 #define VER_DEV_RELEASE
 // #define VER_PRE_RELEASE

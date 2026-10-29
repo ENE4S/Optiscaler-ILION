@@ -342,9 +342,11 @@ void ApplyRequest(reshade::api::effect_runtime* rt, const Request& r)
 }
 
 // ILION dev.55: with the Vulkan -> D3D12 XeFG bridge ReShade runs twice: once on the game's Vulkan swapchain (a
-// hidden window; the bridge copies its image, effects included, and XeFG interpolates it) and once on the D3D12 chain
-// on screen, which XeFG and MFG Unlocker present. The panel used whichever runtime had presented last; with the bridge
-// it only works on the Vulkan runtime (effects once, before frame generation) and keeps the other one's effects off.
+// hidden window) and once on the D3D12 chain on screen, which XeFG and MFG Unlocker present. The panel used whichever
+// runtime had presented last. dev.55-r4: the bridge copies the game's image to D3D12 and presents it before it presents
+// the hidden Vulkan swapchain, where ReShade's Vulkan runtime draws its effects: those never reach the screen (dev.55
+// used that runtime and no effect showed). With the bridge the panel works on the D3D12 runtime (the one on screen,
+// whose overlay is seen too) and keeps the Vulkan one's effects off.
 // dev.55-r3: the crash when switching effects on (No Man's Sky, stack overflow) was ReShade's built-in add-on
 // "Effect Runtime Sync" copying each change back and forth between the two runtimes without end; Instalar_ReShade.bat
 // turns it off in ReShade.ini ([ADDON] DisabledAddons).
@@ -354,14 +356,14 @@ bool SkipRuntime(reshade::api::effect_runtime* rt)
         return false;
 
     const auto* device = rt != nullptr ? rt->get_device() : nullptr;
-    if (device == nullptr || device->get_api() == reshade::api::device_api::vulkan)
+    if (device == nullptr || device->get_api() != reshade::api::device_api::vulkan)
         return false;
 
     if (rt->get_effects_state())
     {
         rt->set_effects_state(false);
-        LOG_INFO("ILION ReShade: effects off on ReShade's D3D12 runtime of the Vulkan XeFG bridge (they run on the "
-                 "game's Vulkan image)");
+        LOG_INFO("ILION ReShade: effects off on ReShade's Vulkan runtime of the Vulkan XeFG bridge (its image is copied "
+                 "before them; they run on the D3D12 one on screen)");
     }
     return true;
 }

@@ -252,6 +252,20 @@ static int reshadePanelPart = 0;                // ILION dev.63: 0 the whole ReS
 static bool overlayIlionLook = false;           // ILION dev.63: the overlay over the game in the look of the new interface
 static const char* ShellText(const char* en, const char* es, const char* pt, const char* ru);
 
+// ILION dev.70: the theme of the interface. 0 Industrial, 1 Clean Olive (both the new interface), 2 ILION Traditional
+// (the classic layout). ClassicLayout=true from earlier versions still means Traditional.
+static int UiThemeIndex(Config* config)
+{
+    if (config->MenuClassicLayout.value_or_default())
+        return 2;
+    const std::string theme = config->MenuUiTheme.value_or_default();
+    if (theme == "olive")
+        return 1;
+    if (theme == "traditional")
+        return 2;
+    return 0;
+}
+
 static void DedupeSrVariants(std::vector<FfxApiProxy::SrVariant>& list);
 
 // The FSR upscaler dlls that can be selected. One list and one way of selecting for the Upscaling tab and for
@@ -8363,7 +8377,9 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
         // Industrial theme: a thin metal edge around a graphite plate. Classic: no border.
         const bool industrialOverlay = IlionTheme::industrial;
         // ILION dev.59: with the new interface the overlay takes its palette and its font; what it measures is the same
-        const bool ilionOverlay = !config->MenuClassicLayout.value_or_default();
+        const bool ilionOverlay = UiThemeIndex(config) != 2;
+        if (ilionOverlay)
+            IlionTheme::SetShellTheme(UiThemeIndex(config)); // dev.70: its palette also before the menu is first opened
         ImFont* overlayFont = ilionOverlay ? IlionTheme::modernFont : nullptr;
 
         ImGui::PushStyleColor(ImGuiCol_Border, ilionOverlay ? ImGui::GetColorU32(IlionTheme::Alpha(IlionTheme::ShellPal::Line, 0.95f))
@@ -15459,6 +15475,38 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         ScopedIndent indent {};
         ImGui::Spacing();
 
+        // ILION dev.70: the theme of the interface. Only the look changes (the next frame): no module is restarted.
+        // Choosing it writes UiTheme and ClassicLayout (kept in step); the skins and modes of the traditional
+        // interface (IndustrialTheme, IlionPalette, BasicMode, EssentialMode) are left as they are.
+#pragma execution_character_set(push, "utf-8")
+        {
+            const int uiTheme = UiThemeIndex(config);
+            const char* uiNames[] = { "Industrial", "Clean Olive", ShellText("ILION Traditional", "ILION Tradicional", "ILION Tradicional", "ILION Классический") };
+            static const char* uiKeys[] = { "industrial", "olive", "traditional" };
+
+            ImGui::SetNextItemWidth(180.0f * ctx.menuResScale);
+            if (IlionTheme::BeginCombo(ShellText("Interface", "Interfaz", "Interface", "Интерфейс"), uiNames[uiTheme]))
+            {
+                for (int n = 0; n < 3; n++)
+                {
+                    if (ImGui::Selectable(uiNames[n], uiTheme == n) && uiTheme != n)
+                    {
+                        config->MenuUiTheme = std::string(uiKeys[n]);
+                        config->MenuClassicLayout = n == 2;
+                        ApplyThemeStyle();
+                        config->SaveMenuPreferences();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            ShowTooltip(ShellText("Industrial and Clean Olive: the new interface in two palettes. ILION Traditional: the earlier menu with its Basic, Essential and Advanced modes and its own themes (below). Saved at once; nothing is restarted.",
+                                  "Industrial y Clean Olive: la interfaz nueva con dos paletas. ILION Tradicional: el menú anterior, con sus modos Básico, Esencial y Avanzado y sus propios temas (abajo). Se guarda al momento; no se reinicia nada.",
+                                  "Industrial e Clean Olive: a nova interface em duas paletas. ILION Tradicional: o menu anterior, com os modos Básico, Essencial e Avançado e os seus próprios temas (abaixo). Guardado na hora; nada é reiniciado.",
+                                  "Industrial и Clean Olive: новый интерфейс в двух палитрах. ILION Классический: прежнее меню с режимами Базовый, Основной и Расширенный и своими темами (ниже). Сохраняется сразу; ничего не перезапускается."));
+            ImGui::Spacing();
+        }
+#pragma execution_character_set(pop)
+
         // The three ILION themes share every control and the layout, only their palette changes.
         // Classic: everything below works as it always did. The choice is saved at once.
         const bool industrialTheme = config->IndustrialTheme.value_or_default();
@@ -22267,7 +22315,8 @@ void MenuCommon::RenderMainMenuWindow(RenderMenuContext& ctx)
                                  ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
 
     // ILION dev.57: the new interface, in Essential and Advanced unless the classic layout is asked for in the ini
-    if (!config->MenuClassicLayout.value_or_default())
+    // (dev.70: or the ILION Traditional theme is chosen)
+    if (UiThemeIndex(config) != 2)
     {
         RenderIlionShell(ctx);
 

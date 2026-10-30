@@ -40,19 +40,20 @@ static const char* Lx(const char* en, const char* es, const char* pt, const char
     }
 }
 
+// ILION dev.70: the palette of the theme in use (IlionTheme::SetShellTheme), with the same names as before
 namespace pal
 {
-const ImVec4 Bg { 0.035f, 0.041f, 0.038f, 1.f };
-const ImVec4 Panel { 0.058f, 0.068f, 0.062f, 1.f };
-const ImVec4 PanelHi { 0.078f, 0.092f, 0.083f, 1.f };
-const ImVec4 Line { 0.15f, 0.19f, 0.16f, 1.f };
-const ImVec4 Text { 0.93f, 0.95f, 0.92f, 1.f };
-const ImVec4 Text2 { 0.62f, 0.67f, 0.62f, 1.f };
-const ImVec4 Dim { 0.38f, 0.42f, 0.39f, 1.f };
-const ImVec4 Green { 0.69f, 1.00f, 0.10f, 1.f };
-const ImVec4 Orange { 1.00f, 0.48f, 0.10f, 1.f };
-const ImVec4 Yellow { 1.00f, 0.84f, 0.10f, 1.f };
-const ImVec4 Red { 1.00f, 0.26f, 0.20f, 1.f };
+inline const ImVec4& Bg = IlionTheme::ShellPal::Bg;
+inline const ImVec4& Panel = IlionTheme::ShellPal::Panel;
+inline const ImVec4& PanelHi = IlionTheme::ShellPal::PanelHi;
+inline const ImVec4& Line = IlionTheme::ShellPal::Line;
+inline const ImVec4& Text = IlionTheme::ShellPal::Text;
+inline const ImVec4& Text2 = IlionTheme::ShellPal::Text2;
+inline const ImVec4& Dim = IlionTheme::ShellPal::Dim;
+inline const ImVec4& Green = IlionTheme::ShellPal::Green;
+inline const ImVec4& Orange = IlionTheme::ShellPal::Orange;
+inline const ImVec4& Yellow = IlionTheme::ShellPal::Yellow;
+inline const ImVec4& Red = IlionTheme::ShellPal::Red;
 } // namespace pal
 
 static ImVec4 Mix(const ImVec4& a, const ImVec4& b, float t)
@@ -117,7 +118,7 @@ static void LedAt(ImDrawList* dl, ImVec2 c, float r, Led l)
     if (l != Led::Off)
     {
         for (int i = 4; i >= 1; i--)
-            dl->AddCircleFilled(pc, U(r + i * r * 0.55f), Col(col, 0.05f * (5 - i)));
+            dl->AddCircleFilled(pc, U(r + i * r * 0.55f), Col(col, 0.05f * (5 - i) * IlionTheme::shellGlow));
         dl->AddCircleFilled(pc, U(r), Col(col));
         dl->AddCircleFilled(P(c.x - r * 0.3f, c.y - r * 0.3f), U(r * 0.38f), Col(ImVec4(1, 1, 1, 0.55f)));
     }
@@ -161,7 +162,7 @@ static bool Button(const char* id, const char* label, ImVec2 size, bool on = fal
     dl->AddRectFilledMultiColor(P(p), P(q), Col(top), Col(top), Col(bot), Col(bot));
     if (on)
         for (int i = 3; i >= 1; i--)
-            dl->AddRect(P(p.x - i, p.y - i), P(q.x + i, q.y + i), Col(accent, 0.06f * (4 - i)), U(5.f), 0, 1.f);
+            dl->AddRect(P(p.x - i, p.y - i), P(q.x + i, q.y + i), Col(accent, 0.06f * (4 - i) * IlionTheme::shellGlow), U(5.f), 0, 1.f);
     dl->AddRect(P(p), P(q), Col(on ? accent : (hov ? Mix(pal::Line, accent, 0.4f) : pal::Line)), U(4.f), 0,
                 on ? U(1.6f) : 1.f);
     dl->AddLine(P(p.x + 2, p.y + 1), P(q.x - 2, p.y + 1), Col(ImVec4(1, 1, 1, on ? 0.10f : 0.05f)));
@@ -533,8 +534,8 @@ static int LangIndex()
 
 static int section = 0;
 static bool fgQuickHome = false; // ILION dev.67: RenderFgQuickControls drawn for the Home card
-static float fgHomeTop = 0.0f;   // ILION dev.69: the top of the Home FG card's content (the states start there)
-static float fgHomeLeftRight = 0.0f; // ILION dev.69: how far right the FG selectors (with their labels) really reach
+static int fgHomePart = 0;            // ILION dev.70: Home FG card, 0 everything, 1 the left zone's controls, 2 the states
+static float fgHomeStatesWidth = 0.0f; // ILION dev.70: width of the states' block, measured when drawn
 static int subTab[kSectionCount] = {};
 static int upFamily = -1;      // family shown in the upscaling panel
 static int upFilter = 0;       // filter of the catalogue
@@ -943,17 +944,14 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
 
     if (homeLayout)
     {
-        // Home: two zones. Left: the selectors above (drawn by the FG selection), the multiplier as wide as them (its
-        // arrow under theirs) and "On". Right: the four states in one column against the card's right edge, from the
-        // top of the card (level with "FG Input"), not under the selectors
+        // Home (ILION dev.70): the card is split by the caller into two table columns that start on the same row.
+        // Part 1 draws the left zone's controls, part 2 the states in the right column, part 0 both when the card is
+        // too narrow for two zones
         float selectorLabel = 0.0f;
         for (const char* label : { "FG Input", "FG Output", "FG Nvngx", "FG Nvngx Replacement" })
             selectorLabel = (std::max)(selectorLabel, ImGui::CalcTextSize(Tr(label)).x);
         selectorLabel += ImGui::GetStyle().ItemInnerSpacing.x * 2.0f;
         const float width = FgSelectorWidth(selectorLabel);
-
-        const ImVec2 leftStart = ImGui::GetCursorScreenPos();
-        const float contentRight = leftStart.x + ImGui::GetContentRegionAvail().x;
 
         // The states' block: pilot, label column and the longest value it can show
         const float h = ImGui::GetTextLineHeight();
@@ -961,16 +959,17 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
         if (state.currentFGSwapchain != nullptr && state.activeFgInput == FGInput::DLSSG)
             valueWidth = (std::max)({ valueWidth, ImGui::CalcTextSize(Tr("ACTIVATE FG")).x, ImGui::CalcTextSize(Tr("Reflex not hooked")).x });
         const float blockWidth = h + U(6) + labelWidth + U(10) + valueWidth;
+        fgHomeStatesWidth = blockWidth;
 
-        // Where the left zone ends: what the selectors really drew (combo and its label), at least the multiplier's width
-        const float selectorsRight = (std::max)(fgHomeLeftRight, leftStart.x + width);
-        const float statesX = contentRight - blockWidth - U(8);
-        // Beside the selectors, from the card's top, when the card is wide enough (sidebar collapsed); else beside
-        // the multiplier and "On" only (sidebar expanded, a narrower card); else under them
-        const bool beside = fgHomeTop > 0.0f && statesX >= selectorsRight + U(16);
-        const bool besideControls = !beside && statesX >= leftStart.x + width + U(16);
+        if (fgHomePart == 2)
+        {
+            drawStates();
+            return;
+        }
 
-        // Left zone, under the selectors
+        const ImVec2 leftStart = ImGui::GetCursorScreenPos();
+        const float contentRight = leftStart.x + ImGui::GetContentRegionAvail().x;
+
         drawMultiplier(width, "##HomeMult", true);
         drawSwitch(Lx("On###QuickFg", "Activada###QuickFg", "Ativada###QuickFg", "Вкл.###QuickFg"));
         if (!same)
@@ -980,20 +979,15 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
             if (ImGui::IsItemHovered())
                 WrappedTooltip("%s", pendingNote);
         }
-        const float leftBottom = ImGui::GetCursorScreenPos().y;
 
-        if (beside)
-        {
-            // Right zone, from the top of the card, one state under the other
-            ImGui::SetCursorScreenPos(ImVec2(statesX, fgHomeTop));
-            ImGui::BeginGroup();
-            drawStates();
-            ImGui::EndGroup();
-            const float rightBottom = ImGui::GetItemRectMax().y + ImGui::GetStyle().ItemSpacing.y;
-            ImGui::SetCursorScreenPos(ImVec2(leftStart.x, (std::max)(leftBottom, rightBottom)));
-            ImGui::Dummy(ImVec2(0.0f, 0.0f));
-        }
-        else if (besideControls)
+        if (fgHomePart == 1)
+            return;
+
+        // Narrow card (sidebar expanded, big scale): the states beside the multiplier and "On" when they leave room,
+        // else under them. Never over the selectors
+        const float leftBottom = ImGui::GetCursorScreenPos().y;
+        const float statesX = contentRight - blockWidth - U(8);
+        if (statesX >= leftStart.x + width + U(16))
         {
             ImGui::SetCursorScreenPos(ImVec2(statesX, leftStart.y));
             ImGui::BeginGroup();
@@ -1004,10 +998,7 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
             ImGui::Dummy(ImVec2(0.0f, 0.0f));
         }
         else
-        {
-            // Too narrow for two zones (big scale or long names): the states under the controls
             drawStates();
-        }
         return;
     }
 
@@ -1035,6 +1026,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
     AdvanceReShadePanel();
 
     S = ScaleFor(io, config);
+    IlionTheme::SetShellTheme(UiThemeIndex(config) == 1 ? 1 : 0); // ILION dev.70: Industrial or Clean Olive
 
     // The controls of the menu take the look of the new interface while it draws, in its single mode
     struct ShellScope
@@ -1266,7 +1258,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
             dl->AddRectFilledMultiColor(P(p), P(q), Col(top), Col(top), Col(bottom), Col(bottom));
             if (sel)
                 for (int k = 4; k >= 1; k--)
-                    dl->AddRect(P(p.x - k, p.y - k), P(q.x + k, q.y + k), Col(pal::Orange, 0.07f * (5 - k)), U(7.f), 0, 1.f);
+                    dl->AddRect(P(p.x - k, p.y - k), P(q.x + k, q.y + k), Col(pal::Orange, 0.07f * (5 - k) * IlionTheme::shellGlow), U(7.f), 0, 1.f);
             dl->AddRect(P(p), P(q), Col(sel ? pal::Orange : pal::Line), U(6.f), 0, sel ? U(2.f) : 1.f);
             const ImU32 ic = Col(sel ? pal::Orange : (hov ? pal::Text : pal::Text2));
 
@@ -1356,7 +1348,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         const ImVec2 a(x0, 78), b(x1, 238);
         PanelRect(a, b);
         const float fx = (std::max)(a.x + 560, b.x - 600);
-        for (float x = a.x + 420; x < fx - 40; x += 14)
+        for (float x = a.x + 420; IlionTheme::shellDecor && x < fx - 40; x += 14)
             dl->AddLine(P(x, a.y + 1), P(x - 60, b.y - 1), Col(pal::Line, 0.45f), 1.f);
 
         // ILION Advisor's module: the centre of the header, between the game and the figures
@@ -1536,7 +1528,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                 const ImVec2 c = P(m0.x + 19, m0.y + 16);
                 const float rl = U(5.5f);
                 for (int k = 3; k >= 1; k--)
-                    dl->AddCircleFilled(c, rl + U(2.f) + k * U(1.6f), Col(lens, 0.035f * (4 - k)));
+                    dl->AddCircleFilled(c, rl + U(2.f) + k * U(1.6f), Col(lens, 0.035f * (4 - k) * IlionTheme::shellGlow));
                 dl->AddCircleFilled(c, rl + U(2.6f), Col(ImVec4(0.16f, 0.17f, 0.16f, 1.f)));
                 dl->AddCircle(c, rl + U(2.6f), Col(ImVec4(0.02f, 0.02f, 0.02f, 1.f)), 0, 1.f);
                 dl->PathArcTo(c, rl + U(2.0f), 3.6f, 5.6f, 12);
@@ -2111,17 +2103,44 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         card("##HomeFg", 2, kSections[2].name[li], fgLed, ImVec2(half + 8, a.y), ImVec2(b.x, rowSplit),
              [&]()
              {
-                 fgHomeTop = ImGui::GetCursorScreenPos().y;
+                 // Two zones as two columns of one table row: both start at the same top, the left one (selectors,
+                 // multiplier, On) never pushes the right one (the states) down. dev.69 measured how far the left
+                 // drawing reached, and any wrapped text of the selection reached the card's edge: the states fell to
+                 // the multiplier's height. A column needs no such guess
+                 float shownLabel = 0.0f;
+                 for (const char* label : { "FG Input", "FG Output", "XeMFG variant" })
+                     shownLabel = (std::max)(shownLabel, ImGui::CalcTextSize(Tr(label)).x);
+                 const float statesWidth = (fgHomeStatesWidth > 0.0f ? fgHomeStatesWidth : U(250)) + U(10);
+                 const float leftNeed = ImGui::GetFontSize() * 15.0f + shownLabel + ImGui::GetStyle().ItemInnerSpacing.x * 2.0f + U(16);
+                 const bool zones = ImGui::GetContentRegionAvail().x - statesWidth >= leftNeed &&
+                                    ImGui::BeginTable("##HomeFgZones", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings);
+
+                 if (zones)
+                 {
+                     ImGui::TableSetupColumn("##left", ImGuiTableColumnFlags_WidthStretch);
+                     ImGui::TableSetupColumn("##right", ImGuiTableColumnFlags_WidthFixed, statesWidth);
+                     ImGui::TableNextRow();
+                     ImGui::TableSetColumnIndex(0);
+                 }
+
                  shellFgInstrumentsApart = true;
                  fgSelectorsOnly = true;
                  RenderFrameGenerationSelection(ctx);
                  fgSelectorsOnly = false;
                  shellFgInstrumentsApart = false;
-                 fgHomeLeftRight = ImGui::GetCurrentWindow()->DC.CursorMaxPos.x;
+
                  fgQuickHome = true;
+                 fgHomePart = zones ? 1 : 0;
                  RenderFgQuickControls(ctx);
+                 if (zones)
+                 {
+                     ImGui::TableSetColumnIndex(1);
+                     fgHomePart = 2;
+                     RenderFgQuickControls(ctx);
+                     ImGui::EndTable();
+                 }
+                 fgHomePart = 0;
                  fgQuickHome = false;
-                 fgHomeTop = 0.0f;
              });
 
         // Latency and FPS: the quick switches of fakenvapi (XeLL, LatencyFleX, Reflex), V-Sync, the FPS limit and the overlay
@@ -2229,7 +2248,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                 ldl->AddRectFilled(P(p), P(q), Col(on ? Mix(pal::Panel, pal::Green, 0.07f) : (hov ? pal::PanelHi : pal::Panel)), U(4.f));
                 if (on)
                     for (int k = 3; k >= 1; k--)
-                        ldl->AddRect(P(p.x - k + 1, p.y - k + 1), P(q.x + k - 1, q.y + k - 1), Col(pal::Green, 0.08f * (4 - k)), U(5.f));
+                        ldl->AddRect(P(p.x - k + 1, p.y - k + 1), P(q.x + k - 1, q.y + k - 1), Col(pal::Green, 0.08f * (4 - k) * IlionTheme::shellGlow), U(5.f));
                 ldl->AddRect(P(p), P(q), Col(on ? pal::Green : pal::Line), U(4.f), 0, on ? U(1.8f) : 1.f);
                 Badge(ImVec2(p.x + 12, p.y + 9), 48.f, look.badge, look.tint);
                 Text(fUi, 21.f, ImVec2(p.x + 76, p.y + 10), pal::Text, familyNames[family]);

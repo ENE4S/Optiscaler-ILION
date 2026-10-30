@@ -215,19 +215,68 @@ inline bool shell = false;
 
 namespace ShellPal
 {
-inline const ImVec4 Bg { 0.035f, 0.041f, 0.038f, 1.f };
-inline const ImVec4 Panel { 0.058f, 0.068f, 0.062f, 1.f };
-inline const ImVec4 PanelHi { 0.078f, 0.092f, 0.083f, 1.f };
-inline const ImVec4 Field { 0.070f, 0.082f, 0.075f, 1.f };
-inline const ImVec4 Line { 0.15f, 0.19f, 0.16f, 1.f };
-inline const ImVec4 Text { 0.93f, 0.95f, 0.92f, 1.f };
-inline const ImVec4 Text2 { 0.62f, 0.67f, 0.62f, 1.f };
-inline const ImVec4 Dim { 0.38f, 0.42f, 0.39f, 1.f };
-inline const ImVec4 Green { 0.69f, 1.00f, 0.10f, 1.f };
-inline const ImVec4 Orange { 1.00f, 0.48f, 0.10f, 1.f };
-inline const ImVec4 Yellow { 1.00f, 0.84f, 0.10f, 1.f };
-inline const ImVec4 Red { 1.00f, 0.26f, 0.20f, 1.f };
+inline ImVec4 Bg { 0.035f, 0.041f, 0.038f, 1.f };
+inline ImVec4 Panel { 0.058f, 0.068f, 0.062f, 1.f };
+inline ImVec4 PanelHi { 0.078f, 0.092f, 0.083f, 1.f };
+inline ImVec4 Field { 0.070f, 0.082f, 0.075f, 1.f };
+inline ImVec4 Line { 0.15f, 0.19f, 0.16f, 1.f };
+inline ImVec4 Text { 0.93f, 0.95f, 0.92f, 1.f };
+inline ImVec4 Text2 { 0.62f, 0.67f, 0.62f, 1.f };
+inline ImVec4 Dim { 0.38f, 0.42f, 0.39f, 1.f };
+inline ImVec4 Green { 0.69f, 1.00f, 0.10f, 1.f };
+inline ImVec4 Orange { 1.00f, 0.48f, 0.10f, 1.f };
+inline ImVec4 Yellow { 1.00f, 0.84f, 0.10f, 1.f };
+inline ImVec4 Red { 1.00f, 0.26f, 0.20f, 1.f };
 } // namespace ShellPal
+
+// ILION dev.70: the theme of the new interface. 0 Industrial (the palette above, as approved), 1 Clean Olive (an olive
+// palette, quieter: less glow around pilots and keys, no decorative stripes). Every component reads ShellPal,
+// shellGlow and shellDecor, so the theme changes nothing else
+inline float shellGlow = 1.0f; // strength of the halos and glows
+inline bool shellDecor = true; // purely decorative parts (the diagonal stripes of the header)
+
+inline void SetShellTheme(int theme)
+{
+    static int applied = 0; // ShellPal starts as Industrial
+    if (theme == applied)
+        return;
+    applied = theme;
+
+    if (theme == 1)
+    {
+        ShellPal::Bg = ImVec4(0.078f, 0.090f, 0.059f, 1.f);
+        ShellPal::Panel = ImVec4(0.106f, 0.122f, 0.082f, 1.f);
+        ShellPal::PanelHi = ImVec4(0.132f, 0.152f, 0.102f, 1.f);
+        ShellPal::Field = ImVec4(0.118f, 0.136f, 0.090f, 1.f);
+        ShellPal::Line = ImVec4(0.200f, 0.227f, 0.149f, 1.f);
+        ShellPal::Text = ImVec4(0.902f, 0.910f, 0.855f, 1.f);
+        ShellPal::Text2 = ImVec4(0.640f, 0.660f, 0.550f, 1.f);
+        ShellPal::Dim = ImVec4(0.420f, 0.440f, 0.360f, 1.f);
+        ShellPal::Green = ImVec4(0.710f, 0.790f, 0.353f, 1.f);
+        ShellPal::Orange = ImVec4(0.790f, 0.510f, 0.243f, 1.f);
+        ShellPal::Yellow = ImVec4(0.850f, 0.706f, 0.290f, 1.f);
+        ShellPal::Red = ImVec4(0.800f, 0.290f, 0.239f, 1.f);
+        shellGlow = 0.35f;
+        shellDecor = false;
+    }
+    else
+    {
+        ShellPal::Bg = ImVec4(0.035f, 0.041f, 0.038f, 1.f);
+        ShellPal::Panel = ImVec4(0.058f, 0.068f, 0.062f, 1.f);
+        ShellPal::PanelHi = ImVec4(0.078f, 0.092f, 0.083f, 1.f);
+        ShellPal::Field = ImVec4(0.070f, 0.082f, 0.075f, 1.f);
+        ShellPal::Line = ImVec4(0.15f, 0.19f, 0.16f, 1.f);
+        ShellPal::Text = ImVec4(0.93f, 0.95f, 0.92f, 1.f);
+        ShellPal::Text2 = ImVec4(0.62f, 0.67f, 0.62f, 1.f);
+        ShellPal::Dim = ImVec4(0.38f, 0.42f, 0.39f, 1.f);
+        ShellPal::Green = ImVec4(0.69f, 1.00f, 0.10f, 1.f);
+        ShellPal::Orange = ImVec4(1.00f, 0.48f, 0.10f, 1.f);
+        ShellPal::Yellow = ImVec4(1.00f, 0.84f, 0.10f, 1.f);
+        ShellPal::Red = ImVec4(1.00f, 0.26f, 0.20f, 1.f);
+        shellGlow = 1.0f;
+        shellDecor = true;
+    }
+}
 
 inline ImVec4 ShellMix(const ImVec4& a, const ImVec4& b, float t)
 {
@@ -240,7 +289,7 @@ inline void ShellLed(ImDrawList* draw, const ImVec2& c, float r, const ImVec4& c
     if (lit)
     {
         for (int i = 4; i >= 1; i--)
-            draw->AddCircleFilled(c, r + i * r * 0.55f, ImGui::GetColorU32(Alpha(color, 0.05f * (5 - i) * color.w)));
+            draw->AddCircleFilled(c, r + i * r * 0.55f, ImGui::GetColorU32(Alpha(color, 0.05f * (5 - i) * color.w * shellGlow)));
         draw->AddCircleFilled(c, r, ImGui::GetColorU32(color));
         draw->AddCircleFilled(ImVec2(c.x - r * 0.3f, c.y - r * 0.3f), r * 0.38f, ImGui::GetColorU32(ImVec4(1, 1, 1, 0.55f)));
     }
@@ -262,7 +311,7 @@ inline void ShellKey(ImDrawList* draw, const ImVec2& p, const ImVec2& q, bool on
                                   ImGui::GetColorU32(bottom));
     if (on)
         for (int i = 3; i >= 1; i--)
-            draw->AddRect(ImVec2(p.x - i, p.y - i), ImVec2(q.x + i, q.y + i), ImGui::GetColorU32(Alpha(accent, 0.06f * (4 - i))),
+            draw->AddRect(ImVec2(p.x - i, p.y - i), ImVec2(q.x + i, q.y + i), ImGui::GetColorU32(Alpha(accent, 0.06f * (4 - i) * shellGlow)),
                           rounding + 1.0f, 0, 1.f);
     draw->AddRect(p, q, ImGui::GetColorU32(on ? accent : (hovered ? ShellMix(ShellPal::Line, accent, 0.4f) : ShellPal::Line)), rounding,
                   0, on ? 1.6f : 1.f);
@@ -1236,7 +1285,7 @@ inline void DrawSliderRail(ImDrawList* draw, const ImVec2& min, const ImVec2& ma
                                           ImGui::GetColorU32(ShellMix(ShellPal::Green, ShellPal::Bg, 0.4f)));
         const ImVec2 k(center, (float) middle);
         for (int i = 3; i >= 1; i--)
-            draw->AddCircleFilled(k, knob + i * knob * 0.3f, ImGui::GetColorU32(Alpha(ShellPal::Green, (hovered || active ? 0.09f : 0.06f) * (4 - i))));
+            draw->AddCircleFilled(k, knob + i * knob * 0.3f, ImGui::GetColorU32(Alpha(ShellPal::Green, (hovered || active ? 0.09f : 0.06f) * (4 - i) * shellGlow)));
         draw->AddCircleFilled(k, knob, ImGui::GetColorU32(ImVec4(0.92f, 0.98f, 0.85f, 1)));
         draw->AddCircle(k, knob, ImGui::GetColorU32(ShellPal::Green), 0, 2.f);
         return;

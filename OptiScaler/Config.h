@@ -505,6 +505,7 @@ class Config
     CustomOptional<std::string> MenuLanguage { "es" };
     CustomOptional<bool> MenuBasicMode { false };
     CustomOptional<bool> MenuClassicLayout { false }; // ILION dev.57: the menu as it was before the new interface
+    CustomOptional<std::string> MenuUiTheme { "industrial" }; // ILION dev.70: industrial, olive or traditional (ClassicLayout=true is traditional)
     CustomOptional<bool> MenuSidebarWide { false };   // ILION dev.57: the sidebar of the new interface with names
     CustomOptional<bool> MenuEssentialMode { false }; // ILION: Essential mode, the full tabs under a strip of status screens. BasicMode wins
     CustomOptional<bool> IlionInfoLine { true };      // ILION: INFO line at the bottom of the menu

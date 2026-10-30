@@ -58,6 +58,7 @@
 #include <mutex>
 #include <atomic>
 #include <functional>
+#include <intrin.h>
 #include <map>
 #include <fstream>
 #include <thread>

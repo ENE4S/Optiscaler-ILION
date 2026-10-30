@@ -609,6 +609,183 @@ static float ScaleFor(const ImGuiIO& io, decltype(Config::Instance()) config)
 }
 } // namespace IlionShell
 
+// ---------------------------------------------------------------------------------------------------------------------
+// ILION Advisor (misc/IlionAdvisor.h): its texts, its hold and the facts it is given
+// ---------------------------------------------------------------------------------------------------------------------
+namespace IlionShell
+{
+using IlionAdvisor::Note;
+
+static const char* NoteText(Note n)
+{
+    switch (n)
+    {
+    case Note::NativeMeetsTarget:
+        return Lx("Measured at native resolution: the FPS reach the target of your screen.", "Medido en resolución nativa: los FPS alcanzan el objetivo de tu pantalla.",
+                  "Medido em resolução nativa: os FPS alcançam o alvo da tela.", "Измерено в нативном разрешении: FPS достигают цели экрана.");
+    case Note::NativeBelowTarget:
+        return Lx("Measured at native resolution: the FPS stay below the target of your screen.", "Medido en resolución nativa: los FPS quedan por debajo del objetivo de tu pantalla.",
+                  "Medido em resolução nativa: os FPS ficam abaixo do alvo da tela.", "Измерено в нативном разрешении: FPS ниже цели экрана.");
+    case Note::NativeUnknownScaled:
+        return Lx("An upscaler runs: these FPS are those of this setting, native performance is unknown.", "Hay un escalador activo: estos FPS son de esta configuración, el rendimiento nativo es desconocido.",
+                  "Há um upscaler ativo: estes FPS são desta configuração, o nativo é desconhecido.", "Работает апскейлер: эти FPS — этой настройки, нативная производительность неизвестна.");
+    case Note::NoStableSamples:
+        return Lx("No stable FPS yet (loading, pause or the menu just opened).", "Aún no hay FPS estables (carga, pausa o menú recién abierto).",
+                  "Ainda não há FPS estáveis (carregamento, pausa ou menu recém-aberto).", "Ещё нет стабильных FPS (загрузка, пауза или меню только открыто).");
+    case Note::PrudentByResolution:
+        return Lx("Prudent start chosen by the output resolution.", "Inicio prudente elegido por la resolución de salida.",
+                  "Início prudente escolhido pela resolução de saída.", "Осторожный старт по выходному разрешению.");
+    case Note::ObservedHigh:
+        return Lx("The FPS are well above the target: a higher quality mode has room.", "Los FPS superan bastante el objetivo: hay margen para un modo de más calidad.",
+                  "Os FPS superam bem o alvo: há margem para um modo de mais qualidade.", "FPS заметно выше цели: есть запас для более качественного режима.");
+    case Note::ObservedLow:
+        return Lx("The FPS stay below the target: a faster mode would help.", "Los FPS quedan por debajo del objetivo: ayudaría un modo más rápido.",
+                  "Os FPS ficam abaixo do alvo: um modo mais rápido ajudaria.", "FPS ниже цели: поможет более быстрый режим.");
+    case Note::PreferredForArch:
+        return Lx("Usable here and the first choice for this GPU's architecture (rule, not a measurement).", "Utilizable aquí y primera opción para la arquitectura de esta GPU (regla, no medición).",
+                  "Utilizável aqui e primeira opção para a arquitetura desta GPU (regra, não medição).", "Доступно и первое для архитектуры этой GPU (правило, не измерение).");
+    case Note::OnlyUsableFamily:
+        return Lx("The only upscaler usable here.", "El único escalador utilizable aquí.", "O único upscaler utilizável aqui.", "Единственный доступный апскейлер.");
+    case Note::NoUsableUpscaler:
+        return Lx("No upscaler of ILION is usable in this game.", "Ningún escalador de ILION es utilizable en este juego.",
+                  "Nenhum upscaler do ILION é utilizável neste jogo.", "В этой игре нет доступных апскейлеров ILION.");
+    case Note::Fsr4Int8Cost:
+        return Lx("RDNA 3 runs FSR 4 through INT8 builds: better image, higher cost than FSR 3.1.", "RDNA 3 ejecuta FSR 4 con versiones INT8: mejor imagen, más coste que FSR 3.1.",
+                  "RDNA 3 executa FSR 4 com versões INT8: imagem melhor, custo maior que FSR 3.1.", "RDNA 3 запускает FSR 4 через INT8: лучше картинка, дороже FSR 3.1.");
+    case Note::FgNotEvaluated:
+        return Lx("FG options not worked out yet in this session (open Frame Generation once).", "Opciones de FG aún no evaluadas en esta sesión (abre Frame Generation una vez).",
+                  "Opções de FG ainda não avaliadas nesta sessão (abra Frame Generation uma vez).", "Опции FG ещё не оценены (откройте Frame Generation).");
+    case Note::FgNoOutput:
+        return Lx("No FG output of OptiScaler is usable here.", "Ninguna salida de FG de OptiScaler es utilizable aquí.",
+                  "Nenhuma saída de FG do OptiScaler é utilizável aqui.", "Нет доступного выхода FG OptiScaler.");
+    case Note::FgNoBase:
+        return Lx("The real (base) FPS are unknown: FG can't be judged yet.", "Los FPS reales (base) son desconocidos: aún no se puede valorar la FG.",
+                  "Os FPS reais (base) são desconhecidos: a FG ainda não pode ser avaliada.", "Реальные (базовые) FPS неизвестны: FG оценить нельзя.");
+    case Note::FgBaseTooLow:
+        return Lx("Base under 45 FPS: generated frames would add too much latency.", "Base por debajo de 45 FPS: los fotogramas generados añadirían demasiada latencia.",
+                  "Base abaixo de 45 FPS: os quadros gerados adicionariam latência demais.", "База ниже 45 FPS: сгенерированные кадры дадут слишком большую задержку.");
+    case Note::FgBaseBelow60:
+        return Lx("Base between 45 and 60 FPS: FG off as a prudent start (latency).", "Base entre 45 y 60 FPS: FG desactivada como inicio prudente (latencia).",
+                  "Base entre 45 e 60 FPS: FG desligada como início prudente (latência).", "База 45–60 FPS: FG выключена для осторожного старта (задержка).");
+    case Note::FgBaseOk:
+        return Lx("Base of 60 FPS or more: FG can add smoothness with acceptable latency.", "Base de 60 FPS o más: la FG puede añadir fluidez con una latencia aceptable.",
+                  "Base de 60 FPS ou mais: a FG pode dar fluidez com latência aceitável.", "База от 60 FPS: FG добавит плавность при приемлемой задержке.");
+    case Note::FgCappedByOutput:
+        return Lx("Multiplier limited to what this FG output can generate.", "Multiplicador limitado a lo que esta salida de FG puede generar.",
+                  "Multiplicador limitado ao que esta saída de FG pode gerar.", "Множитель ограничен возможностями этого выхода FG.");
+    case Note::FgCappedByRefresh:
+        return Lx("Multiplier lowered: more frames would pass the refresh rate of the screen (reference only).", "Multiplicador reducido: más fotogramas superarían la frecuencia de la pantalla (solo referencia).",
+                  "Multiplicador reduzido: mais quadros passariam a frequência da tela (só referência).", "Множитель снижен: больше кадров превысит частоту экрана (ориентир).");
+    case Note::FgCappedEstimatedBase:
+        return Lx("Base FPS estimated (presented / multiplier): no more than x2 is suggested.", "FPS base estimados (presentados / multiplicador): no se sugiere más de x2.",
+                  "FPS base estimados (apresentados / multiplicador): não se sugere mais que x2.", "База оценена (показано / множитель): не более x2.");
+    case Note::FgUnstable:
+        return Lx("Unsteady frame times: a higher multiplier would show it more.", "Tiempos de fotograma irregulares: un multiplicador mayor lo haría más visible.",
+                  "Tempos de quadro irregulares: um multiplicador maior deixaria mais visível.", "Неровное время кадра: больший множитель это усилит.");
+    case Note::FgMaxUnknown:
+        return Lx("The output's maximum is known once it is loaded: x2 until then.", "El máximo de la salida se conoce al cargarla: x2 hasta entonces.",
+                  "O máximo da saída é conhecido ao carregá-la: x2 até lá.", "Максимум выхода известен после загрузки: до тех пор x2.");
+    case Note::FgRefreshUnknown:
+        return Lx("Refresh rate of the screen unknown.", "Frecuencia de la pantalla desconocida.", "Frequência da tela desconhecida.", "Частота экрана неизвестна.");
+    case Note::NrNotSupported:
+        return Lx("Neural Rendering can't run on this GPU.", "Neural Rendering no puede ejecutarse en esta GPU.", "Neural Rendering não roda nesta GPU.",
+                  "Neural Rendering не работает на этой GPU.");
+    case Note::NrNotReady:
+        return Lx("No NR runtime ready, or a restart is pending.", "Ningún motor NR listo, o hay un reinicio pendiente.", "Nenhum motor NR pronto, ou reinício pendente.",
+                  "Нет готового движка NR или ожидается перезапуск.");
+    case Note::NrNoBase:
+        return Lx("Base FPS unknown: NR can't be judged yet.", "FPS base desconocidos: aún no se puede valorar NR.", "FPS base desconhecidos: NR ainda não pode ser avaliado.",
+                  "База FPS неизвестна: NR оценить нельзя.");
+    case Note::NrHeadroom:
+        return Lx("Base of 75 FPS or more: there is room for the model's cost.", "Base de 75 FPS o más: hay margen para el coste del modelo.",
+                  "Base de 75 FPS ou mais: há margem para o custo do modelo.", "База от 75 FPS: есть запас на стоимость модели.");
+    case Note::NrNoHeadroom:
+        return Lx("Base under 75 FPS: the model's cost would be felt.", "Base por debajo de 75 FPS: el coste del modelo se notaría.",
+                  "Base abaixo de 75 FPS: o custo do modelo seria sentido.", "База ниже 75 FPS: стоимость модели будет заметна.");
+    case Note::LatencyAutomatic:
+        return Lx("Intelligent activation picks the compatible technology (Reflex, Anti-Lag 2, XeLL, LatencyFleX).",
+                  "La activación inteligente elige la tecnología compatible (Reflex, Anti-Lag 2, XeLL, LatencyFleX).",
+                  "A ativação inteligente escolhe a tecnologia compatível (Reflex, Anti-Lag 2, XeLL, LatencyFleX).",
+                  "Умная активация выбирает совместимую технологию (Reflex, Anti-Lag 2, XeLL, LatencyFleX).");
+    case Note::LatencyXeFgUsesXeLL:
+        return Lx("With XeFG, XeLL owns latency (Reflex is not used).", "Con XeFG, la latencia la lleva XeLL (Reflex no se usa).",
+                  "Com XeFG, a latência é do XeLL (Reflex não é usado).", "С XeFG задержкой управляет XeLL (Reflex не используется).");
+    }
+    return "";
+}
+
+static bool NoteIsWarning(Note n)
+{
+    return n == Note::Fsr4Int8Cost || n == Note::FgUnstable || n == Note::FgCappedEstimatedBase || n == Note::FgMaxUnknown ||
+           n == Note::FgRefreshUnknown || n == Note::NoStableSamples || n == Note::FgNotEvaluated || n == Note::NativeUnknownScaled;
+}
+
+static const char* QualityText(IlionAdvisor::Quality q)
+{
+    switch (q)
+    {
+    case IlionAdvisor::Quality::NativeAA:
+        return Lx("Native AA", "AA nativo", "AA nativo", "Нативный AA");
+    case IlionAdvisor::Quality::Quality:
+        return Lx("Quality", "Calidad", "Qualidade", "Качество");
+    case IlionAdvisor::Quality::Balanced:
+        return Lx("Balanced", "Equilibrado", "Equilibrado", "Баланс");
+    default:
+        return Lx("Performance", "Rendimiento", "Desempenho", "Производительность");
+    }
+}
+
+static const char* LevelText(IlionAdvisor::Level l)
+{
+    return l == IlionAdvisor::Level::Verified ? Lx("verified", "verificado", "verificado", "проверено")
+           : l == IlionAdvisor::Level::Estimate ? Lx("estimate", "estimación", "estimativa", "оценка")
+                                                : Lx("insufficient data", "datos insuficientes", "dados insuficientes", "мало данных");
+}
+
+static ImVec4 LevelColour(IlionAdvisor::Level l)
+{
+    return l == IlionAdvisor::Level::Verified ? pal::Green : l == IlionAdvisor::Level::Estimate ? pal::Yellow : pal::Orange;
+}
+
+static const char* FgOutName(int o)
+{
+    return o == IlionAdvisor::XeFG ? "XeFG" : o == IlionAdvisor::FsrFG ? "FSR FG" : o == IlionAdvisor::Dlssg ? "DLSSG" : "-";
+}
+
+// Refresh rate of the monitor that shows the game, read again only when the window moves to another monitor
+static double RefreshHz(HWND window)
+{
+    static HMONITOR lastMonitor = nullptr;
+    static double lastHz = 0.0;
+    HMONITOR monitor = window != nullptr ? MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST) : nullptr;
+    if (monitor == nullptr)
+        return 0.0;
+    if (monitor != lastMonitor)
+    {
+        lastMonitor = monitor;
+        lastHz = 0.0;
+        MONITORINFOEXW info {};
+        info.cbSize = sizeof(info);
+        if (GetMonitorInfoW(monitor, &info))
+        {
+            DEVMODEW mode {};
+            mode.dmSize = sizeof(mode);
+            if (EnumDisplaySettingsW(info.szDevice, ENUM_CURRENT_SETTINGS, &mode) && mode.dmDisplayFrequency > 1)
+                lastHz = (double) mode.dmDisplayFrequency;
+        }
+    }
+    return lastHz;
+}
+
+// The suggestion shown and the one waiting to hold for kHoldSeconds
+static IlionAdvisor::Advice advShown;
+static bool advHasShown = false;
+static int advPending = -1;
+static double advPendingSince = 0.0;
+static double advLastRun = -10.0;
+static IlionAdvisor::Facts advFacts;
+} // namespace IlionShell
+
 // ILION dev.60: FG on/off, the multiplier of the loaded output and what is chosen, loaded and active. The same in Home
 // and next to the selection of the Frame Gen module; on/off is the FG key's own function
 void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
@@ -770,7 +947,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
     static const ShellLayout lFrameGen { { "fg_selection", "@fg_quick", "fg_optifg", "fg_reprojection", "fg_nvngx", "fg_fsrfg_inputs" },
                                          { "@fg_instruments", "fg_xefg", "fg_fsrfg", "fg_dlssg" } };
     static const ShellLayout lLatency { { "framerate", "vsync", "low_latency" },
-                                        { "ilion_latency", "ilion_regulator", "@latency_meters", "@latency_monitor" } };
+                                        { "ilion_latency", "ilion_regulator", "@latency_combined" } };
     static const ShellLayout lImage { { "gfx_color", "gfx_advanced" }, { "sharpness", "mipmap", "anisotropy" } };
     static const ShellLayout lReShade { { "reshade", "@reshade_manage" }, {} };
     static const ShellLayout lCompare { { "@compare_info", "gfx_compare" }, { "magnifier" } };
@@ -991,6 +1168,13 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         }
 
         // Expand / collapse: the user's choice, kept in the ini; it never opens by itself
+        // Attribution: ILION is a fork of OptiScaler (its licence and credits are unchanged, see the package)
+        {
+            const char* fork = "OptiScaler Fork";
+            const ImVec2 ts = Measure(fUi, 12.f, fork);
+            Text(fUi, 12.f, ImVec2((side - ts.x) * 0.5f, H - 74), pal::Dim, fork);
+        }
+
         At(8, H - 54);
         if (Button("##wide", wide ? Lx("«  Collapse", "«  Contraer", "«  Recolher", "«  Свернуть") : "»", ImVec2(side - 16, 40)))
         {
@@ -1051,6 +1235,250 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         const float sep = a.x + 22 + Measure(fUi, 20.f, api.c_str()).x + 18;
         dl->AddLine(P(sep, a.y + 110), P(sep, a.y + 130), Col(pal::Line), 1.f);
         // The menu is drawn by ILION inside the game: ILION is running
+        // ILION Advisor: facts once a second while the menu is open, the suggestion changes only after holding 5 s
+        if (ImGui::GetTime() - advLastRun >= 1.0)
+        {
+            advLastRun = ImGui::GetTime();
+            IlionAdvisor::Facts f;
+            const auto& gpu = IdentifyGpu::getPrimaryGpu();
+            f.vendor = gpu.vendorId == VendorId::AMD ? IlionAdvisor::Vendor::Amd : gpu.vendorId == VendorId::Nvidia ? IlionAdvisor::Vendor::Nvidia
+                       : gpu.vendorId == VendorId::Intel ? IlionAdvisor::Vendor::Intel : IlionAdvisor::Vendor::Unknown;
+            f.vramGb = gpu.dedicatedVramInBytes / 1073741824.0;
+            if (f.vendor == IlionAdvisor::Vendor::Amd)
+                f.arch = gpu.amdHwGeneration == device_info::HwGeneration::kGfx12  ? IlionAdvisor::Arch::Rdna4
+                         : gpu.amdHwGeneration == device_info::HwGeneration::kGfx11 ? IlionAdvisor::Arch::Rdna3
+                         : gpu.amdHwGeneration == device_info::HwGeneration::kGfx10_3 ? IlionAdvisor::Arch::Rdna2
+                                                                                     : IlionAdvisor::Arch::AmdOther;
+            else if (f.vendor == IlionAdvisor::Vendor::Nvidia)
+                f.arch = gpu.dlssCapable ? IlionAdvisor::Arch::NvidiaDlss : IlionAdvisor::Arch::NvidiaOther;
+            else if (f.vendor == IlionAdvisor::Vendor::Intel)
+                f.arch = f.vramGb >= 2.0 ? IlionAdvisor::Arch::IntelArc : IlionAdvisor::Arch::IntelOther;
+
+            f.upscalerRunning = upscalerOn;
+            f.outWidth = upscalerOn ? (int) feature->TargetWidth() : (int) io.DisplaySize.x;
+            f.outHeight = upscalerOn ? (int) feature->TargetHeight() : (int) io.DisplaySize.y;
+            f.renderRatio = upscalerOn && feature->RenderWidth() > 0 ? (double) feature->TargetWidth() / feature->RenderWidth() : 1.0;
+            f.refreshHz = RefreshHz(_handle);
+
+            // The last presented frames: their median and how steady they are
+            {
+                std::vector<double> recent;
+                const auto& times = state.frameTimes;
+                for (size_t k = times.size() > 180 ? times.size() - 180 : 0; k < times.size(); k++)
+                    if (times[k] > 0.0)
+                        recent.push_back(times[k]);
+                if (recent.size() >= 90)
+                {
+                    double mean = 0.0;
+                    for (double v : recent)
+                        mean += v;
+                    mean /= recent.size();
+                    double var = 0.0;
+                    for (double v : recent)
+                        var += (v - mean) * (v - mean);
+                    f.frametimeCv = mean > 0.0 ? std::sqrt(var / recent.size()) / mean : 1.0;
+                    std::nth_element(recent.begin(), recent.begin() + recent.size() / 2, recent.end());
+                    const double median = recent[recent.size() / 2];
+                    f.presentedFps = median > 0.0 ? 1000.0 / median : 0.0;
+                    f.samplesStable = f.presentedFps > 0.0 && f.frametimeCv < 0.5;
+                }
+            }
+
+            // Frame generation: what generates now, the real frames MFG cost counts, the copy of the FG options
+            auto fg = state.currentFG;
+            const bool ownFg = fg != nullptr && fg->IsActive() && !fg->IsPaused();
+            const bool dynamicMfg = state.dlssgLastSetMode == sl::DLSSGMode::eDynamic;
+            if (ownFg)
+            {
+                f.fgGenerating = true;
+                f.fgEffectiveMultiplier = (int) fg->GetInterpolatedFrameCount() + 1;
+                f.fgMultiplierReliable = !dynamicMfg && (state.activeFgOutput == FGOutput::XeFG || state.activeFgOutput == FGOutput::FSRFG ||
+                                                         state.activeFgOutput == FGOutput::DLSSG);
+            }
+            else if (state.dlssgDetectedInterpolationCount > 0)
+            {
+                f.fgGenerating = true;
+                f.fgEffectiveMultiplier = state.dlssgDetectedInterpolationCount + 1;
+                f.fgMultiplierReliable = !dynamicMfg;
+            }
+            if (mfgCost.generating && !mfgCost.unmeasurable && mfgCost.current > 0.0)
+                f.realBaseFps = mfgCost.current;
+            for (double r : mfgCost.reference)
+                f.referenceBaseFps = (std::max)(f.referenceBaseFps, r > 0.0 ? r : 0.0);
+            if (mfgCost.reference[MfgCostState::Presents] > 0.0)
+                f.referenceBaseFps = mfgCost.reference[MfgCostState::Presents];
+
+            f.fgLoaded = state.activeFgOutput == FGOutput::XeFG ? IlionAdvisor::XeFG : state.activeFgOutput == FGOutput::FSRFG ? IlionAdvisor::FsrFG
+                         : state.activeFgOutput == FGOutput::DLSSG ? IlionAdvisor::Dlssg : IlionAdvisor::NoFg;
+            f.fgEvaluated = fgOptionsSnapshot.evaluated;
+            f.fgUsable[IlionAdvisor::XeFG] = fgOptionsSnapshot.outputUsable[(int) FGOutput::XeFG];
+            f.fgUsable[IlionAdvisor::FsrFG] = fgOptionsSnapshot.outputUsable[(int) FGOutput::FSRFG];
+            f.fgUsable[IlionAdvisor::Dlssg] = fgOptionsSnapshot.outputUsable[(int) FGOutput::DLSSG];
+            f.fgMaxMultiplier[IlionAdvisor::FsrFG] = 2; // FSR FG makes one frame (its own combo offers no more)
+            if (fg != nullptr && f.fgLoaded != IlionAdvisor::NoFg && f.fgLoaded != IlionAdvisor::FsrFG)
+                f.fgMaxMultiplier[f.fgLoaded] = fg->GetMaxInterpolationCount() + 1;
+
+            // Upscalers usable here, as the catalogue decides it
+            const auto catalog = GatherUpscalers(feature);
+            for (const auto& v : catalog.variants)
+                if (v.usable && v.family >= 0 && v.family < IlionAdvisor::FamilyCount)
+                    f.familyUsable[v.family] = true;
+
+            // Neural Rendering
+            const auto& nrGpu = DlssNr::AmdBridge::GpuSupportInfo();
+            const auto nr = NrSwitchStateNow();
+            f.nrGpuOk = nrGpu.danielOk || nrGpu.lmxxfOk;
+            f.nrReady = nr.ready;
+            f.nrRestart = nr.restart;
+            f.fgXeFgChosen = config->FGOutput.value_or_default() == FGOutput::XeFG || state.activeFgOutput == FGOutput::XeFG;
+
+            advFacts = f;
+            const auto advice = IlionAdvisor::Evaluate(f);
+            const int signature = IlionAdvisor::Signature(advice);
+            if (!advHasShown || signature == IlionAdvisor::Signature(advShown))
+            {
+                advShown = advice;
+                advHasShown = true;
+                advPending = -1;
+            }
+            else if (signature != advPending)
+            {
+                advPending = signature;
+                advPendingSince = ImGui::GetTime();
+            }
+            else if (ImGui::GetTime() - advPendingSince >= IlionAdvisor::kHoldSeconds)
+            {
+                advShown = advice;
+                advPending = -1;
+            }
+        }
+
+        // The short line, under API and ILION ACTIVE, inside the header; a click opens the diagnosis
+        if (advHasShown)
+        {
+            const auto& adv = advShown;
+            std::string line = "ILION Advisor:  ";
+            if (adv.scaling)
+                line += std::string(Lx("Upscaling", "Escalado", "Escala", "Масштаб")) + " " + QualityText(adv.quality) +
+                        (adv.family >= 0 ? std::string(" (") + familyNames[adv.family] + ")" : std::string());
+            else
+                line += std::string(Lx("Native", "Nativo", "Nativo", "Нативно")) +
+                        (adv.family >= 0 && adv.quality == IlionAdvisor::Quality::NativeAA ? std::string(" + AA ") + familyNames[adv.family] : std::string());
+            line += "  ·  ";
+            if (adv.fg)
+                line += StrFmt("FG x%d (%s)", adv.multiplier, FgOutName(adv.fgOut));
+            else if (adv.fgLevel == IlionAdvisor::Level::Insufficient && adv.fgPrudent == false && adv.fgOut == IlionAdvisor::NoFg && !advFacts.fgEvaluated)
+                line += "FG ?";
+            else
+                line += Lx("No FG", "Sin FG", "Sem FG", "Без FG");
+            line += "  ·  NR ";
+            line += adv.nr ? Lx("yes", "sí", "sim", "да") : Lx("no", "no", "não", "нет");
+
+            const IlionAdvisor::Level worst = (std::max)(adv.scalingLevel, adv.fgLevel);
+            const float ly = a.y + 138;
+            LedAt(dl, ImVec2(a.x + 30, ly + 9), 4.5f, worst == IlionAdvisor::Level::Verified ? Led::Green : worst == IlionAdvisor::Level::Estimate ? Led::Yellow : Led::Orange);
+            const float maxW = fx - 40 - (a.x + 44);
+            dl->PushClipRect(P(a.x + 44, ly), P(fx - 40, ly + 20), true);
+            Text(fUi, 15.f, ImVec2(a.x + 44, ly), pal::Text2, line.c_str());
+            dl->PopClipRect();
+            At(a.x + 18, ly - 1);
+            if (ImGui::InvisibleButton("##IlionAdvisor", Sz((std::min)(Measure(fUi, 15.f, line.c_str()).x + 30, maxW + 26), 20)))
+                ImGui::OpenPopup("##IlionAdvisorPopup");
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::PushFont(fUi, U(15.f));
+                ImGui::SetTooltip("%s", Lx("ILION Advisor: open the diagnosis", "ILION Advisor: abrir el diagnóstico", "ILION Advisor: abrir o diagnóstico",
+                                           "ILION Advisor: открыть диагностику"));
+                ImGui::PopFont();
+            }
+        }
+
+        // The diagnosis: hardware, the six answers with their level, reasons and warnings. It changes nothing
+        ImGui::SetNextWindowSize(Sz(700, 0), ImGuiCond_Always);
+        PushContentStyle();
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, Tone(ImVec4(0.045f, 0.052f, 0.048f, 0.99f)));
+        ImGui::PushFont(fUi, U(16.f));
+        if (ImGui::BeginPopup("##IlionAdvisorPopup"))
+        {
+            const auto& adv = advShown;
+            const auto& f = advFacts;
+            ImGui::PushFont(fBrand, U(22.f));
+            ImGui::TextColored(Tone(pal::Green), "ILION ADVISOR");
+            ImGui::PopFont();
+            ImGui::TextColored(Tone(pal::Text2), "%s", Lx("A starting suggestion from what ILION knows here. ILION changes no setting.",
+                                                         "Sugerencia inicial a partir de lo que ILION sabe aquí. ILION no cambia ningún ajuste.",
+                                                         "Sugestão inicial a partir do que o ILION sabe aqui. O ILION não muda nenhum ajuste.",
+                                                         "Начальная рекомендация по данным ILION. ILION ничего не меняет."));
+            IlionTheme::SectionPlate(Lx("Hardware and screen", "Hardware y pantalla", "Hardware e tela", "Оборудование и экран"));
+            const auto& gpu = IdentifyGpu::getPrimaryGpu();
+            ImGui::Text("GPU: %s  ·  %.0f GB", gpu.name.c_str(), f.vramGb);
+            ImGui::Text("%s: %dx%d  ·  %s", Lx("Output", "Salida", "Saída", "Выход"), f.outWidth, f.outHeight,
+                        f.refreshHz > 0.0 ? StrFmt("%.0f Hz", f.refreshHz).c_str() : Lx("refresh unknown", "frecuencia desconocida", "frequência desconhecida", "частота неизвестна"));
+            const char* baseFrom = adv.base == IlionAdvisor::Base::Measured       ? Lx("measured now", "medidos ahora", "medidos agora", "измерено сейчас")
+                                   : adv.base == IlionAdvisor::Base::MeasuredBefore ? Lx("measured before (MFG cost reference)", "medidos antes (referencia de Coste MFG)", "medidos antes (referência do Custo MFG)", "измерено ранее (эталон MFG)")
+                                   : adv.base == IlionAdvisor::Base::Estimated      ? Lx("estimated: presented / multiplier", "estimados: presentados / multiplicador", "estimados: apresentados / multiplicador", "оценка: показано / множитель")
+                                                                                    : Lx("unknown", "desconocidos", "desconhecidos", "неизвестно");
+            if (adv.base != IlionAdvisor::Base::None)
+                ImGui::Text("%s: %.0f FPS (%s)", Lx("Base FPS", "FPS base", "FPS base", "Базовые FPS"), adv.baseFps, baseFrom);
+            else
+                ImGui::Text("%s: %s", Lx("Base FPS", "FPS base", "FPS base", "Базовые FPS"), baseFrom);
+            ImGui::Text("%s: %.0f FPS", Lx("Target used", "Objetivo usado", "Alvo usado", "Цель"), adv.targetFps);
+
+            IlionTheme::SectionPlate(Lx("Suggested setting", "Configuración sugerida", "Configuração sugerida", "Рекомендуемая настройка"));
+            if (ImGui::BeginTable("##AdvRows", 3, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings))
+            {
+                const auto row = [&](const char* name, const std::string& value, IlionAdvisor::Level level, bool prudent)
+                {
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(Tone(pal::Text2), "%s", name);
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted(value.c_str());
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(Tone(LevelColour(level)), "%s%s", LevelText(level),
+                                       prudent ? Lx(" · prudent start", " · inicio prudente", " · início prudente", " · осторожный старт") : "");
+                };
+                row(Lx("Upscaling", "Escalado", "Escala", "Масштаб"), adv.scaling ? Lx("on", "activado", "ligado", "вкл.") : Lx("off (native)", "desactivado (nativo)", "desligado (nativo)", "выкл. (натив)"),
+                    adv.scalingLevel, adv.scalingPrudent);
+                row(Lx("Technology / mode", "Tecnología / modo", "Tecnologia / modo", "Технология / режим"),
+                    (adv.family >= 0 ? std::string(familyNames[adv.family]) : std::string("-")) + "  ·  " + QualityText(adv.quality), adv.techLevel, false);
+                row("Frame Generation", adv.fg ? StrFmt("%s (%s)", Lx("on", "activada", "ligada", "вкл."), FgOutName(adv.fgOut))
+                                               : std::string(Lx("off", "desactivada", "desligada", "выкл.")), adv.fgLevel, adv.fgPrudent);
+                row(Lx("Multiplier", "Multiplicador", "Multiplicador", "Множитель"), adv.fg ? StrFmt("x%d", adv.multiplier) : std::string("-"), adv.fgLevel, false);
+                row("Neural Rendering", adv.nr ? Lx("on", "activado", "ligado", "вкл.") : Lx("off", "desactivado", "desligado", "выкл."), adv.nrLevel, false);
+                row(Lx("Latency", "Latencia", "Latência", "Задержка"), Lx("Intelligent activation: Automatic", "Activación inteligente: Automática", "Ativação inteligente: Automática", "Умная активация: авто"),
+                    IlionAdvisor::Level::Verified, false);
+                ImGui::EndTable();
+            }
+
+            const auto notes = [&](bool warnings)
+            {
+                for (const auto* list : { &adv.scalingNotes, &adv.techNotes, &adv.fgNotes, &adv.nrNotes, &adv.latencyNotes })
+                    for (const Note n : *list)
+                        if (NoteIsWarning(n) == warnings)
+                        {
+                            ImGui::Bullet();
+                            if (warnings)
+                                ImGui::TextColored(Tone(pal::Yellow), "%s", NoteText(n));
+                            else
+                                ImGui::TextWrapped("%s", NoteText(n));
+                        }
+            };
+            IlionTheme::SectionPlate(Lx("Why", "Motivos", "Motivos", "Причины"));
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + U(660));
+            notes(false);
+            IlionTheme::SectionPlate(Lx("Warnings and limits", "Advertencias y límites", "Avisos e limites", "Предупреждения"));
+            notes(true);
+            ImGui::TextColored(Tone(pal::Dim), "%s", Lx("Compatibility comes from ILION's own checks; a technology that runs is not proof that it is the best choice. No FPS are predicted.",
+                                                       "La compatibilidad sale de las comprobaciones de ILION; que una tecnología funcione no demuestra que sea la mejor opción. No se predicen FPS.",
+                                                       "A compatibilidade vem das verificações do ILION; uma tecnologia funcionar não prova que seja a melhor. Não se preveem FPS.",
+                                                       "Совместимость — из проверок ILION; работающая технология не обязательно лучшая. FPS не прогнозируются."));
+            ImGui::PopTextWrapPos();
+            ImGui::EndPopup();
+        }
+        ImGui::PopFont();
+        ImGui::PopStyleColor();
+        PopContentStyle();
+
         // The pilot centred on the line of its text, its glow clear of the letters
         const float activeY = a.y + 108 + Measure(fUi, 20.f, "I").y * 0.5f;
         LedAt(dl, ImVec2(sep + 24, activeY), 6.f, Led::Green);

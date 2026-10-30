@@ -20,6 +20,7 @@
 #include <fsr4/FSR4DriverProviderVk.h>
 #include <misc/HwTelemetry.h>
 #include <misc/IlionBenchmark.h>
+#include <misc/IlionAdvisor.h>
 #include <misc/IlionCompare.h>
 #include <misc/IlionCapture.h>
 #include <misc/IlionReShade.h>
@@ -11397,6 +11398,11 @@ static MfgCostAreas DrawMfgCost(const ImVec2& min, const ImVec2& size)
     }
 
     y = gMax.y + std::floor(fs * 0.25f);
+
+    // ILION dev.65: in the new interface the key keeps a fixed margin from the bottom edge, whatever the panel's height
+    if (flatScreen)
+        y = std::max(y, max.y - std::floor(fs * 0.6f) - std::floor(fs * L::button));
+
     return { changeArea, ImVec2(x, y), ImVec2(width, std::floor(fs * L::button)) };
 }
 
@@ -11592,6 +11598,15 @@ static float FgSelectorWidth(float selectorLabel)
 }
 // ILION dev.59: only the selectors of FG (input, output, nvngx, XeMFG variant), for the Home of the new interface
 static bool fgSelectorsOnly = false;
+// ILION dev.65: what the FG selection worked out last, copied read-only for ILION Advisor. The options keep being
+// decided where they always were; the Advisor only reads this copy
+struct FgOptionsSnapshot
+{
+    bool evaluated = false;
+    bool outputUsable[8] = {}; // by FGOutput value
+};
+static FgOptionsSnapshot fgOptionsSnapshot;
+
 // ILION dev.64: the FG control (on/off, multiplier, states) inside the selection, before its advanced settings
 static bool shellFgQuickInline = false;
 static bool fgQuickDrawn = false;
@@ -11854,6 +11869,11 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
     if (!config->FGNvngxReplacement.has_value())
         config->FGNvngxReplacement = config->FGNvngxReplacement.value_or_default(); // need to have a value before combo
 
+    // ILION dev.65: the copy for ILION Advisor, once the options and their resets are done
+    fgOptionsSnapshot.evaluated = true;
+    for (size_t n = 0; n < std::size(fgOptionsSnapshot.outputUsable); n++)
+        fgOptionsSnapshot.outputUsable[n] = n < outputOptions.size() && !outputOptions[n].disabled && !outputOptions[n].hidden;
+
     if (state.activeFgInput != FGInput::ForceXeLL)
     {
         if (!fgSelectorsOnly)
@@ -11958,6 +11978,16 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
         // Home of the new interface: the selectors only, the module keeps the rest
         if (fgSelectorsOnly)
             return;
+
+        // ILION dev.65: the new interface's FG control right after the selection and its variant: on/off, multiplier
+        // and the states, before the UI options and the advanced settings
+        if (shellFgQuickInline && !fgQuickDrawn)
+        {
+            ImGui::Spacing();
+            RenderFgQuickControls(ctx);
+            ImGui::Spacing();
+            fgQuickDrawn = true;
+        }
 
         // Try to avoid having None selected when the gpu doesn't support DLSSG + some fallbacks
         if (!maySupportDlssg && (replaceFgOutputWithNvngx || showNvngxFgDowndown) &&
@@ -12118,25 +12148,28 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
             ImGui::SameLine(0.0f, 16.0f);
 
-            ImGui::BeginDisabled(!isUsingUIAny || !config->FGDrawUIOverFG.value_or_default());
+            // ILION dev.65: it only applies while "Draw UI over" is on and the game hands a UI texture to FG. Until
+            // then the key is greyed; the new interface shows it off (it doesn't act) and says why, the saved value stays
+            const bool premultApplies = isUsingUIAny && config->FGDrawUIOverFG.value_or_default();
+            ImGui::BeginDisabled(!premultApplies);
 
-            if (bool uiPremultipliedAlpha = config->FGUIPremultipliedAlpha.value_or_default();
+            if (bool uiPremultipliedAlpha = (premultApplies || !IlionTheme::shell) && config->FGUIPremultipliedAlpha.value_or_default();
                 IlionTheme::Checkbox(TrL("UI Premult. alpha"), &uiPremultipliedAlpha))
             {
                 config->FGUIPremultipliedAlpha = uiPremultipliedAlpha;
             }
-            ShowTooltip("If UI is too faint, disable this option");
 
             ImGui::EndDisabled();
-        }
 
-        // ILION dev.64: the new interface's FG control here: after the UI options, before the advanced settings
-        if (shellFgQuickInline && !fgQuickDrawn)
-        {
-            ImGui::Spacing();
-            RenderFgQuickControls(ctx);
-            ImGui::Spacing();
-            fgQuickDrawn = true;
+#pragma execution_character_set(push, "utf-8")
+            if (!premultApplies && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                WrappedTooltip("%s", ShellText("Only with \"Draw UI over\" on and a UI texture from the game. Saved value: kept.",
+                                               "Solo con \"Dibujar UI encima\" activado y una textura de UI del juego. El valor guardado se conserva.",
+                                               "Só com \"Desenhar UI por cima\" ativo e uma textura de UI do jogo. O valor salvo é mantido.",
+                                               "Только при включённом «Рисовать UI поверх» и текстуре UI от игры. Сохранённое значение не меняется."));
+            else
+                ShowTooltip("If UI is too faint, disable this option");
+#pragma execution_character_set(pop)
         }
 
         const bool showOutputSpecificFGSettings = state.activeFgInput == FGInput::DLSSG ||
@@ -18998,8 +19031,26 @@ void MenuCommon::RenderExternalFgTab(RenderMenuContext& ctx)
 
     // ILION dev.62: the new interface shows both at once, MFG SUPER MOTION on the left and AMD AFMF on the right; each
     // keeps its own keys and rules (showing them together starts neither)
-    const bool bothPanels = IlionTheme::shell && ImGui::GetContentRegionAvail().x > ImGui::GetFontSize() * 44.0f &&
-                            ImGui::BeginTable("##ExtFgBoth", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings);
+    const bool bothRoom = IlionTheme::shell && ImGui::GetContentRegionAvail().x > ImGui::GetFontSize() * 44.0f;
+
+    // ILION dev.65: with both columns, the warning about another FG running goes above them, not inside one
+    if (bothRoom)
+    {
+        const auto afmfNow = Afmf().Get();
+        if (optiFgOn)
+            TextWrappedColored(warnColour, "%s", Tr("OptiScaler's frame generation is on. Turn it off in Frame Gen "
+                                                     "before starting an external one."));
+        else if (afmfNow.phase == 2 && afmfNow.enabled && running)
+            TextWrappedColored(warnColour, "%s", Tr("AMD AFMF is on in the driver. Turn it off in the AMD AFMF segment "
+                                                     "before starting MFG SUPER MOTION."));
+    }
+
+    if (bothRoom)
+        ImGui::PushStyleColor(ImGuiCol_TableBorderLight, IlionTheme::ShellPal::Line);
+    const bool bothPanels = bothRoom && ImGui::BeginTable("##ExtFgBoth", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings |
+                                                                                ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_PadOuterX);
+    if (bothRoom)
+        ImGui::PopStyleColor();
 
     if (bothPanels)
     {
@@ -19019,9 +19070,12 @@ void MenuCommon::RenderExternalFgTab(RenderMenuContext& ctx)
         }
     }
 
-    // Only one frame generation at a time (AFMF is known only once its segment was opened)
+    // Only one frame generation at a time (AFMF is known only once its segment was opened). With both columns the
+    // warning is above them
     const auto afmfState = Afmf().Get();
-    if (optiFgOn)
+    if (bothPanels)
+        ;
+    else if (optiFgOn)
         TextWrappedColored(warnColour, "%s", Tr("OptiScaler's frame generation is on. Turn it off in Frame Gen "
                                                  "before starting an external one."));
     else if (afmfState.phase == 2 && afmfState.enabled)
@@ -20376,7 +20430,8 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
     size_t boxCount = 0;
     const MenuBox* boxes = GetMenuBoxes(boxCount);
 
-    const auto drawBox = [&](const char* id)
+    std::function<void(const char*)> drawBox;
+    drawBox = [&](const char* id)
     {
         if (strcmp(id, "@fg_quick") == 0)
         {
@@ -20551,6 +20606,15 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
                       ilionValid ? latency.system : -1.0, orange);
                 ImGui::EndTable();
             }
+            return;
+        }
+
+        // ILION dev.65: the latency meters and the latency state in one card (one header less in the column)
+        if (strcmp(id, "@latency_combined") == 0)
+        {
+            ScopedCard card; // its first box names it
+            drawBox("@latency_meters");
+            drawBox("@latency_monitor");
             return;
         }
 

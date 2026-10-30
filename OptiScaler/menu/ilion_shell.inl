@@ -950,7 +950,28 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
             drawMultiplier(width, "##HomeMult", true);
             drawSwitch(Lx("On###QuickFg", "Activada###QuickFg", "Ativada###QuickFg", "Вкл.###QuickFg"));
             ImGui::TableNextColumn();
-            drawStates();
+
+            // The states at the right end of the card: their block measured (pilot, label column, longest value)
+            // and moved to the right edge, keeping the card's inner margin; if it doesn't fit, it starts at the left
+            {
+                const float h = ImGui::GetTextLineHeight();
+                float valueWidth = (std::max)({ ImGui::CalcTextSize(chosen.c_str()).x, ImGui::CalcTextSize(loaded.c_str()).x,
+                                                ImGui::CalcTextSize(active.c_str()).x });
+                if (state.currentFGSwapchain != nullptr && state.activeFgInput == FGInput::DLSSG)
+                    valueWidth = (std::max)({ valueWidth, ImGui::CalcTextSize(Tr("ACTIVATE FG")).x, ImGui::CalcTextSize(Tr("Reflex not hooked")).x,
+                                              ImGui::CalcTextSize((std::string(Tr("OFF")) + "  ·  " +
+                                                                   Lx("select DLSS Frame Generation in the game", "elige DLSS Frame Generation en el juego",
+                                                                      "escolha DLSS Frame Generation no jogo", "выберите DLSS Frame Generation в игре"))
+                                                                      .c_str())
+                                                  .x });
+                const float blockWidth = h + U(6) + labelWidth + U(10) + valueWidth;
+                const float shift = (std::max)(0.0f, ImGui::GetContentRegionAvail().x - blockWidth - U(8));
+                if (shift > 0.0f)
+                    ImGui::Indent(shift);
+                drawStates();
+                if (shift > 0.0f)
+                    ImGui::Unindent(shift);
+            }
             ImGui::EndTable();
         }
 

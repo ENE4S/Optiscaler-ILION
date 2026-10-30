@@ -769,9 +769,10 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
     // Streamline FG's state is a line of the FG control card (its own card made the column scroll for one line)
     static const ShellLayout lFrameGen { { "fg_selection", "@fg_quick", "fg_optifg", "fg_reprojection", "fg_nvngx", "fg_fsrfg_inputs" },
                                          { "@fg_instruments", "fg_xefg", "fg_fsrfg", "fg_dlssg" } };
-    static const ShellLayout lLatency { { "framerate", "vsync", "low_latency" }, { "ilion_latency", "ilion_regulator", "@latency_monitor" } };
+    static const ShellLayout lLatency { { "framerate", "vsync", "low_latency" },
+                                        { "ilion_latency", "ilion_regulator", "@latency_meters", "@latency_monitor" } };
     static const ShellLayout lImage { { "gfx_color", "gfx_advanced" }, { "sharpness", "mipmap", "anisotropy" } };
-    static const ShellLayout lReShade { { "reshade" }, {} };
+    static const ShellLayout lReShade { { "reshade", "@reshade_manage" }, {} };
     static const ShellLayout lCompare { { "@compare_info", "gfx_compare" }, { "magnifier" } };
     static const ShellLayout lOverlay { { "fps_overlay" }, {} };
     static const ShellLayout lBenchmark { { "benchmark" }, {} };
@@ -797,7 +798,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         { 2, { "Anti-Ghosting", "Anti-Ghosting", "Anti-Ghosting", "Anti-Ghosting" }, "Anti-Ghosting", nullptr, -1 },
         { 3, { "Latency & FPS", "Latencia y FPS", "Latência e FPS", "Задержка и FPS" }, "Latency & FPS", &lLatency, 0 },
         { 4, { "Image", "Imagen", "Imagem", "Изображение" }, "Graphics", &lImage, 0 },
-        { 4, { "Neural Rendering", "Neural Rendering", "Neural Rendering", "Neural Rendering" }, "Neural Rendering", nullptr, 2 },
+        { 4, { "Neural Rendering", "Neural Rendering", "Neural Rendering", "Neural Rendering" }, "Neural Rendering", nullptr, 3 },
         { 4, { "ReShade", "ReShade", "ReShade", "ReShade" }, "Graphics", &lReShade, 0 },
         { 4, { "Comparison", "Comparación", "Comparação", "Сравнение" }, "Graphics", &lCompare, 0 },
         { 5, { "Overlay", "Overlay", "Overlay", "Оверлей" }, "Overlay", &lOverlay, 0 },
@@ -1453,7 +1454,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         At(lb.x - 20 - 170, la.y + 10);
         PushComboStyle();
         ImGui::SetNextItemWidth(U(170));
-        IlionTheme::ShellComboLimit();
+        IlionTheme::ShellComboLimit("##UpFilter");
         if (ImGui::BeginCombo("##UpFilter", filters[upFilter], ImGuiComboFlags_HeightLarge))
         {
             for (int i = 0; i < 5; i++)
@@ -1559,22 +1560,22 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                  Lx("UPSCALING MONITOR", "MONITOR DE ESCALADO", "MONITOR DE ESCALA", "МОНИТОР МАСШТАБИРОВАНИЯ"));
             LedAt(dl, ImVec2(m1.x - 32, m0.y + 26), 6.f, upscalerOn ? Led::Green : upscalerIdle ? Led::Yellow : Led::Off);
 
+            // The technology in the radioactive yellow of ILION
             const std::string tech = upscalerOn || upscalerIdle ? UpscalerLabel(feature) : std::string(Tr("None"));
-            const ImVec4 techColour = catalog.current >= 0 && (upscalerOn || upscalerIdle) ? Mix(pal::Text, LookOf(catalog.current).tint, 0.45f) : pal::Text;
-            Text(fUi, 30.f, ImVec2(m0.x + 18, m0.y + 40), techColour, tech.c_str());
+            Text(fUi, 28.f, ImVec2(m0.x + 18, m0.y + 38), upscalerOn || upscalerIdle ? pal::Yellow : pal::Text2, tech.c_str());
 
             std::string impl = "-";
             if (upscalerOn && RunsSwitchedFfx(feature->GetUpscalerType()))
                 impl = Tr(FfxApiProxy::SrDiagGetSnapshot().activeName.c_str());
             else if (best != nullptr && rank == 3)
                 impl = best->name;
-            Text(fUi, 17.f, ImVec2(m0.x + 18, m0.y + 80), pal::Text2,
+            Text(fUi, 16.f, ImVec2(m0.x + 18, m0.y + 76), pal::Text2,
                  (std::string(Lx("Implementation", "Implementación", "Implementação", "Реализация")) + ":  " + impl).c_str());
 
             const char* runState = upscalerOn     ? Lx("Running", "En ejecución", "Em execução", "Работает")
                                    : upscalerIdle ? Tr("Idle")
                                                   : Lx("Not running", "Sin ejecutar", "Sem executar", "Не работает");
-            At(m0.x + 18, m0.y + 108);
+            At(m0.x + 18, m0.y + 102);
             Pill(runState, upscalerOn ? Led::Green : upscalerIdle ? Led::Yellow : Led::Off);
 
             // The file that runs: its version and its path, as the loader reports them
@@ -1591,73 +1592,73 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
             if (!fileVersion.empty())
             {
                 const std::string version = std::string(Tr("File version")) + ": " + fileVersion;
-                Text(fUi, 15.f, ImVec2(m1.x - 18 - Measure(fUi, 15.f, version.c_str()).x, m0.y + 114), pal::Text2, version.c_str());
-            }
-            if (!dllPath.empty())
-            {
-                const std::string path = wstring_to_string(dllPath);
-                const ImVec2 t0 = P(m0.x + 18, m0.y + 146), t1 = P(m1.x - 18, m0.y + 164);
-                ImGui::PushFont(fUi, U(13.f));
-                ImGui::PushStyleColor(ImGuiCol_Text, Tone(pal::Dim));
-                ImGui::RenderTextEllipsis(dl, t0, t1, t1.x, path.c_str(), nullptr, nullptr);
-                ImGui::PopStyleColor();
-                const bool cut = ImGui::CalcTextSize(path.c_str()).x > t1.x - t0.x;
-                ImGui::PopFont();
-                if (cut && ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(t0, t1))
-                    ImGui::SetTooltip("%s", path.c_str());
+                Text(fUi, 15.f, ImVec2(m1.x - 18 - Measure(fUi, 15.f, version.c_str()).x, m0.y + 108), pal::Text2, version.c_str());
             }
 
+            // Resolution: what the game renders in white, what reaches the screen in yellow
             if (upscalerOn && feature->RenderWidth() > 0)
             {
-                Text(fUi, 24.f, ImVec2(m0.x + 18, m0.y + 172), pal::Text,
-                     StrFmt("%ux%u  ->  %ux%u", feature->RenderWidth(), feature->RenderHeight(), feature->TargetWidth(), feature->TargetHeight()).c_str());
+                const std::string in = StrFmt("%ux%u", feature->RenderWidth(), feature->RenderHeight());
+                const std::string out = StrFmt("%ux%u", feature->TargetWidth(), feature->TargetHeight());
+                float x = m0.x + 18;
+                Text(fUi, 22.f, ImVec2(x, m0.y + 146), pal::Text, in.c_str());
+                x += Measure(fUi, 22.f, in.c_str()).x;
+                Text(fUi, 22.f, ImVec2(x, m0.y + 146), pal::Text2, "  ->  ");
+                x += Measure(fUi, 22.f, "  ->  ").x;
+                Text(fUi, 22.f, ImVec2(x, m0.y + 146), pal::Yellow, out.c_str());
                 const float factor = (float) feature->TargetWidth() / feature->RenderWidth();
-                Text(fUi, 16.f, ImVec2(m0.x + 18, m0.y + 204), pal::Text2,
+                Text(fUi, 15.f, ImVec2(m0.x + 18, m0.y + 176), pal::Text2,
                      StrFmt("%s %.2fx  ·  %s %.0f%%", Lx("Factor", "Factor", "Fator", "Коэффициент"), factor,
                             Lx("rendered pixels", "píxeles renderizados", "pixels renderizados", "отрисовано пикселей"), 100.0f / (factor * factor))
                          .c_str());
             }
 
-            // Upscaler GPU time: the average of the last frames and their graph, as measured by OptiScaler
+            // Upscaler GPU time: its average and a short graph of the last frames, as measured by OptiScaler
             const auto& times = state.upscaleTimes;
             const size_t count = (std::min)(times.size(), (size_t) 120);
             double sum = 0.0, top = 1.0;
             int valid = 0;
-            for (size_t i = times.size() - count; i < times.size(); i++)
+            for (size_t k = times.size() - count; k < times.size(); k++)
             {
-                if (times[i] > 0.0)
+                if (times[k] > 0.0)
                 {
-                    sum += times[i];
+                    sum += times[k];
                     valid++;
-                    top = (std::max)(top, times[i]);
+                    top = (std::max)(top, times[k]);
                 }
             }
+
+            float y = m0.y + 204;
             if (upscalerOn && valid > 0)
             {
-                const float gy = m0.y + 234;
-                Text(fUi, 16.f, ImVec2(m0.x + 18, gy), pal::Text2, Lx("Upscaler time", "Tiempo del escalador", "Tempo do upscaler", "Время апскейлера"));
+                Text(fUi, 15.f, ImVec2(m0.x + 18, y), pal::Text2, Lx("Upscaler time", "Tiempo del escalador", "Tempo do upscaler", "Время апскейлера"));
                 const std::string avg = StrFmt("%.2f ms", sum / valid);
-                Text(fUi, 20.f, ImVec2(m1.x - 18 - Measure(fUi, 20.f, avg.c_str()).x, gy - 2), pal::Green, avg.c_str());
-                const ImVec2 ga(m0.x + 18, gy + 28), gb(m1.x - 18, (std::min)(gy + 110, m1.y - 16));
-                if (gb.y > ga.y + 20 && count > 1)
+                Text(fUi, 18.f, ImVec2(m1.x - 18 - Measure(fUi, 18.f, avg.c_str()).x, y - 2), pal::Green, avg.c_str());
+                const ImVec2 ga(m0.x + 18, y + 24), gb(m1.x - 18, y + 60);
+                dl->AddRect(P(ga), P(gb), Col(pal::Line));
+                if (count > 1)
                 {
-                    dl->AddRect(P(ga), P(gb), Col(pal::Line));
                     ImVec2 pts[120];
-                    for (size_t i = 0; i < count; i++)
+                    for (size_t k = 0; k < count; k++)
                     {
-                        const double v = std::clamp(times[times.size() - count + i], 0.0, top);
-                        pts[i] = P(ga.x + (gb.x - ga.x) * i / (float) (count - 1), gb.y - (gb.y - ga.y) * (float) (v / top));
+                        const double v = std::clamp(times[times.size() - count + k], 0.0, top);
+                        pts[k] = P(ga.x + (gb.x - ga.x) * k / (float) (count - 1), gb.y - (gb.y - ga.y) * (float) (v / top));
                     }
-                    dl->AddPolyline(pts, (int) count, Col(pal::Green), 0, U(1.4f));
+                    dl->AddPolyline(pts, (int) count, Col(pal::Green), 0, U(1.3f));
                 }
+                y = gb.y + 8;
 
-                // Share of the frame the upscaler takes, from the same two measurements as the header and this graph
+                // Its share of the frame time (two measured times, not a loss of FPS) and the shaders OptiScaler times
                 const double frame = ctx.frameTime;
-                std::string share;
                 if (std::isfinite(frame) && frame > 0.0)
-                    share = StrFmt("%s %.0f%%", Lx("Upscaler time / frame time:", "Tiempo del escalador / frametime:", "Tempo do upscaler / frametime:",
-                                                   "Время апскейлера / время кадра:"),
-                                   std::clamp(sum / valid / frame * 100.0, 0.0, 100.0));
+                {
+                    Text(fUi, 14.f, ImVec2(m0.x + 18, y), pal::Text2,
+                         StrFmt("%s %.0f%%", Lx("Upscaler time / frame time:", "Tiempo del escalador / frametime:", "Tempo do upscaler / frametime:",
+                                                "Время апскейлера / время кадра:"),
+                                std::clamp(sum / valid / frame * 100.0, 0.0, 100.0))
+                             .c_str());
+                    y += 20;
+                }
                 int shaders = 0;
                 double shaderMs = 0.0;
                 for (const auto& [name, time, included] : state.detailedGpuTimes)
@@ -1669,13 +1670,31 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                     }
                 }
                 if (shaders > 0)
-                    share += StrFmt("%s%d %s %.2f ms", share.empty() ? "" : "  ·  ", shaders, Lx("shaders", "shaders", "shaders", "шейдеров"), shaderMs);
-                if (!share.empty() && gb.y + 30 < m1.y)
-                    Text(fUi, 15.f, ImVec2(m0.x + 18, gb.y + 10), pal::Text2, share.c_str());
+                {
+                    Text(fUi, 14.f, ImVec2(m0.x + 18, y), pal::Text2,
+                         StrFmt("%s: %d  ·  %.2f ms", Lx("Shaders timed on the GPU", "Shaders medidos en GPU", "Shaders medidos na GPU", "Шейдеров измерено на GPU"),
+                                shaders, shaderMs)
+                             .c_str());
+                    y += 20;
+                }
             }
 
-            // What the game feeds the upscaler
-            Text(fUi, 15.f, ImVec2(m0.x + 18, m1.y - 30), pal::Dim,
+            // The path of the dll that runs: small, on up to two lines, whole in its tooltip
+            if (!dllPath.empty())
+            {
+                y += 6;
+                const std::string path = wstring_to_string(dllPath);
+                Text(fUi, 13.f, ImVec2(m0.x + 18, y), pal::Dim, "DLL");
+                const ImVec2 t0 = P(m0.x + 18, y + 16), t1 = P(m1.x - 18, y + 16 + 34);
+                dl->PushClipRect(t0, t1, true);
+                dl->AddText(fUi, U(13.f), t0, Col(pal::Text2), path.c_str(), nullptr, t1.x - t0.x);
+                dl->PopClipRect();
+                if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(t0, t1))
+                    ImGui::SetTooltip("%s", path.c_str());
+            }
+
+            // What the game feeds the upscaler, and its API
+            Text(fUi, 15.f, ImVec2(m0.x + 18, m1.y - 28), pal::Dim,
                  StrFmt("%s: %s  ·  %s", Lx("Input", "Entrada", "Entrada", "Вход"), ApiUpscalerInputName(state.currentInputApiName).c_str(),
                         ApiName(state.api))
                      .c_str());
@@ -1706,7 +1725,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         ImGui::BeginDisabled(locked);
         PushComboStyle();
         ImGui::SetNextItemWidth(U(d.x - c.x - 36 - rescanW - 12));
-        IlionTheme::ShellComboLimit();
+        IlionTheme::ShellComboLimit("##UpVariant");
         if (ImGui::BeginCombo("##UpVariant", preview.c_str(), ImGuiComboFlags_HeightLarge))
         {
             for (const auto& v : catalog.variants)

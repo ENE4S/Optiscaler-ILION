@@ -246,6 +246,9 @@ static bool shellActive = false;                // ILION dev.58: the new interfa
 static bool shellSettingsTag = false;           // ILION dev.59: the cards drawn now change settings (marked on their name)
 static bool shellHidesUpscalerDiag = false;     // ILION dev.60: Upscaling shows its settings; DLL path and diagnostics are in Status
 static bool latencyReportOnly = false;          // ILION dev.61: only the technical report of the intelligent activation (Status)
+static int reshadePanelPart = 0;                // ILION dev.63: 0 the whole ReShade panel, 1 its effects in use, 2 their management
+static bool overlayIlionLook = false;           // ILION dev.63: the overlay over the game in the look of the new interface
+static const char* ShellText(const char* en, const char* es, const char* pt, const char* ru);
 
 static void DedupeSrVariants(std::vector<FfxApiProxy::SrVariant>& list);
 
@@ -7335,7 +7338,9 @@ static void OverlayRowParts(const char* label, const std::vector<OverlayPart>& p
 
 // Horizontal overlay of the industrial theme: every block is a line that starts with its name, and its readings
 // follow as cells, a fine metal rule between one and the next.
-static void OverlayCellRowTitle(const char* title) { ImGui::TextColored(IlionTheme::TextTitle, "%s", title); }
+static ImVec4 OverlayTitleColour() { return overlayIlionLook ? toneMapColor(IlionTheme::ShellPal::Green) : IlionTheme::TextTitle; }
+
+static void OverlayCellRowTitle(const char* title) { ImGui::TextColored(OverlayTitleColour(), "%s", title); }
 
 static void OverlayCell(const char* label, const std::vector<OverlayPart>& parts)
 {
@@ -7363,7 +7368,8 @@ static void OverlayCell(const char* label, const std::vector<OverlayPart>& parts
     const float x = std::floor(pos.x - space * 1.25f);
 
     ImGui::GetWindowDrawList()->AddLine(ImVec2(x, pos.y + 1.0f), ImVec2(x, pos.y + ImGui::GetTextLineHeight() - 1.0f),
-                                        ImGui::GetColorU32(IlionTheme::Alpha(IlionTheme::Metal, 0.80f)));
+                                        ImGui::GetColorU32(overlayIlionLook ? IlionTheme::Alpha(IlionTheme::ShellPal::Line, 1.0f)
+                                                                            : IlionTheme::Alpha(IlionTheme::Metal, 0.80f)));
 
     // A cell without a label is only its value (the name of a component)
 
@@ -7402,7 +7408,7 @@ static void OverlayBlockTitle(const char* title, float width, bool first)
     if (!first)
         ImGui::Dummy(ImVec2(0.0f, gap));
 
-    ImGui::TextColored(IlionTheme::TextTitle, "%s", title);
+    ImGui::TextColored(OverlayTitleColour(), "%s", title);
 
     const ImVec2 min = ImGui::GetItemRectMin();
     const float y = ImGui::GetItemRectMax().y + gap * 0.5f;
@@ -8357,6 +8363,11 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
         if (overlayFont != nullptr)
             ImGui::PushFont(overlayFont, -1.0f);
 
+        // Labels in the secondary colour of ILION, values in its text colour (the colours of the figures stay as they are)
+        overlayIlionLook = ilionOverlay;
+        if (ilionOverlay)
+            ImGui::PushStyleColor(ImGuiCol_TextDisabled, toneMapColor(IlionTheme::ShellPal::Text2));
+
         if (ImGui::Begin("Performance Overlay", nullptr,
                          ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDecoration |
                              ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing |
@@ -9223,6 +9234,10 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
 
         ImGui::End();
 
+        if (ilionOverlay)
+            ImGui::PopStyleColor();
+        overlayIlionLook = false;
+
         if (overlayFont != nullptr)
             ImGui::PopFont();
 
@@ -9744,8 +9759,16 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
         if (!basicView)
         if (auto ch = ScopedCollapsingHeader(TrL("Advanced selectors")); ch.IsHeaderOpen())
         {
-            TextWrappedDisabled("%s", Tr("OptiScaler's own lists, for what the selector above doesn't offer: the backend (native "
-                                         "DLSS on NVIDIA included) and the provider inside the FFX dll in use."));
+            if (IlionTheme::shell)
+            {
+                ImGui::SameLine();
+                ImGui::TextDisabled("(?)");
+                ShowTooltip("OptiScaler's own lists, for what the selector above doesn't offer: the backend (native "
+                            "DLSS on NVIDIA included) and the provider inside the FFX dll in use.");
+            }
+            else
+                TextWrappedDisabled("%s", Tr("OptiScaler's own lists, for what the selector above doesn't offer: the backend (native "
+                                             "DLSS on NVIDIA included) and the provider inside the FFX dll in use."));
             ImGui::TextDisabled("%s", Tr("OptiScaler's backend list"));
         ImGui::PushItemWidth(150.0f * menuResScale);
 
@@ -9957,201 +9980,205 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
         {
             ImGui::Spacing();
 
-            // Colorspaces
-            const char* colorSpaces[] = { Tr("Linear (Default)"), Tr("Non-Linear"), Tr("Non-Linear sRGB"), Tr("Non-Linear PQ") };
-            int currentColorSpace = 0;
-            if (config->FsrNonLinearPQ.value_or_default())
-                currentColorSpace = 3;
-            else if (config->FsrNonLinearSRGB.value_or_default())
-                currentColorSpace = 2;
-            else if (config->FsrNonLinearColorSpace.value_or_default())
-                currentColorSpace = 1;
-
-            ImGui::SetNextItemWidth(150.0f * menuResScale);
-            if (ImGui::Combo(TrL("Input Color Space"), &currentColorSpace, colorSpaces, IM_ARRAYSIZE(colorSpaces)))
+            // ILION dev.63: colour space, preset, debug view and watermark are secondary: one fold in the new interface
+            if (!IlionTheme::shell || IlionTheme::CollapsingHeader(TrL("Additional FFX options##FfxExtras")))
             {
-                bool isSrgb = (currentColorSpace == 2);
-                bool isPq = (currentColorSpace == 3);
+                // Colorspaces
+                const char* colorSpaces[] = { Tr("Linear (Default)"), Tr("Non-Linear"), Tr("Non-Linear sRGB"), Tr("Non-Linear PQ") };
+                int currentColorSpace = 0;
+                if (config->FsrNonLinearPQ.value_or_default())
+                    currentColorSpace = 3;
+                else if (config->FsrNonLinearSRGB.value_or_default())
+                    currentColorSpace = 2;
+                else if (config->FsrNonLinearColorSpace.value_or_default())
+                    currentColorSpace = 1;
 
-                config->FsrNonLinearSRGB = isSrgb;
-                config->FsrNonLinearPQ = isPq;
-
-                if (isSrgb || isPq)
+                ImGui::SetNextItemWidth(150.0f * menuResScale);
+                if (ImGui::Combo(TrL("Input Color Space"), &currentColorSpace, colorSpaces, IM_ARRAYSIZE(colorSpaces)))
                 {
-                    config->FsrNonLinearColorSpace.set_volatile_value(true);
+                    bool isSrgb = (currentColorSpace == 2);
+                    bool isPq = (currentColorSpace == 3);
+
+                    config->FsrNonLinearSRGB = isSrgb;
+                    config->FsrNonLinearPQ = isPq;
+
+                    if (isSrgb || isPq)
+                    {
+                        config->FsrNonLinearColorSpace.set_volatile_value(true);
+                    }
+                    else if (currentColorSpace == 1) // Just non-Linear
+                    {
+                        config->FsrNonLinearColorSpace = true;
+                    }
+                    else // Linear
+                    {
+                        config->FsrNonLinearColorSpace = false;
+                    }
+
+                    state.newBackend = currentBackend;
+                    MARK_ALL_BACKENDS_CHANGED();
                 }
-                else if (currentColorSpace == 1) // Just non-Linear
+                ShowTooltip("Select the input color space that the game uses.\n"
+                            "Non-Linear / sRGB: Might improve FSR4 upscaling quality, might increase ghosting.\n"
+                            "PQ: Rarest, might increase ghosting and break lights.");
+
+                // FSR 4 Presets
+                const char* presets[] = {
+                    Tr("Default"), Tr("Preset 0"), Tr("Preset 1"), Tr("Preset 2"), Tr("Preset 3"), Tr("Preset 4"), Tr("Preset 5")
+                };
+                int currentPresetIdx = config->Fsr4Preset.has_value() ? config->Fsr4Preset.value() + 1 : 0;
+
+                if (currentPresetIdx < 0 || currentPresetIdx >= IM_ARRAYSIZE(presets))
+                    currentPresetIdx = 0;
+
+                ImGui::SetNextItemWidth(150.0f * menuResScale);
+                if (ImGui::Combo(TrL("FSR4 Preset"), &currentPresetIdx, presets, IM_ARRAYSIZE(presets)))
                 {
-                    config->FsrNonLinearColorSpace = true;
+                    if (currentPresetIdx == 0)
+                        config->Fsr4Preset.reset();
+                    else
+                        config->Fsr4Preset = currentPresetIdx - 1;
+
+                    state.newBackend = currentBackend;
+                    MARK_ALL_BACKENDS_CHANGED();
                 }
-                else // Linear
-                {
-                    config->FsrNonLinearColorSpace = false;
-                }
+                ShowTooltip("Each internal FSR4 preset is tuned for a specific resolution.\n"
+                            "Selecting an FSR4 preset won't change the in-game\nupscaler preset!!!\n\n"
+                            "Preset 0 is meant for FSR Native AA\n"
+                            "Preset 1 is meant for Quality/Ultra Quality\n"
+                            "Preset 2 is meant for Balanced\n"
+                            "Preset 3 is meant for Performance\n"
+                            "Preset 4 is meant for DRS\n"
+                            "Preset 5 is meant for Ultra Performance");
 
-                state.newBackend = currentBackend;
-                MARK_ALL_BACKENDS_CHANGED();
-            }
-            ShowTooltip("Select the input color space that the game uses.\n"
-                        "Non-Linear / sRGB: Might improve FSR4 upscaling quality, might increase ghosting.\n"
-                        "PQ: Rarest, might increase ghosting and break lights.");
-
-            // FSR 4 Presets
-            const char* presets[] = {
-                Tr("Default"), Tr("Preset 0"), Tr("Preset 1"), Tr("Preset 2"), Tr("Preset 3"), Tr("Preset 4"), Tr("Preset 5")
-            };
-            int currentPresetIdx = config->Fsr4Preset.has_value() ? config->Fsr4Preset.value() + 1 : 0;
-
-            if (currentPresetIdx < 0 || currentPresetIdx >= IM_ARRAYSIZE(presets))
-                currentPresetIdx = 0;
-
-            ImGui::SetNextItemWidth(150.0f * menuResScale);
-            if (ImGui::Combo(TrL("FSR4 Preset"), &currentPresetIdx, presets, IM_ARRAYSIZE(presets)))
-            {
-                if (currentPresetIdx == 0)
-                    config->Fsr4Preset.reset();
+                // Display the active preset right next to the combo box instead of using a table
+                ImGui::SameLine();
+                if (state.currentFsr4Preset.has_value())
+                    ImGui::TextDisabled(Tr("(Active: %d)"), state.currentFsr4Preset.value());
+                else if (FSR4ModelSelection::IsInt8FsrHooked())
+                    ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), Tr("(Potential FSR3 fallback)"));
                 else
-                    config->Fsr4Preset = currentPresetIdx - 1;
+                    ImGui::TextDisabled(Tr("(Failed to hook)"));
 
-                state.newBackend = currentBackend;
-                MARK_ALL_BACKENDS_CHANGED();
             }
-            ShowTooltip("Each internal FSR4 preset is tuned for a specific resolution.\n"
-                        "Selecting an FSR4 preset won't change the in-game\nupscaler preset!!!\n\n"
-                        "Preset 0 is meant for FSR Native AA\n"
-                        "Preset 1 is meant for Quality/Ultra Quality\n"
-                        "Preset 2 is meant for Balanced\n"
-                        "Preset 3 is meant for Performance\n"
-                        "Preset 4 is meant for DRS\n"
-                        "Preset 5 is meant for Ultra Performance");
 
-            // Display the active preset right next to the combo box instead of using a table
-            ImGui::SameLine();
-            if (state.currentFsr4Preset.has_value())
-                ImGui::TextDisabled(Tr("(Active: %d)"), state.currentFsr4Preset.value());
-            else if (FSR4ModelSelection::IsInt8FsrHooked())
-                ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), Tr("(Potential FSR3 fallback)"));
-            else
-                ImGui::TextDisabled(Tr("(Failed to hook)"));
-
-        }
-
-        if (majorFsrVersion >= 3)
-        {
-            ImGui::Spacing();
-
-            // The debug view is for Advanced; Essential keeps the watermark, the visible check of what runs
-            const bool showDebugView = !EssentialView();
-
-            if (showDebugView)
+            if (majorFsrVersion >= 3)
             {
-                bool debugView = config->FsrDebugView.value_or_default();
-                if (IlionTheme::Checkbox(TrL("Upscaler Debug View"), &debugView))
-                {
-                    config->FsrDebugView = debugView;
+                ImGui::Spacing();
 
-                    // FSR 4's debug view requires backend reinit
+                // The debug view is for Advanced; Essential keeps the watermark, the visible check of what runs
+                const bool showDebugView = !EssentialView();
+
+                if (showDebugView)
+                {
+                    bool debugView = config->FsrDebugView.value_or_default();
+                    if (IlionTheme::Checkbox(TrL("Upscaler Debug View"), &debugView))
+                    {
+                        config->FsrDebugView = debugView;
+
+                        // FSR 4's debug view requires backend reinit
+                        if (majorFsrVersion > 3)
+                        {
+                            state.newBackend = currentBackend;
+                            MARK_ALL_BACKENDS_CHANGED();
+                        }
+                    }
+
                     if (majorFsrVersion > 3)
                     {
-                        state.newBackend = currentBackend;
-                        MARK_ALL_BACKENDS_CHANGED();
+                        ShowTooltip("Top left: Dilated Motion Vectors\n"
+                                    "Top right: Predicted Blend Factor");
+                    }
+                    else
+                    {
+                        ShowTooltip("Top left: Dilated Motion Vectors\n"
+                                    "Top middle: Protected Areas\n"
+                                    "Top right: Dilated Depth\n"
+                                    "Middle: Upscaled frame\n"
+                                    "Bottom left: Disocclusion mask\n"
+                                    "Bottom middle: Reactiveness\n"
+                                    "Bottom right: Detail Protection Takedown");
                     }
                 }
 
                 if (majorFsrVersion > 3)
                 {
-                    ShowTooltip("Top left: Dilated Motion Vectors\n"
-                                "Top right: Predicted Blend Factor");
-                }
-                else
-                {
-                    ShowTooltip("Top left: Dilated Motion Vectors\n"
-                                "Top middle: Protected Areas\n"
-                                "Top right: Dilated Depth\n"
-                                "Middle: Upscaled frame\n"
-                                "Bottom left: Disocclusion mask\n"
-                                "Bottom middle: Reactiveness\n"
-                                "Bottom right: Detail Protection Takedown");
+                    if (showDebugView)
+                        SameLineIfRoom(CheckboxWidth(TrL("Watermark")), 20.0f * menuResScale);
+                    bool fsr4wm = config->Fsr4EnableWatermark.value_or_default();
+                    if (IlionTheme::Checkbox(TrL("Watermark"), &fsr4wm))
+                    {
+                        LOG_DEBUG("FSR4 Watermark set to {}", fsr4wm);
+                        config->Fsr4EnableWatermark = fsr4wm;
+                    }
+
+                    ShowTooltip("After changing this option, please Save Settings.\n"
+                                "It will be applied on next launch.");
                 }
             }
 
-            if (majorFsrVersion > 3)
+            if (currentFeature->Version() >= feature_version { 3, 1, 1 } &&
+                currentFeature->Version() < feature_version { 4, 0, 0 })
             {
-                if (showDebugView)
-                    SameLineIfRoom(CheckboxWidth(TrL("Watermark")), 20.0f * menuResScale);
-                bool fsr4wm = config->Fsr4EnableWatermark.value_or_default();
-                if (IlionTheme::Checkbox(TrL("Watermark"), &fsr4wm))
+                ImGui::Spacing();
+
+                if (currentFeature != nullptr)
                 {
-                    LOG_DEBUG("FSR4 Watermark set to {}", fsr4wm);
-                    config->Fsr4EnableWatermark = fsr4wm;
-                }
+                    ImGui::Text(Tr("FSR 3.1 Presets:"));
 
-                ShowTooltip("After changing this option, please Save Settings.\n"
-                            "It will be applied on next launch.");
-            }
-        }
+                    SameLineIfRoom(ButtonWidth(TrL("Stability")), 6.0f);
 
-        if (currentFeature->Version() >= feature_version { 3, 1, 1 } &&
-            currentFeature->Version() < feature_version { 4, 0, 0 })
-        {
-            ImGui::Spacing();
+                    // This will be applied by default
+                    if (IlionTheme::Button(TrL("Stability")))
+                    {
+                        auto const scaleRatioX =
+                            (float) currentFeature->TargetWidth() / (float) currentFeature->RenderWidth();
+                        auto const scaleRatioY =
+                            (float) currentFeature->TargetHeight() / (float) currentFeature->RenderHeight();
+                        auto const scaleRatio = std::max(scaleRatioX, scaleRatioY);
 
-            if (currentFeature != nullptr)
-            {
-                ImGui::Text(Tr("FSR 3.1 Presets:"));
+                        config->FsrVelocity = 0.5f;
+                        config->FsrReactiveScale = 0.25f;
 
-                SameLineIfRoom(ButtonWidth(TrL("Stability")), 6.0f);
+                        config->FsrShadingScale.reset();
+                        config->FsrAccAddPerFrame.reset();
+                        config->FsrMinDisOccAcc.reset();
+                        config->FsrShadingScale.set_volatile_value(0.5f / scaleRatio);
+                        config->FsrAccAddPerFrame.set_volatile_value(scaleRatio / 10.0f);
+                        config->FsrMinDisOccAcc.set_volatile_value(scaleRatio / 20.0f);
+                    }
 
-                // This will be applied by default
-                if (IlionTheme::Button(TrL("Stability")))
-                {
-                    auto const scaleRatioX =
-                        (float) currentFeature->TargetWidth() / (float) currentFeature->RenderWidth();
-                    auto const scaleRatioY =
-                        (float) currentFeature->TargetHeight() / (float) currentFeature->RenderHeight();
-                    auto const scaleRatio = std::max(scaleRatioX, scaleRatioY);
+                    SameLineIfRoom(ButtonWidth(TrL("Motion")), 6.0f);
 
-                    config->FsrVelocity = 0.5f;
-                    config->FsrReactiveScale = 0.25f;
+                    if (IlionTheme::Button(TrL("Motion")))
+                    {
+                        auto const scaleRatioX =
+                            (float) currentFeature->TargetWidth() / (float) currentFeature->RenderWidth();
+                        auto const scaleRatioY =
+                            (float) currentFeature->TargetHeight() / (float) currentFeature->RenderHeight();
+                        auto const scaleRatio = std::max(scaleRatioX, scaleRatioY);
 
-                    config->FsrShadingScale.reset();
-                    config->FsrAccAddPerFrame.reset();
-                    config->FsrMinDisOccAcc.reset();
-                    config->FsrShadingScale.set_volatile_value(0.5f / scaleRatio);
-                    config->FsrAccAddPerFrame.set_volatile_value(scaleRatio / 10.0f);
-                    config->FsrMinDisOccAcc.set_volatile_value(scaleRatio / 20.0f);
-                }
+                        config->FsrVelocity = 1.0f;
+                        config->FsrReactiveScale = 0.5f;
 
-                SameLineIfRoom(ButtonWidth(TrL("Motion")), 6.0f);
+                        config->FsrShadingScale.reset();
+                        config->FsrAccAddPerFrame.reset();
+                        config->FsrMinDisOccAcc.reset();
+                        config->FsrShadingScale.set_volatile_value(1.0f / scaleRatio);
+                        config->FsrAccAddPerFrame.set_volatile_value(scaleRatio / 10.0f);
+                        config->FsrMinDisOccAcc.set_volatile_value(scaleRatio / 20.0f);
+                    }
 
-                if (IlionTheme::Button(TrL("Motion")))
-                {
-                    auto const scaleRatioX =
-                        (float) currentFeature->TargetWidth() / (float) currentFeature->RenderWidth();
-                    auto const scaleRatioY =
-                        (float) currentFeature->TargetHeight() / (float) currentFeature->RenderHeight();
-                    auto const scaleRatio = std::max(scaleRatioX, scaleRatioY);
+                    SameLineIfRoom(ButtonWidth(TrL("Default")), 6.0f);
 
-                    config->FsrVelocity = 1.0f;
-                    config->FsrReactiveScale = 0.5f;
-
-                    config->FsrShadingScale.reset();
-                    config->FsrAccAddPerFrame.reset();
-                    config->FsrMinDisOccAcc.reset();
-                    config->FsrShadingScale.set_volatile_value(1.0f / scaleRatio);
-                    config->FsrAccAddPerFrame.set_volatile_value(scaleRatio / 10.0f);
-                    config->FsrMinDisOccAcc.set_volatile_value(scaleRatio / 20.0f);
-                }
-
-                SameLineIfRoom(ButtonWidth(TrL("Default")), 6.0f);
-
-                if (IlionTheme::Button(TrL("Default")))
-                {
-                    config->FsrVelocity = 1.0f;
-                    config->FsrReactiveScale = 1.0f;
-                    config->FsrShadingScale = 1.0f;
-                    config->FsrAccAddPerFrame = 0.333f;
-                    config->FsrMinDisOccAcc = -0.333f;
+                    if (IlionTheme::Button(TrL("Default")))
+                    {
+                        config->FsrVelocity = 1.0f;
+                        config->FsrReactiveScale = 1.0f;
+                        config->FsrShadingScale = 1.0f;
+                        config->FsrAccAddPerFrame = 0.333f;
+                        config->FsrMinDisOccAcc = -0.333f;
+                    }
                 }
             }
 
@@ -10695,7 +10722,9 @@ static void DrawFgCrt(const ImVec2& min, const ImVec2& size, const FgCrtData& d)
                              ImVec2(gMax.x - gw * 0.06f, gMax.y - gh * 0.30f), col(0.85f, 1.0f, 0.90f, 0.05f), 1.2f);
 
     // Text: bright amber labels, lemon yellow values (clearly apart from the amber), ACTIVE in vivid phosphor green
-    const ImVec4 amber(1.00f, 0.80f, 0.28f, 1.0f), yellow(1.00f, 1.00f, 0.42f, 1.0f), dim(0.56f, 0.64f, 0.48f, 1.0f);
+    // The new interface: the secondary figures a little brighter on its darker panel
+    const ImVec4 amber(1.00f, 0.80f, 0.28f, 1.0f), yellow(1.00f, 1.00f, 0.42f, 1.0f),
+        dim = flatScreen ? ImVec4(0.74f, 0.82f, 0.68f, 1.0f) : ImVec4(0.56f, 0.64f, 0.48f, 1.0f);
     const ImVec4 phosphor(0.30f, 1.00f, 0.42f, 1.0f);
     const auto text = [&](float sizePx, const ImVec2& at, const ImVec4& c, const char* s, ImFont* f)
     {
@@ -11130,7 +11159,7 @@ static MfgCostAreas DrawMfgCost(const ImVec2& min, const ImVec2& size)
 
     if (flatScreen)
     {
-        draw->AddRectFilled(min, max, ImGui::GetColorU32(ImVec4(0.075f, 0.070f, 0.045f, 1.0f)), 4.0f);
+        draw->AddRectFilled(min, max, ImGui::GetColorU32(IlionTheme::ShellPal::Panel), 4.0f);
         draw->AddRect(min, max, ImGui::GetColorU32(IlionTheme::ShellPal::Yellow), 4.0f, 0, 2.0f);
     }
     else
@@ -11470,7 +11499,8 @@ static float DrawFgInstruments(const FgCrtData& crt, ImVec2 crtPos, bool sideByS
     const float gap = ImGui::GetStyle().ItemSpacing.x * 1.5f;
     if (crt.status >= 1 || mfgCost.engaged)
     {
-        const ImVec2 costSize = MfgCostSize();
+        // The new interface: a little more room under the capture key
+        const ImVec2 costSize = IlionTheme::shell ? ImVec2(MfgCostSize().x, MfgCostSize().y + std::floor(ImGui::GetFontSize() * 0.5f)) : MfgCostSize();
         const ImVec2 costPos = sideBySide ? ImVec2(std::floor(crtPos.x + crtSize.x + gap), crtPos.y)
                                           : ImVec2(crtPos.x, std::floor(screensBottom + ImGui::GetFontSize() * 0.25f));
         const MfgCostAreas areas = DrawMfgCost(costPos, costSize);
@@ -11503,14 +11533,25 @@ static float DrawFgInstruments(const FgCrtData& crt, ImVec2 crtPos, bool sideByS
 // ILION dev.59: the new interface draws the FG instruments in their own column (Frame Gen) and not under the selectors
 static bool shellFgInstrumentsApart = false;
 
-// ILION dev.61: the multiplier as a value, where the new interface keeps its single editable key next to the selection
+// ILION dev.61: the multiplier as a value, where the new interface keeps its single editable key next to the selection.
+// dev.63: what is configured, apart from what really generates (green, only while frames are being generated)
+#pragma execution_character_set(push, "utf-8")
 static void FgModeValue(const CustomOptional<int>* countConfig)
 {
     const int mode = countConfig != nullptr ? countConfig->value_or_default() : 1;
     const std::string value = mode < 0 ? std::string(Tr("Default")) : mode == 0 ? std::string(Tr("Off")) : StrFmt("%dx", mode + 1);
     ImGui::AlignTextToFramePadding();
-    ImGui::TextDisabled("%s: %s", Tr("Frame Gen"), value.c_str());
+    ImGui::TextDisabled("%s %s: %s", Tr("Frame Gen"), ShellText("configured", "configurado", "configurado", "настроено"), value.c_str());
+
+    const auto fg = State::Instance().currentFG;
+    if (fg != nullptr && fg->IsActive() && !fg->IsPaused())
+    {
+        ImGui::SameLine();
+        ImGui::TextColored(toneMapColor(IlionTheme::ShellPal::Green), "·  %s %ux", ShellText("generating", "generando", "gerando", "генерирует"),
+                           (unsigned) fg->GetInterpolatedFrameCount() + 1);
+    }
 }
+#pragma execution_character_set(pop)
 
 // ILION dev.60: the FG selectors fill their room minus their label; in the new interface never wider than needed
 static float FgSelectorWidth(float selectorLabel)
@@ -11531,7 +11572,15 @@ static void DrawFgInstrumentsColumn(State& state)
     // As large as the column allows them side by side (the screens are sized by the font)
     const float base = ImGui::GetFontSize();
     const float room = ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 1.5f;
-    const float fit = std::clamp(room / (FgCrtSize().x * 2.0f) * base, base, base * 1.35f);
+    float fit = std::floor(std::clamp(room / (FgCrtSize().x * 2.0f) * base, base, base * 1.35f));
+
+    // ILION dev.63: the size changes only by more than a pixel. Every new size of a dynamic font makes ImGui bake its
+    // glyphs again; when the column width moved (sidebar expanded, scroll bar shown or not) the size moved by fractions
+    // from frame to frame and the screens flickered while the glyphs were baked again
+    static float shownFit = 0.0f;
+    if (shownFit > 0.0f && std::abs(fit - shownFit) < 1.5f)
+        fit = shownFit;
+    shownFit = fit;
     ImGui::PushFont(ImGui::GetFont(), fit);
 
     const ImVec2 pos = ImGui::GetCursorScreenPos();
@@ -17638,6 +17687,16 @@ static void RenderReShadeCatalogue(const IlionReShade::Snapshot& rs, const ImVec
     ImGui::EndChild();
 }
 
+#pragma execution_character_set(push, "utf-8")
+static const char* ShellReShadeWaiting()
+{
+    return ShellText("ReShade isn't connected yet: its state is in the column at the right.",
+                     "ReShade aún no está conectado: su estado está en la columna de la derecha.",
+                     "O ReShade ainda não está conectado: o estado está na coluna da direita.",
+                     "ReShade ещё не подключён: его состояние — в правой колонке.");
+}
+#pragma execution_character_set(pop)
+
 void MenuCommon::RenderReShadePanel(RenderMenuContext& ctx)
 {
     IlionReShade::Poll();
@@ -17646,87 +17705,104 @@ void MenuCommon::RenderReShadePanel(RenderMenuContext& ctx)
     const ImVec4 good = toneMapColor(IlionTheme::Themed(ImVec4(0.35f, 0.85f, 0.45f, 1.f), IlionTheme::Role::Good));
     const ImVec4 warn = toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn));
 
-    SectionTitle("ReShade");
-
-    // The close key against the right edge of the panel
-    ImGui::SameLine();
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - ButtonWidth(TrL("Close##reshade"))));
-    if (IlionTheme::Button(TrL("Close##reshade")))
-        reshadePanelOpen = false;
-
-    // Status and connection
-    if (ImGui::BeginTable("##reshadeStatus", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings))
+    // ILION dev.63: the new interface shows the effects in use on the left (part 1) and the state, the adding and the
+    // catalogue on the right (part 2); the classic panel keeps them all (part 0)
+    if (reshadePanelPart == 1 && (!rs.moduleFound || !rs.registered || !rs.runtime))
     {
-        ImGui::TableSetupColumn("##l");
-        ImGui::TableSetupColumn("##v", ImGuiTableColumnFlags_WidthStretch);
-
-        const auto row = [](const char* label, const ImVec4* colour, const std::string& value)
-        {
-            ImGui::TableNextColumn();
-            ImGui::TextDisabled("%s", Tr(label));
-            ImGui::TableNextColumn();
-            if (colour != nullptr)
-                TextWrappedColored(*colour, "%s", value.c_str());
-            else
-                ImGui::TextWrapped("%s", value.c_str());
-        };
-
-        row("ReShade", rs.moduleFound ? &good : &warn,
-            rs.moduleFound ? std::string(Tr("detected")) + (rs.version.empty() ? "" : " " + rs.version) : std::string(Tr("not detected")));
-        row("Bridge", rs.registered ? &good : &warn,
-            rs.registered ? std::string(Tr("connected")) : std::string(Tr(rs.error.empty() ? "disconnected" : rs.error.c_str())));
-        row("Runtime", rs.runtime ? &good : &warn,
-            rs.runtime ? std::string(Tr("presenting frames")) : std::string(Tr("waiting for ReShade to present a frame")));
-
-        if (rs.moduleFound && !rs.path.empty())
-            row("File", nullptr, rs.path);
-
-        ImGui::EndTable();
-    }
-
-    const char* diagnosis = ReShadeDiagnosis(rs);
-
-    if (!rs.moduleFound)
-    {
-        TextWrappedDisabled("%s", Tr(diagnosis));
+        TextWrappedDisabled("%s", ShellReShadeWaiting());
         return;
     }
 
-    if (diagnosis != nullptr)
-        TextWrappedColored(warn, "%s", Tr(diagnosis));
-
-    if (!rs.registered || !rs.runtime)
-        return;
-
-    // ReShade's processing, as ReShade reports it
-    bool effectsOn = rs.effectsOn;
-    if (IlionTheme::Checkbox(TrL("ReShade processing"), &effectsOn))
-        IlionReShade::SetEffectsState(effectsOn);
-
-    if (rs.pending > 0)
+    if (reshadePanelPart != 1)
     {
+        SectionTitle("ReShade");
+
+        // The close key against the right edge of the panel
         ImGui::SameLine();
-        ImGui::TextDisabled("%s", Tr("applying..."));
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - ButtonWidth(TrL("Close##reshade"))));
+        if (IlionTheme::Button(TrL("Close##reshade")))
+            reshadePanelOpen = false;
+
+        // Status and connection
+        if (ImGui::BeginTable("##reshadeStatus", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings))
+        {
+            ImGui::TableSetupColumn("##l");
+            ImGui::TableSetupColumn("##v", ImGuiTableColumnFlags_WidthStretch);
+
+            const auto row = [](const char* label, const ImVec4* colour, const std::string& value)
+            {
+                ImGui::TableNextColumn();
+                ImGui::TextDisabled("%s", Tr(label));
+                ImGui::TableNextColumn();
+                if (colour != nullptr)
+                    TextWrappedColored(*colour, "%s", value.c_str());
+                else
+                    ImGui::TextWrapped("%s", value.c_str());
+            };
+
+            row("ReShade", rs.moduleFound ? &good : &warn,
+                rs.moduleFound ? std::string(Tr("detected")) + (rs.version.empty() ? "" : " " + rs.version) : std::string(Tr("not detected")));
+            row("Bridge", rs.registered ? &good : &warn,
+                rs.registered ? std::string(Tr("connected")) : std::string(Tr(rs.error.empty() ? "disconnected" : rs.error.c_str())));
+            row("Runtime", rs.runtime ? &good : &warn,
+                rs.runtime ? std::string(Tr("presenting frames")) : std::string(Tr("waiting for ReShade to present a frame")));
+
+            if (rs.moduleFound && !rs.path.empty())
+                row("File", nullptr, rs.path);
+
+            ImGui::EndTable();
+        }
+
+        const char* diagnosis = ReShadeDiagnosis(rs);
+
+        if (!rs.moduleFound)
+        {
+            TextWrappedDisabled("%s", Tr(diagnosis));
+            return;
+        }
+
+        if (diagnosis != nullptr)
+            TextWrappedColored(warn, "%s", Tr(diagnosis));
+
+        if (!rs.registered || !rs.runtime)
+            return;
     }
 
-    TextWrappedDisabled("%s", Tr("Each active effect costs GPU time; switched off, an effect costs nothing."));
+    if (reshadePanelPart != 2)
+    {
+        // ReShade's processing, as ReShade reports it
+        bool effectsOn = rs.effectsOn;
+        if (IlionTheme::Checkbox(TrL("ReShade processing"), &effectsOn))
+            IlionReShade::SetEffectsState(effectsOn);
 
-    // Default catalogue, then the effects the user added
-    const size_t catalogue = std::size(IlionReShade::kCatalogue);
+        if (rs.pending > 0)
+        {
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", Tr("applying..."));
+        }
 
-    ImGui::Spacing();
-    SectionTitle("Default effects");
-    for (size_t i = 0; i < rs.effects.size() && i < catalogue; i++)
-        RenderReShadeEffect(rs.effects[i], false);
+        TextWrappedDisabled("%s", Tr("Each active effect costs GPU time; switched off, an effect costs nothing."));
 
-    ImGui::Spacing();
-    SectionTitle("Added effects");
+        // Default catalogue, then the effects the user added
+        const size_t catalogue = std::size(IlionReShade::kCatalogue);
 
-    if (rs.effects.size() <= catalogue)
-        TextWrappedDisabled("%s", Tr("None yet: pick an installed effect below."));
+        ImGui::Spacing();
+        SectionTitle("Default effects");
+        for (size_t i = 0; i < rs.effects.size() && i < catalogue; i++)
+            RenderReShadeEffect(rs.effects[i], false);
 
-    for (size_t i = catalogue; i < rs.effects.size(); i++)
-        RenderReShadeEffect(rs.effects[i], true);
+        ImGui::Spacing();
+        SectionTitle("Added effects");
+
+        if (rs.effects.size() <= catalogue)
+            TextWrappedDisabled("%s", Tr("None yet: pick an installed effect below."));
+
+        for (size_t i = catalogue; i < rs.effects.size(); i++)
+            RenderReShadeEffect(rs.effects[i], true);
+    }
+
+    if (reshadePanelPart == 1)
+        return;
 
     // Add effect: the techniques ReShade has loaded that aren't in the panel yet
     ImGui::Spacing();
@@ -19573,7 +19649,8 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
     // AmdDynamicRes / AmdDynamicTargetFps) with a target picked by intent; the latency regulator is the same as in
     // Latency & FPS. Keys and a short state stay in sight; the explanations and figures are folded below.
     {
-        ScopedCard card;
+        std::optional<ScopedCard> card;
+        card.emplace();
         SectionTitle("Automatic performance");
         const bool advanced = AdvancedView();
         const bool dynamic = cfg.AmdDynamicRes.value_or_default();
@@ -19704,7 +19781,14 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
         ImGui::TextUnformatted(Tr("Latency regulator"));
         DrawLatencyRegulatorControls("N", false);
 
-        // Folded by default: the explanations and the controller's figures
+        // Folded by default: the explanations and the controller's figures. ILION dev.63: in the new interface a card of
+        // its own under the controls, not inside their box
+        std::optional<ScopedCard> techCard;
+        if (IlionTheme::shell)
+        {
+            card.reset();
+            techCard.emplace();
+        }
         const std::string techLabel = std::string(Tr("Technical information")) + "##NrAutoTech";
         if (IlionTheme::CollapsingHeader(techLabel.c_str())) {
             ImGui::Indent();
@@ -20234,6 +20318,83 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
             return;
         }
 
+        if (strcmp(id, "@reshade_manage") == 0)
+        {
+            // The management part of the ReShade panel, under its card, while the panel is open
+            if (reshadePanelOpen && reshadePanelAmount >= 1.0f)
+            {
+                ScopedCard card;
+                ScopedID manageId { "reshade_manage" };
+                reshadePanelPart = 2;
+                RenderReShadePanel(ctx);
+                reshadePanelPart = 0;
+            }
+            return;
+        }
+
+        if (strcmp(id, "@latency_meters") == 0)
+        {
+            ScopedCard card(ShellText("Latency meters", "Medidores de latencia", "Medidores de latência", "Измерители задержки"));
+            ScopedID metersId { "latency_meters" };
+
+            // Reflex timings: the frame range of the last report of Reflex or fakenvapi, polled twice a second as the
+            // overlay does
+            static double lastPoll = 0.0;
+            static double reflexMs = -1.0;
+            if (lastPoll <= 0.001 || lastPoll + 500.0 < ctx.now)
+            {
+                reflexMs = -1.0;
+#ifdef LOW_LATENCY_INPUTS
+                static TimingData timing {};
+                if (InputCommon::get_timing_data(timing) && timing.timeRange.has_value())
+                    reflexMs = (double) timing.timeRange.value().length / 1000000.0;
+#else
+                if (ReflexHooks::updateTimingData() && ReflexHooks::timingData[TimingType::TimeRange].has_value())
+                    reflexMs = (double) ReflexHooks::timingData[TimingType::TimeRange].value().length / 1000000.0;
+#endif
+                lastPoll = ctx.now;
+            }
+
+            // ILION's estimated latency (misc/IlionLatency.h), with the same reducer key as the overlay's meter
+            int reducerId = 0;
+            if (fakenvapi::isUsingAsMainNvapi())
+                reducerId = 1 + (int) fakenvapi::getCurrentMode() * 2 + (fakenvapi::isLowLatencyActive() ? 1 : 0);
+            reducerId += 1000 * IlionRegulator::CurrentLevel();
+            const auto latency = IlionLatency::Get(reducerId);
+            const bool ilionValid = ctx.state.swapchainApi == DX12 && latency.valid && latency.system >= 0.0;
+
+            const ImVec4 blue = toneMapColor(ImVec4(0.25f, 0.70f, 1.00f, 1.0f));
+            const ImVec4 orange = toneMapColor(IlionTheme::ShellPal::Orange);
+            const char* noData = ShellText("No data", "Sin datos", "Sem dados", "Нет данных");
+
+            if (ImGui::BeginTable("##LatencyMeters", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings))
+            {
+                const auto meter = [&](const char* name, const char* detail, double value, const ImVec4& colour)
+                {
+                    ImGui::TableNextColumn();
+                    ImGui::TextDisabled("%s", name);
+                    ImGui::PushFont(ImGui::GetFont(), std::floor(ImGui::GetFontSize() * 1.8f));
+                    if (value >= 0.0)
+                        ImGui::TextColored(colour, "%.1f ms", value);
+                    else
+                        ImGui::TextDisabled("%s", noData);
+                    ImGui::PopFont();
+                    ImGui::TextDisabled("%s", detail);
+                };
+                meter("Reflex timings", ShellText("frame range of the last report", "rango del fotograma del último informe",
+                                                  "intervalo do quadro do último relatório", "диапазон кадра в последнем отчёте"),
+                      reflexMs, blue);
+                meter(ShellText("ILION latency", "Latencia ILION", "Latência ILION", "Задержка ILION"),
+                      latency.onScreen ? ShellText("estimated, simulation to screen", "estimada, de simulación a pantalla", "estimada, da simulação à tela",
+                                                   "оценка, от симуляции до экрана")
+                                       : ShellText("estimated, simulation to GPU end", "estimada, de simulación a fin de GPU", "estimada, da simulação ao fim da GPU",
+                                                   "оценка, от симуляции до конца GPU"),
+                      ilionValid ? latency.system : -1.0, orange);
+                ImGui::EndTable();
+            }
+            return;
+        }
+
         if (strcmp(id, "@latency_report") == 0)
         {
             ScopedCard card(ShellText("Latency: technical report", "Latencia: informe técnico", "Latência: relatório técnico", "Задержка: технический отчёт"));
@@ -20528,7 +20689,11 @@ void MenuCommon::RenderMenuTabBody(RenderMenuContext& ctx, int tabIndex, bool sc
         const float wide = std::floor(ImGui::GetContentRegionAvail().x * 0.62f * std::min(1.0f, reshadePanelAmount));
         ImGui::BeginChild("##ReShadePanel", ImVec2(std::max(1.0f, wide), 0.0f), ImGuiChildFlags_Borders);
         if (reshadePanelAmount >= 1.0f)
+        {
+            reshadePanelPart = 1;
             RenderReShadePanel(ctx);
+            reshadePanelPart = 0;
+        }
         ImGui::EndChild();
         ImGui::SameLine();
     }

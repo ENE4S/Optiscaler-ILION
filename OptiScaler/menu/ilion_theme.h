@@ -1426,19 +1426,43 @@ inline bool SliderInt(const char* label, int* value, int min, int max, const cha
 // accent / accentColour (dev.51-exp4): a part of the preview drawn in another colour
 // ILION dev.61: a drop-down list of the new interface opens under its field, at least as wide as it and never wider than
 // a reasonable column (long names are clipped in the list, the full name is in its tooltip), nor taller than the menu
-inline void ShellComboLimit()
+inline void ShellComboLimit(const char* label)
 {
     if (!shell || (GImGui->NextWindowData.HasFlags & ImGuiNextWindowDataFlags_HasSizeConstraint) != 0)
         return;
 
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    const float fs = ImGui::GetFontSize();
     const float width = ImGui::CalcItemWidth();
-    ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0.0f), ImVec2(ImMax(width, ImGui::GetFontSize() * 26.0f), ImGui::GetFontSize() * 24.0f));
+    const float maxHeight = fs * 24.0f;
+
+    // The room of the window that holds it: the new interface keeps its INFO band clear
+    const ImGuiWindow* root = window->RootWindow;
+    const bool mainWindow = root != nullptr && std::strstr(root->Name, "IlionShell") != nullptr;
+    const float top = root != nullptr ? root->Pos.y + fs * 0.5f : 0.0f;
+    const float bottom = root != nullptr ? root->Pos.y + root->Size.y - (mainWindow ? fs * 6.8f : fs * 0.5f) : ImGui::GetIO().DisplaySize.y;
+    const float fieldTop = window->DC.CursorPos.y;
+    const float below = bottom - (fieldTop + ImGui::GetFrameHeight());
+    const float above = fieldTop - top;
+
+    float height = ImMin(maxHeight, below);
+
+    // Not enough room under the field: the list opens upwards, its bottom on the field's top
+    if (below < ImMin(maxHeight, fs * 9.0f) && above > below)
+    {
+        height = ImMin(maxHeight, above);
+        const ImGuiID popup = ImHashStr("##ComboPopup", 0, window->GetID(label));
+        if (ImGui::IsPopupOpen(popup, ImGuiPopupFlags_None))
+            ImGui::SetNextWindowPos(ImVec2(window->DC.CursorPos.x, fieldTop), ImGuiCond_Always, ImVec2(0.0f, 1.0f));
+    }
+
+    ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0.0f), ImVec2(ImMax(width, fs * 26.0f), ImMax(fs * 4.0f, height)));
 }
 
 inline bool BeginCombo(const char* label, const char* preview, ImGuiComboFlags flags = 0, const ImVec4* previewColour = nullptr,
                        const char* accent = nullptr, const ImVec4* accentColour = nullptr)
 {
-    ShellComboLimit();
+    ShellComboLimit(label);
 
     const bool accented = accent != nullptr && accentColour != nullptr && preview != nullptr && std::strstr(preview, accent);
 

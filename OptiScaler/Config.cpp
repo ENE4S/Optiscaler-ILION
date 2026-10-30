@@ -614,6 +614,7 @@ LmxxfFullNetwork.set_from_config(readBool("DlssNr", "LmxxfFullNetwork"));
             MenuEssentialMode.set_from_config(readBool("Menu", "EssentialMode"));
             MenuClassicLayout.set_from_config(readBool("Menu", "ClassicLayout"));
             MenuUiTheme.set_from_config(readString("Menu", "UiTheme", true));
+            MenuUiPresentation.set_from_config(readString("Menu", "UiPresentation", true));
             MenuSidebarWide.set_from_config(readBool("Menu", "SidebarWide"));
             IlionInfoLine.set_from_config(readBool("Menu", "IlionInfoLine"));
             CustomTabCards.set_from_config(readString("Menu", "CustomTabCards"));
@@ -1609,6 +1610,7 @@ ini.SetValue("DlssNr", "LmxxfFullNetwork", GetBoolValue(Instance()->LmxxfFullNet
         ini.SetValue("Menu", "EssentialMode", GetBoolValue(Instance()->MenuEssentialMode.value_for_config()).c_str());
         ini.SetValue("Menu", "ClassicLayout", GetBoolValue(Instance()->MenuClassicLayout.value_for_config()).c_str());
         ini.SetValue("Menu", "UiTheme", Instance()->MenuUiTheme.value_for_config_or("auto").c_str());
+        ini.SetValue("Menu", "UiPresentation", Instance()->MenuUiPresentation.value_for_config_or("auto").c_str());
         ini.SetValue("Menu", "SidebarWide", GetBoolValue(Instance()->MenuSidebarWide.value_for_config()).c_str());
         ini.SetValue("Menu", "IlionInfoLine", GetBoolValue(Instance()->IlionInfoLine.value_for_config()).c_str());
         ini.SetValue("Menu", "CustomTabCards", Instance()->CustomTabCards.value_for_config_or("auto").c_str());
@@ -1946,6 +1948,7 @@ bool Config::SaveMenuPreferences()
     const std::string essentialMode = GetBoolValue(Instance()->MenuEssentialMode.value_for_config());
     const std::string classicLayout = GetBoolValue(Instance()->MenuClassicLayout.value_for_config());
     const std::string uiTheme = Instance()->MenuUiTheme.value_for_config_or("auto");
+    const std::string uiPresentation = Instance()->MenuUiPresentation.value_for_config_or("auto");
     const std::string sidebarWide = GetBoolValue(Instance()->MenuSidebarWide.value_for_config());
     const std::string infoLine = GetBoolValue(Instance()->IlionInfoLine.value_for_config());
     const std::string reshadeAdded = Instance()->ReShadeAddedEffects.value_for_config_or("auto");
@@ -1959,6 +1962,7 @@ bool Config::SaveMenuPreferences()
     ini.SetValue("Menu", "EssentialMode", essentialMode.c_str());
     ini.SetValue("Menu", "ClassicLayout", classicLayout.c_str());
     ini.SetValue("Menu", "UiTheme", uiTheme.c_str());
+    ini.SetValue("Menu", "UiPresentation", uiPresentation.c_str());
     ini.SetValue("Menu", "SidebarWide", sidebarWide.c_str());
     ini.SetValue("Menu", "IlionInfoLine", infoLine.c_str());
     ini.SetValue("ReShade", "AddedEffects", reshadeAdded.c_str());
@@ -1974,6 +1978,7 @@ bool Config::SaveMenuPreferences()
     file.SetValue("Menu", "EssentialMode", essentialMode.c_str());
     file.SetValue("Menu", "ClassicLayout", classicLayout.c_str());
     file.SetValue("Menu", "UiTheme", uiTheme.c_str());
+    file.SetValue("Menu", "UiPresentation", uiPresentation.c_str());
     file.SetValue("Menu", "SidebarWide", sidebarWide.c_str());
     file.SetValue("Menu", "IlionInfoLine", infoLine.c_str());
     file.SetValue("ReShade", "AddedEffects", reshadeAdded.c_str());

@@ -11,6 +11,9 @@ namespace IlionShell
 {
 constexpr float W = 1600.0f;
 constexpr float H = 1000.0f;
+// ILION dev.73: the Compact presentation's window, in the same design units (so the same scale and fonts)
+constexpr float kCompactW = 720.0f;
+constexpr float kCompactH = 960.0f;
 
 static float S = 1.0f;
 static ImVec2 O;
@@ -115,7 +118,17 @@ static void LedAt(ImDrawList* dl, ImVec2 c, float r, Led l)
     const ImVec4 col = LedColor(l);
     const ImVec2 pc = P(c);
 
-    if (l != Led::Off)
+    if (l != Led::Off && IlionTheme::shellLemonPilots)
+    {
+        // ILION dev.73: Clean Olive: a short halo close to the lens, a thin dark rim against the olive, a brighter core
+        for (int i = 3; i >= 1; i--)
+            dl->AddCircleFilled(pc, U(r + i * r * 0.35f), Col(col, 0.10f * (4 - i)));
+        dl->AddCircle(pc, U(r) + 1.0f, Col(ImVec4(0, 0, 0, 0.55f)), 0, 1.5f);
+        dl->AddCircleFilled(pc, U(r), Col(col));
+        dl->AddCircleFilled(pc, U(r * 0.5f), Col(Mix(col, ImVec4(1, 1, 1, 1), 0.55f)));
+        dl->AddCircleFilled(P(c.x - r * 0.3f, c.y - r * 0.3f), U(r * 0.3f), Col(ImVec4(1, 1, 1, 0.65f)));
+    }
+    else if (l != Led::Off)
     {
         for (int i = 4; i >= 1; i--)
             dl->AddCircleFilled(pc, U(r + i * r * 0.55f), Col(col, 0.05f * (5 - i) * IlionTheme::shellGlow));
@@ -1039,6 +1052,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
 
     S = ScaleFor(io, config);
     const bool olive = UiThemeIndex(config) == 1;
+    const bool compact = UiCompact(config); // ILION dev.73: the Compact presentation (Full is the default)
     IlionTheme::SetShellTheme(olive ? 1 : 0); // ILION dev.70: Industrial or Clean Olive
 
     // The controls of the menu take the look of the new interface while it draws, in its single mode
@@ -1053,10 +1067,12 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         {
             IlionTheme::shell = false;
             shellActive = false;
-            shellOlive = false;
+            shellSimple = false;
+            shellCompact = false;
         }
     } shellScope;
-    shellOlive = olive; // ILION dev.71: Clean Olive's simpler pages
+    shellSimple = olive || compact; // ILION dev.71: Clean Olive's simpler pages; dev.73: also the Compact presentation
+    shellCompact = compact;
     fUi = IlionTheme::modernFont != nullptr ? IlionTheme::modernFont : ImGui::GetFont();
     fBrand = IlionTheme::crtTitleFont != nullptr ? IlionTheme::crtTitleFont : fUi;
     const int li = LangIndex();
@@ -1105,6 +1121,18 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
     static const ShellLayout lCompat { { "init_flags", "fsr_common", "upscaler_inputs", "shaders_limits" },
                                        { "spoofing", "plugins", "barriers", "root_signatures" }, true };
     static const ShellLayout lLog { { "logging" }, {}, true };
+    // ILION dev.73: the Compact presentation's own lists (one column): Frame Gen without its monitors and MFG cost,
+    // Latency with its short state (the meters and the report are in Diagnostics), and Diagnostics' parts
+    static const ShellLayout lFrameGenC { { "fg_selection", "@fg_quick", "fg_optifg", "fg_reprojection", "fg_nvngx", "fg_fsrfg_inputs" },
+                                          { "fg_xefg", "fg_fsrfg", "fg_dlssg" } };
+    static const ShellLayout lLatencyC { { "framerate", "vsync", "low_latency" }, { "ilion_latency", "ilion_regulator", "@latency_monitor" } };
+    static const ShellLayout dSummary { { "status_summary" }, {} };
+    static const ShellLayout dUpscaler { { "@upscaler_diag" }, {} };
+    static const ShellLayout dFrameGen { { "@fg_status", "@fg_instruments" }, {} };
+    static const ShellLayout dNr { { "@nr_status" }, {} };
+    static const ShellLayout dLatency { { "@latency_meters", "@latency_report" }, {} };
+    static const ShellLayout dSystem { { "status_system" }, {} };
+    static const ShellLayout dDetected { { "status_detected", "status_hooks", "status_init" }, {} };
 
     struct Sub
     {
@@ -1162,9 +1190,14 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         section = 0;
 
     // Window -------------------------------------------------------------------------------------------------------
-    const ImVec2 size = Sz(W, H);
+    // ILION dev.73: the Compact presentation has its own size; the window is centred again when the presentation changes
+    static int lastCompact = -1;
+    const bool presentationChanged = lastCompact != -1 && lastCompact != (int) compact;
+    lastCompact = (int) compact;
+    const ImVec2 size = compact ? Sz(kCompactW, kCompactH) : Sz(W, H);
     ImGui::SetNextWindowSize(size, ImGuiCond_Always);
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), presentationChanged ? ImGuiCond_Always : ImGuiCond_Appearing,
+                            ImVec2(0.5f, 0.5f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, U(6.0f));
@@ -1249,96 +1282,6 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         Led::Off,
         Led::Off,
     };
-
-    // Sidebar ------------------------------------------------------------------------------------------------------
-    const bool wide = config->MenuSidebarWide.value_or_default();
-    const float side = wide ? 260.f : 112.f;
-    {
-        dl->AddRectFilled(P(0, 0), P(side, H), Col(ImVec4(0.025f, 0.03f, 0.028f, 1)), U(6.0f), ImDrawFlags_RoundCornersLeft);
-        float y = 70;
-
-        for (int i = 0; i < kSectionCount; i++)
-        {
-            if (!sectionShown(i))
-                continue; // the next one takes its place: no gap
-
-            const ImVec2 p(8, y), q(side - 8, y + 96);
-            At(p.x, p.y);
-            ImGui::PushID(i);
-            if (ImGui::InvisibleButton("nav", Sz(q.x - p.x, q.y - p.y)))
-                section = i;
-            const bool hov = ImGui::IsItemHovered();
-            if (hov && !wide)
-            {
-                ImGui::PushFont(fUi, U(17.f));
-                ImGui::SetTooltip("%s", kSections[i].name[li]);
-                ImGui::PopFont();
-            }
-            ImGui::PopID();
-
-            const bool sel = section == i;
-            const ImVec4 top = sel ? ImVec4(0.11f, 0.075f, 0.04f, 1) : (hov ? pal::PanelHi : pal::Panel);
-            const ImVec4 bottom = Mix(top, ImVec4(0, 0, 0, 1), 0.4f);
-            dl->AddRectFilledMultiColor(P(p), P(q), Col(top), Col(top), Col(bottom), Col(bottom));
-            if (sel)
-                for (int k = 4; k >= 1; k--)
-                    dl->AddRect(P(p.x - k, p.y - k), P(q.x + k, q.y + k), Col(pal::Orange, 0.07f * (5 - k) * IlionTheme::shellGlow), U(7.f), 0, 1.f);
-            dl->AddRect(P(p), P(q), Col(sel ? pal::Orange : pal::Line), U(6.f), 0, sel ? U(2.f) : 1.f);
-            const ImU32 ic = Col(sel ? pal::Orange : (hov ? pal::Text : pal::Text2));
-
-            if (wide)
-            {
-                // The full name when it fits, else smaller, else the short one of the compact bar
-                Icon(i, ImVec2(p.x + 40, p.y + 48), 34.f, ic);
-                const float room = q.x - p.x - 74 - 10;
-                const char* name = kSections[i].name[li];
-                float fs = 18.f;
-                while (fs > 14.f && Measure(fUi, fs, name).x > room)
-                    fs -= 1.f;
-                if (Measure(fUi, fs, name).x > room)
-                {
-                    name = kSections[i].caps[li];
-                    fs = 16.f;
-                    while (fs > 11.f && Measure(fUi, fs, name).x > room)
-                        fs -= 1.f;
-                }
-                const ImVec2 ts = Measure(fUi, fs, name);
-                Text(fUi, fs, ImVec2(p.x + 74, p.y + 48 - ts.y * 0.5f), sel ? pal::Orange : pal::Text, name);
-            }
-            else
-            {
-                Icon(i, ImVec2((p.x + q.x) * 0.5f, p.y + 38), 34.f, ic);
-                const char* caps = kSections[i].caps[li];
-                float fs = 16.f;
-                while (fs > 11.f && Measure(fUi, fs, caps).x > q.x - p.x - 8)
-                    fs -= 1.f;
-                const ImVec2 ts = Measure(fUi, fs, caps);
-                Text(fUi, fs, ImVec2((p.x + q.x - ts.x) * 0.5f, p.y + 66), sel ? pal::Orange : pal::Text, caps);
-            }
-
-            // Activity pilot, apart from the selection
-            if (sectionLed[i] != Led::Off)
-                LedAt(dl, ImVec2(q.x - 14, p.y + 14), 5.f, sectionLed[i]);
-            y += 104;
-        }
-
-        // Expand / collapse: the user's choice, kept in the ini; it never opens by itself
-        // Attribution: ILION is a fork of OptiScaler (its licence and credits are unchanged, see the package)
-        {
-            const char* fork = "OptiScaler Fork";
-            const ImVec2 ts = Measure(fUi, 12.f, fork);
-            Text(fUi, 12.f, ImVec2((side - ts.x) * 0.5f, H - 74), pal::Dim, fork);
-        }
-
-        At(8, H - 54);
-        if (Button("##wide", wide ? Lx("«  Collapse", "«  Contraer", "«  Recolher", "«  Свернуть") : "»", ImVec2(side - 16, 40)))
-        {
-            config->MenuSidebarWide = !wide;
-            config->SaveMenuPreferences();
-        }
-    }
-
-    const float x0 = side + 16, x1 = W - 18;
 
     // ILION dev.72: ILION Advisor's parts as functions of the shell, so another presentation can show them. Each one is
     // called where its code was, in the same order: the facts are gathered once a second as before, nothing twice
@@ -1632,6 +1575,683 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         ImGui::PopStyleColor();
         PopContentStyle();
     };
+
+    // ILION dev.72: the contents of Home's cards as functions of the shell (selection and state of upscaling, of frame
+    // generation, latency, V-Sync and the FPS limit), so another presentation can draw them in its own frames. They are
+    // drawn by the ImGui flow (no fixed coordinates): the Full presentation calls them in its cards, as before
+    const auto smallLabel = [&](const char* text)
+    {
+        ImGui::PushStyleColor(ImGuiCol_Text, Tone(pal::Text2));
+        ImGui::TextUnformatted(text);
+        ImGui::PopStyleColor();
+    };
+
+    const auto homeUpscaling = [&]()
+             {
+                 static const int order[] = { FamFsr4, FamHelix, FamDlss4, FamXess, FamFsr31, FamFsr2, FamFfx };
+                 const auto catalog = GatherUpscalers(feature);
+                 if (upFamily < 0 || upFamily >= FamCount || !catalog.present[upFamily])
+                     upFamily = catalog.current >= 0 ? catalog.current : FamFsr4;
+
+                 const float gap = ImGui::GetStyle().ItemSpacing.x;
+                 const float w = (ImGui::GetContentRegionAvail().x - gap) * 0.5f;
+                 const float x0 = ImGui::GetCursorPosX();
+
+                 smallLabel(Lx("Technology", "Tecnología", "Tecnologia", "Технология"));
+                 ImGui::SameLine(x0 + w + gap);
+                 smallLabel(Lx("Implementation", "Implementación", "Implementação", "Реализация"));
+
+                 const bool locked = FfxApiProxy::SrSwitchLocked();
+                 ImGui::BeginDisabled(locked);
+                 ImGui::SetNextItemWidth(w);
+                 if (IlionTheme::BeginCombo("##HomeFamily", familyNames[upFamily]))
+                 {
+                     for (const int family : order)
+                     {
+                         if (catalog.present[family] && ImGui::Selectable(familyNames[family], family == upFamily))
+                             upFamily = family;
+                     }
+                     ImGui::EndCombo();
+                 }
+
+                 ImGui::SameLine(x0 + w + gap);
+                 std::string preview = Lx("Choose one", "Elige uno", "Escolha um", "Выберите");
+                 int previewRank = 0, available = 0;
+                 for (const auto& v : catalog.variants)
+                 {
+                     if (v.family != upFamily)
+                         continue;
+                     available += v.usable ? 1 : 0;
+                     const int value = v.status.active ? 3 : v.status.loaded ? 2 : v.status.selected ? 1 : 0;
+                     if (value > previewRank)
+                     {
+                         previewRank = value;
+                         preview = v.name;
+                     }
+                 }
+
+                 ImGui::SetNextItemWidth(w);
+                 if (IlionTheme::BeginCombo("##HomeVariant", preview.c_str()))
+                 {
+                     for (const auto& v : catalog.variants)
+                     {
+                         if (v.family != upFamily)
+                             continue;
+                         const char* word = StatusWord(v.status);
+                         std::string label = v.name;
+                         if (*word != 0)
+                             label += StrFmt("  [%s]", Tr(word));
+                         label += "###" + (v.entry != nullptr ? wstring_to_string(v.entry->key) : v.isDefault ? std::string("default") : v.name);
+                         ImGui::BeginDisabled(!v.usable);
+                         if (ImGui::Selectable(label.c_str(), v.status.selected || v.status.active) && !(v.status.selected && v.status.loaded))
+                         {
+                             const bool d4r = v.entry != nullptr && v.entry->kind == IlionUpscalers::Kind::D4r;
+                             ChooseUpscalerVariant(v);
+                             SetApplied(d4r && !State::Instance().dlssExternalBackend ? Apply::Restart : Apply::Reinit);
+                         }
+                         ImGui::EndDisabled();
+                         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                             UpscalerVariantTip(v);
+                     }
+                     ImGui::EndCombo();
+                 }
+                 ImGui::EndDisabled();
+                 DrawD4rWarning();
+
+                 ImGui::Spacing();
+                 const int rank = FamilyRank(catalog, upFamily);
+                 Pill(rank == 3   ? Lx("Loaded and active", "Cargado y activo", "Carregado e ativo", "Загружен и активен")
+                      : rank == 2 ? Lx("Loaded", "Cargado", "Carregado", "Загружен")
+                      : rank == 1 ? Lx("Chosen, not running yet", "Elegido, aún sin ejecutarse", "Escolhido, ainda não em execução",
+                                       "Выбран, ещё не работает")
+                                  : Lx("Not in use", "Sin usar", "Sem uso", "Не используется"),
+                      LedOfRank(rank));
+                 ImGui::SameLine(0, U(16));
+                 ImGui::SetCursorPosY(ImGui::GetCursorPosY() + U(6));
+                 Label(StrFmt("%d %s", available, Lx("implementations available", "implementaciones disponibles", "implementações disponíveis",
+                                                     "доступных реализаций"))
+                           .c_str(),
+                       pal::Text2, 15.f);
+
+                 // What runs: resolution, factor and the upscaler's own time
+                 if (upscalerOn && feature->RenderWidth() > 0)
+                 {
+                     const float factor = (float) feature->TargetWidth() / feature->RenderWidth();
+                     Label(StrFmt("%s  ·  %ux%u -> %ux%u", UpscalerLabel(feature).c_str(), feature->RenderWidth(), feature->RenderHeight(),
+                                  feature->TargetWidth(), feature->TargetHeight())
+                               .c_str(),
+                           pal::Text, 17.f);
+
+                     double sum = 0.0;
+                     int valid = 0;
+                     const auto& times = state.upscaleTimes;
+                     for (size_t k = times.size() > 60 ? times.size() - 60 : 0; k < times.size(); k++)
+                     {
+                         if (times[k] > 0.0)
+                         {
+                             sum += times[k];
+                             valid++;
+                         }
+                     }
+                     std::string line = StrFmt("%s %.2fx  ·  %.0f%% %s", Lx("Factor", "Factor", "Fator", "Коэффициент"), factor,
+                                               100.0f / (factor * factor),
+                                               Lx("of the pixels rendered", "de los píxeles renderizados", "dos pixels renderizados", "пикселей отрисовано"));
+                     if (valid > 0)
+                         line += StrFmt("  ·  %s %.2f ms", Lx("upscaler", "escalador", "upscaler", "апскейлер"), sum / valid);
+                     Label(line.c_str(), pal::Text2, 15.f);
+                 }
+                 else
+                     Label(Lx("No upscaler is running in this game right now.", "Ningún escalador se está ejecutando ahora en este juego.",
+                              "Nenhum upscaler está em execução neste jogo agora.", "Сейчас в этой игре апскейлер не работает."),
+                           pal::Text2, 15.f);
+                 if (locked)
+                     Label(Tr("It can't be changed while a benchmark is running."), pal::Yellow, 15.f);
+                 ApplyState(Q(ImGui::GetCursorScreenPos()));
+             };
+
+    const auto homeFrameGen = [&]()
+             {
+                 // Two zones as two columns of one table row: both start at the same top, the left one (selectors,
+                 // multiplier, On) never pushes the right one (the states) down.
+                 // dev.71: why dev.69 and dev.70 still put the states low. With their usual width the selectors take
+                 // 17 font sizes (289 px at 17 px) plus their label (up to 171 px, "FG Nvngx Replacement" in Spanish,
+                 // counted even when not shown), and the states' block was measured with "Reflex not hooked" (169 px)
+                 // whenever the game's DLSSG is the input, as in Cyberpunk: ~316 px. 289 + 179 + 316 is more than
+                 // the card's 691 px, so dev.70 never split the card and fell back to beside the multiplier.
+                 // Now the states' block is measured with what it shows, the labels counted are only the ones shown,
+                 // and in the two zones the selectors (and the variant and the multiplier, so their arrows stay in one
+                 // line) take the left column's room minus their label: narrower, same font and height
+                 const auto& style = ImGui::GetStyle();
+                 const FGOutput outputNow = config->FGOutput.value_or_default();
+                 float shownLabel = ImGui::CalcTextSize(Tr("FG Input")).x;
+                 if (config->FGInput.value_or_default() == FGInput::NvngxFG)
+                     shownLabel = (std::max)(shownLabel, ImGui::CalcTextSize(Tr("FG Nvngx")).x);
+                 else
+                     shownLabel = (std::max)(shownLabel, ImGui::CalcTextSize(Tr("FG Output")).x);
+                 if (outputNow == FGOutput::DLSSG)
+                     shownLabel = (std::max)(shownLabel, ImGui::CalcTextSize(Tr("FG Nvngx Replacement")).x);
+                 if (outputNow == FGOutput::XeFG)
+                     shownLabel = (std::max)(shownLabel, ImGui::CalcTextSize(Tr("XeMFG variant")).x);
+                 shownLabel += style.ItemInnerSpacing.x * 2.0f;
+
+                 const float statesWidth = fgHomeStatesWidth > 0.0f ? fgHomeStatesWidth : U(260);
+                 const float gap = U(12);
+                 const float leftRoom = ImGui::GetContentRegionAvail().x - statesWidth - gap - style.CellPadding.x * 4.0f;
+                 const float comboMin = ImGui::GetFontSize() * 8.0f;
+                 const bool zones = leftRoom - shownLabel >= comboMin &&
+                                    ImGui::BeginTable("##HomeFgZones", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings);
+
+                 if (zones)
+                 {
+                     ImGui::TableSetupColumn("##left", ImGuiTableColumnFlags_WidthStretch);
+                     ImGui::TableSetupColumn("##right", ImGuiTableColumnFlags_WidthFixed, statesWidth + gap);
+                     ImGui::TableNextRow();
+                     ImGui::TableSetColumnIndex(0);
+                     fgHomeComboWidth = (std::min)(ImGui::GetFontSize() * 17.0f, std::floor(leftRoom - shownLabel));
+                 }
+
+                 shellFgInstrumentsApart = true;
+                 fgSelectorsOnly = true;
+                 RenderFrameGenerationSelection(ctx);
+                 fgSelectorsOnly = false;
+                 shellFgInstrumentsApart = false;
+
+                 fgQuickHome = true;
+                 fgHomePart = zones ? 1 : 0;
+                 RenderFgQuickControls(ctx);
+                 if (zones)
+                 {
+                     ImGui::TableSetColumnIndex(1);
+                     fgHomePart = 2;
+                     RenderFgQuickControls(ctx);
+                     ImGui::EndTable();
+                 }
+                 fgHomePart = 0;
+                 fgQuickHome = false;
+                 fgHomeComboWidth = 0.0f;
+             };
+
+    const auto homeLatency = [&]()
+             {
+                 if (ImGui::BeginTable("##HomeLatCols", 3, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings))
+                 {
+                     ImGui::TableNextColumn();
+                     ImGui::BeginDisabled(IlionLatency::Current() != IlionLatency::Manual);
+#ifdef LOW_LATENCY_INPUTS
+                     RenderLowLatencySettings(ctx);
+#else
+                     RenderFakenvapiSettings(ctx);
+#endif
+                     ImGui::EndDisabled();
+                     if (IlionLatency::Current() != IlionLatency::Manual)
+                         TextWrappedColored(Tone(pal::Text2), "%s",
+                                            Lx("Intelligent activation chooses these: set it to Manual in Latency & FPS to change them.",
+                                               "La activación inteligente los elige: ponla en Manual en Latencia y FPS para cambiarlos.",
+                                               "A ativação inteligente os escolhe: coloque em Manual em Latência e FPS para alterá-los.",
+                                               "Их выбирает умная активация: переключите её в Ручной режим в «Задержка и FPS»."));
+
+                     ImGui::TableNextColumn();
+                     RenderVsyncSettings(ctx);
+
+                     ImGui::TableNextColumn();
+                     // FPS limit: the same value and key as Latency & FPS
+                     if (std::isinf(_limitFps))
+                         _limitFps = config->FramerateLimit.value_or_default();
+                     smallLabel(Lx("FPS limit (0 = none)", "Límite de FPS (0 = sin límite)", "Limite de FPS (0 = sem limite)", "Лимит FPS (0 = нет)"));
+                     const float apply = ButtonWidth(TrL("Apply Limit"));
+                     ImGui::SetNextItemWidth((std::max)(U(80), ImGui::GetContentRegionAvail().x - apply - ImGui::GetStyle().ItemSpacing.x));
+                     ImGui::SliderFloat("##HomeFpsLimit", &_limitFps, 0, (std::max)(240.0f, _limitFps), "%.0f");
+                     ImGui::SameLine();
+                     if (IlionTheme::Button(TrL("Apply Limit")))
+                         config->FramerateLimit = _limitFps;
+
+                     ImGui::Spacing();
+                     bool shown = config->ShowFps.value_or_default();
+                     if (IlionTheme::Checkbox(Lx("Performance overlay###HomeOverlay", "Overlay de rendimiento###HomeOverlay",
+                                                 "Overlay de desempenho###HomeOverlay", "Оверлей производительности###HomeOverlay"),
+                                              &shown))
+                         config->ShowFps = shown;
+                     ImGui::EndTable();
+                 }
+             };
+
+
+    // ILION dev.73: the Compact presentation. A window of its own size with tabs above; every control is the one the
+    // Full presentation draws (the functions above, the module tabs, the cards), only arranged in one column. The
+    // technical information goes to its last tab, Diagnostics. Nothing here changes a setting by itself
+    if (compact)
+    {
+        constexpr float CW = kCompactW, CH = kCompactH;
+        constexpr int kDiag = kSectionCount - 1; // the place of Status & compatibility: Diagnostics in Compact
+        static int compactSection = 0;
+        static int compactSub[kSectionCount] = {};
+        if (compactSection < 0 || compactSection > kDiag)
+            compactSection = 0;
+
+        // The Advisor's facts once a frame, as the Full header gathers them (the header is not drawn here)
+        advisorUpdate();
+
+        // Top bar: brand, version and the way back to the Full presentation
+        dl->AddRectFilled(P(0, 0), P(CW, 58), Col(Mix(pal::Bg, ImVec4(0, 0, 0, 1), 0.35f)), U(6.0f), ImDrawFlags_RoundCornersTop);
+        dl->AddLine(P(0, 58), P(CW, 58), Col(pal::Line));
+        Text(fBrand, 30.f, ImVec2(16, 10), pal::Green, "ILION");
+        const float brandW = Measure(fBrand, 30.f, "ILION").x;
+        Text(fUi, 13.f, ImVec2(16 + brandW + 10, 24), pal::Dim, (std::string("v") + BuildInfo::IlionVersion()).c_str());
+        {
+            const char* toFull = Lx("Full view", "Vista completa", "Vista completa", "Полный вид");
+            const float fw = Measure(fUi, 15.f, toFull).x + 30;
+            At(CW - 16 - fw, 9);
+            if (Button("##CompactToFull", toFull, ImVec2(fw, 40), false, pal::Green, 15.f))
+            {
+                config->MenuUiPresentation = std::string("full");
+                config->SaveMenuPreferences();
+            }
+        }
+
+        // Tabs: the modules, and Diagnostics last
+        {
+            const float gap = 4.f;
+            const float tabW = std::floor((CW - 24 - gap * kDiag) / (kDiag + 1));
+            for (int i = 0; i <= kDiag; i++)
+            {
+                const ImVec2 p(12 + i * (tabW + gap), 66), q(12 + i * (tabW + gap) + tabW, 134);
+                const char* caps = i == kDiag ? Lx("DIAGNOSTICS", "DIAGNÓSTICO", "DIAGNÓSTICO", "ДИАГНОСТИКА") : kSections[i].caps[li];
+                At(p.x, p.y);
+                ImGui::PushID(200 + i);
+                if (ImGui::InvisibleButton("cnav", Sz(q.x - p.x, q.y - p.y)))
+                    compactSection = i;
+                const bool hov = ImGui::IsItemHovered();
+                if (hov)
+                {
+                    ImGui::PushFont(fUi, U(16.f));
+                    ImGui::SetTooltip("%s", i == kDiag ? Lx("Diagnostics", "Diagnóstico", "Diagnóstico", "Диагностика") : kSections[i].name[li]);
+                    ImGui::PopFont();
+                }
+                ImGui::PopID();
+
+                const bool sel = compactSection == i;
+                const ImVec4 top = sel ? ImVec4(0.11f, 0.075f, 0.04f, 1) : (hov ? pal::PanelHi : pal::Panel);
+                const ImVec4 bottom = Mix(top, ImVec4(0, 0, 0, 1), 0.4f);
+                dl->AddRectFilledMultiColor(P(p), P(q), Col(top), Col(top), Col(bottom), Col(bottom));
+                dl->AddRect(P(p), P(q), Col(sel ? pal::Orange : pal::Line), U(5.f), 0, sel ? U(2.f) : 1.f);
+                const ImU32 ic = Col(sel ? pal::Orange : (hov ? pal::Text : pal::Text2));
+                Icon(i, ImVec2((p.x + q.x) * 0.5f, p.y + 24), 26.f, ic);
+                float fs = 13.f;
+                while (fs > 9.f && Measure(fUi, fs, caps).x > tabW - 6)
+                    fs -= 1.f;
+                const ImVec2 ts = Measure(fUi, fs, caps);
+                Text(fUi, fs, ImVec2((p.x + q.x - ts.x) * 0.5f, p.y + 46), sel ? pal::Orange : pal::Text, caps);
+                if (i < kDiag && sectionLed[i] != Led::Off)
+                    LedAt(dl, ImVec2(q.x - 9, p.y + 9), 3.5f, sectionLed[i]);
+            }
+        }
+
+        // Sub-sections of the module, as in Full (pinned cards are not in Clean Olive)
+        float top = 144;
+        int shown[8];
+        int shownCount = 0;
+        if (compactSection >= 2 && compactSection < kDiag)
+        {
+            for (int k = 0; k < subCount && shownCount < 8; k++)
+            {
+                if (olive && strcmp(subs[k].tab, "Custom") == 0)
+                    continue;
+                if (subs[k].section == compactSection && tabVisible(tabIndex(subs[k].tab)))
+                    shown[shownCount++] = k;
+            }
+            if (shownCount > 0 && std::none_of(shown, shown + shownCount, [&](int k) { return k == compactSub[compactSection]; }))
+                compactSub[compactSection] = shown[0];
+
+            if (shownCount > 1)
+            {
+                float fs = 15.f;
+                const auto total = [&](float size)
+                {
+                    float w = 0.0f;
+                    for (int n = 0; n < shownCount; n++)
+                        w += Measure(fUi, size, subs[shown[n]].name[li]).x + 28 + 6;
+                    return w;
+                };
+                while (fs > 12.f && total(fs) > CW - 24)
+                    fs -= 1.f;
+                float x = 12;
+                for (int n = 0; n < shownCount; n++)
+                {
+                    const int k = shown[n];
+                    const char* label = subs[k].name[li];
+                    const float w = Measure(fUi, fs, label).x + 28;
+                    At(x, top);
+                    ImGui::PushID(300 + k);
+                    if (Button("##csub", label, ImVec2(w, 36), compactSub[compactSection] == k, pal::Yellow, fs))
+                        compactSub[compactSection] = k;
+                    ImGui::PopID();
+                    x += w + 6;
+                }
+                top += 44;
+            }
+        }
+
+        // The ReShade panel belongs to its sub-section, as in Full
+        if (!(compactSection == 4 && shownCount > 0 && compactSub[4] == subReShade))
+        {
+            reshadePanelOpen = false;
+            reshadePanelAmount = 0.0f;
+        }
+
+        // Content: one column that scrolls
+        bool openAdvisor = false;
+        const ImVec2 ca(12, top), cb(CW - 12, CH - 62);
+        PanelRect(ca, cb);
+        PushContentStyle();
+        ImGui::PushFont(fUi, U(16.f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, Sz(8.f, 6.f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, Sz(8.f, 4.f));
+        if (BeginArea("##CompactBody", ImVec2(ca.x + 12, ca.y + 10), ImVec2(cb.x - 6, cb.y - 8)))
+        {
+            ImGui::PushItemWidth((std::min)(ImGui::GetContentRegionAvail().x * 0.55f, U(300.f)));
+
+            // A state row: its pilot, its name and its value (the value wraps inside the window)
+            const auto stateRow = [&](Led led, const char* name, const std::string& value, const ImVec4* colour = nullptr)
+            {
+                ImGui::TableNextColumn();
+                const ImVec2 p = ImGui::GetCursorScreenPos();
+                const float h = ImGui::GetTextLineHeight();
+                ShellLedAt(ImGui::GetWindowDrawList(), ImVec2(p.x + h * 0.5f, p.y + h * 0.5f), h * 0.22f, led);
+                ImGui::Dummy(ImVec2(h, h));
+                ImGui::SameLine(0, U(6));
+                ImGui::TextColored(Tone(pal::Text2), "%s", name);
+                ImGui::TableNextColumn();
+                ImGui::PushStyleColor(ImGuiCol_Text, Tone(colour != nullptr ? *colour : pal::Text));
+                ImGui::TextWrapped("%s", value.c_str());
+                ImGui::PopStyleColor();
+            };
+            const auto beginRows = [&](const char* id)
+            {
+                if (!ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings))
+                    return false;
+                ImGui::TableSetupColumn("##name", ImGuiTableColumnFlags_WidthFixed);
+                ImGui::TableSetupColumn("##value", ImGuiTableColumnFlags_WidthStretch);
+                return true;
+            };
+
+            if (compactSection == 0)
+            {
+                // Home: the game, ILION, what runs, the performance and the Advisor's suggestion
+                const std::string game = !state.gameName.empty() ? state.gameName : state.gameExe;
+                ImGui::PushFont(fUi, U(24.f));
+                ImGui::TextColored(Tone(pal::Text), "%s", game.empty() ? "-" : game.c_str());
+                ImGui::PopFont();
+                std::string api = ApiName(state.api);
+                if (IdentifyGpu::gameUsesDxvk())
+                    api += " (DXVK)";
+                else if (IdentifyGpu::gameUsesVkd3dProton())
+                    api += " (VKD3D)";
+
+                if (beginRows("##CompactHome"))
+                {
+                    stateRow(Led::Off, "API", api);
+                    const ImVec4 green = pal::Green;
+                    stateRow(Led::Green, "ILION", Lx("Active", "Activo", "Ativo", "Активен"), &green);
+
+                    std::string up = Lx("No upscaler is running", "Ningún escalador en ejecución", "Nenhum upscaler em execução", "Апскейлер не работает");
+                    if (upscalerOn && feature->RenderWidth() > 0)
+                        up = StrFmt("%s  ·  %ux%u -> %ux%u", UpscalerLabel(feature).c_str(), feature->RenderWidth(), feature->RenderHeight(),
+                                    feature->TargetWidth(), feature->TargetHeight());
+                    else if (upscalerOn || upscalerIdle)
+                        up = UpscalerLabel(feature) + (upscalerIdle ? std::string("  ·  ") + Lx("paused", "en pausa", "em pausa", "пауза") : std::string());
+                    stateRow(sectionLed[1], Lx("Upscaling", "Escalado", "Escala", "Масштаб"), up);
+                    stateRow(fgLed, "Frame Generation", fgText);
+                    stateRow(sectionLed[4], "Neural Rendering",
+                             nrRunning   ? Lx("Running", "En ejecución", "Em execução", "Работает")
+                             : nrEnabled ? Lx("On, not running yet", "Activado, aún sin ejecutarse", "Ativado, ainda sem executar", "Включён, ещё не работает")
+                                         : Lx("Off", "Desactivado", "Desligado", "Выкл."));
+                    stateRow(latencyOn ? Led::Green : Led::Off, Lx("Latency", "Latencia", "Latência", "Задержка"),
+                             (latencyTech != nullptr ? std::string(latencyTech) : std::string("-")) +
+                                 (fpsLimit > 0.0f ? StrFmt("  ·  %s %.0f FPS", Lx("limit", "límite", "limite", "лимит"), fpsLimit) : std::string()));
+                    const double ft = ctx.frameTime;
+                    const bool measured = std::isfinite(ft) && ft > 0.0;
+                    stateRow(Led::Off, Lx("Performance", "Rendimiento", "Desempenho", "Производительность"),
+                             measured ? StrFmt("%.0f FPS  ·  %.1f ms", 1000.0 / ft, ft) : std::string("-"));
+                    ImGui::EndTable();
+                }
+
+                ImGui::Spacing();
+                IlionTheme::SectionPlate("ILION ADVISOR");
+                {
+                    const ImVec2 p = ImGui::GetCursorScreenPos();
+                    const float h = ImGui::GetTextLineHeight();
+                    IlionTheme::ShellLed(ImGui::GetWindowDrawList(), ImVec2(p.x + h * 0.5f, p.y + h * 0.5f), h * 0.28f, Tone(advisorConfidenceColour()), true);
+                    ImGui::Dummy(ImVec2(h, h));
+                    ImGui::SameLine(0, U(6));
+                    ImGui::TextColored(Tone(pal::Text2), "%s", Lx("A suggestion, not what is active now.", "Una recomendación, no lo que está activo.",
+                                                                 "Uma recomendação, não o que está ativo.", "Рекомендация, а не текущее состояние."));
+                }
+                const AdvisorSuggestion sug = advisorSuggestion();
+                if (!sug.ready)
+                    ImGui::TextColored(Tone(sug.upColour), "%s", sug.up.c_str());
+                else if (beginRows("##CompactAdvisor"))
+                {
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(Tone(pal::Text2), "%s", Lx("Upscaling", "Escalado", "Escala", "Масштаб"));
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(Tone(sug.upColour), "%s", sug.up.c_str());
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(Tone(pal::Text2), "FG");
+                    ImGui::TableNextColumn();
+                    if (sug.fg)
+                    {
+                        ImGui::TextColored(Tone(sug.techColour), "%s", sug.tech);
+                        ImGui::SameLine(0, 0);
+                        ImGui::TextColored(Tone(pal::Green), "%s", sug.mult.c_str());
+                    }
+                    else
+                        ImGui::TextColored(Tone(sug.fgColour), "%s", sug.fgText.c_str());
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(Tone(pal::Text2), "NR");
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(Tone(sug.nrColour), "%s", sug.nrText.c_str());
+                    ImGui::EndTable();
+                }
+                if (IlionTheme::Button(Lx("Advisor diagnosis###CompactAdvisorOpen", "Diagnóstico del Advisor###CompactAdvisorOpen",
+                                          "Diagnóstico do Advisor###CompactAdvisorOpen", "Диагностика Advisor###CompactAdvisorOpen")))
+                    openAdvisor = true;
+            }
+            else if (compactSection == 1)
+            {
+                // Upscaling: technology, implementation, state, resolution and factor (Home's own controls), then the
+                // settings of the upscaler that runs, without its DLL diagnostics and advanced selectors
+                homeUpscaling();
+                ImGui::Spacing();
+                shellHidesSelector = true;
+                skipSectionTitle = "Upscalers";
+                shellHidesUpscalerDiag = true;
+                RenderUpscalerStateMessage(ctx);
+                if (IsUpscalerActive(feature))
+                    RenderActiveUpscalerSettings(ctx);
+                skipSectionTitle = nullptr;
+                shellHidesSelector = false;
+                shellHidesUpscalerDiag = false;
+            }
+            else if (compactSection < kDiag)
+            {
+                // The other modules: their sub-section, drawn by its own code in one column
+                if (shownCount > 0)
+                {
+                    const Sub& sub = subs[compactSub[compactSection]];
+                    const ShellLayout* layout = sub.layout == &lFrameGen ? &lFrameGenC : sub.layout == &lLatency ? &lLatencyC : sub.layout;
+                    shellFgInstrumentsApart = layout == &lFrameGenC;
+                    shellFgQuickInline = layout == &lFrameGenC;
+                    RenderMenuTabBody(ctx, tabIndex(sub.tab), false, layout, sub.flow);
+                    shellFgInstrumentsApart = false;
+                    shellFgQuickInline = false;
+                }
+                else
+                    Label(Lx("Nothing to show in this section for this game.", "Nada que mostrar en esta sección para este juego.",
+                             "Nada a mostrar nesta seção para este jogo.", "В этом разделе для этой игры ничего нет."),
+                          pal::Text2, 16.f);
+            }
+            else
+            {
+                // Diagnostics: the technical information of the modules, as their own cards report it (read-only, except
+                // Compatibility, whose settings are these of Full)
+                Label(Lx("Technical information: what is chosen, loaded, active and generating, as ILION reads it.",
+                         "Información técnica: lo elegido, cargado, activo y generando, tal como lo lee ILION.",
+                         "Informação técnica: o escolhido, carregado, ativo e gerando, como o ILION lê.",
+                         "Техническая информация: выбрано, загружено, активно и генерирует — как это читает ILION."),
+                      pal::Text2, 15.f);
+                const int statusTab = tabIndex("Help / Status");
+                const auto part = [&](const char* label, const ShellLayout* layout, int tab)
+                {
+                    if (IlionTheme::CollapsingHeader(label))
+                        RenderMenuTabBody(ctx, tab, false, layout, 0);
+                };
+                part(Lx("Summary###DiagSummary", "Resumen###DiagSummary", "Resumo###DiagSummary", "Сводка###DiagSummary"), &dSummary, statusTab);
+                part(Lx("Upscaler: DLL, version and checks###DiagUp", "Escalador: DLL, versión y comprobaciones###DiagUp",
+                        "Upscaler: DLL, versão e verificações###DiagUp", "Апскейлер: DLL, версия и проверки###DiagUp"), &dUpscaler, statusTab);
+                part(Lx("Frame Generation: state and monitors###DiagFg", "Frame Generation: estado y monitores###DiagFg",
+                        "Frame Generation: estado e monitores###DiagFg", "Генерация кадров: состояние и мониторы###DiagFg"), &dFrameGen, statusTab);
+                if (IlionTheme::CollapsingHeader(Lx("Streamline###DiagSl", "Streamline###DiagSl", "Streamline###DiagSl", "Streamline###DiagSl")))
+                {
+                    const auto v = state.streamlineVersion;
+                    const bool slFound = v.major != 0 || v.minor != 0 || v.patch != 0;
+                    const char* yes = Lx("yes", "sí", "sim", "да");
+                    const char* no = Lx("no", "no", "não", "нет");
+                    ImGui::Text("%s: %s", Lx("Streamline version", "Versión de Streamline", "Versão do Streamline", "Версия Streamline"),
+                                slFound ? StrFmt("%u.%u.%u", v.major, v.minor, v.patch).c_str() : Lx("not detected", "no detectada", "não detectada", "не обнаружена"));
+                    ImGui::Text("%s: %s", Lx("Reflex hooked", "Reflex enganchado", "Reflex conectado", "Reflex перехвачен"), ReflexHooks::isReflexHooked() ? yes : no);
+                    ImGui::Text("%s: %s", Lx("Game's DLSSG as FG input (loaded)", "DLSSG del juego como entrada de FG (cargada)",
+                                             "DLSSG do jogo como entrada de FG (carregada)", "DLSSG игры как вход FG (загружен)"),
+                                state.activeFgInput == FGInput::DLSSG ? yes : no);
+                    ImGui::Text("%s: %s", Lx("DLSSG frames detected", "Fotogramas DLSSG detectados", "Quadros DLSSG detectados", "Обнаружены кадры DLSSG"),
+                                state.dlssgDetectedInterpolationCount > 0 ? StrFmt("x%d", state.dlssgDetectedInterpolationCount + 1).c_str() : no);
+                }
+                part(Lx("Neural Rendering: state###DiagNr", "Neural Rendering: estado###DiagNr", "Neural Rendering: estado###DiagNr",
+                        "Neural Rendering: состояние###DiagNr"), &dNr, statusTab);
+                part(Lx("Latency: meters and report###DiagLat", "Latencia: medidores e informe###DiagLat", "Latência: medidores e relatório###DiagLat",
+                        "Задержка: измерители и отчёт###DiagLat"), &dLatency, statusTab);
+                part(Lx("System###DiagSys", "Sistema###DiagSys", "Sistema###DiagSys", "Система###DiagSys"), &dSystem, statusTab);
+                part(Lx("Detected, hooks and injection###DiagDet", "Detectado, hooks e inyección###DiagDet", "Detectado, hooks e injeção###DiagDet",
+                        "Обнаружено, хуки и внедрение###DiagDet"), &dDetected, statusTab);
+                part(Lx("Compatibility settings###DiagCompat", "Ajustes de compatibilidad###DiagCompat", "Ajustes de compatibilidade###DiagCompat",
+                        "Настройки совместимости###DiagCompat"), &lCompat, tabIndex("Compatibility"));
+                part(Lx("Log###DiagLog", "Registro###DiagLog", "Registro###DiagLog", "Журнал###DiagLog"), &lLog, statusTab);
+            }
+
+            ImGui::PopItemWidth();
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleVar(2);
+        ImGui::PopFont();
+        PopContentStyle();
+
+        // Footer: save, close and the state of the last change
+        At(16, CH - 52);
+        if (Button("##CompactSave", Tr("Save Settings"), ImVec2(160, 40), false, pal::Green, 15.f))
+            config->SaveIni();
+        At(CW - 16 - 130, CH - 52);
+        if (Button("##CompactClose", Tr("Close"), ImVec2(130, 40), false, pal::Green, 15.f))
+            CloseMainMenu(io);
+        ApplyState(ImVec2(190, CH - 46));
+
+        // The Advisor's diagnosis, opened from the same ID stack it is drawn in
+        if (openAdvisor)
+            ImGui::OpenPopup("##IlionAdvisorPopup");
+        advisorDiagnosis();
+
+        ImGui::End();
+        ImGui::PopStyleColor(2);
+        return;
+    }
+
+    // Sidebar ------------------------------------------------------------------------------------------------------
+    const bool wide = config->MenuSidebarWide.value_or_default();
+    const float side = wide ? 260.f : 112.f;
+    {
+        dl->AddRectFilled(P(0, 0), P(side, H), Col(ImVec4(0.025f, 0.03f, 0.028f, 1)), U(6.0f), ImDrawFlags_RoundCornersLeft);
+        float y = 70;
+
+        for (int i = 0; i < kSectionCount; i++)
+        {
+            if (!sectionShown(i))
+                continue; // the next one takes its place: no gap
+
+            const ImVec2 p(8, y), q(side - 8, y + 96);
+            At(p.x, p.y);
+            ImGui::PushID(i);
+            if (ImGui::InvisibleButton("nav", Sz(q.x - p.x, q.y - p.y)))
+                section = i;
+            const bool hov = ImGui::IsItemHovered();
+            if (hov && !wide)
+            {
+                ImGui::PushFont(fUi, U(17.f));
+                ImGui::SetTooltip("%s", kSections[i].name[li]);
+                ImGui::PopFont();
+            }
+            ImGui::PopID();
+
+            const bool sel = section == i;
+            const ImVec4 top = sel ? ImVec4(0.11f, 0.075f, 0.04f, 1) : (hov ? pal::PanelHi : pal::Panel);
+            const ImVec4 bottom = Mix(top, ImVec4(0, 0, 0, 1), 0.4f);
+            dl->AddRectFilledMultiColor(P(p), P(q), Col(top), Col(top), Col(bottom), Col(bottom));
+            if (sel)
+                for (int k = 4; k >= 1; k--)
+                    dl->AddRect(P(p.x - k, p.y - k), P(q.x + k, q.y + k), Col(pal::Orange, 0.07f * (5 - k) * IlionTheme::shellGlow), U(7.f), 0, 1.f);
+            dl->AddRect(P(p), P(q), Col(sel ? pal::Orange : pal::Line), U(6.f), 0, sel ? U(2.f) : 1.f);
+            const ImU32 ic = Col(sel ? pal::Orange : (hov ? pal::Text : pal::Text2));
+
+            if (wide)
+            {
+                // The full name when it fits, else smaller, else the short one of the compact bar
+                Icon(i, ImVec2(p.x + 40, p.y + 48), 34.f, ic);
+                const float room = q.x - p.x - 74 - 10;
+                const char* name = kSections[i].name[li];
+                float fs = 18.f;
+                while (fs > 14.f && Measure(fUi, fs, name).x > room)
+                    fs -= 1.f;
+                if (Measure(fUi, fs, name).x > room)
+                {
+                    name = kSections[i].caps[li];
+                    fs = 16.f;
+                    while (fs > 11.f && Measure(fUi, fs, name).x > room)
+                        fs -= 1.f;
+                }
+                const ImVec2 ts = Measure(fUi, fs, name);
+                Text(fUi, fs, ImVec2(p.x + 74, p.y + 48 - ts.y * 0.5f), sel ? pal::Orange : pal::Text, name);
+            }
+            else
+            {
+                Icon(i, ImVec2((p.x + q.x) * 0.5f, p.y + 38), 34.f, ic);
+                const char* caps = kSections[i].caps[li];
+                float fs = 16.f;
+                while (fs > 11.f && Measure(fUi, fs, caps).x > q.x - p.x - 8)
+                    fs -= 1.f;
+                const ImVec2 ts = Measure(fUi, fs, caps);
+                Text(fUi, fs, ImVec2((p.x + q.x - ts.x) * 0.5f, p.y + 66), sel ? pal::Orange : pal::Text, caps);
+            }
+
+            // Activity pilot, apart from the selection
+            if (sectionLed[i] != Led::Off)
+                LedAt(dl, ImVec2(q.x - 14, p.y + 14), 5.f, sectionLed[i]);
+            y += 104;
+        }
+
+        // Expand / collapse: the user's choice, kept in the ini; it never opens by itself
+        // Attribution: ILION is a fork of OptiScaler (its licence and credits are unchanged, see the package)
+        {
+            const char* fork = "OptiScaler Fork";
+            const ImVec2 ts = Measure(fUi, 12.f, fork);
+            Text(fUi, 12.f, ImVec2((side - ts.x) * 0.5f, H - 74), pal::Dim, fork);
+        }
+
+        At(8, H - 54);
+        if (Button("##wide", wide ? Lx("«  Collapse", "«  Contraer", "«  Recolher", "«  Свернуть") : "»", ImVec2(side - 16, 40)))
+        {
+            config->MenuSidebarWide = !wide;
+            config->SaveMenuPreferences();
+        }
+    }
+
+    const float x0 = side + 16, x1 = W - 18;
 
     // Top strip: brand, the game and what it runs at ---------------------------------------------------------------
     {
@@ -2014,245 +2634,6 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         ImGui::PopFont();
         PopContentStyle();
     };
-
-    // ILION dev.72: the contents of Home's cards as functions of the shell (selection and state of upscaling, of frame
-    // generation, latency, V-Sync and the FPS limit), so another presentation can draw them in its own frames. They are
-    // drawn by the ImGui flow (no fixed coordinates): the Full presentation calls them in its cards, as before
-    const auto smallLabel = [&](const char* text)
-    {
-        ImGui::PushStyleColor(ImGuiCol_Text, Tone(pal::Text2));
-        ImGui::TextUnformatted(text);
-        ImGui::PopStyleColor();
-    };
-
-    const auto homeUpscaling = [&]()
-             {
-                 static const int order[] = { FamFsr4, FamHelix, FamDlss4, FamXess, FamFsr31, FamFsr2, FamFfx };
-                 const auto catalog = GatherUpscalers(feature);
-                 if (upFamily < 0 || upFamily >= FamCount || !catalog.present[upFamily])
-                     upFamily = catalog.current >= 0 ? catalog.current : FamFsr4;
-
-                 const float gap = ImGui::GetStyle().ItemSpacing.x;
-                 const float w = (ImGui::GetContentRegionAvail().x - gap) * 0.5f;
-                 const float x0 = ImGui::GetCursorPosX();
-
-                 smallLabel(Lx("Technology", "Tecnología", "Tecnologia", "Технология"));
-                 ImGui::SameLine(x0 + w + gap);
-                 smallLabel(Lx("Implementation", "Implementación", "Implementação", "Реализация"));
-
-                 const bool locked = FfxApiProxy::SrSwitchLocked();
-                 ImGui::BeginDisabled(locked);
-                 ImGui::SetNextItemWidth(w);
-                 if (IlionTheme::BeginCombo("##HomeFamily", familyNames[upFamily]))
-                 {
-                     for (const int family : order)
-                     {
-                         if (catalog.present[family] && ImGui::Selectable(familyNames[family], family == upFamily))
-                             upFamily = family;
-                     }
-                     ImGui::EndCombo();
-                 }
-
-                 ImGui::SameLine(x0 + w + gap);
-                 std::string preview = Lx("Choose one", "Elige uno", "Escolha um", "Выберите");
-                 int previewRank = 0, available = 0;
-                 for (const auto& v : catalog.variants)
-                 {
-                     if (v.family != upFamily)
-                         continue;
-                     available += v.usable ? 1 : 0;
-                     const int value = v.status.active ? 3 : v.status.loaded ? 2 : v.status.selected ? 1 : 0;
-                     if (value > previewRank)
-                     {
-                         previewRank = value;
-                         preview = v.name;
-                     }
-                 }
-
-                 ImGui::SetNextItemWidth(w);
-                 if (IlionTheme::BeginCombo("##HomeVariant", preview.c_str()))
-                 {
-                     for (const auto& v : catalog.variants)
-                     {
-                         if (v.family != upFamily)
-                             continue;
-                         const char* word = StatusWord(v.status);
-                         std::string label = v.name;
-                         if (*word != 0)
-                             label += StrFmt("  [%s]", Tr(word));
-                         label += "###" + (v.entry != nullptr ? wstring_to_string(v.entry->key) : v.isDefault ? std::string("default") : v.name);
-                         ImGui::BeginDisabled(!v.usable);
-                         if (ImGui::Selectable(label.c_str(), v.status.selected || v.status.active) && !(v.status.selected && v.status.loaded))
-                         {
-                             const bool d4r = v.entry != nullptr && v.entry->kind == IlionUpscalers::Kind::D4r;
-                             ChooseUpscalerVariant(v);
-                             SetApplied(d4r && !State::Instance().dlssExternalBackend ? Apply::Restart : Apply::Reinit);
-                         }
-                         ImGui::EndDisabled();
-                         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                             UpscalerVariantTip(v);
-                     }
-                     ImGui::EndCombo();
-                 }
-                 ImGui::EndDisabled();
-                 DrawD4rWarning();
-
-                 ImGui::Spacing();
-                 const int rank = FamilyRank(catalog, upFamily);
-                 Pill(rank == 3   ? Lx("Loaded and active", "Cargado y activo", "Carregado e ativo", "Загружен и активен")
-                      : rank == 2 ? Lx("Loaded", "Cargado", "Carregado", "Загружен")
-                      : rank == 1 ? Lx("Chosen, not running yet", "Elegido, aún sin ejecutarse", "Escolhido, ainda não em execução",
-                                       "Выбран, ещё не работает")
-                                  : Lx("Not in use", "Sin usar", "Sem uso", "Не используется"),
-                      LedOfRank(rank));
-                 ImGui::SameLine(0, U(16));
-                 ImGui::SetCursorPosY(ImGui::GetCursorPosY() + U(6));
-                 Label(StrFmt("%d %s", available, Lx("implementations available", "implementaciones disponibles", "implementações disponíveis",
-                                                     "доступных реализаций"))
-                           .c_str(),
-                       pal::Text2, 15.f);
-
-                 // What runs: resolution, factor and the upscaler's own time
-                 if (upscalerOn && feature->RenderWidth() > 0)
-                 {
-                     const float factor = (float) feature->TargetWidth() / feature->RenderWidth();
-                     Label(StrFmt("%s  ·  %ux%u -> %ux%u", UpscalerLabel(feature).c_str(), feature->RenderWidth(), feature->RenderHeight(),
-                                  feature->TargetWidth(), feature->TargetHeight())
-                               .c_str(),
-                           pal::Text, 17.f);
-
-                     double sum = 0.0;
-                     int valid = 0;
-                     const auto& times = state.upscaleTimes;
-                     for (size_t k = times.size() > 60 ? times.size() - 60 : 0; k < times.size(); k++)
-                     {
-                         if (times[k] > 0.0)
-                         {
-                             sum += times[k];
-                             valid++;
-                         }
-                     }
-                     std::string line = StrFmt("%s %.2fx  ·  %.0f%% %s", Lx("Factor", "Factor", "Fator", "Коэффициент"), factor,
-                                               100.0f / (factor * factor),
-                                               Lx("of the pixels rendered", "de los píxeles renderizados", "dos pixels renderizados", "пикселей отрисовано"));
-                     if (valid > 0)
-                         line += StrFmt("  ·  %s %.2f ms", Lx("upscaler", "escalador", "upscaler", "апскейлер"), sum / valid);
-                     Label(line.c_str(), pal::Text2, 15.f);
-                 }
-                 else
-                     Label(Lx("No upscaler is running in this game right now.", "Ningún escalador se está ejecutando ahora en este juego.",
-                              "Nenhum upscaler está em execução neste jogo agora.", "Сейчас в этой игре апскейлер не работает."),
-                           pal::Text2, 15.f);
-                 if (locked)
-                     Label(Tr("It can't be changed while a benchmark is running."), pal::Yellow, 15.f);
-                 ApplyState(Q(ImGui::GetCursorScreenPos()));
-             };
-
-    const auto homeFrameGen = [&]()
-             {
-                 // Two zones as two columns of one table row: both start at the same top, the left one (selectors,
-                 // multiplier, On) never pushes the right one (the states) down.
-                 // dev.71: why dev.69 and dev.70 still put the states low. With their usual width the selectors take
-                 // 17 font sizes (289 px at 17 px) plus their label (up to 171 px, "FG Nvngx Replacement" in Spanish,
-                 // counted even when not shown), and the states' block was measured with "Reflex not hooked" (169 px)
-                 // whenever the game's DLSSG is the input, as in Cyberpunk: ~316 px. 289 + 179 + 316 is more than
-                 // the card's 691 px, so dev.70 never split the card and fell back to beside the multiplier.
-                 // Now the states' block is measured with what it shows, the labels counted are only the ones shown,
-                 // and in the two zones the selectors (and the variant and the multiplier, so their arrows stay in one
-                 // line) take the left column's room minus their label: narrower, same font and height
-                 const auto& style = ImGui::GetStyle();
-                 const FGOutput outputNow = config->FGOutput.value_or_default();
-                 float shownLabel = ImGui::CalcTextSize(Tr("FG Input")).x;
-                 if (config->FGInput.value_or_default() == FGInput::NvngxFG)
-                     shownLabel = (std::max)(shownLabel, ImGui::CalcTextSize(Tr("FG Nvngx")).x);
-                 else
-                     shownLabel = (std::max)(shownLabel, ImGui::CalcTextSize(Tr("FG Output")).x);
-                 if (outputNow == FGOutput::DLSSG)
-                     shownLabel = (std::max)(shownLabel, ImGui::CalcTextSize(Tr("FG Nvngx Replacement")).x);
-                 if (outputNow == FGOutput::XeFG)
-                     shownLabel = (std::max)(shownLabel, ImGui::CalcTextSize(Tr("XeMFG variant")).x);
-                 shownLabel += style.ItemInnerSpacing.x * 2.0f;
-
-                 const float statesWidth = fgHomeStatesWidth > 0.0f ? fgHomeStatesWidth : U(260);
-                 const float gap = U(12);
-                 const float leftRoom = ImGui::GetContentRegionAvail().x - statesWidth - gap - style.CellPadding.x * 4.0f;
-                 const float comboMin = ImGui::GetFontSize() * 8.0f;
-                 const bool zones = leftRoom - shownLabel >= comboMin &&
-                                    ImGui::BeginTable("##HomeFgZones", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings);
-
-                 if (zones)
-                 {
-                     ImGui::TableSetupColumn("##left", ImGuiTableColumnFlags_WidthStretch);
-                     ImGui::TableSetupColumn("##right", ImGuiTableColumnFlags_WidthFixed, statesWidth + gap);
-                     ImGui::TableNextRow();
-                     ImGui::TableSetColumnIndex(0);
-                     fgHomeComboWidth = (std::min)(ImGui::GetFontSize() * 17.0f, std::floor(leftRoom - shownLabel));
-                 }
-
-                 shellFgInstrumentsApart = true;
-                 fgSelectorsOnly = true;
-                 RenderFrameGenerationSelection(ctx);
-                 fgSelectorsOnly = false;
-                 shellFgInstrumentsApart = false;
-
-                 fgQuickHome = true;
-                 fgHomePart = zones ? 1 : 0;
-                 RenderFgQuickControls(ctx);
-                 if (zones)
-                 {
-                     ImGui::TableSetColumnIndex(1);
-                     fgHomePart = 2;
-                     RenderFgQuickControls(ctx);
-                     ImGui::EndTable();
-                 }
-                 fgHomePart = 0;
-                 fgQuickHome = false;
-                 fgHomeComboWidth = 0.0f;
-             };
-
-    const auto homeLatency = [&]()
-             {
-                 if (ImGui::BeginTable("##HomeLatCols", 3, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings))
-                 {
-                     ImGui::TableNextColumn();
-                     ImGui::BeginDisabled(IlionLatency::Current() != IlionLatency::Manual);
-#ifdef LOW_LATENCY_INPUTS
-                     RenderLowLatencySettings(ctx);
-#else
-                     RenderFakenvapiSettings(ctx);
-#endif
-                     ImGui::EndDisabled();
-                     if (IlionLatency::Current() != IlionLatency::Manual)
-                         TextWrappedColored(Tone(pal::Text2), "%s",
-                                            Lx("Intelligent activation chooses these: set it to Manual in Latency & FPS to change them.",
-                                               "La activación inteligente los elige: ponla en Manual en Latencia y FPS para cambiarlos.",
-                                               "A ativação inteligente os escolhe: coloque em Manual em Latência e FPS para alterá-los.",
-                                               "Их выбирает умная активация: переключите её в Ручной режим в «Задержка и FPS»."));
-
-                     ImGui::TableNextColumn();
-                     RenderVsyncSettings(ctx);
-
-                     ImGui::TableNextColumn();
-                     // FPS limit: the same value and key as Latency & FPS
-                     if (std::isinf(_limitFps))
-                         _limitFps = config->FramerateLimit.value_or_default();
-                     smallLabel(Lx("FPS limit (0 = none)", "Límite de FPS (0 = sin límite)", "Limite de FPS (0 = sem limite)", "Лимит FPS (0 = нет)"));
-                     const float apply = ButtonWidth(TrL("Apply Limit"));
-                     ImGui::SetNextItemWidth((std::max)(U(80), ImGui::GetContentRegionAvail().x - apply - ImGui::GetStyle().ItemSpacing.x));
-                     ImGui::SliderFloat("##HomeFpsLimit", &_limitFps, 0, (std::max)(240.0f, _limitFps), "%.0f");
-                     ImGui::SameLine();
-                     if (IlionTheme::Button(TrL("Apply Limit")))
-                         config->FramerateLimit = _limitFps;
-
-                     ImGui::Spacing();
-                     bool shown = config->ShowFps.value_or_default();
-                     if (IlionTheme::Checkbox(Lx("Performance overlay###HomeOverlay", "Overlay de rendimiento###HomeOverlay",
-                                                 "Overlay de desempenho###HomeOverlay", "Оверлей производительности###HomeOverlay"),
-                                              &shown))
-                         config->ShowFps = shown;
-                     ImGui::EndTable();
-                 }
-             };
 
     // Sections ------------------------------------------------------------------------------------------------------
     if (section == 0)

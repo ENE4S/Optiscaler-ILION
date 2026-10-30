@@ -305,6 +305,19 @@ inline ImVec4 ShellMix(const ImVec4& a, const ImVec4& b, float t)
 // A pilot lamp of the new interface: halo, core and highlight when lit, a dark glass with a thin ring when out
 inline void ShellLed(ImDrawList* draw, const ImVec2& c, float r, const ImVec4& color, bool lit, bool hovered = false)
 {
+    // ILION dev.73: Clean Olive's lit lens: a short halo close to it, a thin dark rim that sets it off the olive, the
+    // lens and a brighter core. Same size and place; Industrial keeps the drawing below
+    if (lit && shell && shellLemonPilots)
+    {
+        for (int i = 3; i >= 1; i--)
+            draw->AddCircleFilled(c, r + i * r * 0.35f, ImGui::GetColorU32(Alpha(color, 0.10f * (4 - i) * color.w)));
+        draw->AddCircle(c, r + 1.0f, ImGui::GetColorU32(ImVec4(0, 0, 0, 0.55f)), 0, 1.5f);
+        draw->AddCircleFilled(c, r, ImGui::GetColorU32(color));
+        draw->AddCircleFilled(c, r * 0.5f, ImGui::GetColorU32(ShellMix(color, ImVec4(1, 1, 1, color.w), 0.55f)));
+        draw->AddCircleFilled(ImVec2(c.x - r * 0.3f, c.y - r * 0.3f), r * 0.3f, ImGui::GetColorU32(ImVec4(1, 1, 1, 0.65f)));
+        return;
+    }
+
     if (lit)
     {
         for (int i = 4; i >= 1; i--)

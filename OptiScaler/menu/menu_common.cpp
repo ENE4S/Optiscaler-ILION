@@ -244,8 +244,10 @@ static const char* requestedMenuTab = nullptr; // Label of a tab to switch to on
 static bool personalPanelOpen = false;          // ILION: Customise panel of Personal, at the right of its boxes
 static bool reshadePanelOpen = false;           // ILION: ReShade panel, joined to the right of the window (Graphics)
 static bool shellHidesSelector = false;         // ILION dev.57: the new interface chooses the upscaler in its catalogue
-static bool shellOlive = false;                 // ILION dev.71: the new interface draws in Clean Olive: its simpler pages hide
-                                                // some technical controls (they keep working and keep their values)
+static bool shellSimple = false;                // ILION dev.71: the new interface draws its simpler pages (Clean Olive, and dev.73
+                                                // the Compact presentation): some technical controls are hidden (they keep
+                                                // working and keep their values)
+static bool shellCompact = false;               // ILION dev.73: the new interface draws its Compact presentation
 static float fgHomeComboWidth = 0.0f;           // ILION dev.71: width of the FG selectors, the XeMFG variant and the multiplier
                                                 // in the Home card when it is split in two zones (0: their usual width)
 static bool shellActive = false;                // ILION dev.58: the new interface is drawing, in its single (Advanced) mode
@@ -268,6 +270,13 @@ static int UiThemeIndex(Config* config)
     if (theme == "traditional")
         return 2;
     return 0;
+}
+
+// ILION dev.73: the presentation of the new interface: Full (default, also with no saved preference) or Compact.
+// ILION Traditional keeps its own modes and never uses it
+static bool UiCompact(Config* config)
+{
+    return UiThemeIndex(config) != 2 && config->MenuUiPresentation.value_or_default() == "compact";
 }
 
 static void DedupeSrVariants(std::vector<FfxApiProxy::SrVariant>& list);
@@ -9804,9 +9813,9 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
         // ILION: OptiScaler's own backend list (native DLSS on NVIDIA included) and the FFX provider list, unchanged,
         // folded under one key; ILION's manager above stays the main selector. Not in Basic, which keeps it simple
-        if (!shellOlive)
+        if (!shellSimple)
             ImGui::Spacing();
-        if (!basicView && !shellOlive)
+        if (!basicView && !shellSimple)
         if (auto ch = ScopedCollapsingHeader(TrL("Advanced selectors")); ch.IsHeaderOpen())
         {
             if (IlionTheme::shell)
@@ -10031,7 +10040,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             ImGui::Spacing();
 
             // ILION dev.63: colour space, preset, debug view and watermark are secondary: one fold in the new interface
-            if (!shellOlive && (!IlionTheme::shell || IlionTheme::CollapsingHeader(TrL("Additional FFX options##FfxExtras"))))
+            if (!shellSimple && (!IlionTheme::shell || IlionTheme::CollapsingHeader(TrL("Additional FFX options##FfxExtras"))))
             {
                 // Colorspaces
                 const char* colorSpaces[] = { Tr("Linear (Default)"), Tr("Non-Linear"), Tr("Non-Linear sRGB"), Tr("Non-Linear PQ") };
@@ -10232,10 +10241,10 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                 }
             }
 
-            if (!shellOlive)
+            if (!shellSimple)
                 ImGui::Spacing();
 
-            if (!shellOlive)
+            if (!shellSimple)
             if (auto ch = ScopedCollapsingHeader(TrL("FSR 3 Upscaler Manual Tuning")); ch.IsHeaderOpen())
             {
                 ScopedIndent indent {};
@@ -12152,7 +12161,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
         auto fgOutput = reinterpret_cast<IFGFeature_Dx12*>(state.currentFG);
         if ((state.activeFgOutput != FGOutput::Reprojection && state.activeFgOutput != FGOutput::NoFG &&
              state.activeFgInput != FGInput::NoFG && state.activeFgInput != FGInput::NvngxFG) &&
-            fgOutput && !EssentialView() && !shellOlive)
+            fgOutput && !EssentialView() && !shellSimple)
         {
             IlionTheme::Checkbox(TrL("Show Detected UI"), &state.fgHudlessCompare);
             ShowTooltip("Needs HUDless texture to compare with final image.\n"
@@ -12204,7 +12213,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
         const bool showHudCutoff = state.activeFgInput == FGInput::NvngxFG || state.activeFgOutput == FGOutput::FSRFG;
 
-        if ((showOutputSpecificFGSettings || showHudCutoff) && !shellOlive)
+        if ((showOutputSpecificFGSettings || showHudCutoff) && !shellSimple)
         {
             if (auto ch = ScopedCollapsingHeader(TrL("Advanced FG Settings")); ch.IsHeaderOpen())
             {
@@ -12778,7 +12787,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
         // ILION: UI composition, debug view and borderless of XeFG under one folded key, same controls and states
         // Display, debug and extended settings: Advanced only
-        if (!EssentialView() && !shellOlive)
+        if (!EssentialView() && !shellSimple)
         if (auto display = ScopedCollapsingHeader(TrL("Display and debug##xefg")); display.IsHeaderOpen())
         {
         ImGui::BeginDisabled(!correctMVs || cantActivate);
@@ -12823,9 +12832,9 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         // IlionTheme::Checkbox(TrL("Only Generated##2"), &state.fgOnlyGenerated);
         // ShowTooltip("Display only XeFG generated frames");
 
-        if (!shellOlive)
+        if (!shellSimple)
             ImGui::Spacing();
-        if (!EssentialView() && !shellOlive)
+        if (!EssentialView() && !shellSimple)
         if (auto ch = ScopedCollapsingHeader(TrL("Extended XeFG Settings")); ch.IsHeaderOpen())
         {
             ImGui::Spacing();
@@ -15513,6 +15522,32 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
                                   "Industrial y Clean Olive: la interfaz nueva con dos paletas. ILION Tradicional: el menú anterior, con sus modos Básico, Esencial y Avanzado y sus propios temas. Se guarda al momento; no se reinicia nada.",
                                   "Industrial e Clean Olive: a nova interface em duas paletas. ILION Tradicional: o menu anterior, com os modos Básico, Essencial e Avançado e os seus próprios temas. Guardado na hora; nada é reiniciado.",
                                   "Industrial и Clean Olive: новый интерфейс в двух палитрах. ILION Классический: прежнее меню с режимами Базовый, Основной и Расширенный и своими темами. Сохраняется сразу; ничего не перезапускается."));
+
+            // ILION dev.73: the presentation of the new interface (Full or Compact), apart from its theme. Only the
+            // drawing changes, from the next frame: no technology is restarted
+            if (IlionTheme::shell)
+            {
+                const bool compactNow = config->MenuUiPresentation.value_or_default() == "compact";
+                const char* presentationNames[] = { ShellText("Full", "Completa", "Completa", "Полная"),
+                                                    ShellText("Compact", "Compacta", "Compacta", "Компактная") };
+                ImGui::SetNextItemWidth(180.0f * ctx.menuResScale);
+                if (IlionTheme::BeginCombo(ShellText("Presentation", "Presentación", "Apresentação", "Вид"), presentationNames[compactNow ? 1 : 0]))
+                {
+                    for (int n = 0; n < 2; n++)
+                    {
+                        if (ImGui::Selectable(presentationNames[n], (n == 1) == compactNow) && (n == 1) != compactNow)
+                        {
+                            config->MenuUiPresentation = std::string(n == 1 ? "compact" : "full");
+                            config->SaveMenuPreferences();
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                ShowTooltip(ShellText("Full: the whole interface. Compact: a narrower window with the everyday controls; the technical information is in its Diagnostics tab. Saved at once; nothing is restarted.",
+                                      "Completa: la interfaz entera. Compacta: una ventana más estrecha con los controles de uso diario; la información técnica está en su pestaña Diagnóstico. Se guarda al momento; no se reinicia nada.",
+                                      "Completa: a interface inteira. Compacta: uma janela mais estreita com os controles do dia a dia; a informação técnica fica na aba Diagnóstico. Guardado na hora; nada é reiniciado.",
+                                      "Полная: весь интерфейс. Компактная: более узкое окно с повседневными настройками; техническая информация — во вкладке «Диагностика». Сохраняется сразу; ничего не перезапускается."));
+            }
             ImGui::Spacing();
         }
 #pragma execution_character_set(pop)
@@ -20044,13 +20079,13 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
         // Folded by default: the explanations and the controller's figures. ILION dev.63: in the new interface a card of
         // its own under the controls, not inside their box
         std::optional<ScopedCard> techCard;
-        if (IlionTheme::shell)
+        if (IlionTheme::shell && !shellCompact)
         {
             card.reset();
             techCard.emplace();
         }
         const std::string techLabel = std::string(Tr("Technical information")) + "##NrAutoTech";
-        if (IlionTheme::CollapsingHeader(techLabel.c_str())) {
+        if (!shellCompact && IlionTheme::CollapsingHeader(techLabel.c_str())) {
             ImGui::Indent();
             WrappedText(IlionTheme::TextDim,
                         StrFmt(Tr("Target %d FPS. The NR resolution below is the maximum: when the game can't hold the "
@@ -20092,7 +20127,7 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
         DrawNrSummary(cfg);
     }
     // ILION dev.50: the neural monitor, only in Advanced (not Essential, not Basic)
-    if (AdvancedView())
+    if (AdvancedView() && !shellCompact)
     {
         ScopedCard card;
         DrawNrMonitor(ctx.currentFeature, nrStatus, cfg.DlssNrRunBeforeSr.value_or_default());
@@ -20188,8 +20223,8 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
             ImGui::EndTable();
         }
     }
-    // No DefaultOpen flag: long diagnostics remain collapsed until requested.
-    if (IlionTheme::CollapsingHeader(TrL("Technical information"))) {
+    // No DefaultOpen flag: long diagnostics remain collapsed until requested. ILION dev.73: not in Compact
+    if (!shellCompact && IlionTheme::CollapsingHeader(TrL("Technical information"))) {
         const auto stats = Stats();
         ImGui::TextWrapped("%s", Status().c_str());
         ImGui::TextWrapped(Tr("Daniel DLL: %s / weights: %s"), HasFiles() ? Tr("found") : Tr("missing"), DanielWeightsPresent() ? Tr("found") : Tr("missing"));
@@ -20488,7 +20523,7 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
     if (!shellActive || (layout == nullptr && flow == 0))
         return false;
 
-    const bool columns = ImGui::GetContentRegionAvail().x > ImGui::GetFontSize() * 44.0f;
+    const bool columns = !shellCompact && ImGui::GetContentRegionAvail().x > ImGui::GetFontSize() * 44.0f;
     shellSettingsTag = layout != nullptr && layout->settings;
 
     size_t boxCount = 0;

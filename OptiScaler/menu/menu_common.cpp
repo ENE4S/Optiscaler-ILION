@@ -95,6 +95,40 @@ static ImVec4 SdrColors[ImGuiCol_COUNT];
 static bool inputMenu = false;
 static bool inputFG = false;
 static bool fgHotkeyLeftDefault = false; // FG hotkey temporarily overrode Default (follow game)
+
+// ILION dev.58: the FG key's switch, also used by the Home of the new interface. Only while there is an FG input and
+// output in use, as the key always required
+static bool CanToggleFrameGeneration(const State& state)
+{
+    return state.activeFgInput != FGInput::NoFG && state.activeFgOutput != FGOutput::NoFG &&
+           (state.currentFGSwapchain != nullptr || state.activeFgInput == FGInput::NvngxFG);
+}
+
+static void ToggleFrameGeneration(State& state, decltype(Config::Instance()) config)
+{
+    if (fgHotkeyLeftDefault)
+    {
+        // Second press goes back to following the game
+        fgHotkeyLeftDefault = false;
+        config->FGEnabled = std::optional<bool> {};
+        LOG_DEBUG("FG toggle key pressed, following the game again");
+    }
+    else if (config->FGFollowsGame())
+    {
+        // Volatile so the ini keeps auto
+        fgHotkeyLeftDefault = true;
+        config->FGEnabled.set_volatile_value(!config->IsFGEnabled());
+        LOG_DEBUG("FG toggle key pressed, overriding the game with {}", config->FGEnabled.value());
+    }
+    else
+    {
+        config->FGEnabled = !config->IsFGEnabled();
+        LOG_DEBUG("FG toggle key pressed, setting FGEnabled to {}", config->FGEnabled.value());
+    }
+
+    if (config->IsFGEnabled())
+        state.fgChanged = true;
+}
 static bool inputFps = false;
 static bool inputFpsCycle = false;
 static uint64_t lastInputTick = 0;
@@ -208,6 +242,7 @@ static const char* requestedMenuTab = nullptr; // Label of a tab to switch to on
 static bool personalPanelOpen = false;          // ILION: Customise panel of Personal, at the right of its boxes
 static bool reshadePanelOpen = false;           // ILION: ReShade panel, joined to the right of the window (Graphics)
 static bool shellHidesSelector = false;         // ILION dev.57: the new interface chooses the upscaler in its catalogue
+static bool shellActive = false;                // ILION dev.58: the new interface is drawing, in its single (Advanced) mode
 
 static void DedupeSrVariants(std::vector<FfxApiProxy::SrVariant>& list);
 
@@ -411,8 +446,19 @@ static void WrappedTooltip(const char* fmt, ...)
 // ILION Essential mode is on (Basic wins over it): technical and debug controls are left to Advanced
 static bool EssentialView()
 {
+    // ILION dev.58: the new interface offers only the Advanced mode for now; the Essential setting is kept for later
+    if (shellActive)
+        return false;
+
     auto config = Config::Instance();
     return !config->MenuBasicMode.value_or_default() && config->MenuEssentialMode.value_or_default();
+}
+
+// ILION dev.58: Advanced, as the modes set it, or the new interface (Advanced only for now)
+static bool AdvancedView()
+{
+    auto config = Config::Instance();
+    return shellActive || (!config->MenuBasicMode.value_or_default() && !config->MenuEssentialMode.value_or_default());
 }
 
 // --- ILION's upscalers ----------------------------------------------------------------------------------------
@@ -1686,7 +1732,8 @@ static void DrawCardTitle(const char* label)
 {
     label = Tr(label);
 
-    // Name plate of the panel: an olive band across the top of the card with a metal rule under it
+    // Name plate of the panel: an olive band across the top of the card with a metal rule under it (the new
+    // interface: a green mark and a fine rule)
     if (IlionTheme::industrial)
     {
         const ImGuiWindow* window = ImGui::GetCurrentWindow();
@@ -1705,7 +1752,8 @@ static void DrawCardTitle(const char* label)
     const std::string plate = IlionTheme::industrial ? IlionTheme::Upper(label) : std::string();
 
     const bool inverseHead = IlionTheme::industrial && IlionTheme::skin == IlionTheme::Skin::Crt;
-    ImGui::PushStyleColor(ImGuiCol_Text, inverseHead               ? IlionTheme::GraphiteDeep
+    ImGui::PushStyleColor(ImGuiCol_Text, IlionTheme::shell          ? IlionTheme::ShellPal::Text
+                                         : inverseHead             ? IlionTheme::GraphiteDeep
                                          : IlionTheme::industrial ? IlionTheme::TitleAmber
                                                                   : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
 
@@ -7844,32 +7892,8 @@ void MenuCommon::HandleMenuShortcuts(RenderMenuContext& ctx)
         {
             inputFG = false;
 
-            if (state.activeFgInput != FGInput::NoFG && state.activeFgOutput != FGOutput::NoFG &&
-                (state.currentFGSwapchain != nullptr || state.activeFgInput == FGInput::NvngxFG))
-            {
-                if (fgHotkeyLeftDefault)
-                {
-                    // Second press goes back to following the game
-                    fgHotkeyLeftDefault = false;
-                    config->FGEnabled = std::optional<bool> {};
-                    LOG_DEBUG("FG toggle key pressed, following the game again");
-                }
-                else if (config->FGFollowsGame())
-                {
-                    // Volatile so the ini keeps auto
-                    fgHotkeyLeftDefault = true;
-                    config->FGEnabled.set_volatile_value(!config->IsFGEnabled());
-                    LOG_DEBUG("FG toggle key pressed, overriding the game with {}", config->FGEnabled.value());
-                }
-                else
-                {
-                    config->FGEnabled = !config->IsFGEnabled();
-                    LOG_DEBUG("FG toggle key pressed, setting FGEnabled to {}", config->FGEnabled.value());
-                }
-
-                if (config->IsFGEnabled())
-                    state.fgChanged = true;
-            }
+            if (CanToggleFrameGeneration(state))
+                ToggleFrameGeneration(state, config);
         }
 
         if (inputFps)
@@ -10537,10 +10561,20 @@ static void DrawFgCrt(const ImVec2& min, const ImVec2& size, const FgCrtData& d)
     const ImVec2 max(min.x + size.x, min.y + size.y);
     const auto col = [](float r, float g, float b, float a = 1.0f) { return ImGui::GetColorU32(ImVec4(r, g, b, a)); };
 
-    // Bezel: brushed metal, lighter at the top, a fine highlight and a dark outline
+    // Bezel: brushed metal, lighter at the top, a fine highlight and a dark outline (the new interface: its panel with
+    // a green edge, no screws, no tube)
     const float bezel = std::floor(fs * 0.55f);
     const float rounding = std::floor(fs * 0.45f);
+    const bool flatScreen = IlionTheme::shell;
+    if (flatScreen)
+    {
+        draw->AddRectFilled(min, max, ImGui::GetColorU32(IlionTheme::ShellPal::Panel), 4.0f);
+        draw->AddRect(min, max, ImGui::GetColorU32(IlionTheme::ShellPal::Green), 4.0f, 0, 1.5f);
+    }
+    else
     draw->AddRectFilled(ImVec2(min.x + 2.0f, min.y + 3.0f), ImVec2(max.x + 2.0f, max.y + 3.0f), col(0, 0, 0, 0.45f), rounding);
+    if (!flatScreen)
+    {
     draw->AddRectFilledMultiColor(min, max, col(0.40f, 0.41f, 0.38f), col(0.40f, 0.41f, 0.38f), col(0.17f, 0.18f, 0.16f),
                                   col(0.17f, 0.18f, 0.16f));
     draw->AddRect(min, max, col(0.05f, 0.05f, 0.05f), rounding, 0, 1.5f);
@@ -10556,21 +10590,26 @@ static void DrawFgCrt(const ImVec2& min, const ImVec2& size, const FgCrtData& d)
         draw->AddLine(ImVec2(at.x - screw * 0.6f, at.y + screw * 0.6f), ImVec2(at.x + screw * 0.6f, at.y - screw * 0.6f),
                       col(0.15f, 0.15f, 0.14f), 1.0f);
     }
+    }
 
     // Recess, then the glass set a little into it
     const ImVec2 rMin(min.x + bezel, min.y + bezel), rMax(max.x - bezel, max.y - bezel);
-    draw->AddRectFilled(rMin, rMax, col(0.0f, 0.0f, 0.0f), rounding * 1.6f);
+    if (!flatScreen)
+        draw->AddRectFilled(rMin, rMax, col(0.0f, 0.0f, 0.0f), rounding * 1.6f);
 
     const ImVec2 gMin(rMin.x + 2.0f, rMin.y + 2.0f), gMax(rMax.x - 2.0f, rMax.y - 2.0f);
     const float glassRound = rounding * 1.5f;
     const float gw = gMax.x - gMin.x, gh = gMax.y - gMin.y;
-    draw->AddRectFilled(gMin, gMax, col(0.016f, 0.070f, 0.036f), glassRound);
+    if (!flatScreen)
+        draw->AddRectFilled(gMin, gMax, col(0.016f, 0.070f, 0.036f), glassRound);
 
     draw->PushClipRect(ImVec2(gMin.x + 1.0f, gMin.y + 1.0f), ImVec2(gMax.x - 1.0f, gMax.y - 1.0f), true);
 
     // Depth: the tube darkens towards every edge (no lit block behind the text), the recess casts a soft shadow
     // on the top of the glass
     const ImU32 clear = col(0, 0, 0, 0), edge = col(0, 0, 0, 0.50f), shadow = col(0, 0, 0, 0.45f);
+    if (!flatScreen)
+    {
     draw->AddRectFilledMultiColor(gMin, ImVec2(gMin.x + gw * 0.22f, gMax.y), edge, clear, clear, edge);
     draw->AddRectFilledMultiColor(ImVec2(gMax.x - gw * 0.22f, gMin.y), gMax, clear, edge, edge, clear);
     draw->AddRectFilledMultiColor(gMin, ImVec2(gMax.x, gMin.y + gh * 0.14f), shadow, shadow, clear, clear);
@@ -10579,6 +10618,7 @@ static void DrawFgCrt(const ImVec2& min, const ImVec2& size, const FgCrtData& d)
     // Fine scan lines
     for (float y = gMin.y + 2.0f; y < gMax.y; y += 3.0f)
         draw->AddLine(ImVec2(gMin.x, y), ImVec2(gMax.x, y), col(0, 0, 0, 0.14f));
+    }
 
     // Inner depth: the glass sits behind the bezel, a soft dark band follows its rounded edge
     draw->AddRect(ImVec2(gMin.x + 1.5f, gMin.y + 1.5f), ImVec2(gMax.x - 1.5f, gMax.y - 1.5f), col(0, 0, 0, 0.35f), glassRound, 0, 3.0f);
@@ -11019,23 +11059,36 @@ static MfgCostAreas DrawMfgCost(const ImVec2& min, const ImVec2& size)
     const float fs = ImGui::GetFontSize();
     const ImVec2 max(min.x + size.x, min.y + size.y);
     const auto col = [](float r, float g, float b, float a = 1.0f) { return ImGui::GetColorU32(ImVec4(r, g, b, a)); };
-    const ImU32 window = col(0.08f, 0.07f, 0.05f), windowEdge = col(0.0f, 0.0f, 0.0f, 0.6f), soft = col(0.70f, 0.64f, 0.50f);
+    const bool flatScreen = IlionTheme::shell; // the new interface
+    const ImU32 window = flatScreen ? ImGui::GetColorU32(IlionTheme::ShellPal::Bg) : col(0.08f, 0.07f, 0.05f),
+                windowEdge = flatScreen ? ImGui::GetColorU32(IlionTheme::ShellPal::Line) : col(0.0f, 0.0f, 0.0f, 0.6f),
+                soft = flatScreen ? ImGui::GetColorU32(IlionTheme::ShellPal::Text2) : col(0.70f, 0.64f, 0.50f);
     const float windowRound = std::floor(fs * 0.2f);
 
     // Frame: dark brown case, a fine highlight, the aged amber face with faint scan lines
     const float rounding = std::floor(fs * 0.35f);
     const float frame = std::max(2.0f, std::floor(fs * L::frame));
+    const ImVec2 fMin(min.x + frame, min.y + frame), fMax(max.x - frame, max.y - frame);
+
+    if (flatScreen)
+    {
+        draw->AddRectFilled(min, max, ImGui::GetColorU32(IlionTheme::ShellPal::Panel), 4.0f);
+        draw->AddRect(min, max, ImGui::GetColorU32(IlionTheme::ShellPal::Yellow), 4.0f, 0, 1.5f);
+    }
+    else
+    {
     draw->AddRectFilled(min, max, col(0.20f, 0.15f, 0.09f), rounding);
     draw->AddRect(min, max, col(0.55f, 0.45f, 0.30f, 0.55f), rounding, 0, 1.0f);
 
-    const ImVec2 fMin(min.x + frame, min.y + frame), fMax(max.x - frame, max.y - frame);
     draw->AddRectFilledMultiColor(fMin, fMax, col(0.88f, 0.70f, 0.28f), col(0.86f, 0.68f, 0.26f), col(0.66f, 0.49f, 0.17f),
                                   col(0.68f, 0.51f, 0.18f));
     for (float y = fMin.y + 2.0f; y < fMax.y; y += 3.0f)
         draw->AddLine(ImVec2(fMin.x, y), ImVec2(fMax.x, y), col(0.30f, 0.18f, 0.02f, 0.06f));
     draw->AddRect(fMin, fMax, col(0.0f, 0.0f, 0.0f, 0.35f), std::max(0.0f, rounding - frame), 0, 1.5f);
+    }
 
-    const ImU32 ink = col(0.17f, 0.10f, 0.03f), inkSoft = col(0.23f, 0.14f, 0.04f);
+    const ImU32 ink = flatScreen ? ImGui::GetColorU32(IlionTheme::ShellPal::Text) : col(0.17f, 0.10f, 0.03f),
+                inkSoft = flatScreen ? ImGui::GetColorU32(IlionTheme::ShellPal::Text2) : col(0.23f, 0.14f, 0.04f);
     const float pad = std::floor(fs * 0.5f);
     const float x = fMin.x + pad, right = fMax.x - pad, width = right - x;
     float y = fMin.y + std::floor(fs * L::padding);
@@ -11582,7 +11635,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
         // Basic keeps it beside the selectors when there is room; Essential and Advanced put it below them, its left
         // edge on the selectors' left edge (Frame Gen, Personal and any tab that shows this box)
-        const bool crtBeside = config->MenuBasicMode.value_or_default() &&
+        const bool crtBeside = (config->MenuBasicMode.value_or_default() || IlionTheme::shell) &&
                                selectionAvail >= crtSize.x + crtGap + selectorLabel + ImGui::GetFontSize() * 14.0f;
         const ImVec2 selectionStart = ImGui::GetCursorScreenPos();
         const float selectionWidth = crtBeside ? selectionAvail - crtSize.x - crtGap : 0.0f;
@@ -19211,6 +19264,38 @@ static void DrawNrMonitor(IFeature* feature, const NrUiStatus& status, bool befo
     draw->AddRect(gMin, gMax, col(phosphor.x, phosphor.y, phosphor.z, 0.30f), glassRound, 0, 1.0f);
 }
 
+// ILION dev.58: the NR switch, shared by its panel and the Home of the new interface. It can be turned on while a
+// runtime is ready and no restart is pending; off always
+struct NrSwitchState
+{
+    bool ready = false;
+    bool restart = false;
+    bool active = false;
+};
+
+static NrSwitchState NrSwitchStateNow()
+{
+    using namespace DlssNr::AmdBridge;
+    using namespace DlssNr::RuntimeCaps;
+    const auto choice = ChosenRuntime();
+    const bool daniel = HasFiles() && DanielWeightsPresent();
+    const bool lmxxf = LmxxfReady();
+    NrSwitchState out;
+    out.ready = choice == NeuralRuntime::Daniel ? daniel : choice == NeuralRuntime::Lmxxf ? lmxxf : (daniel != lmxxf);
+    out.restart = BackendActive() && choice != NeuralRuntime::Unchosen && ActiveRuntime() != choice;
+    out.active = RecentlyActive();
+    return out;
+}
+
+static void SetNeuralRendering(Config& cfg, bool enabled)
+{
+    using namespace DlssNr::AmdBridge;
+    using namespace DlssNr::RuntimeCaps;
+    cfg.DlssNrEnabled = enabled;
+    NoteToggle(enabled, "menu");
+    InvalidateHistory();
+}
+
 void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
 {
     using namespace DlssNr::AmdBridge;
@@ -19221,9 +19306,10 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
     const auto choice = ChosenRuntime();
     const bool daniel = HasFiles() && DanielWeightsPresent();
     const bool lmxxf = LmxxfReady();
-    const bool ready = choice == NeuralRuntime::Daniel ? daniel : choice == NeuralRuntime::Lmxxf ? lmxxf : (daniel != lmxxf);
-    const bool restart = BackendActive() && choice != NeuralRuntime::Unchosen && ActiveRuntime() != choice;
-    const bool active = RecentlyActive();
+    const auto nrSwitch = NrSwitchStateNow();
+    const bool ready = nrSwitch.ready;
+    const bool restart = nrSwitch.restart;
+    const bool active = nrSwitch.active;
     const NrUiStatus nrStatus = NrStatusNow(ctx.state.api, ctx.currentFeature, cfg.DlssNrEnabled.value_or_default(), ready, restart, active);
     const ImVec4 amber(1.f, 0.65f, 0.06f, 1.f);
     {
@@ -19231,11 +19317,8 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
         SectionTitle("Neural Rendering");
         bool enabled = cfg.DlssNrEnabled.value_or_default();
         ImGui::BeginDisabled((!ready || restart) && !enabled);
-        if (IlionTheme::Checkbox(TrL("Enable Neural Rendering"), &enabled, &active, &amber)) {
-            cfg.DlssNrEnabled = enabled;
-            NoteToggle(enabled, "menu");
-            InvalidateHistory();
-        }
+        if (IlionTheme::Checkbox(TrL("Enable Neural Rendering"), &enabled, &active, &amber))
+            SetNeuralRendering(cfg, enabled);
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered()) WrappedTooltip("%s", Tr("The amber lamp requires a completed model output on the GPU; enabling NR alone does not light it."));
         // ILION dev.50: from NrStatusNow - an incompatibility or a missing backend is said as such
@@ -19289,7 +19372,7 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
     {
         ScopedCard card;
         SectionTitle("Automatic performance");
-        const bool advanced = !cfg.MenuBasicMode.value_or_default() && !cfg.MenuEssentialMode.value_or_default();
+        const bool advanced = AdvancedView();
         const bool dynamic = cfg.AmdDynamicRes.value_or_default();
         const int target = cfg.AmdDynamicTargetFps.value_or_default();
         const int shownTarget = std::clamp(target, 30, 240);
@@ -19456,7 +19539,7 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
         }
     }
     // ILION dev.50: the neural monitor, only in Advanced (not Essential, not Basic)
-    if (!cfg.MenuBasicMode.value_or_default() && !cfg.MenuEssentialMode.value_or_default())
+    if (AdvancedView())
     {
         ScopedCard card;
         DrawNrMonitor(ctx.currentFeature, nrStatus, cfg.DlssNrRunBeforeSr.value_or_default());
@@ -19572,7 +19655,7 @@ const MenuCommon::MenuTab* MenuCommon::MenuTabs(size_t& count)
         { "MAIN", "Frame Gen", "Frame generation source, output and pacing." },
         { "MAIN", "External FG", "MFG SUPER MOTION and AMD AFMF started and steered from here. Advanced mode only.",
           RenderExternalFgTab, false,
-          [](RenderMenuContext& c) { return !c.config->MenuBasicMode.value_or_default() && !c.config->MenuEssentialMode.value_or_default(); } },
+          [](RenderMenuContext& c) { return AdvancedView(); } },
         { "MAIN", "Anti-Ghosting", "Options against ghosting and trails, grouped by the technology they work with.",
           RenderAntiGhostingTab },
         { "MAIN", "Latency & FPS", "Frame limiter, low latency and V-Sync." },
@@ -19827,7 +19910,7 @@ void MenuCommon::RenderMenuTabBody(RenderMenuContext& ctx, int tabIndex, bool sc
     tabIndex = std::clamp(tabIndex, 0, (int) tabCount - 1);
 
     constexpr int customTab = 0;
-    const bool essential = !config->MenuBasicMode.value_or_default() && config->MenuEssentialMode.value_or_default();
+    const bool essential = !shellActive && !config->MenuBasicMode.value_or_default() && config->MenuEssentialMode.value_or_default();
 
     const MenuTab& tab = tabs[tabIndex];
 
@@ -21218,16 +21301,26 @@ void MenuCommon::RenderMainMenuWindow(RenderMenuContext& ctx)
                                  ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
 
     // ILION dev.57: the new interface, in Essential and Advanced unless the classic layout is asked for in the ini
-    if (!config->MenuBasicMode.value_or_default() && !config->MenuClassicLayout.value_or_default())
+    if (!config->MenuClassicLayout.value_or_default())
     {
         RenderIlionShell(ctx);
 
-        // The same windows the classic layout opens beside the menu
+        // The same windows the classic layout opens beside the menu, in the look of the new interface
+        IlionShell::PushContentStyle();
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, IlionShell::Tone(IlionShell::pal::Bg));
+        ImGui::PushStyleColor(ImGuiCol_TitleBg, IlionShell::Tone(IlionShell::pal::Panel));
+        ImGui::PushStyleColor(ImGuiCol_TitleBgActive, IlionShell::Tone(IlionShell::pal::PanelHi));
+        ImGui::PushFont(IlionShell::fUi, IlionShell::U(17.f));
+        IlionTheme::shell = true;
         RenderMipmapBiasWindow(ctx, flags);
         RenderHudlessResourcesWindow(ctx, flags);
         DrawBenchmarkCompareWindow(menuResScale, io);
         DrawVisualCompareWindow(menuResScale, io);
         DrawFinalReportWindow(menuResScale, io);
+        IlionTheme::shell = false;
+        ImGui::PopFont();
+        ImGui::PopStyleColor(3);
+        IlionShell::PopContentStyle();
 
         if (config->UseHQFont.value_or_default())
             ImGui::PopFontSize();

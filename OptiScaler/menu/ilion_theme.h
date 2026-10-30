@@ -209,6 +209,66 @@ inline ImVec4 Shade(const ImVec4& color, float factor)
     return ImVec4(ImMin(color.x * factor, 1.0f), ImMin(color.y * factor, 1.0f), ImMin(color.z * factor, 1.0f), color.w);
 }
 
+// ILION dev.58: the controls of the menu drawn with the components of the new interface (menu/ilion_shell.inl), set
+// only while it draws. Each control keeps its own behaviour, only its look changes.
+inline bool shell = false;
+
+namespace ShellPal
+{
+inline const ImVec4 Bg { 0.035f, 0.041f, 0.038f, 1.f };
+inline const ImVec4 Panel { 0.058f, 0.068f, 0.062f, 1.f };
+inline const ImVec4 PanelHi { 0.078f, 0.092f, 0.083f, 1.f };
+inline const ImVec4 Field { 0.070f, 0.082f, 0.075f, 1.f };
+inline const ImVec4 Line { 0.15f, 0.19f, 0.16f, 1.f };
+inline const ImVec4 Text { 0.93f, 0.95f, 0.92f, 1.f };
+inline const ImVec4 Text2 { 0.62f, 0.67f, 0.62f, 1.f };
+inline const ImVec4 Dim { 0.38f, 0.42f, 0.39f, 1.f };
+inline const ImVec4 Green { 0.69f, 1.00f, 0.10f, 1.f };
+inline const ImVec4 Orange { 1.00f, 0.48f, 0.10f, 1.f };
+inline const ImVec4 Yellow { 1.00f, 0.84f, 0.10f, 1.f };
+inline const ImVec4 Red { 1.00f, 0.26f, 0.20f, 1.f };
+} // namespace ShellPal
+
+inline ImVec4 ShellMix(const ImVec4& a, const ImVec4& b, float t)
+{
+    return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t);
+}
+
+// A pilot lamp of the new interface: halo, core and highlight when lit, a dark glass with a thin ring when out
+inline void ShellLed(ImDrawList* draw, const ImVec2& c, float r, const ImVec4& color, bool lit, bool hovered = false)
+{
+    if (lit)
+    {
+        for (int i = 4; i >= 1; i--)
+            draw->AddCircleFilled(c, r + i * r * 0.55f, ImGui::GetColorU32(Alpha(color, 0.05f * (5 - i) * color.w)));
+        draw->AddCircleFilled(c, r, ImGui::GetColorU32(color));
+        draw->AddCircleFilled(ImVec2(c.x - r * 0.3f, c.y - r * 0.3f), r * 0.38f, ImGui::GetColorU32(ImVec4(1, 1, 1, 0.55f)));
+    }
+    else
+    {
+        draw->AddCircleFilled(c, r, ImGui::GetColorU32(ImVec4(0.12f, 0.14f, 0.13f, 1.f)));
+        draw->AddCircle(c, r, ImGui::GetColorU32(hovered ? ShellMix(ShellPal::Line, ShellPal::Green, 0.5f) : ShellPal::Line), 0, 1.f);
+    }
+}
+
+// A key of the new interface: a little relief, a lit edge when it is the chosen one
+inline void ShellKey(ImDrawList* draw, const ImVec2& p, const ImVec2& q, bool on, bool hovered, bool down,
+                     const ImVec4& accent = ShellPal::Green)
+{
+    const float rounding = ImMax(2.0f, ImGui::GetStyle().FrameRounding);
+    const ImVec4 top = on ? ShellMix(ShellPal::Panel, accent, 0.22f) : (hovered ? ShellPal::PanelHi : ShellPal::Field);
+    const ImVec4 bottom = ShellMix(top, ImVec4(0, 0, 0, 1), down ? 0.1f : 0.35f);
+    draw->AddRectFilledMultiColor(p, q, ImGui::GetColorU32(top), ImGui::GetColorU32(top), ImGui::GetColorU32(bottom),
+                                  ImGui::GetColorU32(bottom));
+    if (on)
+        for (int i = 3; i >= 1; i--)
+            draw->AddRect(ImVec2(p.x - i, p.y - i), ImVec2(q.x + i, q.y + i), ImGui::GetColorU32(Alpha(accent, 0.06f * (4 - i))),
+                          rounding + 1.0f, 0, 1.f);
+    draw->AddRect(p, q, ImGui::GetColorU32(on ? accent : (hovered ? ShellMix(ShellPal::Line, accent, 0.4f) : ShellPal::Line)), rounding,
+                  0, on ? 1.6f : 1.f);
+    draw->AddLine(ImVec2(p.x + 2, p.y + 1), ImVec2(q.x - 2, p.y + 1), ImGui::GetColorU32(ImVec4(1, 1, 1, on ? 0.10f : 0.05f)));
+}
+
 // Strength of the brushed metal grain drawn over panels, lower on palettes where it would be too visible
 inline float metalOpacity = 1.0f;
 
@@ -549,6 +609,17 @@ inline void DrawLamp(ImDrawList* draw, const ImVec2& center, float radius, bool 
 {
     const ImVec4 color = tint ? *tint : LampColor(kind);
 
+    if (shell)
+    {
+        const ImVec4 led = tint ? *tint
+                           : kind == Lamp::Amber ? ShellPal::Yellow
+                           : kind == Lamp::Red   ? ShellPal::Red
+                           : kind == Lamp::Neutral ? ShellPal::Text2
+                                                 : ShellPal::Green;
+        ShellLed(draw, center, ImMax(2.5f, ImFloor(radius * 0.62f)), led, lit, hovered);
+        return;
+    }
+
     // Fallout 2: a round phosphor dot; lit it glows on the glass, out it is a dim ring
     if (skin == Skin::Crt)
     {
@@ -653,6 +724,12 @@ inline void DrawChamferFrame(ImDrawList* draw, const ImVec2& min, const ImVec2& 
 
 inline void DrawPanelFrame(ImDrawList* draw, const ImVec2& min, const ImVec2& max, bool screws, float scale = 1.0f)
 {
+    if (shell)
+    {
+        draw->AddRect(min, max, ImGui::GetColorU32(ShellPal::Line), 4.0f * scale);
+        return;
+    }
+
     // Fallout 2: a double line with cut corners
     if (skin == Skin::Crt)
     {
@@ -722,6 +799,17 @@ inline void ChamferPoints(ImVec2 points[8], const ImVec2& min, const ImVec2& max
 
 inline void DrawKey(ImDrawList* draw, const ImRect& bounds, const ImVec4& face, bool hovered, bool down)
 {
+    // New interface: the key of the approved design. A key pushed in the active colour is the chosen one; the red
+    // keys of things that can't be undone keep a red edge
+    if (shell)
+    {
+        const ImVec4 active = ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive);
+        const bool red = face.x > 0.30f && face.y < face.x * 0.4f && face.z < face.x * 0.4f;
+        const bool on = !down && face.x == active.x && face.y == active.y && face.z == active.z;
+        ShellKey(draw, bounds.Min, bounds.Max, on || red, hovered, down, red ? ShellPal::Red : ShellPal::Green);
+        return;
+    }
+
     // Fallout 2: a key with cut corners, dim phosphor fill, its edge turns amber under the pointer
     if (skin == Skin::Crt)
     {
@@ -792,6 +880,14 @@ inline void DrawKey(ImDrawList* draw, const ImRect& bounds, const ImVec4& face, 
 // A recess in the panel: dark, with the shade at the top and the light at the bottom
 inline void DrawWell(ImDrawList* draw, const ImVec2& min, const ImVec2& max, bool hovered = false)
 {
+    if (shell)
+    {
+        const float rounding = ImMax(2.0f, ImGui::GetStyle().FrameRounding);
+        draw->AddRectFilled(min, max, ImGui::GetColorU32(hovered ? ShellPal::PanelHi : ShellPal::Field), rounding);
+        draw->AddRect(min, max, ImGui::GetColorU32(hovered ? ShellMix(ShellPal::Line, ShellPal::Green, 0.4f) : ShellPal::Line), rounding);
+        return;
+    }
+
     // Fallout 2: a dark field between two brackets
     if (skin == Skin::Crt)
     {
@@ -835,8 +931,62 @@ inline void DrawWell(ImDrawList* draw, const ImVec2& min, const ImVec2& max, boo
 // Each one takes and returns what the ImGui control it stands in for does, with the same id.
 
 // On/off option: a pilot lamp in a recessed plate with the name of the option. The lamp is the state.
+// The switch of the new interface: a lever with its pilot at the end it is set to, the name after it
+inline bool ShellSwitch(const char* label, bool* value, const bool* activity, const ImVec4* tint)
+{
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+
+    if (window->SkipItems)
+        return false;
+
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const ImGuiID id = window->GetID(label);
+    const ImVec2 labelSize = ImGui::CalcTextSize(label, nullptr, true);
+    const float height = ImGui::GetFrameHeight();
+    const float trackH = ImFloor(height * 0.86f);
+    const float trackW = ImFloor(trackH * 2.0f);
+    const ImVec2 pos = window->DC.CursorPos;
+    const float width = trackW + (labelSize.x > 0.0f ? style.ItemInnerSpacing.x * 1.5f + labelSize.x : 0.0f);
+    const ImRect bounds(pos, ImVec2(pos.x + width, pos.y + height));
+
+    ImGui::ItemSize(bounds, style.FramePadding.y);
+
+    if (!ImGui::ItemAdd(bounds, id))
+        return false;
+
+    bool hovered = false, held = false;
+    const bool pressed = ImGui::ButtonBehavior(bounds, id, &hovered, &held);
+
+    if (pressed)
+    {
+        *value = !*value;
+        ImGui::MarkItemEdited(id);
+    }
+
+    ImGui::RenderNavCursor(bounds, id);
+
+    const ImVec4 accent = tint ? *tint : activity ? ShellPal::Yellow : ShellPal::Green;
+    const bool lit = activity ? *activity : *value;
+    const ImVec2 t0(pos.x, pos.y + ImFloor((height - trackH) * 0.5f)), t1(pos.x + trackW, t0.y + trackH);
+    ImDrawList* draw = window->DrawList;
+    draw->AddRectFilled(t0, t1, ImGui::GetColorU32(*value ? ShellMix(ShellPal::Bg, accent, 0.25f) : ShellPal::Bg), trackH * 0.5f);
+    draw->AddRect(t0, t1,
+                  ImGui::GetColorU32(*value ? accent : hovered ? ShellMix(ShellPal::Line, accent, 0.4f) : ShellPal::Line),
+                  trackH * 0.5f, 0, 1.3f);
+    const float knob = ImFloor(trackH * 0.5f);
+    ShellLed(draw, ImVec2(*value ? t1.x - knob : t0.x + knob, (t0.y + t1.y) * 0.5f), ImFloor(trackH * 0.29f), accent, lit, hovered);
+
+    if (labelSize.x > 0.0f)
+        ImGui::RenderText(ImVec2(pos.x + trackW + style.ItemInnerSpacing.x * 1.5f, pos.y + style.FramePadding.y), label);
+
+    return pressed;
+}
+
 inline bool Switch(const char* label, bool* value, const bool* activity = nullptr, const ImVec4* tint = nullptr)
 {
+    if (shell)
+        return ShellSwitch(label, value, activity, tint);
+
     ImGuiWindow* window = ImGui::GetCurrentWindow();
 
     if (window->SkipItems)
@@ -1073,6 +1223,25 @@ inline void DrawSliderRail(ImDrawList* draw, const ImVec2& min, const ImVec2& ma
     const float center = ImFloor(ImLerp(min.x + 2.0f + grabSize * 0.5f, max.x - 2.0f - grabSize * 0.5f, fraction));
     const float middle = ImFloor((min.y + max.y) * 0.5f);
 
+    // New interface: a rail lit in green up to the value and a knob with a glow
+    if (shell)
+    {
+        const float rail = ImMax(2.0f, ImFloor((max.y - min.y) * 0.13f));
+        const float knob = ImMax(4.0f, ImFloor((max.y - min.y) * 0.30f));
+        const ImVec2 r0(min.x + 2.0f, middle - rail), r1(max.x - 2.0f, middle + rail);
+        draw->AddRectFilled(r0, r1, ImGui::GetColorU32(ShellPal::Line), rail);
+        if (center > r0.x)
+            draw->AddRectFilledMultiColor(r0, ImVec2(center, r1.y), ImGui::GetColorU32(ShellMix(ShellPal::Green, ShellPal::Bg, 0.4f)),
+                                          ImGui::GetColorU32(ShellPal::Green), ImGui::GetColorU32(ShellPal::Green),
+                                          ImGui::GetColorU32(ShellMix(ShellPal::Green, ShellPal::Bg, 0.4f)));
+        const ImVec2 k(center, (float) middle);
+        for (int i = 3; i >= 1; i--)
+            draw->AddCircleFilled(k, knob + i * knob * 0.3f, ImGui::GetColorU32(Alpha(ShellPal::Green, (hovered || active ? 0.09f : 0.06f) * (4 - i))));
+        draw->AddCircleFilled(k, knob, ImGui::GetColorU32(ImVec4(0.92f, 0.98f, 0.85f, 1)));
+        draw->AddCircle(k, knob, ImGui::GetColorU32(ShellPal::Green), 0, 2.f);
+        return;
+    }
+
     // Terminal: a dotted track, amber up to the value, a block for the cursor
     if (TerminalLike())
     {
@@ -1297,9 +1466,9 @@ inline bool BeginCombo(const char* label, const char* preview, ImGuiComboFlags f
     if (window->SkipItems || flags != 0 || preview == nullptr)
     {
         const bool green = skin == Skin::Industrial;
-        ImGui::PushStyleColor(ImGuiCol_Button, green ? ImVec4(0.10f, 0.42f, 0.08f, 1.0f) : OliveDim);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, green ? ImVec4(0.14f, 0.60f, 0.10f, 1.0f) : Olive);
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, green ? LampGreenDim : OliveLit);
+        ImGui::PushStyleColor(ImGuiCol_Button, shell ? ShellMix(ShellPal::Panel, ShellPal::Green, 0.10f) : green ? ImVec4(0.10f, 0.42f, 0.08f, 1.0f) : OliveDim);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, shell ? ShellMix(ShellPal::Panel, ShellPal::Green, 0.22f) : green ? ImVec4(0.14f, 0.60f, 0.10f, 1.0f) : Olive);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, shell ? ShellMix(ShellPal::Panel, ShellPal::Green, 0.30f) : green ? LampGreenDim : OliveLit);
 
         const bool open = ImGui::BeginCombo(label, preview, flags);
 
@@ -1321,7 +1490,7 @@ inline bool BeginCombo(const char* label, const char* preview, ImGuiComboFlags f
 
     window->DrawList->PushClipRect(ImVec2(min.x + 2.0f, min.y), ImVec2(fieldMax.x - 2.0f, fieldMax.y), true);
     AddTextAccent(window->DrawList, ImVec2(min.x + style.FramePadding.x, min.y + style.FramePadding.y),
-                  ImGui::GetColorU32(previewColour != nullptr ? *previewColour : LampGreen), preview,
+                  ImGui::GetColorU32(previewColour != nullptr ? *previewColour : shell ? ShellPal::Text : LampGreen), preview,
                   accented ? accent : nullptr, accented ? ImGui::GetColorU32(*accentColour) : 0);
     window->DrawList->PopClipRect();
 
@@ -1457,6 +1626,20 @@ inline void SectionPlate(const char* text)
     const ImVec2 textSize = ImGui::CalcTextSize(text, textEnd);
 
     ImGui::Dummy(ImVec2(0.0f, ImFloor(style.ItemSpacing.y * 0.5f)));
+
+    // New interface: the name in capitals in the secondary colour and a thin rule to the edge
+    if (shell)
+    {
+        const std::string name = Upper(text);
+        ImGui::PushStyleColor(ImGuiCol_Text, ShellPal::Text2);
+        ImGui::TextUnformatted(name.c_str());
+        ImGui::PopStyleColor();
+        const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+        const float y = ImFloor((a.y + b.y) * 0.5f);
+        if (b.x + 10.0f < window->WorkRect.Max.x)
+            window->DrawList->AddLine(ImVec2(b.x + 10.0f, y), ImVec2(window->WorkRect.Max.x, y), ImGui::GetColorU32(ShellPal::Line));
+        return;
+    }
 
     const ImVec2 pos = window->DC.CursorPos;
     const float pad = style.FramePadding.x + 2.0f;
@@ -2088,6 +2271,14 @@ inline float CardCut() { return ImFloor(ImGui::GetStyle().WindowPadding.x * 0.75
 // corner.
 inline void DrawCardBody(ImDrawList* draw, const ImVec2& min, const ImVec2& max)
 {
+    // New interface: the compact panel with a fine edge
+    if (shell)
+    {
+        draw->AddRectFilled(min, max, ImGui::GetColorU32(ShellPal::Panel), 4.0f);
+        draw->AddRect(min, max, ImGui::GetColorU32(ShellPal::Line), 4.0f);
+        return;
+    }
+
     // Fallout 2: a plate with cut corners framed by a double line, an amber notch at two corners
     if (skin == Skin::Crt)
     {
@@ -2171,6 +2362,14 @@ inline void DrawCardBody(ImDrawList* draw, const ImVec2& min, const ImVec2& max)
 // stripes at its right end.
 inline void DrawCardBand(ImDrawList* draw, float left, float top, float right, float bottom)
 {
+    // New interface: a short green mark at the head of the card and a fine rule under its name
+    if (shell)
+    {
+        draw->AddRectFilled(ImVec2(left + 1.0f, top + 6.0f), ImVec2(left + 4.0f, bottom - 4.0f), ImGui::GetColorU32(ShellPal::Green), 1.0f);
+        draw->AddLine(ImVec2(left + 1.0f, bottom), ImVec2(right - 1.0f, bottom), ImGui::GetColorU32(ShellPal::Line));
+        return;
+    }
+
     // Flat: a darker band under the name with an accent line, so every card has a clear head
     if (skin == Skin::Flat)
     {

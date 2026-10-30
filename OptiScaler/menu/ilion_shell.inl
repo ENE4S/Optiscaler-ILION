@@ -533,6 +533,8 @@ static int LangIndex()
 
 static int section = 0;
 static bool fgQuickHome = false; // ILION dev.67: RenderFgQuickControls drawn for the Home card
+static float fgHomeTop = 0.0f;   // ILION dev.69: the top of the Home FG card's content (the states start there)
+static float fgHomeLeftRight = 0.0f; // ILION dev.69: how far right the FG selectors (with their labels) really reach
 static int subTab[kSectionCount] = {};
 static int upFamily = -1;      // family shown in the upscaling panel
 static int upFilter = 0;       // filter of the catalogue
@@ -921,6 +923,13 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
                 row(Led::Red, names[3], Tr("Reflex not hooked"));
             else if ((state.fgLastFrame - state.dlssgLastFrame) < 3)
                 row(fg != nullptr && fg->IsActive() ? Led::Green : Led::Orange, names[3], fg != nullptr && fg->IsActive() ? Tr("ON") : Tr("ACTIVATE FG"));
+            else if (homeLayout)
+            {
+                row(Led::Off, names[3], Tr("OFF"));
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", Lx("Select DLSS Frame Generation in the game", "Elige DLSS Frame Generation en el juego",
+                                               "Escolha DLSS Frame Generation no jogo", "Выберите DLSS Frame Generation в игре"));
+            }
             else
                 row(Led::Off, names[3], std::string(Tr("OFF")) + "  ·  " + Lx("select DLSS Frame Generation in the game", "elige DLSS Frame Generation en el juego",
                                                                              "escolha DLSS Frame Generation no jogo", "выберите DLSS Frame Generation в игре"));
@@ -934,53 +943,70 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
 
     if (homeLayout)
     {
-        // Home: the multiplier under the selectors, as wide as them (its arrow under theirs), "On" under it, and the
-        // states in a column at the right instead of under everything
+        // Home: two zones. Left: the selectors above (drawn by the FG selection), the multiplier as wide as them (its
+        // arrow under theirs) and "On". Right: the four states in one column against the card's right edge, from the
+        // top of the card (level with "FG Input"), not under the selectors
         float selectorLabel = 0.0f;
         for (const char* label : { "FG Input", "FG Output", "FG Nvngx", "FG Nvngx Replacement" })
             selectorLabel = (std::max)(selectorLabel, ImGui::CalcTextSize(Tr(label)).x);
         selectorLabel += ImGui::GetStyle().ItemInnerSpacing.x * 2.0f;
         const float width = FgSelectorWidth(selectorLabel);
 
-        if (ImGui::BeginTable("##HomeFgControl", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings))
-        {
-            ImGui::TableSetupColumn("##controls", ImGuiTableColumnFlags_WidthFixed, width + U(18));
-            ImGui::TableSetupColumn("##states", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableNextColumn();
-            drawMultiplier(width, "##HomeMult", true);
-            drawSwitch(Lx("On###QuickFg", "Activada###QuickFg", "Ativada###QuickFg", "Вкл.###QuickFg"));
-            ImGui::TableNextColumn();
+        const ImVec2 leftStart = ImGui::GetCursorScreenPos();
+        const float contentRight = leftStart.x + ImGui::GetContentRegionAvail().x;
 
-            // The states at the right end of the card: their block measured (pilot, label column, longest value)
-            // and moved to the right edge, keeping the card's inner margin; if it doesn't fit, it starts at the left
-            {
-                const float h = ImGui::GetTextLineHeight();
-                float valueWidth = (std::max)({ ImGui::CalcTextSize(chosen.c_str()).x, ImGui::CalcTextSize(loaded.c_str()).x,
-                                                ImGui::CalcTextSize(active.c_str()).x });
-                if (state.currentFGSwapchain != nullptr && state.activeFgInput == FGInput::DLSSG)
-                    valueWidth = (std::max)({ valueWidth, ImGui::CalcTextSize(Tr("ACTIVATE FG")).x, ImGui::CalcTextSize(Tr("Reflex not hooked")).x,
-                                              ImGui::CalcTextSize((std::string(Tr("OFF")) + "  ·  " +
-                                                                   Lx("select DLSS Frame Generation in the game", "elige DLSS Frame Generation en el juego",
-                                                                      "escolha DLSS Frame Generation no jogo", "выберите DLSS Frame Generation в игре"))
-                                                                      .c_str())
-                                                  .x });
-                const float blockWidth = h + U(6) + labelWidth + U(10) + valueWidth;
-                const float shift = (std::max)(0.0f, ImGui::GetContentRegionAvail().x - blockWidth - U(8));
-                if (shift > 0.0f)
-                    ImGui::Indent(shift);
-                drawStates();
-                if (shift > 0.0f)
-                    ImGui::Unindent(shift);
-            }
-            ImGui::EndTable();
-        }
+        // The states' block: pilot, label column and the longest value it can show
+        const float h = ImGui::GetTextLineHeight();
+        float valueWidth = (std::max)({ ImGui::CalcTextSize(chosen.c_str()).x, ImGui::CalcTextSize(loaded.c_str()).x, ImGui::CalcTextSize(active.c_str()).x });
+        if (state.currentFGSwapchain != nullptr && state.activeFgInput == FGInput::DLSSG)
+            valueWidth = (std::max)({ valueWidth, ImGui::CalcTextSize(Tr("ACTIVATE FG")).x, ImGui::CalcTextSize(Tr("Reflex not hooked")).x });
+        const float blockWidth = h + U(6) + labelWidth + U(10) + valueWidth;
 
+        // Where the left zone ends: what the selectors really drew (combo and its label), at least the multiplier's width
+        const float selectorsRight = (std::max)(fgHomeLeftRight, leftStart.x + width);
+        const float statesX = contentRight - blockWidth - U(8);
+        // Beside the selectors, from the card's top, when the card is wide enough (sidebar collapsed); else beside
+        // the multiplier and "On" only (sidebar expanded, a narrower card); else under them
+        const bool beside = fgHomeTop > 0.0f && statesX >= selectorsRight + U(16);
+        const bool besideControls = !beside && statesX >= leftStart.x + width + U(16);
+
+        // Left zone, under the selectors
+        drawMultiplier(width, "##HomeMult", true);
+        drawSwitch(Lx("On###QuickFg", "Activada###QuickFg", "Ativada###QuickFg", "Вкл.###QuickFg"));
         if (!same)
         {
             ImGui::TextColored(Tone(pal::Orange), "%s", Lx("Chosen FG not loaded yet", "FG elegida aún sin cargar", "FG escolhida ainda não carregada",
                                                            "Выбранная FG ещё не загружена"));
             if (ImGui::IsItemHovered())
                 WrappedTooltip("%s", pendingNote);
+        }
+        const float leftBottom = ImGui::GetCursorScreenPos().y;
+
+        if (beside)
+        {
+            // Right zone, from the top of the card, one state under the other
+            ImGui::SetCursorScreenPos(ImVec2(statesX, fgHomeTop));
+            ImGui::BeginGroup();
+            drawStates();
+            ImGui::EndGroup();
+            const float rightBottom = ImGui::GetItemRectMax().y + ImGui::GetStyle().ItemSpacing.y;
+            ImGui::SetCursorScreenPos(ImVec2(leftStart.x, (std::max)(leftBottom, rightBottom)));
+            ImGui::Dummy(ImVec2(0.0f, 0.0f));
+        }
+        else if (besideControls)
+        {
+            ImGui::SetCursorScreenPos(ImVec2(statesX, leftStart.y));
+            ImGui::BeginGroup();
+            drawStates();
+            ImGui::EndGroup();
+            const float rightBottom = ImGui::GetItemRectMax().y + ImGui::GetStyle().ItemSpacing.y;
+            ImGui::SetCursorScreenPos(ImVec2(leftStart.x, (std::max)(leftBottom, rightBottom)));
+            ImGui::Dummy(ImVec2(0.0f, 0.0f));
+        }
+        else
+        {
+            // Too narrow for two zones (big scale or long names): the states under the controls
+            drawStates();
         }
         return;
     }
@@ -2085,14 +2111,17 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         card("##HomeFg", 2, kSections[2].name[li], fgLed, ImVec2(half + 8, a.y), ImVec2(b.x, rowSplit),
              [&]()
              {
+                 fgHomeTop = ImGui::GetCursorScreenPos().y;
                  shellFgInstrumentsApart = true;
                  fgSelectorsOnly = true;
                  RenderFrameGenerationSelection(ctx);
                  fgSelectorsOnly = false;
                  shellFgInstrumentsApart = false;
+                 fgHomeLeftRight = ImGui::GetCurrentWindow()->DC.CursorMaxPos.x;
                  fgQuickHome = true;
                  RenderFgQuickControls(ctx);
                  fgQuickHome = false;
+                 fgHomeTop = 0.0f;
              });
 
         // Latency and FPS: the quick switches of fakenvapi (XeLL, LatencyFleX, Reflex), V-Sync, the FPS limit and the overlay

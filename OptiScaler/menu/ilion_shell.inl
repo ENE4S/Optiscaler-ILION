@@ -938,7 +938,7 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
                 row(Led::Red, names[3], Tr("Reflex not hooked"));
             else if ((state.fgLastFrame - state.dlssgLastFrame) < 3)
                 row(fg != nullptr && fg->IsActive() ? Led::Green : Led::Orange, names[3], fg != nullptr && fg->IsActive() ? Tr("ON") : Tr("ACTIVATE FG"));
-            else if (homeLayout)
+            else if (homeLayout || shellCompact)
             {
                 row(Led::Off, names[3], Tr("OFF"));
                 if (ImGui::IsItemHovered())
@@ -1025,6 +1025,21 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
         }
         else
             drawStates();
+        return;
+    }
+
+    // ILION dev.76: the Compact presentation: two columns, the switch and under it the multiplier at the left, the four
+    // states at the right; the same controls and states
+    if (shellCompact && ImGui::BeginTable("##CompactFgControls", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings))
+    {
+        ImGui::TableNextColumn();
+        drawSwitch(Lx("Frame generation on###QuickFg", "Generación activada###QuickFg", "Geração ativada###QuickFg", "Генерация включена###QuickFg"));
+        drawMultiplier(U(130), "Frame Gen##QuickMult", true);
+        ImGui::TableNextColumn();
+        drawStates();
+        ImGui::EndTable();
+        if (!same)
+            TextWrappedColored(Tone(pal::Orange), "%s", pendingNote);
         return;
     }
 
@@ -1987,10 +2002,9 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                 // ILION dev.74: Home is the control centre. A small header (game, API, ILION, performance), then the
                 // controls of Home's cards (the same functions: a change here is the change in their tabs) and the
                 // Advisor's suggestion
+                // ILION dev.76: the header in two zones: the game, its API, ILION and the performance at the left; ILION
+                // Advisor's suggestion at the right (the facts are gathered once a frame above; nothing is computed here)
                 const std::string game = !state.gameName.empty() ? state.gameName : state.gameExe;
-                ImGui::PushFont(fUi, U(21.f));
-                ImGui::TextColored(Tone(pal::Text), "%s", game.empty() ? "-" : game.c_str());
-                ImGui::PopFont();
                 std::string api = ApiName(state.api);
                 if (IdentifyGpu::gameUsesDxvk())
                     api += " (DXVK)";
@@ -1998,20 +2012,83 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                     api += " (VKD3D)";
                 const double ft = ctx.frameTime;
                 const bool measured = std::isfinite(ft) && ft > 0.0;
-                ImGui::TextColored(Tone(pal::Text2), "%s", api.c_str());
-                ImGui::SameLine(0, U(14));
+
+                if (ImGui::BeginTable("##CompactHeader", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings))
                 {
-                    const ImVec2 p = ImGui::GetCursorScreenPos();
-                    const float h = ImGui::GetTextLineHeight();
-                    ShellLedAt(ImGui::GetWindowDrawList(), ImVec2(p.x + h * 0.5f, p.y + h * 0.5f), h * 0.22f, Led::Green);
-                    ImGui::Dummy(ImVec2(h, h));
-                }
-                ImGui::SameLine(0, U(4));
-                ImGui::TextColored(Tone(pal::Green), "%s", Lx("ILION ACTIVE", "ILION ACTIVO", "ILION ATIVO", "ILION АКТИВЕН"));
-                if (measured)
-                {
-                    ImGui::SameLine(0, U(14));
-                    ImGui::TextColored(Tone(pal::Text2), "%.0f FPS  ·  %.1f ms", 1000.0 / ft, ft);
+                    ImGui::TableSetupColumn("##game", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                    ImGui::TableSetupColumn("##advisor", ImGuiTableColumnFlags_WidthStretch, 1.15f);
+                    ImGui::TableNextRow();
+
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::PushFont(fUi, U(21.f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, Tone(pal::Text));
+                    ImGui::TextWrapped("%s", game.empty() ? "-" : game.c_str());
+                    ImGui::PopStyleColor();
+                    ImGui::PopFont();
+                    ImGui::TextColored(Tone(pal::Text2), "%s", api.c_str());
+                    {
+                        const ImVec2 p = ImGui::GetCursorScreenPos();
+                        const float h = ImGui::GetTextLineHeight();
+                        ShellLedAt(ImGui::GetWindowDrawList(), ImVec2(p.x + h * 0.5f, p.y + h * 0.5f), h * 0.22f, Led::Green);
+                        ImGui::Dummy(ImVec2(h, h));
+                    }
+                    ImGui::SameLine(0, U(4));
+                    ImGui::TextColored(Tone(pal::Green), "%s", Lx("ILION ACTIVE", "ILION ACTIVO", "ILION ATIVO", "ILION АКТИВЕН"));
+                    if (measured)
+                        ImGui::TextColored(Tone(pal::Text2), "%.0f FPS  ·  %.1f ms", 1000.0 / ft, ft);
+
+                    // ILION Advisor: its confidence pilot, the suggested setting and the key to its diagnosis
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, Col(Mix(pal::Bg, ImVec4(0, 0, 0, 1), 0.25f)));
+                    {
+                        const ImVec2 p = ImGui::GetCursorScreenPos();
+                        const float h = ImGui::GetTextLineHeight();
+                        IlionTheme::ShellLed(ImGui::GetWindowDrawList(), ImVec2(p.x + h * 0.5f, p.y + h * 0.5f), h * 0.28f, Tone(advisorConfidenceColour()), true);
+                        ImGui::Dummy(ImVec2(h, h));
+                    }
+                    ImGui::SameLine(0, U(6));
+                    ImGui::TextColored(Tone(pal::Green), "ILION ADVISOR");
+                    ImGui::SameLine(0, U(8));
+                    ImGui::TextColored(Tone(pal::Dim), "%s", Lx("Suggested setting", "Configuración sugerida", "Configuração sugerida", "Рекомендация"));
+
+                    const AdvisorSuggestion sug = advisorSuggestion();
+                    if (!sug.ready)
+                        ImGui::TextColored(Tone(sug.upColour), "%s", sug.up.c_str());
+                    else if (beginRows("##CompactAdvisor"))
+                    {
+                        ImGui::TableNextColumn();
+                        ImGui::TextColored(Tone(pal::Text2), "%s", Lx("Upscaling", "Escalado", "Escala", "Масштаб"));
+                        ImGui::TableNextColumn();
+                        ImGui::PushStyleColor(ImGuiCol_Text, Tone(sug.upColour));
+                        ImGui::TextWrapped("%s", sug.up.c_str());
+                        ImGui::PopStyleColor();
+                        ImGui::TableNextColumn();
+                        ImGui::TextColored(Tone(pal::Text2), "FG");
+                        ImGui::TableNextColumn();
+                        if (sug.fg)
+                        {
+                            ImGui::TextColored(Tone(sug.techColour), "%s", sug.tech);
+                            ImGui::SameLine(0, 0);
+                            ImGui::TextColored(Tone(pal::Green), "%s", sug.mult.c_str());
+                        }
+                        else
+                        {
+                            ImGui::PushStyleColor(ImGuiCol_Text, Tone(sug.fgColour));
+                            ImGui::TextWrapped("%s", sug.fgText.c_str());
+                            ImGui::PopStyleColor();
+                        }
+                        ImGui::TableNextColumn();
+                        ImGui::TextColored(Tone(pal::Text2), "NR");
+                        ImGui::TableNextColumn();
+                        ImGui::PushStyleColor(ImGuiCol_Text, Tone(sug.nrColour));
+                        ImGui::TextWrapped("%s", sug.nrText.c_str());
+                        ImGui::PopStyleColor();
+                        ImGui::EndTable();
+                    }
+                    if (IlionTheme::Button(Lx("Diagnosis###CompactAdvisorOpen", "Diagnóstico###CompactAdvisorOpen",
+                                              "Diagnóstico###CompactAdvisorOpen", "Диагностика###CompactAdvisorOpen")))
+                        openAdvisor = true;
+                    ImGui::EndTable();
                 }
 
                 ImGui::Spacing();
@@ -2054,46 +2131,6 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                     ImGui::EndTable();
                 }
 
-                ImGui::Spacing();
-                IlionTheme::SectionPlate("ILION ADVISOR");
-                {
-                    const ImVec2 p = ImGui::GetCursorScreenPos();
-                    const float h = ImGui::GetTextLineHeight();
-                    IlionTheme::ShellLed(ImGui::GetWindowDrawList(), ImVec2(p.x + h * 0.5f, p.y + h * 0.5f), h * 0.28f, Tone(advisorConfidenceColour()), true);
-                    ImGui::Dummy(ImVec2(h, h));
-                    ImGui::SameLine(0, U(6));
-                    ImGui::TextColored(Tone(pal::Text2), "%s", Lx("A suggestion, not what is active now.", "Una recomendación, no lo que está activo.",
-                                                                 "Uma recomendação, não o que está ativo.", "Рекомендация, а не текущее состояние."));
-                }
-                const AdvisorSuggestion sug = advisorSuggestion();
-                if (!sug.ready)
-                    ImGui::TextColored(Tone(sug.upColour), "%s", sug.up.c_str());
-                else if (beginRows("##CompactAdvisor"))
-                {
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(Tone(pal::Text2), "%s", Lx("Upscaling", "Escalado", "Escala", "Масштаб"));
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(Tone(sug.upColour), "%s", sug.up.c_str());
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(Tone(pal::Text2), "FG");
-                    ImGui::TableNextColumn();
-                    if (sug.fg)
-                    {
-                        ImGui::TextColored(Tone(sug.techColour), "%s", sug.tech);
-                        ImGui::SameLine(0, 0);
-                        ImGui::TextColored(Tone(pal::Green), "%s", sug.mult.c_str());
-                    }
-                    else
-                        ImGui::TextColored(Tone(sug.fgColour), "%s", sug.fgText.c_str());
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(Tone(pal::Text2), "NR");
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(Tone(sug.nrColour), "%s", sug.nrText.c_str());
-                    ImGui::EndTable();
-                }
-                if (IlionTheme::Button(Lx("Advisor diagnosis###CompactAdvisorOpen", "Diagnóstico del Advisor###CompactAdvisorOpen",
-                                          "Diagnóstico do Advisor###CompactAdvisorOpen", "Диагностика Advisor###CompactAdvisorOpen")))
-                    openAdvisor = true;
             }
             else if (compactSection == 1)
             {

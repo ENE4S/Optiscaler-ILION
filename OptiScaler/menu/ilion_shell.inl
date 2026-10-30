@@ -2026,6 +2026,22 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                 ImGui::Spacing();
                 IlionTheme::SectionPlate(Lx("Latency and Neural Rendering", "Latencia y Neural Rendering", "Latência e Neural Rendering",
                                             "Задержка и Neural Rendering"));
+                // ILION dev.75: the latency methods (Reflex, LatencyFleX, XeLL...) with the very controls of Latency & FPS;
+                // the intelligent activation chooses them unless it is set to Manual, as in Home's latency card
+                ImGui::BeginDisabled(IlionLatency::Current() != IlionLatency::Manual);
+#ifdef LOW_LATENCY_INPUTS
+                RenderLowLatencySettings(ctx);
+#else
+                RenderFakenvapiSettings(ctx);
+#endif
+                ImGui::EndDisabled();
+                if (IlionLatency::Current() != IlionLatency::Manual)
+                    TextWrappedColored(Tone(pal::Text2), "%s",
+                                       Lx("Intelligent activation chooses these: set it to Manual in Latency & FPS to change them.",
+                                          "La activación inteligente los elige: ponla en Manual en Latencia y FPS para cambiarlos.",
+                                          "A ativação inteligente os escolhe: coloque em Manual em Latência e FPS para alterá-los.",
+                                          "Их выбирает умная активация: переключите её в Ручной режим в «Задержка и FPS»."));
+                ImGui::Spacing();
                 if (beginRows("##CompactHome"))
                 {
                     stateRow(latencyOn ? Led::Green : Led::Off, Lx("Latency", "Latencia", "Latência", "Задержка"),
@@ -2153,7 +2169,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                                 peak = (std::max)(peak, graph[k]);
                             ImGui::PushStyleColor(ImGuiCol_PlotLines, Tone(pal::Green));
                             ImGui::PushStyleColor(ImGuiCol_FrameBg, Tone(ImVec4(0, 0, 0, 0.25f)));
-                            ImGui::PlotLines("##CompactUpTimes", graph, count, 0, nullptr, 0.0f, (std::max)(0.1f, peak * 1.2f), ImVec2(-1.0f, U(44.f)));
+                            ImGui::PlotLines("##CompactUpTimes", graph, count, 0, nullptr, 0.0f, (std::max)(0.1f, peak * 1.2f), ImVec2(-1.0f, U(84.f)));
                             ImGui::PopStyleColor(2);
                         }
                         else
@@ -2165,7 +2181,10 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                 ImGui::PopStyleColor(2);
                 ApplyState(Q(ImGui::GetCursorScreenPos()));
 
+                // The settings of the upscaler that runs (model, presets and the options of its technology)
                 ImGui::Spacing();
+                if (IsUpscalerActive(feature))
+                    IlionTheme::SectionPlate(Lx("Upscaler settings", "Ajustes del escalador", "Ajustes do upscaler", "Настройки апскейлера"));
                 shellHidesSelector = true;
                 skipSectionTitle = "Upscalers";
                 shellHidesUpscalerDiag = true;

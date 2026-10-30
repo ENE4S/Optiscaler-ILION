@@ -17733,7 +17733,15 @@ static void RenderReShadeCatalogue(const IlionReShade::Snapshot& rs, const ImVec
     using Index = IlionReShadeCatalog::Snapshot::Index;
 
     ImGui::Spacing();
-    SectionTitle("Effect catalogue");
+    // ILION dev.75: in the Compact presentation the catalogue folds (closed at first); its contents are the same
+    if (shellCompact)
+    {
+        const std::string catalogueLabel = std::string(Tr("Effect catalogue")) + "###CompactReShadeCatalogue";
+        if (!IlionTheme::CollapsingHeader(catalogueLabel.c_str()))
+            return;
+    }
+    else
+        SectionTitle("Effect catalogue");
 
     if (cat.index == Index::NotLoaded || cat.index == Index::IndexFailed)
     {
@@ -21006,24 +21014,39 @@ void MenuCommon::RenderMenuTabBody(RenderMenuContext& ctx, int tabIndex, bool sc
 
     ImGui::PushID(tabIndex);
     // Without its own child (scrollChild false) the content follows the cursor, inside a child of the caller
-    const bool ownChild = scrollChild || personalPanel || reshadePanel;
+    // ILION dev.75: Compact draws the ReShade page in its own scrolling column (one scroll for the whole page)
+    const bool ownChild = scrollChild || personalPanel || (reshadePanel && !shellCompact);
     // ILION dev.61: the new interface puts the ReShade effects first, wide, and the card at their right
     const bool reshadeFirst = reshadePanel && shellActive;
     if (reshadeFirst)
     {
-        // ILION dev.74: the Compact presentation is too narrow for two columns: the effects above, the card under them
-        const float wide = std::floor(ImGui::GetContentRegionAvail().x * 0.62f * std::min(1.0f, reshadePanelAmount));
-        const float high = std::floor(ImGui::GetContentRegionAvail().y * 0.5f * std::min(1.0f, reshadePanelAmount));
-        ImGui::BeginChild("##ReShadePanel", shellCompact ? ImVec2(0.0f, std::max(1.0f, high)) : ImVec2(std::max(1.0f, wide), 0.0f), ImGuiChildFlags_Borders);
-        if (reshadePanelAmount >= 1.0f)
+        // ILION dev.74: the Compact presentation is too narrow for two columns: the effects above, the card under them.
+        // dev.75: there without a box of their own, so they scroll with the page
+        if (shellCompact)
         {
-            reshadePanelPart = 1;
-            RenderReShadePanel(ctx);
-            reshadePanelPart = 0;
+            if (reshadePanelAmount >= 1.0f)
+            {
+                reshadePanelPart = 1;
+                RenderReShadePanel(ctx);
+                reshadePanelPart = 0;
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+            }
         }
-        ImGui::EndChild();
-        if (!shellCompact)
+        else
+        {
+            const float wide = std::floor(ImGui::GetContentRegionAvail().x * 0.62f * std::min(1.0f, reshadePanelAmount));
+            ImGui::BeginChild("##ReShadePanel", ImVec2(std::max(1.0f, wide), 0.0f), ImGuiChildFlags_Borders);
+            if (reshadePanelAmount >= 1.0f)
+            {
+                reshadePanelPart = 1;
+                RenderReShadePanel(ctx);
+                reshadePanelPart = 0;
+            }
+            ImGui::EndChild();
             ImGui::SameLine();
+        }
     }
 
     if (ownChild)

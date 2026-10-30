@@ -951,19 +951,31 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
         for (const char* label : { "FG Input", "FG Output", "FG Nvngx", "FG Nvngx Replacement" })
             selectorLabel = (std::max)(selectorLabel, ImGui::CalcTextSize(Tr(label)).x);
         selectorLabel += ImGui::GetStyle().ItemInnerSpacing.x * 2.0f;
-        const float width = FgSelectorWidth(selectorLabel);
+        const float width = fgHomeComboWidth > 0.0f ? fgHomeComboWidth : FgSelectorWidth(selectorLabel);
 
-        // The states' block: pilot, label column and the longest value it can show
+        // The states' block: pilot, label column and the longest value shown now (dev.71: not the longest possible)
         const float h = ImGui::GetTextLineHeight();
         float valueWidth = (std::max)({ ImGui::CalcTextSize(chosen.c_str()).x, ImGui::CalcTextSize(loaded.c_str()).x, ImGui::CalcTextSize(active.c_str()).x });
         if (state.currentFGSwapchain != nullptr && state.activeFgInput == FGInput::DLSSG)
-            valueWidth = (std::max)({ valueWidth, ImGui::CalcTextSize(Tr("ACTIVATE FG")).x, ImGui::CalcTextSize(Tr("Reflex not hooked")).x });
-        const float blockWidth = h + U(6) + labelWidth + U(10) + valueWidth;
+        {
+            const char* streamlineNow = !ReflexHooks::isReflexHooked()                     ? Tr("Reflex not hooked")
+                                        : (state.fgLastFrame - state.dlssgLastFrame) >= 3 ? Tr("OFF")
+                                        : fg != nullptr && fg->IsActive()                  ? Tr("ON")
+                                                                                           : Tr("ACTIVATE FG");
+            valueWidth = (std::max)(valueWidth, ImGui::CalcTextSize(streamlineNow).x);
+        }
+        const float blockWidth = std::ceil(h + U(6) + labelWidth + U(10) + valueWidth);
         fgHomeStatesWidth = blockWidth;
 
         if (fgHomePart == 2)
         {
+            // Against the card's right edge: the column can be a frame behind a change of width
+            const float indent = (std::max)(0.0f, ImGui::GetContentRegionAvail().x - blockWidth);
+            if (indent > 0.0f)
+                ImGui::Indent(indent);
             drawStates();
+            if (indent > 0.0f)
+                ImGui::Unindent(indent);
             return;
         }
 
@@ -1026,7 +1038,8 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
     AdvanceReShadePanel();
 
     S = ScaleFor(io, config);
-    IlionTheme::SetShellTheme(UiThemeIndex(config) == 1 ? 1 : 0); // ILION dev.70: Industrial or Clean Olive
+    const bool olive = UiThemeIndex(config) == 1;
+    IlionTheme::SetShellTheme(olive ? 1 : 0); // ILION dev.70: Industrial or Clean Olive
 
     // The controls of the menu take the look of the new interface while it draws, in its single mode
     struct ShellScope
@@ -1040,8 +1053,10 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         {
             IlionTheme::shell = false;
             shellActive = false;
+            shellOlive = false;
         }
     } shellScope;
+    shellOlive = olive; // ILION dev.71: Clean Olive's simpler pages
     fUi = IlionTheme::modernFont != nullptr ? IlionTheme::modernFont : ImGui::GetFont();
     fBrand = IlionTheme::crtTitleFont != nullptr ? IlionTheme::crtTitleFont : fUi;
     const int li = LangIndex();
@@ -1139,6 +1154,12 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
 
         requestedMenuTab = nullptr;
     }
+
+    // ILION dev.71: Clean Olive has no Status & compatibility module (Industrial and Traditional keep it)
+    constexpr int kStatusSection = 7;
+    const auto sectionShown = [&](int i) { return !(olive && i == kStatusSection); };
+    if (!sectionShown(section))
+        section = 0;
 
     // Window -------------------------------------------------------------------------------------------------------
     const ImVec2 size = Sz(W, H);
@@ -1238,6 +1259,9 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
 
         for (int i = 0; i < kSectionCount; i++)
         {
+            if (!sectionShown(i))
+                continue; // the next one takes its place: no gap
+
             const ImVec2 p(8, y), q(side - 8, y + 96);
             At(p.x, p.y);
             ImGui::PushID(i);
@@ -2104,23 +2128,42 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
              [&]()
              {
                  // Two zones as two columns of one table row: both start at the same top, the left one (selectors,
-                 // multiplier, On) never pushes the right one (the states) down. dev.69 measured how far the left
-                 // drawing reached, and any wrapped text of the selection reached the card's edge: the states fell to
-                 // the multiplier's height. A column needs no such guess
-                 float shownLabel = 0.0f;
-                 for (const char* label : { "FG Input", "FG Output", "XeMFG variant" })
-                     shownLabel = (std::max)(shownLabel, ImGui::CalcTextSize(Tr(label)).x);
-                 const float statesWidth = (fgHomeStatesWidth > 0.0f ? fgHomeStatesWidth : U(250)) + U(10);
-                 const float leftNeed = ImGui::GetFontSize() * 15.0f + shownLabel + ImGui::GetStyle().ItemInnerSpacing.x * 2.0f + U(16);
-                 const bool zones = ImGui::GetContentRegionAvail().x - statesWidth >= leftNeed &&
+                 // multiplier, On) never pushes the right one (the states) down.
+                 // dev.71: why dev.69 and dev.70 still put the states low. With their usual width the selectors take
+                 // 17 font sizes (289 px at 17 px) plus their label (up to 171 px, "FG Nvngx Replacement" in Spanish,
+                 // counted even when not shown), and the states' block was measured with "Reflex not hooked" (169 px)
+                 // whenever the game's DLSSG is the input, as in Cyberpunk: ~316 px. 289 + 179 + 316 is more than
+                 // the card's 691 px, so dev.70 never split the card and fell back to beside the multiplier.
+                 // Now the states' block is measured with what it shows, the labels counted are only the ones shown,
+                 // and in the two zones the selectors (and the variant and the multiplier, so their arrows stay in one
+                 // line) take the left column's room minus their label: narrower, same font and height
+                 const auto& style = ImGui::GetStyle();
+                 const FGOutput outputNow = config->FGOutput.value_or_default();
+                 float shownLabel = ImGui::CalcTextSize(Tr("FG Input")).x;
+                 if (config->FGInput.value_or_default() == FGInput::NvngxFG)
+                     shownLabel = (std::max)(shownLabel, ImGui::CalcTextSize(Tr("FG Nvngx")).x);
+                 else
+                     shownLabel = (std::max)(shownLabel, ImGui::CalcTextSize(Tr("FG Output")).x);
+                 if (outputNow == FGOutput::DLSSG)
+                     shownLabel = (std::max)(shownLabel, ImGui::CalcTextSize(Tr("FG Nvngx Replacement")).x);
+                 if (outputNow == FGOutput::XeFG)
+                     shownLabel = (std::max)(shownLabel, ImGui::CalcTextSize(Tr("XeMFG variant")).x);
+                 shownLabel += style.ItemInnerSpacing.x * 2.0f;
+
+                 const float statesWidth = fgHomeStatesWidth > 0.0f ? fgHomeStatesWidth : U(260);
+                 const float gap = U(12);
+                 const float leftRoom = ImGui::GetContentRegionAvail().x - statesWidth - gap - style.CellPadding.x * 4.0f;
+                 const float comboMin = ImGui::GetFontSize() * 8.0f;
+                 const bool zones = leftRoom - shownLabel >= comboMin &&
                                     ImGui::BeginTable("##HomeFgZones", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings);
 
                  if (zones)
                  {
                      ImGui::TableSetupColumn("##left", ImGuiTableColumnFlags_WidthStretch);
-                     ImGui::TableSetupColumn("##right", ImGuiTableColumnFlags_WidthFixed, statesWidth);
+                     ImGui::TableSetupColumn("##right", ImGuiTableColumnFlags_WidthFixed, statesWidth + gap);
                      ImGui::TableNextRow();
                      ImGui::TableSetColumnIndex(0);
+                     fgHomeComboWidth = (std::min)(ImGui::GetFontSize() * 17.0f, std::floor(leftRoom - shownLabel));
                  }
 
                  shellFgInstrumentsApart = true;
@@ -2141,6 +2184,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                  }
                  fgHomePart = 0;
                  fgQuickHome = false;
+                 fgHomeComboWidth = 0.0f;
              });
 
         // Latency and FPS: the quick switches of fakenvapi (XeLL, LatencyFleX, Reflex), V-Sync, the FPS limit and the overlay
@@ -2622,6 +2666,8 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         int shownCount = 0;
         for (int k = 0; k < subCount && shownCount < 8; k++)
         {
+            if (olive && strcmp(subs[k].tab, "Custom") == 0)
+                continue; // ILION dev.71: Clean Olive has no pinned cards page
             if (subs[k].section == section && tabVisible(tabIndex(subs[k].tab)))
                 shown[shownCount++] = k;
         }

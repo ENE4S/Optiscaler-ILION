@@ -244,6 +244,10 @@ static const char* requestedMenuTab = nullptr; // Label of a tab to switch to on
 static bool personalPanelOpen = false;          // ILION: Customise panel of Personal, at the right of its boxes
 static bool reshadePanelOpen = false;           // ILION: ReShade panel, joined to the right of the window (Graphics)
 static bool shellHidesSelector = false;         // ILION dev.57: the new interface chooses the upscaler in its catalogue
+static bool shellOlive = false;                 // ILION dev.71: the new interface draws in Clean Olive: its simpler pages hide
+                                                // some technical controls (they keep working and keep their values)
+static float fgHomeComboWidth = 0.0f;           // ILION dev.71: width of the FG selectors, the XeMFG variant and the multiplier
+                                                // in the Home card when it is split in two zones (0: their usual width)
 static bool shellActive = false;                // ILION dev.58: the new interface is drawing, in its single (Advanced) mode
 static bool shellSettingsTag = false;           // ILION dev.59: the cards drawn now change settings (marked on their name)
 static bool shellHidesUpscalerDiag = false;     // ILION dev.60: Upscaling shows its settings; DLL path and diagnostics are in Status
@@ -9800,8 +9804,9 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
         // ILION: OptiScaler's own backend list (native DLSS on NVIDIA included) and the FFX provider list, unchanged,
         // folded under one key; ILION's manager above stays the main selector. Not in Basic, which keeps it simple
-        ImGui::Spacing();
-        if (!basicView)
+        if (!shellOlive)
+            ImGui::Spacing();
+        if (!basicView && !shellOlive)
         if (auto ch = ScopedCollapsingHeader(TrL("Advanced selectors")); ch.IsHeaderOpen())
         {
             if (IlionTheme::shell)
@@ -10026,7 +10031,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             ImGui::Spacing();
 
             // ILION dev.63: colour space, preset, debug view and watermark are secondary: one fold in the new interface
-            if (!IlionTheme::shell || IlionTheme::CollapsingHeader(TrL("Additional FFX options##FfxExtras")))
+            if (!shellOlive && (!IlionTheme::shell || IlionTheme::CollapsingHeader(TrL("Additional FFX options##FfxExtras"))))
             {
                 // Colorspaces
                 const char* colorSpaces[] = { Tr("Linear (Default)"), Tr("Non-Linear"), Tr("Non-Linear sRGB"), Tr("Non-Linear PQ") };
@@ -10227,8 +10232,10 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                 }
             }
 
-            ImGui::Spacing();
+            if (!shellOlive)
+                ImGui::Spacing();
 
+            if (!shellOlive)
             if (auto ch = ScopedCollapsingHeader(TrL("FSR 3 Upscaler Manual Tuning")); ch.IsHeaderOpen())
             {
                 ScopedIndent indent {};
@@ -11489,7 +11496,9 @@ static void RenderXeMfgVariantSelector(decltype(Config::Instance()) config)
     ImGui::Spacing();
     ImGui::BeginDisabled(!config->LoadAsiPlugins.value_or_default());
     // ILION dev.62: in the new interface as wide as the FG selectors above it, their labels in one column
-    if (IlionTheme::shell)
+    if (IlionTheme::shell && fgHomeComboWidth > 0.0f)
+        ImGui::SetNextItemWidth(fgHomeComboWidth);
+    else if (IlionTheme::shell)
         ImGui::SetNextItemWidth(std::min(ImGui::GetFontSize() * 17.0f, std::max(ImGui::GetFontSize() * 8.0f, ImGui::GetContentRegionAvail().x - ImGui::GetFontSize() * 9.0f)));
     else
         ImGui::SetNextItemWidth(std::min(ImGui::GetFontSize() * 18.0f, ImGui::GetContentRegionAvail().x * 0.6f));
@@ -11921,7 +11930,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             ImGui::TableNextColumn();
 
             // The combo fills its column minus its label: neither the names nor the label are cut
-            ImGui::SetNextItemWidth(FgSelectorWidth(selectorLabel));
+            ImGui::SetNextItemWidth(fgHomeComboWidth > 0.0f ? fgHomeComboWidth : FgSelectorWidth(selectorLabel));
             PopulateCombo(TrL("FG Input"), config->FGInput, inputOptions);
             ShowTooltip("The data source to be used for FG\n"
                         "The native FG which the game supports");
@@ -11932,7 +11941,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             {
                 // Disable None?
                 // The combo fills its column minus its label: neither the names nor the label are cut
-                ImGui::SetNextItemWidth(FgSelectorWidth(selectorLabel));
+                ImGui::SetNextItemWidth(fgHomeComboWidth > 0.0f ? fgHomeComboWidth : FgSelectorWidth(selectorLabel));
                 PopulateCombo(TrL("FG Nvngx"), config->FGNvngxReplacement, nvngxOptions);
                 ShowTooltip("What backend to use instead of the real DLSSG");
                 if (config->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::HelixSR)
@@ -11941,7 +11950,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             else
             {
                 // The combo fills its column minus its label: neither the names nor the label are cut
-                ImGui::SetNextItemWidth(FgSelectorWidth(selectorLabel));
+                ImGui::SetNextItemWidth(fgHomeComboWidth > 0.0f ? fgHomeComboWidth : FgSelectorWidth(selectorLabel));
                 PopulateCombo(TrL("FG Output"), config->FGOutput, outputOptions);
                 ShowTooltip("The FG that you will actually be using");
             }
@@ -11951,7 +11960,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                 ImGui::TableNextColumn();
 
                 // The combo fills its column minus its label: neither the names nor the label are cut
-                ImGui::SetNextItemWidth(FgSelectorWidth(selectorLabel));
+                ImGui::SetNextItemWidth(fgHomeComboWidth > 0.0f ? fgHomeComboWidth : FgSelectorWidth(selectorLabel));
                 PopulateCombo(TrL("FG Nvngx Replacement"), config->FGNvngxReplacement, nvngxOptions);
                 ShowTooltip("What backend to use instead of the real DLSSG");
                 if (config->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::HelixSR)
@@ -12143,7 +12152,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
         auto fgOutput = reinterpret_cast<IFGFeature_Dx12*>(state.currentFG);
         if ((state.activeFgOutput != FGOutput::Reprojection && state.activeFgOutput != FGOutput::NoFG &&
              state.activeFgInput != FGInput::NoFG && state.activeFgInput != FGInput::NvngxFG) &&
-            fgOutput && !EssentialView())
+            fgOutput && !EssentialView() && !shellOlive)
         {
             IlionTheme::Checkbox(TrL("Show Detected UI"), &state.fgHudlessCompare);
             ShowTooltip("Needs HUDless texture to compare with final image.\n"
@@ -12195,7 +12204,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
         const bool showHudCutoff = state.activeFgInput == FGInput::NvngxFG || state.activeFgOutput == FGOutput::FSRFG;
 
-        if (showOutputSpecificFGSettings || showHudCutoff)
+        if ((showOutputSpecificFGSettings || showHudCutoff) && !shellOlive)
         {
             if (auto ch = ScopedCollapsingHeader(TrL("Advanced FG Settings")); ch.IsHeaderOpen())
             {
@@ -12769,7 +12778,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
         // ILION: UI composition, debug view and borderless of XeFG under one folded key, same controls and states
         // Display, debug and extended settings: Advanced only
-        if (!EssentialView())
+        if (!EssentialView() && !shellOlive)
         if (auto display = ScopedCollapsingHeader(TrL("Display and debug##xefg")); display.IsHeaderOpen())
         {
         ImGui::BeginDisabled(!correctMVs || cantActivate);
@@ -12814,8 +12823,9 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         // IlionTheme::Checkbox(TrL("Only Generated##2"), &state.fgOnlyGenerated);
         // ShowTooltip("Display only XeFG generated frames");
 
-        ImGui::Spacing();
-        if (!EssentialView())
+        if (!shellOlive)
+            ImGui::Spacing();
+        if (!EssentialView() && !shellOlive)
         if (auto ch = ScopedCollapsingHeader(TrL("Extended XeFG Settings")); ch.IsHeaderOpen())
         {
             ImGui::Spacing();
@@ -15499,13 +15509,18 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
                 }
                 ImGui::EndCombo();
             }
-            ShowTooltip(ShellText("Industrial and Clean Olive: the new interface in two palettes. ILION Traditional: the earlier menu with its Basic, Essential and Advanced modes and its own themes (below). Saved at once; nothing is restarted.",
-                                  "Industrial y Clean Olive: la interfaz nueva con dos paletas. ILION Tradicional: el menú anterior, con sus modos Básico, Esencial y Avanzado y sus propios temas (abajo). Se guarda al momento; no se reinicia nada.",
-                                  "Industrial e Clean Olive: a nova interface em duas paletas. ILION Tradicional: o menu anterior, com os modos Básico, Essencial e Avançado e os seus próprios temas (abaixo). Guardado na hora; nada é reiniciado.",
-                                  "Industrial и Clean Olive: новый интерфейс в двух палитрах. ILION Классический: прежнее меню с режимами Базовый, Основной и Расширенный и своими темами (ниже). Сохраняется сразу; ничего не перезапускается."));
+            ShowTooltip(ShellText("Industrial and Clean Olive: the new interface in two palettes. ILION Traditional: the earlier menu with its Basic, Essential and Advanced modes and its own themes. Saved at once; nothing is restarted.",
+                                  "Industrial y Clean Olive: la interfaz nueva con dos paletas. ILION Tradicional: el menú anterior, con sus modos Básico, Esencial y Avanzado y sus propios temas. Se guarda al momento; no se reinicia nada.",
+                                  "Industrial e Clean Olive: a nova interface em duas paletas. ILION Tradicional: o menu anterior, com os modos Básico, Essencial e Avançado e os seus próprios temas. Guardado na hora; nada é reiniciado.",
+                                  "Industrial и Clean Olive: новый интерфейс в двух палитрах. ILION Классический: прежнее меню с режимами Базовый, Основной и Расширенный и своими темами. Сохраняется сразу; ничего не перезапускается."));
             ImGui::Spacing();
         }
 #pragma execution_character_set(pop)
+
+        // ILION dev.71: the skins, colours and background below belong to the traditional interface (the new one
+        // draws its own): only there are they shown. Their saved values stay as they are
+        if (IlionTheme::shell)
+            return;
 
         // The three ILION themes share every control and the layout, only their palette changes.
         // Classic: everything below works as it always did. The choice is saved at once.

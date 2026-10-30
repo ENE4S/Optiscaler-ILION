@@ -243,6 +243,7 @@ static bool personalPanelOpen = false;          // ILION: Customise panel of Per
 static bool reshadePanelOpen = false;           // ILION: ReShade panel, joined to the right of the window (Graphics)
 static bool shellHidesSelector = false;         // ILION dev.57: the new interface chooses the upscaler in its catalogue
 static bool shellActive = false;                // ILION dev.58: the new interface is drawing, in its single (Advanced) mode
+static bool shellSettingsTag = false;           // ILION dev.59: the cards drawn now change settings (marked on their name)
 
 static void DedupeSrVariants(std::vector<FfxApiProxy::SrVariant>& list);
 
@@ -1769,6 +1770,17 @@ static void DrawCardTitle(const char* label)
     if (titleFont != nullptr)
         ImGui::PopFont();
 
+    // ILION dev.59: a card that changes the configuration says so, discreetly, at the right of its name
+    if (IlionTheme::shell && shellSettingsTag)
+    {
+        const auto lang = Ilion::CurrentLang();
+        const char* tag = lang == Ilion::Lang::EN ? "SETTING" : lang == Ilion::Lang::RU ? "\xD0\x9D\xD0\x90\xD0\xA1\xD0\xA2\xD0\xA0\xD0\x9E\xD0\x99\xD0\x9A\xD0\x90" : "AJUSTE";
+        const float size = std::floor(ImGui::GetFontSize() * 0.72f);
+        const ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(size, FLT_MAX, 0.0f, tag);
+        const ImVec2 at(ImGui::GetCurrentWindow()->WorkRect.Max.x - ts.x, ImGui::GetItemRectMin().y + (ImGui::GetItemRectSize().y - ts.y) * 0.5f);
+        ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), size, at, ImGui::GetColorU32(IlionTheme::ShellPal::Orange), tag);
+    }
+
     ImGui::PopStyleColor();
 
     // Spacing below is not an item the tooltips should attach to
@@ -1873,6 +1885,17 @@ ScopedCard::ScopedCard(const char* title)
 
     const ImGuiStyle& style = ImGui::GetStyle();
 
+    // ILION dev.59: the card that starts the right column moves to it
+    if (flow)
+    {
+        if (!flowBroken && flowIndex >= flowBreak && (void*) ImGui::GetCurrentTable() == flowTable)
+        {
+            ImGui::TableNextColumn();
+            flowBroken = true;
+        }
+        _flowSlot = flowIndex++;
+    }
+
     _window = ImGui::GetCurrentWindow();
     _pad = ImVec2(style.WindowPadding.x, style.WindowPadding.y * 0.75f);
     _min = _window->DC.CursorPos;
@@ -1919,6 +1942,13 @@ ScopedCard::~ScopedCard()
     // Nothing was drawn, skip the rectangle
     if (_window->DC.CursorPos.y <= _contentStartY)
     {
+        if (_flowSlot >= 0 && _flowSlot < 64)
+        {
+            if ((int) flowHeights.size() <= _flowSlot)
+                flowHeights.resize(_flowSlot + 1, 0.0f);
+            flowHeights[_flowSlot] = 0.0f;
+        }
+
         _splitter.Merge(drawList);
         _window->DC.CursorPos.y = _min.y;
         return;
@@ -1926,6 +1956,13 @@ ScopedCard::~ScopedCard()
 
     const float bottom = _window->DC.CursorPos.y - style.ItemSpacing.y + _pad.y;
     const ImVec2 max(_min.x + _width, bottom);
+
+    if (_flowSlot >= 0 && _flowSlot < 64)
+    {
+        if ((int) flowHeights.size() <= _flowSlot)
+            flowHeights.resize(_flowSlot + 1, 0.0f);
+        flowHeights[_flowSlot] = bottom - _min.y;
+    }
 
     _splitter.SetCurrentChannel(drawList, 0);
     // drawList->AddRectFilled(_min, max, ImGui::GetColorU32(ImGuiCol_WindowBg), style.ChildRounding);
@@ -8288,8 +8325,12 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
         // Set overlay window properties
         // Industrial theme: a thin metal edge around a graphite plate. Classic: no border.
         const bool industrialOverlay = IlionTheme::industrial;
+        // ILION dev.59: with the new interface the overlay takes its palette and its font; what it measures is the same
+        const bool ilionOverlay = !config->MenuClassicLayout.value_or_default();
+        ImFont* overlayFont = ilionOverlay ? IlionTheme::modernFont : nullptr;
 
-        ImGui::PushStyleColor(ImGuiCol_Border, industrialOverlay
+        ImGui::PushStyleColor(ImGuiCol_Border, ilionOverlay ? ImGui::GetColorU32(IlionTheme::Alpha(IlionTheme::ShellPal::Line, 0.95f))
+                                               : industrialOverlay
                                                    ? ImGui::GetColorU32(IlionTheme::Alpha(IlionTheme::Metal, 0.70f))
                                                    : IM_COL32(0, 0, 0, 0));
         ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(0, 0, 0, 0)); // Transparent frame background
@@ -8297,18 +8338,22 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
         if (!config->OverlaysUseTheme.value_or_default())
         {
             ImGui::PushStyleColor(ImGuiCol_Text,
-                                  toneMapColor(industrialOverlay ? IlionTheme::Text : ImVec4(1.0f, 1.0f, 1.0f, 1.0f)));
-            ImGui::PushStyleColor(ImGuiCol_WindowBg,
-                                  industrialOverlay ? IlionTheme::GraphiteDeep : ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+                                  toneMapColor(ilionOverlay ? IlionTheme::ShellPal::Text
+                                               : industrialOverlay ? IlionTheme::Text : ImVec4(1.0f, 1.0f, 1.0f, 1.0f)));
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ilionOverlay ? IlionTheme::ShellPal::Bg
+                                                     : industrialOverlay ? IlionTheme::GraphiteDeep : ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
         }
 
         ImGui::SetNextWindowBgAlpha(config->FpsOverlayAlpha.value_or_default()); // Transparent background
 
         if (!config->OverlaysUseTheme.value_or_default())
         {
-            ImVec4 green = industrialOverlay ? IlionTheme::LampGreen : ImVec4(0.0f, 1.0f, 0.0f, 1.0f);
+            ImVec4 green = ilionOverlay ? IlionTheme::ShellPal::Green : industrialOverlay ? IlionTheme::LampGreen : ImVec4(0.0f, 1.0f, 0.0f, 1.0f);
             ImGui::PushStyleColor(ImGuiCol_PlotLines, toneMapColor(green));
         }
+
+        if (overlayFont != nullptr)
+            ImGui::PushFont(overlayFont, -1.0f);
 
         if (ImGui::Begin("Performance Overlay", nullptr,
                          ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDecoration |
@@ -9175,6 +9220,9 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
             ImGui::PopFontSize();
 
         ImGui::End();
+
+        if (overlayFont != nullptr)
+            ImGui::PopFont();
 
         if (stylePushed)
             ImGui::PopStyleVar(7);
@@ -11389,6 +11437,73 @@ static void RenderXeMfgVariantSelector(decltype(Config::Instance()) config)
                            Tr("Restart the game to load the chosen XeMFG variant"));
 }
 
+// ILION dev.59: the FG screen and the MFG cost screen with its capture key, from crtPos: stacked beside the selectors
+// (classic) or side by side in a column of their own (new interface). Returns the bottom of what was drawn
+static float DrawFgInstruments(const FgCrtData& crt, ImVec2 crtPos, bool sideBySide)
+{
+    const ImVec2 crtSize = FgCrtSize();
+
+    DrawFgCrt(crtPos, crtSize, crt);
+
+    // The screen takes its place in the layout and shows the tooltip
+    ImGui::SetCursorScreenPos(crtPos);
+    ImGui::InvisibleButton("##fgCrt", crtSize);
+    if (ImGui::IsItemHovered())
+        FgCrtTooltip(crt);
+
+    // ILION: the MFG cost screen under it while a FG is selected or running (its capture key is used with FG off)
+    float screensBottom = crtPos.y + crtSize.y;
+    const float gap = ImGui::GetStyle().ItemSpacing.x * 1.5f;
+    if (crt.status >= 1 || mfgCost.engaged)
+    {
+        const ImVec2 costSize = MfgCostSize();
+        const ImVec2 costPos = sideBySide ? ImVec2(std::floor(crtPos.x + crtSize.x + gap), crtPos.y)
+                                          : ImVec2(crtPos.x, std::floor(screensBottom + ImGui::GetFontSize() * 0.25f));
+        const MfgCostAreas areas = DrawMfgCost(costPos, costSize);
+
+        if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(areas.change.Min, areas.change.Max))
+            WrappedTooltip("%s\n\n%s: %s", Tr("Compares the current real FPS with the average recorded before Multi Frame Generation was switched on. "
+                                            "The percentage changes dynamically during play. Changes can also come from a different graphics "
+                                            "load and don't necessarily show the cost of MFG alone."),
+                           Tr("Real frames counted by"), MfgCostSourceName(mfgCost.source));
+
+        ImGui::SetCursorScreenPos(areas.buttonPos);
+        ImGui::BeginDisabled(mfgCost.generating || mfgCost.capturing);
+        const std::string key = mfgCost.capturing
+                                    ? StrFmt("%s %d/10 s###mfgCapture", Tr("Capturing"), (int) std::min(10.0, mfgCost.captureMs / 1000.0))
+                                    : std::string(Tr("Capture reference")) + "###mfgCapture";
+        if (IlionTheme::Button(key.c_str(), areas.buttonSize))
+            StartMfgCostCapture();
+        ImGui::EndDisabled();
+
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            WrappedTooltip("%s", Tr("Turn FG off, stand in a real scene of the game and press: ILION measures the real FPS for 10 s and "
+                                    "keeps their average as the reference for the comparison."));
+
+        screensBottom = std::max(screensBottom, costPos.y + costSize.y);
+    }
+
+    return screensBottom;
+}
+
+// ILION dev.59: the new interface draws the FG instruments in their own column (Frame Gen) and not under the selectors
+static bool shellFgInstrumentsApart = false;
+// ILION dev.59: only the selectors of FG (input, output, nvngx, XeMFG variant), for the Home of the new interface
+static bool fgSelectorsOnly = false;
+
+static void DrawFgInstrumentsColumn(State& state)
+{
+    if (state.activeFgInput == FGInput::ForceXeLL)
+        return;
+
+    const FgCrtData crt = GatherFgCrt(state);
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const bool sideBySide = ImGui::GetContentRegionAvail().x >= FgCrtSize().x * 2.0f + ImGui::GetStyle().ItemSpacing.x * 1.5f;
+    const float bottom = DrawFgInstruments(crt, pos, sideBySide);
+    ImGui::SetCursorScreenPos(ImVec2(pos.x, bottom + ImGui::GetStyle().ItemSpacing.y));
+    ImGui::Dummy(ImVec2(0.0f, 0.0f));
+}
+
 void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 {
     auto& state = ctx.state;
@@ -11620,8 +11735,11 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
     if (state.activeFgInput != FGInput::ForceXeLL)
     {
-        SectionTitle("Frame Generation");
-        ShowTooltip("Which copium do you choose?");
+        if (!fgSelectorsOnly)
+        {
+            SectionTitle("Frame Generation");
+            ShowTooltip("Which copium do you choose?");
+        }
 
         // ILION: the FG screen next to the input and output (to their right when there is room, else centred below)
         const ImVec2 crtSize = FgCrtSize();
@@ -11685,6 +11803,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             ImGui::EndTable();
         }
 
+        if (!shellFgInstrumentsApart)
         {
             const FgCrtData crt = GatherFgCrt(state);
             const float selectionBottom = ImGui::GetCursorScreenPos().y;
@@ -11704,43 +11823,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                                 selectionBottom + ImGui::GetStyle().ItemSpacing.y);
             }
 
-            DrawFgCrt(crtPos, crtSize, crt);
-
-            // The screen takes its place in the layout and shows the tooltip
-            ImGui::SetCursorScreenPos(crtPos);
-            ImGui::InvisibleButton("##fgCrt", crtSize);
-            if (ImGui::IsItemHovered())
-                FgCrtTooltip(crt);
-
-            // ILION: the MFG cost screen under it while a FG is selected or running (its capture key is used with FG off)
-            float screensBottom = crtPos.y + crtSize.y;
-            if (crt.status >= 1 || mfgCost.engaged)
-            {
-                const ImVec2 costSize = MfgCostSize();
-                const ImVec2 costPos(crtPos.x, std::floor(screensBottom + ImGui::GetFontSize() * 0.25f));
-                const MfgCostAreas areas = DrawMfgCost(costPos, costSize);
-
-                if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(areas.change.Min, areas.change.Max))
-                    WrappedTooltip("%s\n\n%s: %s", Tr("Compares the current real FPS with the average recorded before Multi Frame Generation was switched on. "
-                                                    "The percentage changes dynamically during play. Changes can also come from a different graphics "
-                                                    "load and don't necessarily show the cost of MFG alone."),
-                                   Tr("Real frames counted by"), MfgCostSourceName(mfgCost.source));
-
-                ImGui::SetCursorScreenPos(areas.buttonPos);
-                ImGui::BeginDisabled(mfgCost.generating || mfgCost.capturing);
-                const std::string key = mfgCost.capturing
-                                            ? StrFmt("%s %d/10 s###mfgCapture", Tr("Capturing"), (int) std::min(10.0, mfgCost.captureMs / 1000.0))
-                                            : std::string(Tr("Capture reference")) + "###mfgCapture";
-                if (IlionTheme::Button(key.c_str(), areas.buttonSize))
-                    StartMfgCostCapture();
-                ImGui::EndDisabled();
-
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                    WrappedTooltip("%s", Tr("Turn FG off, stand in a real scene of the game and press: ILION measures the real FPS for 10 s and "
-                                            "keeps their average as the reference for the comparison."));
-
-                screensBottom = costPos.y + costSize.y;
-            }
+            const float screensBottom = DrawFgInstruments(crt, crtPos, false);
 
             ImGui::SetCursorScreenPos(ImVec2(selectionStart.x, std::max(selectionBottom, screensBottom + ImGui::GetStyle().ItemSpacing.y)));
             ImGui::Dummy(ImVec2(0.0f, 0.0f));
@@ -11750,6 +11833,10 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
         // the route XeMFG uses (another generator hides it, the choice stays in the config)
         if (config->FGOutput.value_or_default() == FGOutput::XeFG)
             RenderXeMfgVariantSelector(config);
+
+        // Home of the new interface: the selectors only, the module keeps the rest
+        if (fgSelectorsOnly)
+            return;
 
         // Try to avoid having None selected when the gpu doesn't support DLSSG + some fallbacks
         if (!maySupportDlssg && (replaceFgOutputWithNvngx || showNvngxFgDowndown) &&
@@ -18235,6 +18322,22 @@ static void DrawExtCrtGlass(ImDrawList* draw, const ImVec2& min, const ImVec2& m
     const float fs = ImGui::GetFontSize();
     const auto col = [](float r, float g, float b, float a = 1.0f) { return ImGui::GetColorU32(ImVec4(r, g, b, a)); };
 
+    // ILION dev.59: in the new interface a panel with the orange edge of what is external, marked as such
+    if (IlionTheme::shell)
+    {
+        const float pad = std::floor(fs * 0.5f);
+        draw->AddRectFilled(min, max, ImGui::GetColorU32(IlionTheme::ShellPal::Panel), 4.0f);
+        draw->AddRect(min, max, ImGui::GetColorU32(IlionTheme::ShellPal::Orange), 4.0f, 0, 1.5f);
+        const char* tag = Ilion::CurrentLang() == Ilion::Lang::EN ? "EXTERNAL" : Ilion::CurrentLang() == Ilion::Lang::RU ? "\xD0\x92\xD0\x9D\xD0\x95\xD0\xA8\xD0\x9D\xD0\x98\xD0\x99" : "EXTERNO";
+        const float tagSize = std::floor(fs * 0.72f);
+        const ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(tagSize, FLT_MAX, 0.0f, tag);
+        draw->AddText(ImGui::GetFont(), tagSize, ImVec2(max.x - ts.x - pad, min.y + 3.0f), ImGui::GetColorU32(IlionTheme::ShellPal::Orange), tag);
+        gMinOut = ImVec2(min.x + pad, min.y + pad + ts.y * 0.5f);
+        gMaxOut = ImVec2(max.x - pad, max.y - pad);
+        glassRoundOut = 4.0f;
+        return;
+    }
+
     // Bezel, screws, recess
     const float bezel = std::floor(fs * 0.55f);
     const float rounding = std::floor(fs * 0.45f);
@@ -19896,9 +19999,144 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
     ImGui::PopStyleColor();
 }
 
+// ILION dev.59: how the new interface lays out a tab: the boxes of each column by id, in order. "@fg_instruments" are
+// the FG screens. settings: the cards change the configuration (marked as such)
+struct MenuCommon::ShellLayout
+{
+    const char* left[12];
+    const char* right[12];
+    bool settings = false;
+};
+
+bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, const ShellLayout* layout, bool flow)
+{
+    if (!shellActive || (layout == nullptr && !flow))
+        return false;
+
+    const bool columns = ImGui::GetContentRegionAvail().x > ImGui::GetFontSize() * 44.0f;
+    shellSettingsTag = layout != nullptr && layout->settings;
+
+    size_t boxCount = 0;
+    const MenuBox* boxes = GetMenuBoxes(boxCount);
+
+    const auto drawBox = [&](const char* id)
+    {
+        if (strcmp(id, "@fg_instruments") == 0)
+        {
+            ScopedID instrumentsId { "fg_instruments" };
+            const bool apart = shellFgInstrumentsApart;
+            shellFgInstrumentsApart = false;
+            DrawFgInstrumentsColumn(ctx.state);
+            shellFgInstrumentsApart = apart;
+            ImGui::Spacing();
+            return;
+        }
+
+        for (size_t i = 0; i < boxCount; i++)
+        {
+            if (strcmp(boxes[i].id, id) == 0)
+            {
+                ImGui::PushID(boxes[i].id);
+                RenderMenuBox(ctx, boxes[i]);
+                ImGui::PopID();
+                return;
+            }
+        }
+    };
+
+    const ImGuiTableFlags tableFlags = ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings;
+
+    if (layout != nullptr)
+    {
+        // One box alone keeps the whole width (its own controls keep a proportionate length)
+        const bool table = columns && layout->right[0] != nullptr && ImGui::BeginTable("##ShellColumns", 2, tableFlags);
+
+        if (table)
+            ImGui::TableNextColumn();
+
+        for (const char* id : layout->left)
+        {
+            if (id != nullptr)
+                drawBox(id);
+        }
+
+        if (table)
+            ImGui::TableNextColumn();
+
+        for (const char* id : layout->right)
+        {
+            if (id != nullptr)
+                drawBox(id);
+        }
+
+        if (table)
+            ImGui::EndTable();
+
+        shellSettingsTag = false;
+        return true;
+    }
+
+    // Flow: the tab's own drawing and its boxes, the cards split into two columns in reading order
+    static std::string lastTab;
+    if (lastTab != tab.label)
+    {
+        lastTab = tab.label;
+        ScopedCard::flowHeights.clear();
+    }
+
+    float total = 0.0f;
+    for (const float h : ScopedCard::flowHeights)
+        total += h;
+
+    int breakAt = 1;
+    float acc = 0.0f;
+    for (int i = 0; i < (int) ScopedCard::flowHeights.size(); i++)
+    {
+        acc += ScopedCard::flowHeights[i];
+        breakAt = i + 1;
+        if (acc >= total * 0.5f)
+            break;
+    }
+
+    // A tab of a single card keeps the whole width
+    const bool table = columns && ScopedCard::flowHeights.size() != 1 && ImGui::BeginTable("##ShellFlow", 2, tableFlags);
+
+    if (table)
+    {
+        ImGui::TableNextColumn();
+        ScopedCard::flow = true;
+        ScopedCard::flowTable = ImGui::GetCurrentTable();
+        ScopedCard::flowBroken = false;
+        ScopedCard::flowIndex = 0;
+        ScopedCard::flowBreak = (int) ScopedCard::flowHeights.size() > 1 ? breakAt : 1;
+    }
+
+    if (tab.draw != nullptr)
+        tab.draw(ctx);
+
+    for (size_t i = 0; i < boxCount; i++)
+    {
+        if (strcmp(boxes[i].tab, tab.label) != 0)
+            continue;
+
+        ImGui::PushID(boxes[i].id);
+        RenderMenuBox(ctx, boxes[i]);
+        ImGui::PopID();
+    }
+
+    if (table)
+    {
+        ScopedCard::flow = false;
+        ScopedCard::flowTable = nullptr;
+        ImGui::EndTable();
+    }
+
+    return true;
+}
+
 // The content of one tab: what the tab draws, its boxes (Essential: the main ones, the secondary ones folded) and the
 // Personal or ReShade panel beside them. ILION dev.57: also drawn inside the sections of the new interface
-void MenuCommon::RenderMenuTabBody(RenderMenuContext& ctx, int tabIndex, bool scrollChild)
+void MenuCommon::RenderMenuTabBody(RenderMenuContext& ctx, int tabIndex, bool scrollChild, const ShellLayout* layout, bool flow)
 {
     auto config = ctx.config;
     auto& menuResScale = ctx.menuResScale;
@@ -19979,67 +20217,71 @@ void MenuCommon::RenderMenuTabBody(RenderMenuContext& ctx, int tabIndex, bool sc
     if (ownChild)
         ImGui::BeginChild("##MenuTabBody", ImVec2((personalPanel || reshadePanel) ? -(panelWidth + style.ItemSpacing.x) : 0.0f, 0.0f));
 
-    if (tab.draw != nullptr)
-        tab.draw(ctx);
-
-    size_t boxCount = 0;
-    const MenuBox* boxes = GetMenuBoxes(boxCount);
-    DrawFn lastSource = nullptr;
-
-    // Essential: the everyday boxes of the tab, the secondary ones folded under "More options", the diagnostic and
-    // very specialised ones left to Advanced. Each box is drawn by its own code, nothing changes in what it does.
-    std::vector<const MenuBox*> secondary;
-
-    for (size_t i = 0; i < boxCount; i++)
+    // ILION dev.59: the new interface lays the tab out in its own columns
+    if (!RenderShellColumns(ctx, tab, layout, flow))
     {
-        if (strcmp(boxes[i].tab, tab.label) != 0)
-            continue;
+        if (tab.draw != nullptr)
+            tab.draw(ctx);
 
-        if (essential)
+        size_t boxCount = 0;
+        const MenuBox* boxes = GetMenuBoxes(boxCount);
+        DrawFn lastSource = nullptr;
+
+        // Essential: the everyday boxes of the tab, the secondary ones folded under "More options", the diagnostic and
+        // very specialised ones left to Advanced. Each box is drawn by its own code, nothing changes in what it does.
+        std::vector<const MenuBox*> secondary;
+
+        for (size_t i = 0; i < boxCount; i++)
         {
-            const EssentialRole role = EssentialRoleOf(boxes[i].id);
+            if (strcmp(boxes[i].tab, tab.label) != 0)
+                continue;
 
-            if (role == EssentialRole::Main)
+            if (essential)
             {
-                ImGui::PushID(boxes[i].id);
-                RenderMenuBox(ctx, boxes[i]);
-                ImGui::PopID();
+                const EssentialRole role = EssentialRoleOf(boxes[i].id);
+
+                if (role == EssentialRole::Main)
+                {
+                    ImGui::PushID(boxes[i].id);
+                    RenderMenuBox(ctx, boxes[i]);
+                    ImGui::PopID();
+                }
+                else if (role == EssentialRole::Secondary)
+                {
+                    secondary.push_back(&boxes[i]);
+                }
+
+                continue;
             }
-            else if (role == EssentialRole::Secondary)
+
+            // A function with several boxes is drawn once for all of them
+            if (boxes[i].draw == nullptr)
             {
-                secondary.push_back(&boxes[i]);
+                if (boxes[i].source != lastSource)
+                    boxes[i].source(ctx);
+            }
+            else
+            {
+                boxes[i].draw(ctx);
             }
 
-            continue;
+            lastSource = boxes[i].source;
         }
 
-        // A function with several boxes is drawn once for all of them
-        if (boxes[i].draw == nullptr)
+        if (!secondary.empty())
         {
-            if (boxes[i].source != lastSource)
-                boxes[i].source(ctx);
-        }
-        else
-        {
-            boxes[i].draw(ctx);
-        }
+            ImGui::Spacing();
 
-        lastSource = boxes[i].source;
-    }
-
-    if (!secondary.empty())
-    {
-        ImGui::Spacing();
-
-        if (auto ch = ScopedCollapsingHeader(TrL("More options##Essential")); ch.IsHeaderOpen())
-        {
-            ScopedIndent indent {};
-
-            for (const MenuBox* box : secondary)
+            if (auto ch = ScopedCollapsingHeader(TrL("More options##Essential")); ch.IsHeaderOpen())
             {
-                ImGui::PushID(box->id);
-                RenderMenuBox(ctx, *box);
-                ImGui::PopID();
+                ScopedIndent indent {};
+
+                for (const MenuBox* box : secondary)
+                {
+                    ImGui::PushID(box->id);
+                    RenderMenuBox(ctx, *box);
+                    ImGui::PopID();
+                }
             }
         }
     }
@@ -20551,6 +20793,14 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
     SectionTitle("Benchmark");
     ScopedID sectionId { "Benchmark" };
 
+    // ILION dev.59: the new interface puts the test and its keys on the left, status, result and captures on the right
+    const bool benchColumns = IlionTheme::shell && ImGui::GetContentRegionAvail().x > ImGui::GetFontSize() * 40.0f;
+    if (benchColumns)
+    {
+        ImGui::BeginTable("##BenchColumns", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX);
+        ImGui::TableNextColumn();
+    }
+
     const auto benchState = IlionBenchmark::GetState();
     const bool running = IlionBenchmark::Running();
     const bool busy = running || benchState == IlionBenchmark::State::Processing;
@@ -20856,6 +21106,9 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
     ShowTooltip("Integrated final report: performance, stability and visual quality of every DLL\n"
                 "that has saved tests, with one conclusion.");
 
+    if (benchColumns)
+        ImGui::TableNextColumn();
+
     // Status
     ImGui::Spacing();
 
@@ -21100,6 +21353,9 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
 
     if (IlionTheme::Checkbox(TrL("Performance overlay"), &fpsEnabled))
         config->ShowFps = fpsEnabled;
+
+    if (benchColumns)
+        ImGui::EndTable();
 }
 
 // BASIC MODE -----------------------------

@@ -47,6 +47,19 @@ class ScopedCard
 
   private:
     inline static ScopedCard* _current = nullptr;
+
+  public:
+    // ILION dev.59: cards of one function laid out in the two columns of a table, in reading order: the left column
+    // takes the first cards up to about half of their height (measured on the last frame), the right one the rest
+    inline static bool flow = false;
+    inline static int flowIndex = 0;
+    inline static int flowBreak = 1;
+    inline static std::vector<float> flowHeights;
+    inline static void* flowTable = nullptr; // the table of the flow: a card inside another table never breaks it
+    inline static bool flowBroken = false;
+
+  private:
+    int _flowSlot = -1;
     inline static const char* _filter = nullptr;
 
     // With it set, the filter also applies to cards drawn inside of another card
@@ -233,7 +246,10 @@ class MenuCommon
     // ILION dev.57: the tabs, the content of one tab and the new interface drawn around them
     struct MenuTab;
     static const MenuTab* MenuTabs(size_t& count);
-    static void RenderMenuTabBody(RenderMenuContext& ctx, int tabIndex, bool scrollChild = true);
+    struct ShellLayout;
+    static void RenderMenuTabBody(RenderMenuContext& ctx, int tabIndex, bool scrollChild = true, const ShellLayout* layout = nullptr,
+                                  bool flow = false);
+    static bool RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, const ShellLayout* layout, bool flow);
     static void RenderIlionShell(RenderMenuContext& ctx);
     static void CloseMainMenu(ImGuiIO& io);
     static void RenderCustomTab(RenderMenuContext& ctx);

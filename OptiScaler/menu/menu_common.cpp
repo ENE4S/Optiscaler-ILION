@@ -10121,7 +10121,8 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
             }
 
-            if (majorFsrVersion >= 3)
+            // ILION dev.74: not in the Compact presentation (their values stay as they are)
+            if (majorFsrVersion >= 3 && !shellCompact)
             {
                 ImGui::Spacing();
 
@@ -16064,7 +16065,7 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
     SectionTitle("FPS Overlay");
 
     // ILION dev.60: the new interface keeps the overlay's settings on the left and the hardware readings on the right
-    const bool overlayColumns = IlionTheme::shell && ImGui::GetContentRegionAvail().x > ImGui::GetFontSize() * 40.0f;
+    const bool overlayColumns = IlionTheme::shell && !shellCompact && ImGui::GetContentRegionAvail().x > ImGui::GetFontSize() * 40.0f;
     if (overlayColumns)
     {
         ImGui::BeginTable("##OverlayColumns", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings);
@@ -21010,8 +21011,10 @@ void MenuCommon::RenderMenuTabBody(RenderMenuContext& ctx, int tabIndex, bool sc
     const bool reshadeFirst = reshadePanel && shellActive;
     if (reshadeFirst)
     {
+        // ILION dev.74: the Compact presentation is too narrow for two columns: the effects above, the card under them
         const float wide = std::floor(ImGui::GetContentRegionAvail().x * 0.62f * std::min(1.0f, reshadePanelAmount));
-        ImGui::BeginChild("##ReShadePanel", ImVec2(std::max(1.0f, wide), 0.0f), ImGuiChildFlags_Borders);
+        const float high = std::floor(ImGui::GetContentRegionAvail().y * 0.5f * std::min(1.0f, reshadePanelAmount));
+        ImGui::BeginChild("##ReShadePanel", shellCompact ? ImVec2(0.0f, std::max(1.0f, high)) : ImVec2(std::max(1.0f, wide), 0.0f), ImGuiChildFlags_Borders);
         if (reshadePanelAmount >= 1.0f)
         {
             reshadePanelPart = 1;
@@ -21019,7 +21022,8 @@ void MenuCommon::RenderMenuTabBody(RenderMenuContext& ctx, int tabIndex, bool sc
             reshadePanelPart = 0;
         }
         ImGui::EndChild();
-        ImGui::SameLine();
+        if (!shellCompact)
+            ImGui::SameLine();
     }
 
     if (ownChild)

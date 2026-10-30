@@ -547,6 +547,7 @@ static int LangIndex()
 
 static int section = 0;
 static bool fgQuickHome = false; // ILION dev.67: RenderFgQuickControls drawn for the Home card
+static bool upSelectOnly = false; // ILION dev.74: homeUpscaling draws only its selectors (Compact's Upscaling, its monitor below)
 static int fgHomePart = 0;            // ILION dev.70: Home FG card, 0 everything, 1 the left zone's controls, 2 the states
 static float fgHomeStatesWidth = 0.0f; // ILION dev.70: width of the states' block, measured when drawn
 static int subTab[kSectionCount] = {};
@@ -1124,7 +1125,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
     // ILION dev.73: the Compact presentation's own lists (one column): Frame Gen without its monitors and MFG cost,
     // Latency with its short state (the meters and the report are in Diagnostics), and Diagnostics' parts
     static const ShellLayout lFrameGenC { { "fg_selection", "@fg_quick", "fg_optifg", "fg_reprojection", "fg_nvngx", "fg_fsrfg_inputs" },
-                                          { "fg_xefg", "fg_fsrfg", "fg_dlssg" } };
+                                          { "fg_xefg", "fg_fsrfg", "fg_dlssg", "@fg_instruments" } };
     static const ShellLayout lLatencyC { { "framerate", "vsync", "low_latency" }, { "ilion_latency", "ilion_regulator", "@latency_monitor" } };
     static const ShellLayout dSummary { { "status_summary" }, {} };
     static const ShellLayout dUpscaler { { "@upscaler_diag" }, {} };
@@ -1658,6 +1659,13 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                  ImGui::EndDisabled();
                  DrawD4rWarning();
 
+                 if (upSelectOnly)
+                 {
+                     if (locked)
+                         Label(Tr("It can't be changed while a benchmark is running."), pal::Yellow, 15.f);
+                     return;
+                 }
+
                  ImGui::Spacing();
                  const int rank = FamilyRank(catalog, upFamily);
                  Pill(rank == 3   ? Lx("Loaded and active", "Cargado y activo", "Carregado e ativo", "Загружен и активен")
@@ -1976,9 +1984,11 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
 
             if (compactSection == 0)
             {
-                // Home: the game, ILION, what runs, the performance and the Advisor's suggestion
+                // ILION dev.74: Home is the control centre. A small header (game, API, ILION, performance), then the
+                // controls of Home's cards (the same functions: a change here is the change in their tabs) and the
+                // Advisor's suggestion
                 const std::string game = !state.gameName.empty() ? state.gameName : state.gameExe;
-                ImGui::PushFont(fUi, U(24.f));
+                ImGui::PushFont(fUi, U(21.f));
                 ImGui::TextColored(Tone(pal::Text), "%s", game.empty() ? "-" : game.c_str());
                 ImGui::PopFont();
                 std::string api = ApiName(state.api);
@@ -1986,32 +1996,45 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                     api += " (DXVK)";
                 else if (IdentifyGpu::gameUsesVkd3dProton())
                     api += " (VKD3D)";
+                const double ft = ctx.frameTime;
+                const bool measured = std::isfinite(ft) && ft > 0.0;
+                ImGui::TextColored(Tone(pal::Text2), "%s", api.c_str());
+                ImGui::SameLine(0, U(14));
+                {
+                    const ImVec2 p = ImGui::GetCursorScreenPos();
+                    const float h = ImGui::GetTextLineHeight();
+                    ShellLedAt(ImGui::GetWindowDrawList(), ImVec2(p.x + h * 0.5f, p.y + h * 0.5f), h * 0.22f, Led::Green);
+                    ImGui::Dummy(ImVec2(h, h));
+                }
+                ImGui::SameLine(0, U(4));
+                ImGui::TextColored(Tone(pal::Green), "%s", Lx("ILION ACTIVE", "ILION ACTIVO", "ILION ATIVO", "ILION АКТИВЕН"));
+                if (measured)
+                {
+                    ImGui::SameLine(0, U(14));
+                    ImGui::TextColored(Tone(pal::Text2), "%.0f FPS  ·  %.1f ms", 1000.0 / ft, ft);
+                }
 
+                ImGui::Spacing();
+                IlionTheme::SectionPlate(kSections[1].name[li]);
+                homeUpscaling();
+
+                ImGui::Spacing();
+                IlionTheme::SectionPlate(kSections[2].name[li]);
+                homeFrameGen();
+
+                // Latency and Neural Rendering: their state on two lines (their controls are in their tabs)
+                ImGui::Spacing();
+                IlionTheme::SectionPlate(Lx("Latency and Neural Rendering", "Latencia y Neural Rendering", "Latência e Neural Rendering",
+                                            "Задержка и Neural Rendering"));
                 if (beginRows("##CompactHome"))
                 {
-                    stateRow(Led::Off, "API", api);
-                    const ImVec4 green = pal::Green;
-                    stateRow(Led::Green, "ILION", Lx("Active", "Activo", "Ativo", "Активен"), &green);
-
-                    std::string up = Lx("No upscaler is running", "Ningún escalador en ejecución", "Nenhum upscaler em execução", "Апскейлер не работает");
-                    if (upscalerOn && feature->RenderWidth() > 0)
-                        up = StrFmt("%s  ·  %ux%u -> %ux%u", UpscalerLabel(feature).c_str(), feature->RenderWidth(), feature->RenderHeight(),
-                                    feature->TargetWidth(), feature->TargetHeight());
-                    else if (upscalerOn || upscalerIdle)
-                        up = UpscalerLabel(feature) + (upscalerIdle ? std::string("  ·  ") + Lx("paused", "en pausa", "em pausa", "пауза") : std::string());
-                    stateRow(sectionLed[1], Lx("Upscaling", "Escalado", "Escala", "Масштаб"), up);
-                    stateRow(fgLed, "Frame Generation", fgText);
+                    stateRow(latencyOn ? Led::Green : Led::Off, Lx("Latency", "Latencia", "Latência", "Задержка"),
+                             (latencyTech != nullptr ? std::string(latencyTech) : std::string("-")) +
+                                 (fpsLimit > 0.0f ? StrFmt("  ·  %s %.0f FPS", Lx("limit", "límite", "limite", "лимит"), fpsLimit) : std::string()));
                     stateRow(sectionLed[4], "Neural Rendering",
                              nrRunning   ? Lx("Running", "En ejecución", "Em execução", "Работает")
                              : nrEnabled ? Lx("On, not running yet", "Activado, aún sin ejecutarse", "Ativado, ainda sem executar", "Включён, ещё не работает")
                                          : Lx("Off", "Desactivado", "Desligado", "Выкл."));
-                    stateRow(latencyOn ? Led::Green : Led::Off, Lx("Latency", "Latencia", "Latência", "Задержка"),
-                             (latencyTech != nullptr ? std::string(latencyTech) : std::string("-")) +
-                                 (fpsLimit > 0.0f ? StrFmt("  ·  %s %.0f FPS", Lx("limit", "límite", "limite", "лимит"), fpsLimit) : std::string()));
-                    const double ft = ctx.frameTime;
-                    const bool measured = std::isfinite(ft) && ft > 0.0;
-                    stateRow(Led::Off, Lx("Performance", "Rendimiento", "Desempenho", "Производительность"),
-                             measured ? StrFmt("%.0f FPS  ·  %.1f ms", 1000.0 / ft, ft) : std::string("-"));
                     ImGui::EndTable();
                 }
 
@@ -2060,7 +2083,88 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
             {
                 // Upscaling: technology, implementation, state, resolution and factor (Home's own controls), then the
                 // settings of the upscaler that runs, without its DLL diagnostics and advanced selectors
+                upSelectOnly = true;
                 homeUpscaling();
+                upSelectOnly = false;
+
+                // ILION dev.74: the upscaling monitor of the Compact presentation: the same readings as Full's (running
+                // feature, its resolutions, factor and measured time), laid out for this width. No path, no log
+                ImGui::Spacing();
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, Tone(Mix(pal::Bg, ImVec4(0, 0, 0, 1), 0.25f)));
+                ImGui::PushStyleColor(ImGuiCol_Border, Tone(pal::Line));
+                if (ImGui::BeginChild("##CompactUpMonitor", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY))
+                {
+                    const bool running = upscalerOn || upscalerIdle;
+                    {
+                        const ImVec2 p = ImGui::GetCursorScreenPos();
+                        const float h = ImGui::GetTextLineHeight();
+                        ShellLedAt(ImGui::GetWindowDrawList(), ImVec2(p.x + h * 0.5f, p.y + h * 0.5f), h * 0.24f, sectionLed[1]);
+                        ImGui::Dummy(ImVec2(h, h));
+                    }
+                    ImGui::SameLine(0, U(6));
+                    ImGui::PushFont(fUi, U(20.f));
+                    ImGui::TextColored(Tone(running ? pal::Yellow : pal::Text2), "%s",
+                                       running ? UpscalerLabel(feature).c_str()
+                                               : Lx("No upscaler is running", "Ningún escalador en ejecución", "Nenhum upscaler em execução", "Апскейлер не работает"));
+                    ImGui::PopFont();
+
+                    if (running)
+                    {
+                        const auto v = feature->Version();
+                        ImGui::TextColored(Tone(pal::Text2), "%s  ·  %s %u.%u.%u  ·  %s",
+                                           upscalerOn ? Lx("Running", "En ejecución", "Em execução", "Работает") : Lx("Paused", "En pausa", "Em pausa", "Пауза"),
+                                           Lx("version", "versión", "versão", "версия"), v.major, v.minor, v.patch, ApiName(state.api));
+
+                        if (feature->RenderWidth() > 0)
+                        {
+                            const float factor = (float) feature->TargetWidth() / feature->RenderWidth();
+                            ImGui::TextColored(Tone(pal::Text), "%ux%u", feature->RenderWidth(), feature->RenderHeight());
+                            ImGui::SameLine(0, U(8));
+                            ImGui::TextColored(Tone(pal::Text2), "->");
+                            ImGui::SameLine(0, U(8));
+                            ImGui::TextColored(Tone(pal::Yellow), "%ux%u", feature->TargetWidth(), feature->TargetHeight());
+                            ImGui::TextColored(Tone(pal::Text2), "%s %.2fx  ·  %.0f%% %s", Lx("Factor", "Factor", "Fator", "Коэффициент"), factor,
+                                               100.0f / (factor * factor),
+                                               Lx("of the pixels rendered", "de los píxeles renderizados", "dos pixels renderizados", "пикселей отрисовано"));
+                        }
+
+                        // The upscaler's GPU time, as OptiScaler measures it: its average and the last frames
+                        static float graph[120];
+                        int count = 0;
+                        double sum = 0.0;
+                        int valid = 0;
+                        const auto& times = state.upscaleTimes;
+                        for (size_t k = times.size() > 120 ? times.size() - 120 : 0; k < times.size(); k++)
+                        {
+                            graph[count++] = (float) (std::max)(0.0, (double) times[k]);
+                            if (times[k] > 0.0 && k + 60 >= times.size())
+                            {
+                                sum += times[k];
+                                valid++;
+                            }
+                        }
+                        if (valid > 0)
+                        {
+                            ImGui::TextColored(Tone(pal::Text2), "%s", Lx("Upscaler time", "Tiempo del escalador", "Tempo do upscaler", "Время апскейлера"));
+                            ImGui::SameLine(0, U(8));
+                            ImGui::TextColored(Tone(pal::Green), "%.2f ms", sum / valid);
+                            float peak = 0.0f;
+                            for (int k = 0; k < count; k++)
+                                peak = (std::max)(peak, graph[k]);
+                            ImGui::PushStyleColor(ImGuiCol_PlotLines, Tone(pal::Green));
+                            ImGui::PushStyleColor(ImGuiCol_FrameBg, Tone(ImVec4(0, 0, 0, 0.25f)));
+                            ImGui::PlotLines("##CompactUpTimes", graph, count, 0, nullptr, 0.0f, (std::max)(0.1f, peak * 1.2f), ImVec2(-1.0f, U(44.f)));
+                            ImGui::PopStyleColor(2);
+                        }
+                        else
+                            ImGui::TextDisabled("%s", Lx("Upscaler time: not measured", "Tiempo del escalador: sin medir", "Tempo do upscaler: sem medição",
+                                                         "Время апскейлера: не измерено"));
+                    }
+                }
+                ImGui::EndChild();
+                ImGui::PopStyleColor(2);
+                ApplyState(Q(ImGui::GetCursorScreenPos()));
+
                 ImGui::Spacing();
                 shellHidesSelector = true;
                 skipSectionTitle = "Upscalers";

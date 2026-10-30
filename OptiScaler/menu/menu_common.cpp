@@ -19790,7 +19790,7 @@ static void DrawNrSummary(const Config& cfg)
         ImGui::TableNextColumn();
         const ImVec2 p = ImGui::GetCursorScreenPos();
         const float h = ImGui::GetTextLineHeight();
-        IlionTheme::ShellLed(ImGui::GetWindowDrawList(), ImVec2(p.x + h * 0.4f, p.y + h * 0.5f), h * 0.2f, colour, lit);
+        IlionTheme::ShellLed(ImGui::GetWindowDrawList(), ImVec2(p.x + h * 0.4f, p.y + h * 0.5f), h * 0.2f, IlionTheme::ShellPilot(colour), lit);
         ImGui::Dummy(ImVec2(h, h));
         ImGui::SameLine();
         ImGui::TextDisabled("%s", name);
@@ -20568,7 +20568,7 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
                     ImGui::TableNextColumn();
                     const ImVec2 p = ImGui::GetCursorScreenPos();
                     const float h = ImGui::GetTextLineHeight();
-                    IlionTheme::ShellLed(ImGui::GetWindowDrawList(), ImVec2(p.x + h * 0.4f, p.y + h * 0.5f), h * 0.2f, colour, lit);
+                    IlionTheme::ShellLed(ImGui::GetWindowDrawList(), ImVec2(p.x + h * 0.4f, p.y + h * 0.5f), h * 0.2f, IlionTheme::ShellPilot(colour), lit);
                     ImGui::Dummy(ImVec2(h, h));
                     ImGui::SameLine();
                     ImGui::TextDisabled("%s", name);

@@ -234,6 +234,23 @@ inline ImVec4 Red { 1.00f, 0.26f, 0.20f, 1.f };
 // shellGlow and shellDecor, so the theme changes nothing else
 inline float shellGlow = 1.0f; // strength of the halos and glows
 inline bool shellDecor = true; // purely decorative parts (the diagonal stripes of the header)
+inline bool shellLemonPilots = false; // ILION dev.72: Clean Olive's pilots (see ShellPilot)
+
+// ILION dev.72: the colour of a lit pilot. In Clean Olive a green pilot is lost against the olive palette: there the
+// positive one (on, active, loaded) is a bright lemon and the waiting one (estimate, chosen but not running) a golden
+// amber, set apart from it by hue and brightness. Red and orange keep their meaning. Only while the new interface
+// draws, and only for the pilot colours themselves (texts, keys and switches keep the palette)
+inline ImVec4 ShellPilot(const ImVec4& colour)
+{
+    if (!shell || !shellLemonPilots)
+        return colour;
+    const auto same = [&](const ImVec4& c) { return colour.x == c.x && colour.y == c.y && colour.z == c.z; };
+    if (same(ShellPal::Green))
+        return ImVec4(1.00f, 0.94f, 0.30f, colour.w); // lemon: relative luminance ~0.84, 13:1 or more against the olive panels
+    if (same(ShellPal::Yellow))
+        return ImVec4(1.00f, 0.69f, 0.16f, colour.w); // golden amber: ~0.52, 8:1 or more, a clearly different hue
+    return colour;
+}
 
 inline void SetShellTheme(int theme)
 {
@@ -258,6 +275,7 @@ inline void SetShellTheme(int theme)
         ShellPal::Red = ImVec4(0.800f, 0.290f, 0.239f, 1.f);
         shellGlow = 0.35f;
         shellDecor = false;
+        shellLemonPilots = true;
     }
     else
     {
@@ -275,6 +293,7 @@ inline void SetShellTheme(int theme)
         ShellPal::Red = ImVec4(1.00f, 0.26f, 0.20f, 1.f);
         shellGlow = 1.0f;
         shellDecor = true;
+        shellLemonPilots = false;
     }
 }
 
@@ -665,7 +684,7 @@ inline void DrawLamp(ImDrawList* draw, const ImVec2& center, float radius, bool 
                            : kind == Lamp::Red   ? ShellPal::Red
                            : kind == Lamp::Neutral ? ShellPal::Text2
                                                  : ShellPal::Green;
-        ShellLed(draw, center, ImMax(2.5f, ImFloor(radius * 0.62f)), led, lit, hovered);
+        ShellLed(draw, center, ImMax(2.5f, ImFloor(radius * 0.62f)), ShellPilot(led), lit, hovered);
         return;
     }
 

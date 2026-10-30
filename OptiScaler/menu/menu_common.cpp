@@ -245,6 +245,7 @@ static bool shellHidesSelector = false;         // ILION dev.57: the new interfa
 static bool shellActive = false;                // ILION dev.58: the new interface is drawing, in its single (Advanced) mode
 static bool shellSettingsTag = false;           // ILION dev.59: the cards drawn now change settings (marked on their name)
 static bool shellHidesUpscalerDiag = false;     // ILION dev.60: Upscaling shows its settings; DLL path and diagnostics are in Status
+static bool latencyReportOnly = false;          // ILION dev.61: only the technical report of the intelligent activation (Status)
 
 static void DedupeSrVariants(std::vector<FfxApiProxy::SrVariant>& list);
 
@@ -11498,6 +11499,15 @@ static float DrawFgInstruments(const FgCrtData& crt, ImVec2 crtPos, bool sideByS
 // ILION dev.59: the new interface draws the FG instruments in their own column (Frame Gen) and not under the selectors
 static bool shellFgInstrumentsApart = false;
 
+// ILION dev.61: the multiplier as a value, where the new interface keeps its single editable key next to the selection
+static void FgModeValue(const CustomOptional<int>* countConfig)
+{
+    const int mode = countConfig != nullptr ? countConfig->value_or_default() : 1;
+    const std::string value = mode < 0 ? std::string(Tr("Default")) : mode == 0 ? std::string(Tr("Off")) : StrFmt("%dx", mode + 1);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("%s: %s", Tr("Frame Gen"), value.c_str());
+}
+
 // ILION dev.60: the FG selectors fill their room minus their label; in the new interface never wider than needed
 static float FgSelectorWidth(float selectorLabel)
 {
@@ -12318,7 +12328,10 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 ShowTooltip("List of FGs reported by FFX SDK");
             }
 
-            RenderFGModeCombo(ctx, "Frame Gen##fsrfg", 1, nullptr);
+            if (IlionTheme::shell)
+                FgModeValue(nullptr);
+            else
+                RenderFGModeCombo(ctx, "Frame Gen##fsrfg", 1, nullptr);
 
             if (basicView)
                 return;
@@ -12594,8 +12607,11 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
         ImGui::BeginDisabled(!correctMVs || cantActivate);
 
-        RenderFGModeCombo(ctx, "Frame Gen##xefg", fgOutput->GetMaxInterpolationCount(),
-                          &config->FGXeFGInterpolationCount);
+        if (IlionTheme::shell)
+            FgModeValue(&config->FGXeFGInterpolationCount);
+        else
+            RenderFGModeCombo(ctx, "Frame Gen##xefg", fgOutput->GetMaxInterpolationCount(),
+                              &config->FGXeFGInterpolationCount);
 
         if (basicView)
         {
@@ -12730,8 +12746,11 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), Tr("OFF"));
         }
 
-        RenderFGModeCombo(ctx, "Frame Gen##dlssg", fgOutput->GetMaxInterpolationCount(),
-                          &config->FGDLSSGInterpolationCount);
+        if (IlionTheme::shell)
+            FgModeValue(&config->FGDLSSGInterpolationCount);
+        else
+            RenderFGModeCombo(ctx, "Frame Gen##dlssg", fgOutput->GetMaxInterpolationCount(),
+                              &config->FGDLSSGInterpolationCount);
 
         if (basicView)
             return;
@@ -14800,10 +14819,14 @@ void MenuCommon::RenderIntelligentLatency(RenderMenuContext& ctx)
     auto& state = ctx.state;
     auto config = ctx.config;
 
+    const Mode mode = Current();
+
+    // The report alone (Status of the new interface): the keys stay in Latency & FPS
+    if (!latencyReportOnly)
+    {
     SectionTitle("Intelligent Activation");
 
     // Mode: three keys on one line
-    const Mode mode = Current();
     const char* labels[] = { "Automatic##IlionLat", "Manual##IlionLat", "Off##IlionLat" };
     const char* tips[] = { "ILION lets OptiScaler pick the compatible technology",
                            "The original options below stay in your hands",
@@ -14823,9 +14846,10 @@ void MenuCommon::RenderIntelligentLatency(RenderMenuContext& ctx)
             ImGui::PopStyleColor();
         ShowTooltip(tips[i]);
     }
+    }
 
-    // What fakenvapi and the game report (the new interface: folded, the switches above stay in view)
-    if (!IlionTheme::shell || IlionTheme::CollapsingHeader(TrL("Technical report##IlionLat")))
+    // What fakenvapi and the game report (the new interface: in Status, the keys above stay in Latency & FPS)
+    if (!IlionTheme::shell || latencyReportOnly)
     {
     const auto vendor = IdentifyGpu::getPrimaryGpu().vendorId;
     const bool fakenvapiInUse = fakenvapi::isUsingAsMainNvapi();
@@ -15295,7 +15319,12 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
 
     // THEME -----------------------------
     ImGui::Spacing();
-    if (auto ch = ScopedCollapsingHeader(TrL("Menu Theme and Color")); ch.IsHeaderOpen())
+    // ILION dev.61: the new interface shows the theme without folding it
+    {
+    std::optional<ScopedCollapsingHeader> ch;
+    if (!IlionTheme::shell)
+        ch.emplace(TrL("Menu Theme and Color"));
+    if (IlionTheme::shell || ch->IsHeaderOpen())
     {
         ScopedIndent indent {};
         ImGui::Spacing();
@@ -15795,6 +15824,7 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
         }
 
         ImGui::Spacing();
+    }
     }
 }
 
@@ -20104,6 +20134,134 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
             return;
         }
 
+        if (strcmp(id, "@latency_monitor") == 0)
+        {
+            ScopedCard card(ShellText("Latency status", "Estado de la latencia", "Estado da latência", "Состояние задержки"));
+            ScopedID monitorId { "latency_monitor" };
+            const auto mode = IlionLatency::Current();
+            const bool fakenvapiInUse = fakenvapi::isUsingAsMainNvapi();
+            const char* tech = fakenvapiInUse ? IlionLatency::TechName(fakenvapi::getCurrentMode()) : nullptr;
+            const bool lowLatency = fakenvapiInUse && fakenvapi::isLowLatencyActive();
+            const auto regulator = IlionRegulator::CurrentState();
+            const float limit = ctx.config->FramerateLimit.value_or_default();
+
+            const char* modeName = mode == IlionLatency::Manual ? ShellText("Manual", "Manual", "Manual", "Ручной")
+                                   : mode == 2               ? ShellText("Off", "Apagada", "Desligada", "Выкл.")
+                                                             : ShellText("Automatic", "Automática", "Automática", "Авто");
+            const char* regulatorName = regulator == IlionRegulator::Status::Active ? ShellText("Active", "Activo", "Ativo", "Активен")
+                                        : regulator == IlionRegulator::Status::Off  ? ShellText("Off", "Apagado", "Desligado", "Выкл.")
+                                        : regulator == IlionRegulator::Status::FrameGeneration
+                                            ? ShellText("Paused: frame generation", "En pausa: generación de fotogramas", "Em pausa: geração de quadros", "Пауза: генерация кадров")
+                                        : regulator == IlionRegulator::Status::NotSupported
+                                            ? ShellText("Not supported here", "No compatible aquí", "Não compatível aqui", "Здесь не поддерживается")
+                                        : regulator == IlionRegulator::Status::Failed ? ShellText("Failed", "Falló", "Falhou", "Ошибка")
+                                                                                      : ShellText("Waiting for frames", "Esperando fotogramas", "Aguardando quadros", "Ожидание кадров");
+            const auto& cfg = *ctx.config;
+            const std::string vsync = !cfg.OverrideVsync.value_or_default()
+                                          ? std::string(ShellText("as the game sets it", "como lo pone el juego", "como o jogo define", "как в игре"))
+                                      : cfg.ForceVsync.has_value() && cfg.ForceVsync.value()
+                                          ? StrFmt("%s (%u)", ShellText("forced on", "forzado activado", "forçado ligado", "принудительно вкл."), cfg.VsyncInterval.value_or_default())
+                                          : std::string(ShellText("forced off", "forzado desactivado", "forçado desligado", "принудительно выкл."));
+
+            if (ImGui::BeginTable("##LatencyMonitor", 2, ImGuiTableFlags_SizingFixedFit))
+            {
+                const auto row = [&](bool lit, const char* name, const std::string& value)
+                {
+                    ImGui::TableNextColumn();
+                    const ImVec2 p = ImGui::GetCursorScreenPos();
+                    const float h = ImGui::GetTextLineHeight();
+                    IlionTheme::ShellLed(ImGui::GetWindowDrawList(), ImVec2(p.x + h * 0.4f, p.y + h * 0.5f), h * 0.2f, IlionTheme::ShellPal::Green, lit);
+                    ImGui::Dummy(ImVec2(h, h));
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("%s", name);
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted(value.c_str());
+                };
+                row(mode != 2, ShellText("Intelligent activation", "Activación inteligente", "Ativação inteligente", "Умная активация"), modeName);
+                row(lowLatency, ShellText("Method in use", "Método en uso", "Método em uso", "Используемый метод"),
+                    tech != nullptr ? std::string(tech) : std::string("-"));
+                row(regulator == IlionRegulator::Status::Active, ShellText("Latency regulator", "Regulador de latencia", "Regulador de latência", "Регулятор задержки"),
+                    regulatorName);
+                row(limit > 0.0f, ShellText("FPS limit", "Límite de FPS", "Limite de FPS", "Лимит FPS"),
+                    limit > 0.0f ? StrFmt("%.0f FPS", limit) : std::string(ShellText("none", "sin límite", "sem limite", "нет")));
+                row(cfg.OverrideVsync.value_or_default(), "V-Sync", vsync);
+                ImGui::EndTable();
+            }
+            return;
+        }
+
+        if (strcmp(id, "@latency_report") == 0)
+        {
+            ScopedCard card(ShellText("Latency: technical report", "Latencia: informe técnico", "Latência: relatório técnico", "Задержка: технический отчёт"));
+            ScopedID reportId { "latency_report" };
+            latencyReportOnly = true;
+            RenderIntelligentLatency(ctx);
+            latencyReportOnly = false;
+            return;
+        }
+
+        if (strcmp(id, "@fg_status") == 0)
+        {
+            ScopedCard card(ShellText("Frame generation: state", "Frame Generation: estado", "Frame Generation: estado", "Генерация кадров: состояние"));
+            ScopedID statusId { "fg_status" };
+            const auto& state = ctx.state;
+            const auto& cfg = *ctx.config;
+            auto fg = state.currentFG;
+            const bool running = fg != nullptr && fg->IsActive() && !fg->IsPaused();
+            ImGui::Text("%s: %s / %s", ShellText("Chosen", "Elegido", "Escolhido", "Выбрано"),
+                        std::string(magic_enum::enum_name(cfg.FGInput.value_or_default())).c_str(),
+                        std::string(magic_enum::enum_name(cfg.FGOutput.value_or_default())).c_str());
+            ImGui::Text("%s: %s / %s", ShellText("Loaded", "Cargado", "Carregado", "Загружено"),
+                        std::string(magic_enum::enum_name(state.activeFgInput)).c_str(),
+                        std::string(magic_enum::enum_name(state.activeFgOutput)).c_str());
+            if (fg != nullptr)
+                ImGui::Text("%s: %s  ·  %s %ux", ShellText("Implementation", "Implementación", "Implementação", "Реализация"), fg->Name(),
+                            ShellText("generated frames", "fotogramas generados", "quadros gerados", "сгенерировано кадров"),
+                            (unsigned) fg->GetInterpolatedFrameCount());
+            ImGui::Text("%s: %s", ShellText("Generating", "Generando", "Gerando", "Генерирует"),
+                        running ? ShellText("yes", "sí", "sim", "да") : ShellText("no", "no", "não", "нет"));
+            return;
+        }
+
+        if (strcmp(id, "@compare_info") == 0)
+        {
+            // What the comparison compares, and whether it can show anything now (the same conditions as its shader)
+            const auto& cfg = *ctx.config;
+            const auto set = [](const CustomOptional<bool>& on, const CustomOptional<float>& value)
+            { return on.value_or_default() && std::abs(value.value_or_default()) > 0.001f; };
+            const bool anyAdjustment = set(cfg.GfxTemperatureEnabled, cfg.GfxTemperature) || set(cfg.GfxBrightnessEnabled, cfg.GfxBrightness) ||
+                                       set(cfg.GfxContrastEnabled, cfg.GfxContrast) || set(cfg.GfxSaturationEnabled, cfg.GfxSaturation) ||
+                                       set(cfg.GfxVibranceEnabled, cfg.GfxVibrance) || set(cfg.GfxLocalContrastEnabled, cfg.GfxLocalContrast);
+            const bool upscaling = ctx.currentFeature != nullptr && ctx.currentFeature->IsInited() && !ctx.currentFeature->IsFrozen();
+            const bool ready = cfg.GfxEnabled.value_or_default() && anyAdjustment && upscaling;
+
+            ImGui::PushStyleColor(ImGuiCol_Text, ready ? IlionTheme::ShellPal::Text2 : IlionTheme::ShellPal::Yellow);
+            ImGui::TextWrapped("%s", ShellText("Split screen and Show original compare the picture with and without the Colour and image adjustments "
+                                               "(temperature, brightness, contrast, saturation, vibrance, local contrast).",
+                                               "Dividir pantalla y Ver original comparan la imagen con y sin los ajustes de Color e imagen "
+                                               "(temperatura, brillo, contraste, saturación, vibrancia, contraste local).",
+                                               "Dividir tela e Ver original comparam a imagem com e sem os ajustes de Cor e imagem "
+                                               "(temperatura, brilho, contraste, saturação, vibração, contraste local).",
+                                               "Разделение экрана и Оригинал сравнивают изображение с настройками цвета и без них "
+                                               "(температура, яркость, контраст, насыщенность, яркость цвета, локальный контраст)."));
+            if (!cfg.GfxEnabled.value_or_default())
+                ImGui::TextWrapped("%s", ShellText("Now: the image adjustments are switched off.", "Ahora: los ajustes de imagen están desactivados.",
+                                                   "Agora: os ajustes de imagem estão desligados.", "Сейчас: настройки изображения выключены."));
+            else if (!anyAdjustment)
+                ImGui::TextWrapped("%s", ShellText("Now: no colour adjustment is set, so both halves look the same.",
+                                                   "Ahora: no hay ningún ajuste de color aplicado, así que las dos mitades se ven iguales.",
+                                                   "Agora: nenhum ajuste de cor aplicado, as duas metades ficam iguais.",
+                                                   "Сейчас: цветовые настройки не заданы, обе половины одинаковы."));
+            else if (!upscaling)
+                ImGui::TextWrapped("%s", ShellText("Now: no OptiScaler upscaler is running; the adjustments are applied on its output.",
+                                                   "Ahora: no se ejecuta ningún escalador de OptiScaler; los ajustes se aplican sobre su salida.",
+                                                   "Agora: nenhum upscaler do OptiScaler em execução; os ajustes são aplicados na saída dele.",
+                                                   "Сейчас: апскейлер OptiScaler не работает; настройки применяются к его выходу."));
+            ImGui::PopStyleColor();
+            ImGui::Spacing();
+            return;
+        }
+
         if (strcmp(id, "@fg_instruments") == 0)
         {
             ScopedID instrumentsId { "fg_instruments" };
@@ -20299,8 +20457,20 @@ void MenuCommon::RenderMenuTabBody(RenderMenuContext& ctx, int tabIndex, bool sc
     ImGui::PushID(tabIndex);
     // Without its own child (scrollChild false) the content follows the cursor, inside a child of the caller
     const bool ownChild = scrollChild || personalPanel || reshadePanel;
+    // ILION dev.61: the new interface puts the ReShade effects first, wide, and the card at their right
+    const bool reshadeFirst = reshadePanel && shellActive;
+    if (reshadeFirst)
+    {
+        const float wide = std::floor(ImGui::GetContentRegionAvail().x * 0.62f * std::min(1.0f, reshadePanelAmount));
+        ImGui::BeginChild("##ReShadePanel", ImVec2(std::max(1.0f, wide), 0.0f), ImGuiChildFlags_Borders);
+        if (reshadePanelAmount >= 1.0f)
+            RenderReShadePanel(ctx);
+        ImGui::EndChild();
+        ImGui::SameLine();
+    }
+
     if (ownChild)
-        ImGui::BeginChild("##MenuTabBody", ImVec2((personalPanel || reshadePanel) ? -(panelWidth + style.ItemSpacing.x) : 0.0f, 0.0f));
+        ImGui::BeginChild("##MenuTabBody", ImVec2((personalPanel || (reshadePanel && !reshadeFirst)) ? -(panelWidth + style.ItemSpacing.x) : 0.0f, 0.0f));
 
     // ILION dev.59: the new interface lays the tab out in its own columns
     if (!RenderShellColumns(ctx, tab, layout, flow))
@@ -20382,7 +20552,7 @@ void MenuCommon::RenderMenuTabBody(RenderMenuContext& ctx, int tabIndex, bool sc
         RenderPersonalPanel(ctx);
         ImGui::EndChild();
     }
-    else if (reshadePanel)
+    else if (reshadePanel && !reshadeFirst)
     {
         ImGui::SameLine();
         ImGui::BeginChild("##ReShadePanel", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);

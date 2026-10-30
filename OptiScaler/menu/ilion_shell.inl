@@ -649,15 +649,22 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
     }
 
     // Chosen, loaded and active, apart
+    const char* names[3] = { Lx("Chosen:", "Elegido:", "Escolhido:", "Выбрано:"), Lx("Loaded:", "Cargado:", "Carregado:", "Загружено:"),
+                             Lx("Generating:", "Generando:", "Gerando:", "Генерирует:") };
+    float labelWidth = 0.0f;
+    for (const char* name : names)
+        labelWidth = (std::max)(labelWidth, ImGui::CalcTextSize(name).x);
+
     const auto row = [&](Led led, const char* name, const std::string& value)
     {
         const ImVec2 p = ImGui::GetCursorScreenPos();
+        const float x0 = ImGui::GetCursorPosX();
         const float h = ImGui::GetTextLineHeight();
         ShellLedAt(ImGui::GetWindowDrawList(), ImVec2(p.x + h * 0.5f, p.y + h * 0.5f), h * 0.22f, led);
         ImGui::Dummy(ImVec2(h, h));
         ImGui::SameLine(0, U(6));
         ImGui::TextColored(Tone(pal::Text2), "%s", name);
-        ImGui::SameLine(0, U(8));
+        ImGui::SameLine(x0 + h + U(6) + labelWidth + U(10));
         ImGui::TextUnformatted(value.c_str());
     };
 
@@ -678,9 +685,9 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
         active = StrFmt("%s %ux", name.c_str(), multiplier);
     }
 
-    row(Led::Off, Lx("Chosen:", "Elegido:", "Escolhido:", "Выбрано:"), chosen);
-    row(same ? Led::Green : Led::Orange, Lx("Loaded:", "Cargado:", "Carregado:", "Загружено:"), loaded);
-    row(running ? Led::Green : Led::Off, Lx("Generating:", "Generando:", "Gerando:", "Генерирует:"), active);
+    row(Led::Off, names[0], chosen);
+    row(same ? Led::Green : Led::Orange, names[1], loaded);
+    row(running ? Led::Green : Led::Off, names[2], active);
     if (!same)
         TextWrappedColored(Tone(pal::Orange), "%s",
                            Lx("The choice is not the one loaded yet: it applies when OptiScaler creates the FG again (in some games, after a restart).",
@@ -751,15 +758,15 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
     static const ShellLayout lFrameGen { { "fg_selection", "@fg_quick", "fg_optifg", "fg_reprojection", "fg_nvngx", "fg_fsrfg_inputs",
                                            "fg_sl_inputs" },
                                          { "@fg_instruments", "fg_xefg", "fg_fsrfg", "fg_dlssg" } };
-    static const ShellLayout lLatency { { "framerate", "vsync", "low_latency" }, { "ilion_latency", "ilion_regulator" } };
+    static const ShellLayout lLatency { { "framerate", "vsync", "low_latency" }, { "ilion_latency", "ilion_regulator", "@latency_monitor" } };
     static const ShellLayout lImage { { "gfx_color", "gfx_advanced" }, { "sharpness", "mipmap", "anisotropy" } };
     static const ShellLayout lReShade { { "reshade" }, {} };
-    static const ShellLayout lCompare { { "gfx_compare" }, { "magnifier" } };
+    static const ShellLayout lCompare { { "@compare_info", "gfx_compare" }, { "magnifier" } };
     static const ShellLayout lOverlay { { "fps_overlay" }, {} };
     static const ShellLayout lBenchmark { { "benchmark" }, {} };
     static const ShellLayout lMenu { { "theme" }, { "menu_scale", "keybinds" } };
-    static const ShellLayout lStatus { { "status_summary", "status_system", "status_init" },
-                                       { "@upscaler_diag", "status_detected", "status_hooks" } };
+    static const ShellLayout lStatus { { "status_summary", "@fg_status", "status_system", "status_init" },
+                                       { "@upscaler_diag", "@latency_report", "status_detected", "status_hooks" } };
     static const ShellLayout lCompat { { "init_flags", "fsr_common", "upscaler_inputs" },
                                        { "spoofing", "plugins", "shaders_limits", "barriers", "root_signatures" }, true };
     static const ShellLayout lLog { { "logging" }, {}, true };
@@ -1176,7 +1183,16 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         {
             // Controls of a proportionate length where a tab keeps one column
             ImGui::PushItemWidth((std::min)(ImGui::GetContentRegionAvail().x * 0.55f, U(460.f)));
+            const bool dense = layout == &lStatus || layout == &lCompat || layout == &lLog;
+            if (dense)
+            {
+                ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, Sz(10.f, 5.f));
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, Sz(9.f, 5.f));
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, Sz(14.f, 10.f));
+            }
             RenderMenuTabBody(ctx, tab, true, layout, flow);
+            if (dense)
+                ImGui::PopStyleVar(3);
             ImGui::PopItemWidth();
         }
         ImGui::EndChild();
@@ -1188,7 +1204,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
     if (section == 0)
     {
         // Home: Upscaling and Frame Generation on top, latency and FPS under them; the same functions as the modules
-        const float rowSplit = a.y + 318, rowBottom = b.y - 120;
+        const float rowSplit = a.y + 300, rowBottom = b.y - 120;
         const float half = a.x + (b.x - a.x) * 0.5f;
 
         const auto card = [&](const char* id, int icon, const char* title, Led led, ImVec2 p, ImVec2 q, const auto& controls)
@@ -1197,12 +1213,15 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
             Icon(icon, ImVec2(p.x + 30, p.y + 26), 26.f, Col(pal::Green));
             Text(fUi, 19.f, ImVec2(p.x + 56, p.y + 14), pal::Text, title);
             LedAt(dl, ImVec2(q.x - 22, p.y + 24), 6.f, led);
-            dl->AddLine(P(p.x + 14, p.y + 48), P(q.x - 14, p.y + 48), Col(pal::Line));
+            dl->AddLine(P(p.x + 14, p.y + 46), P(q.x - 14, p.y + 46), Col(pal::Line));
 
             PushContentStyle();
             ImGui::PushFont(fUi, U(17.f));
-            if (BeginArea(id, ImVec2(p.x + 16, p.y + 58), ImVec2(q.x - 12, q.y - 8)))
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, Sz(10.f, 6.f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, Sz(10.f, 5.f));
+            if (BeginArea(id, ImVec2(p.x + 16, p.y + 54), ImVec2(q.x - 12, q.y - 6)))
                 controls();
+            ImGui::PopStyleVar(2);
             ImGui::EndChild();
             ImGui::PopFont();
             PopContentStyle();
@@ -1422,6 +1441,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         At(lb.x - 20 - 170, la.y + 10);
         PushComboStyle();
         ImGui::SetNextItemWidth(U(170));
+        IlionTheme::ShellComboLimit();
         if (ImGui::BeginCombo("##UpFilter", filters[upFilter], ImGuiComboFlags_HeightLarge))
         {
             for (int i = 0; i < 5; i++)
@@ -1525,10 +1545,10 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         {
             const ImVec2 m0(mx + 8, c.y), m1(dFull.x, dFull.y);
             PanelRect(m0, m1, false, &pal::Green);
-            dl->PushClipRect(P(m0.x + 2, m0.y), P(m1.x - 10, m1.y), true);
+            dl->PushClipRect(P(m0.x + 2, m0.y + 2), P(m1.x - 2, m1.y - 2), true);
             Text(fUi, 15.f, ImVec2(m0.x + 18, m0.y + 14), pal::Text2,
                  Lx("UPSCALING MONITOR", "MONITOR DE ESCALADO", "MONITOR DE ESCALA", "МОНИТОР МАСШТАБИРОВАНИЯ"));
-            LedAt(dl, ImVec2(m1.x - 22, m0.y + 22), 6.f, upscalerOn ? Led::Green : upscalerIdle ? Led::Yellow : Led::Off);
+            LedAt(dl, ImVec2(m1.x - 32, m0.y + 26), 6.f, upscalerOn ? Led::Green : upscalerIdle ? Led::Yellow : Led::Off);
 
             const std::string tech = upscalerOn || upscalerIdle ? UpscalerLabel(feature) : std::string(Tr("None"));
             Text(fUi, 30.f, ImVec2(m0.x + 18, m0.y + 40), pal::Text, tech.c_str());
@@ -1590,7 +1610,21 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                     }
                     dl->AddPolyline(pts, (int) count, Col(pal::Green), 0, U(1.4f));
                 }
+
+                // Share of the frame the upscaler takes, from the same two measurements as the header and this graph
+                const double frame = ctx.frameTime;
+                if (std::isfinite(frame) && frame > 0.0 && gb.y + 30 < m1.y)
+                    Text(fUi, 16.f, ImVec2(m0.x + 18, gb.y + 12), pal::Text2,
+                         StrFmt("%s %.0f%%", Lx("Share of the frame time:", "Parte del tiempo de fotograma:", "Parte do tempo de quadro:", "Доля времени кадра:"),
+                                std::clamp(sum / valid / frame * 100.0, 0.0, 100.0))
+                             .c_str());
             }
+
+            // What the game feeds the upscaler
+            Text(fUi, 15.f, ImVec2(m0.x + 18, m1.y - 30), pal::Dim,
+                 StrFmt("%s: %s  ·  %s", Lx("Input", "Entrada", "Entrada", "Вход"), ApiUpscalerInputName(state.currentInputApiName).c_str(),
+                        ApiName(state.api))
+                     .c_str());
             dl->PopClipRect();
         }
 
@@ -1618,6 +1652,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         ImGui::BeginDisabled(locked);
         PushComboStyle();
         ImGui::SetNextItemWidth(U(d.x - c.x - 36 - rescanW - 12));
+        IlionTheme::ShellComboLimit();
         if (ImGui::BeginCombo("##UpVariant", preview.c_str(), ImGuiComboFlags_HeightLarge))
         {
             for (const auto& v : catalog.variants)

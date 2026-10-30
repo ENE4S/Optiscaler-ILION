@@ -248,8 +248,10 @@ class MenuCommon
     static const MenuTab* MenuTabs(size_t& count);
     struct ShellLayout;
     static void RenderMenuTabBody(RenderMenuContext& ctx, int tabIndex, bool scrollChild = true, const ShellLayout* layout = nullptr,
-                                  bool flow = false);
-    static bool RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, const ShellLayout* layout, bool flow);
+                                  int flow = 0);
+    static bool RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, const ShellLayout* layout, int flow);
+    static void RenderUpscalerDllDiagnostics(RenderMenuContext& ctx); // ILION dev.60: path, hash, hot-swap, verification
+    static void RenderFgQuickControls(RenderMenuContext& ctx);        // ILION dev.60: on/off, multiplier and states of FG
     static void RenderIlionShell(RenderMenuContext& ctx);
     static void CloseMainMenu(ImGuiIO& io);
     static void RenderCustomTab(RenderMenuContext& ctx);

@@ -244,6 +244,7 @@ static bool reshadePanelOpen = false;           // ILION: ReShade panel, joined 
 static bool shellHidesSelector = false;         // ILION dev.57: the new interface chooses the upscaler in its catalogue
 static bool shellActive = false;                // ILION dev.58: the new interface is drawing, in its single (Advanced) mode
 static bool shellSettingsTag = false;           // ILION dev.59: the cards drawn now change settings (marked on their name)
+static bool shellHidesUpscalerDiag = false;     // ILION dev.60: Upscaling shows its settings; DLL path and diagnostics are in Status
 
 static void DedupeSrVariants(std::vector<FfxApiProxy::SrVariant>& list);
 
@@ -9520,6 +9521,172 @@ void MenuCommon::RenderUpscalerStateMessage(RenderMenuContext& ctx)
 
 static const char* ApiName(API api);
 
+// ILION dev.60: the dll of the FFX upscaler in use: path and hash, hot-swap diagnostics, visual verification and the
+// comparison sessions. In the Upscaling tab of the classic menu and in Status of the new interface
+void MenuCommon::RenderUpscalerDllDiagnostics(RenderMenuContext& ctx)
+{
+    auto config = ctx.config;
+    (void) config;
+
+    const auto activeSrPath = FfxApiProxy::Dx12Module_SR_Path();
+
+    // Hash of the dll in use, calculated in the background and looked up again only until it's there
+    static std::wstring hashedSrPath;
+    static std::string activeSrHash;
+    static double lastHashLookup = 0.0;
+
+    if (hashedSrPath != activeSrPath)
+    {
+        hashedSrPath = activeSrPath;
+        activeSrHash.clear();
+        FSR4Versions::RequestHash(activeSrPath);
+    }
+
+    if (activeSrHash.empty() && ctx.now - lastHashLookup > 500.0)
+    {
+        lastHashLookup = ctx.now;
+        activeSrHash = FSR4Versions::HashForPath(activeSrPath);
+    }
+
+    // Path and hash of the dll that's loaded, closed unless the user opens it
+    // Path and the hot-swap diagnostics: Advanced only
+    if (!EssentialView() && ImGui::TreeNode(TrL("Loaded DLL path")))
+    {
+        ImGui::TextWrapped("%s", wstring_to_string(activeSrPath).c_str());
+        ImGui::TextDisabled(Tr("SHA-256: %s"), activeSrHash.empty() ? Tr("calculating...") : activeSrHash.c_str());
+
+        ImGui::TreePop();
+    }
+
+    // Read-only, everything comes from the dispatch calls that were actually made
+    if (!EssentialView() && ImGui::TreeNode(TrL("UPSCALER HOT-SWAP DIAGNOSTICS")))
+    {
+        const auto diag = FfxApiProxy::SrDiagGetSnapshot();
+
+        const ImVec4 statusColor = diag.statusLevel == 0   ? ImVec4(0.3f, 1.f, 0.3f, 1.f)
+                                   : diag.statusLevel == 2 ? IlionTheme::Themed(ImVec4(1.f, 0.2f, 0.2f, 1.f), IlionTheme::Role::Bad)
+                                                           : IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn);
+
+        ImGui::Text(Tr("Selected: %s"), Tr(diag.selectedName.c_str()));
+        ImGui::Text(Tr("Active: %s"), Tr(diag.activeName.c_str()));
+        ShowTooltip("Dll that owns the ffxDispatch function called by the last upscale dispatch");
+        ImGui::TextWrapped(Tr("DLL Path: %s"),
+                           diag.activePath.empty() ? "-" : wstring_to_string(diag.activePath).c_str());
+        ImGui::TextColored(toneMapColor(statusColor), Tr("Status: %s"), Tr(diag.status.c_str()));
+        ImGui::Text(Tr("Dispatch Count: %llu (errors: %llu)"), diag.activeDispatchCount, diag.activeErrorCount);
+
+        for (const auto& module : diag.modules)
+            ImGui::TextDisabled("  %s: %llu", module.name.c_str(), module.dispatchCount);
+
+        ImGui::Text(Tr("Last Switch: %s"), diag.observedSwitch.empty() ? "-" : diag.observedSwitch.c_str());
+        ShowTooltip("Change of the dll that executes the dispatch, as seen in the dispatch calls");
+        ImGui::TextDisabled(Tr("Request: %s"), diag.switchResult.empty() ? "-" : diag.switchResult.c_str());
+        ImGui::TextDisabled(Tr("Context: %s"), diag.createResult.empty() ? "-" : diag.createResult.c_str());
+        ImGui::TextDisabled(Tr("Traced by: %s"), Tr(diag.resolvedBy.c_str()));
+        ImGui::TextDisabled(Tr("Driver provider: %s"),
+                            diag.driverProvider.empty() ? Tr("not requested") : diag.driverProvider.c_str());
+        ShowTooltip("Result of amdxcffx64's provider update for the upscaler dll that asked for it.\n"
+                    "When it succeeds the dll may run the driver's FSR 4 instead of its own,\n"
+                    "that can't be told apart from the dispatch call.");
+
+        ImGui::TreePop();
+    }
+
+    // Experimental, the marker color is keyed to the dll that recorded the GPU work, not to the selection
+    if (ImGui::TreeNode(TrL("UPSCALER VISUAL VERIFICATION")))
+    {
+        bool visualEnabled = FSR4VisualVerify::Enabled();
+
+        if (IlionTheme::Checkbox(TrL("Color marker on upscaler output"), &visualEnabled))
+            FSR4VisualVerify::SetEnabled(visualEnabled);
+
+        ShowTooltip("Writes color bars into the output of the upscale dispatch, before the game's post\n"
+                    "processing. Top and bottom bars: the dll below recorded the compute work of the frame.\n"
+                    "Blue = FSR 4 official, Green = FSR 4.1.1B, Magenta = FSR 4 Lite, White = any other dll (HelixSR...).\n"
+                    "Yellow top bar only = could not be verified.\n\n"
+                    "The bars are drawn by OptiScaler, not by the dll. Not saved, off on next launch.");
+
+        const auto evidence = FSR4VisualVerify::GetEvidence();
+
+        if (!evidence.enabled)
+        {
+            ImGui::TextDisabled("%s", Tr("Disabled"));
+        }
+        else if (!evidence.hasFrame || evidence.msSinceLastFrame > 1000)
+        {
+            TextWrappedColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)),
+                               "%s", Tr("Verdict: NO DATA (no upscale dispatch in the last second)"));
+        }
+        else
+        {
+            std::wstring execPath;
+            const auto execName = FfxApiProxy::SrDiagDescribeModule(evidence.execModule, &execPath);
+
+            ImGui::Text(Tr("Executing DLL: %s"), Tr(execName.c_str()));
+            ImGui::TextWrapped(Tr("DLL Path: %s"), execPath.empty() ? "-" : wstring_to_string(execPath).c_str());
+            ImGui::Text(Tr("Context created by: %s"),
+                        Tr(evidence.ownerModule == nullptr               ? "unknown"
+                           : evidence.ownerModule == evidence.execModule ? "the same dll"
+                                                                         : "A DIFFERENT DLL"));
+            ImGui::TextWrapped(Tr("Compute dispatches: %u by this dll, %u by others"), evidence.computeFromExec,
+                        evidence.computeFromOther);
+
+            if (evidence.otherModule != nullptr)
+            {
+                ImGui::Text(Tr("Other module: %s"),
+                            FfxApiProxy::SrDiagDescribeModule(evidence.otherModule).c_str());
+            }
+
+            ImGui::Text(Tr("Marker: %s"), Tr(FSR4VisualVerify::MarkerName(evidence.marker)));
+            ImGui::TextDisabled(Tr("Marker draw: %s"), Tr(FSR4VisualVerify::DrawStatusName(evidence.draw)));
+
+            if (evidence.verified)
+            {
+                ImGui::TextColored(toneMapColor(ImVec4(0.3f, 1.f, 0.3f, 1.f)), "%s", Tr("Verdict: VERIFIED"));
+            }
+            else
+            {
+                const char* reason = !evidence.instrumented             ? "command list can't be observed"
+                                     : evidence.execModule == nullptr   ? "dispatch function not traced"
+                                     : evidence.ownerModule == nullptr  ? "context owner unknown"
+                                     : evidence.ownerModule != evidence.execModule
+                                         ? "context belongs to another dll"
+                                     : evidence.computeFromOther > 0    ? "GPU work recorded by another module"
+                                     : evidence.computeFromExec == 0    ? "no compute dispatch seen"
+                                                                        : "dispatch failed";
+
+                ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.2f, 0.2f, 1.f), IlionTheme::Role::Bad)),
+                                   Tr("Verdict: NOT VERIFIED (%s)"), Tr(reason));
+            }
+
+            ImGui::TextDisabled(Tr("Frames: %llu verified of %llu"), evidence.verifiedFrames, evidence.frames);
+        }
+
+        ImGui::TreePop();
+    }
+
+    // Not saved, results are shown under the performance overlay
+    bool comparisonEnabled = FSR4Comparison::Enabled();
+
+    if (IlionTheme::Checkbox(TrL("Upscaler comparison mode"), &comparisonEnabled))
+    {
+        FSR4Comparison::SetEnabled(comparisonEnabled);
+
+        // The results panel is part of the performance overlay
+        if (comparisonEnabled && !config->ShowFps.value_or_default())
+            config->ShowFps.set_volatile_value(true);
+    }
+
+    ShowTooltip("Measures every upscaler dll while it's the one executing the upscaling and shows\n"
+                "the results under the performance overlay, one box per upscaler, named as ILION's list\n"
+                "knows it. Switch the upscaler to measure the next one. Live only for FFX upscalers\n"
+                "(FSR 4 builds, HelixSR); DLSS is compared through saved Benchmark tests.\n\n"
+                "AVG = counted frames / their total time\n"
+                "MIN / MAX = slowest / fastest single frame, as fps (not 1%% lows)\n\n"
+                "The first 2 seconds after a switch aren't counted.\n"
+                "Enabling it starts a new session and shows the performance overlay.");
+}
+
 void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 {
     auto& state = ctx.state;
@@ -9531,8 +9698,8 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
     // UPSCALERS -----------------------------
     SectionTitle("Upscalers");
 
-    // Row - API | GPU | Upscaler input
-    if (!basicView)
+    // Row - API | GPU | Upscaler input (the new interface shows it in its header and monitor)
+    if (!basicView && !shellHidesUpscalerDiag)
         ImGui::TextWrapped(Tr("%s%s | %s | Input: %s"), ApiName(state.api),
                        IdentifyGpu::gameUsesDxvk()          ? " (DXVK)"
                        : IdentifyGpu::gameUsesVkd3dProton() ? " (VKD3D)"
@@ -9544,7 +9711,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
     const bool usesDlssd = currentFeature->GetUpscalerType() == Upscaler::DLSSD;
 
-    if (!basicView)
+    if (!basicView && !shellHidesUpscalerDiag)
     {
         ImGui::TextDisabled(Tr("%dx%d -> %dx%d (%.2fx)"), currentFeature->RenderWidth(), currentFeature->RenderHeight(),
                             currentFeature->TargetWidth(), currentFeature->TargetHeight(),
@@ -9552,7 +9719,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
     }
 
     // ILION experiment: what the external d4r backend is really running, from its log and from NGX's answers
-    if (state.dlssExternalBackend && currentFeature->GetUpscalerType() == Upscaler::DLSS)
+    if (!shellHidesUpscalerDiag && state.dlssExternalBackend && currentFeature->GetUpscalerType() == Upscaler::DLSS)
         IlionD4rPanel::Draw(IlionD4rLogPath(), currentFeature->Version().major, currentFeature->Version().minor,
                             currentFeature->Version().patch);
 
@@ -9775,167 +9942,9 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
         // Upscaler dll selection, kept outside of the version checks so it's still reachable when a dll fails
         if (RunsSwitchedFfx(currentBackend))
         {
-            // Path, hash, diagnostics and comparison stay in the full menu only
-            if (!basicView)
-            {
-            const auto activeSrPath = FfxApiProxy::Dx12Module_SR_Path();
-
-            // Hash of the dll in use, calculated in the background and looked up again only until it's there
-            static std::wstring hashedSrPath;
-            static std::string activeSrHash;
-            static double lastHashLookup = 0.0;
-
-            if (hashedSrPath != activeSrPath)
-            {
-                hashedSrPath = activeSrPath;
-                activeSrHash.clear();
-                FSR4Versions::RequestHash(activeSrPath);
-            }
-
-            if (activeSrHash.empty() && ctx.now - lastHashLookup > 500.0)
-            {
-                lastHashLookup = ctx.now;
-                activeSrHash = FSR4Versions::HashForPath(activeSrPath);
-            }
-
-            // Path and hash of the dll that's loaded, closed unless the user opens it
-            // Path and the hot-swap diagnostics: Advanced only
-            if (!EssentialView() && ImGui::TreeNode(TrL("Loaded DLL path")))
-            {
-                ImGui::TextWrapped("%s", wstring_to_string(activeSrPath).c_str());
-                ImGui::TextDisabled(Tr("SHA-256: %s"), activeSrHash.empty() ? Tr("calculating...") : activeSrHash.c_str());
-
-                ImGui::TreePop();
-            }
-
-            // Read-only, everything comes from the dispatch calls that were actually made
-            if (!EssentialView() && ImGui::TreeNode(TrL("UPSCALER HOT-SWAP DIAGNOSTICS")))
-            {
-                const auto diag = FfxApiProxy::SrDiagGetSnapshot();
-
-                const ImVec4 statusColor = diag.statusLevel == 0   ? ImVec4(0.3f, 1.f, 0.3f, 1.f)
-                                           : diag.statusLevel == 2 ? IlionTheme::Themed(ImVec4(1.f, 0.2f, 0.2f, 1.f), IlionTheme::Role::Bad)
-                                                                   : IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn);
-
-                ImGui::Text(Tr("Selected: %s"), Tr(diag.selectedName.c_str()));
-                ImGui::Text(Tr("Active: %s"), Tr(diag.activeName.c_str()));
-                ShowTooltip("Dll that owns the ffxDispatch function called by the last upscale dispatch");
-                ImGui::TextWrapped(Tr("DLL Path: %s"),
-                                   diag.activePath.empty() ? "-" : wstring_to_string(diag.activePath).c_str());
-                ImGui::TextColored(toneMapColor(statusColor), Tr("Status: %s"), Tr(diag.status.c_str()));
-                ImGui::Text(Tr("Dispatch Count: %llu (errors: %llu)"), diag.activeDispatchCount, diag.activeErrorCount);
-
-                for (const auto& module : diag.modules)
-                    ImGui::TextDisabled("  %s: %llu", module.name.c_str(), module.dispatchCount);
-
-                ImGui::Text(Tr("Last Switch: %s"), diag.observedSwitch.empty() ? "-" : diag.observedSwitch.c_str());
-                ShowTooltip("Change of the dll that executes the dispatch, as seen in the dispatch calls");
-                ImGui::TextDisabled(Tr("Request: %s"), diag.switchResult.empty() ? "-" : diag.switchResult.c_str());
-                ImGui::TextDisabled(Tr("Context: %s"), diag.createResult.empty() ? "-" : diag.createResult.c_str());
-                ImGui::TextDisabled(Tr("Traced by: %s"), Tr(diag.resolvedBy.c_str()));
-                ImGui::TextDisabled(Tr("Driver provider: %s"),
-                                    diag.driverProvider.empty() ? Tr("not requested") : diag.driverProvider.c_str());
-                ShowTooltip("Result of amdxcffx64's provider update for the upscaler dll that asked for it.\n"
-                            "When it succeeds the dll may run the driver's FSR 4 instead of its own,\n"
-                            "that can't be told apart from the dispatch call.");
-
-                ImGui::TreePop();
-            }
-
-            // Experimental, the marker color is keyed to the dll that recorded the GPU work, not to the selection
-            if (ImGui::TreeNode(TrL("UPSCALER VISUAL VERIFICATION")))
-            {
-                bool visualEnabled = FSR4VisualVerify::Enabled();
-
-                if (IlionTheme::Checkbox(TrL("Color marker on upscaler output"), &visualEnabled))
-                    FSR4VisualVerify::SetEnabled(visualEnabled);
-
-                ShowTooltip("Writes color bars into the output of the upscale dispatch, before the game's post\n"
-                            "processing. Top and bottom bars: the dll below recorded the compute work of the frame.\n"
-                            "Blue = FSR 4 official, Green = FSR 4.1.1B, Magenta = FSR 4 Lite, White = any other dll (HelixSR...).\n"
-                            "Yellow top bar only = could not be verified.\n\n"
-                            "The bars are drawn by OptiScaler, not by the dll. Not saved, off on next launch.");
-
-                const auto evidence = FSR4VisualVerify::GetEvidence();
-
-                if (!evidence.enabled)
-                {
-                    ImGui::TextDisabled("%s", Tr("Disabled"));
-                }
-                else if (!evidence.hasFrame || evidence.msSinceLastFrame > 1000)
-                {
-                    TextWrappedColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)),
-                                       "%s", Tr("Verdict: NO DATA (no upscale dispatch in the last second)"));
-                }
-                else
-                {
-                    std::wstring execPath;
-                    const auto execName = FfxApiProxy::SrDiagDescribeModule(evidence.execModule, &execPath);
-
-                    ImGui::Text(Tr("Executing DLL: %s"), Tr(execName.c_str()));
-                    ImGui::TextWrapped(Tr("DLL Path: %s"), execPath.empty() ? "-" : wstring_to_string(execPath).c_str());
-                    ImGui::Text(Tr("Context created by: %s"),
-                                Tr(evidence.ownerModule == nullptr               ? "unknown"
-                                   : evidence.ownerModule == evidence.execModule ? "the same dll"
-                                                                                 : "A DIFFERENT DLL"));
-                    ImGui::TextWrapped(Tr("Compute dispatches: %u by this dll, %u by others"), evidence.computeFromExec,
-                                evidence.computeFromOther);
-
-                    if (evidence.otherModule != nullptr)
-                    {
-                        ImGui::Text(Tr("Other module: %s"),
-                                    FfxApiProxy::SrDiagDescribeModule(evidence.otherModule).c_str());
-                    }
-
-                    ImGui::Text(Tr("Marker: %s"), Tr(FSR4VisualVerify::MarkerName(evidence.marker)));
-                    ImGui::TextDisabled(Tr("Marker draw: %s"), Tr(FSR4VisualVerify::DrawStatusName(evidence.draw)));
-
-                    if (evidence.verified)
-                    {
-                        ImGui::TextColored(toneMapColor(ImVec4(0.3f, 1.f, 0.3f, 1.f)), "%s", Tr("Verdict: VERIFIED"));
-                    }
-                    else
-                    {
-                        const char* reason = !evidence.instrumented             ? "command list can't be observed"
-                                             : evidence.execModule == nullptr   ? "dispatch function not traced"
-                                             : evidence.ownerModule == nullptr  ? "context owner unknown"
-                                             : evidence.ownerModule != evidence.execModule
-                                                 ? "context belongs to another dll"
-                                             : evidence.computeFromOther > 0    ? "GPU work recorded by another module"
-                                             : evidence.computeFromExec == 0    ? "no compute dispatch seen"
-                                                                                : "dispatch failed";
-
-                        ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.2f, 0.2f, 1.f), IlionTheme::Role::Bad)),
-                                           Tr("Verdict: NOT VERIFIED (%s)"), Tr(reason));
-                    }
-
-                    ImGui::TextDisabled(Tr("Frames: %llu verified of %llu"), evidence.verifiedFrames, evidence.frames);
-                }
-
-                ImGui::TreePop();
-            }
-
-            // Not saved, results are shown under the performance overlay
-            bool comparisonEnabled = FSR4Comparison::Enabled();
-
-            if (IlionTheme::Checkbox(TrL("Upscaler comparison mode"), &comparisonEnabled))
-            {
-                FSR4Comparison::SetEnabled(comparisonEnabled);
-
-                // The results panel is part of the performance overlay
-                if (comparisonEnabled && !config->ShowFps.value_or_default())
-                    config->ShowFps.set_volatile_value(true);
-            }
-
-            ShowTooltip("Measures every upscaler dll while it's the one executing the upscaling and shows\n"
-                        "the results under the performance overlay, one box per upscaler, named as ILION's list\n"
-                        "knows it. Switch the upscaler to measure the next one. Live only for FFX upscalers\n"
-                        "(FSR 4 builds, HelixSR); DLSS is compared through saved Benchmark tests.\n\n"
-                        "AVG = counted frames / their total time\n"
-                        "MIN / MAX = slowest / fastest single frame, as fps (not 1%% lows)\n\n"
-                        "The first 2 seconds after a switch aren't counted.\n"
-                        "Enabling it starts a new session and shows the performance overlay.");
-            }
+            // Path, hash, diagnostics and comparison stay in the full menu only (the new interface: in Status)
+            if (!basicView && !shellHidesUpscalerDiag)
+                RenderUpscalerDllDiagnostics(ctx);
         }
 
         if (basicView)
@@ -10616,8 +10625,8 @@ static void DrawFgCrt(const ImVec2& min, const ImVec2& size, const FgCrtData& d)
     const bool flatScreen = IlionTheme::shell;
     if (flatScreen)
     {
-        draw->AddRectFilled(min, max, ImGui::GetColorU32(IlionTheme::ShellPal::Panel), 4.0f);
-        draw->AddRect(min, max, ImGui::GetColorU32(IlionTheme::ShellPal::Green), 4.0f, 0, 1.5f);
+        draw->AddRectFilled(min, max, ImGui::GetColorU32(ImVec4(0.045f, 0.075f, 0.050f, 1.0f)), 4.0f);
+        draw->AddRect(min, max, ImGui::GetColorU32(IlionTheme::ShellPal::Green), 4.0f, 0, 2.0f);
     }
     else
     draw->AddRectFilled(ImVec2(min.x + 2.0f, min.y + 3.0f), ImVec2(max.x + 2.0f, max.y + 3.0f), col(0, 0, 0, 0.45f), rounding);
@@ -11120,8 +11129,8 @@ static MfgCostAreas DrawMfgCost(const ImVec2& min, const ImVec2& size)
 
     if (flatScreen)
     {
-        draw->AddRectFilled(min, max, ImGui::GetColorU32(IlionTheme::ShellPal::Panel), 4.0f);
-        draw->AddRect(min, max, ImGui::GetColorU32(IlionTheme::ShellPal::Yellow), 4.0f, 0, 1.5f);
+        draw->AddRectFilled(min, max, ImGui::GetColorU32(ImVec4(0.075f, 0.070f, 0.045f, 1.0f)), 4.0f);
+        draw->AddRect(min, max, ImGui::GetColorU32(IlionTheme::ShellPal::Yellow), 4.0f, 0, 2.0f);
     }
     else
     {
@@ -11488,6 +11497,13 @@ static float DrawFgInstruments(const FgCrtData& crt, ImVec2 crtPos, bool sideByS
 
 // ILION dev.59: the new interface draws the FG instruments in their own column (Frame Gen) and not under the selectors
 static bool shellFgInstrumentsApart = false;
+
+// ILION dev.60: the FG selectors fill their room minus their label; in the new interface never wider than needed
+static float FgSelectorWidth(float selectorLabel)
+{
+    const float width = std::max(ImGui::GetFontSize() * 8.0f, ImGui::GetContentRegionAvail().x - selectorLabel);
+    return IlionTheme::shell ? std::min(width, ImGui::GetFontSize() * 15.0f) : width;
+}
 // ILION dev.59: only the selectors of FG (input, output, nvngx, XeMFG variant), for the Home of the new interface
 static bool fgSelectorsOnly = false;
 
@@ -11497,11 +11513,19 @@ static void DrawFgInstrumentsColumn(State& state)
         return;
 
     const FgCrtData crt = GatherFgCrt(state);
+
+    // As large as the column allows them side by side (the screens are sized by the font)
+    const float base = ImGui::GetFontSize();
+    const float room = ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 1.5f;
+    const float fit = std::clamp(room / (FgCrtSize().x * 2.0f) * base, base, base * 1.35f);
+    ImGui::PushFont(ImGui::GetFont(), fit);
+
     const ImVec2 pos = ImGui::GetCursorScreenPos();
     const bool sideBySide = ImGui::GetContentRegionAvail().x >= FgCrtSize().x * 2.0f + ImGui::GetStyle().ItemSpacing.x * 1.5f;
     const float bottom = DrawFgInstruments(crt, pos, sideBySide);
     ImGui::SetCursorScreenPos(ImVec2(pos.x, bottom + ImGui::GetStyle().ItemSpacing.y));
     ImGui::Dummy(ImVec2(0.0f, 0.0f));
+    ImGui::PopFont();
 }
 
 void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
@@ -11763,7 +11787,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             ImGui::TableNextColumn();
 
             // The combo fills its column minus its label: neither the names nor the label are cut
-            ImGui::SetNextItemWidth(std::max(ImGui::GetFontSize() * 8.0f, ImGui::GetContentRegionAvail().x - selectorLabel));
+            ImGui::SetNextItemWidth(FgSelectorWidth(selectorLabel));
             PopulateCombo(TrL("FG Input"), config->FGInput, inputOptions);
             ShowTooltip("The data source to be used for FG\n"
                         "The native FG which the game supports");
@@ -11774,7 +11798,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             {
                 // Disable None?
                 // The combo fills its column minus its label: neither the names nor the label are cut
-                ImGui::SetNextItemWidth(std::max(ImGui::GetFontSize() * 8.0f, ImGui::GetContentRegionAvail().x - selectorLabel));
+                ImGui::SetNextItemWidth(FgSelectorWidth(selectorLabel));
                 PopulateCombo(TrL("FG Nvngx"), config->FGNvngxReplacement, nvngxOptions);
                 ShowTooltip("What backend to use instead of the real DLSSG");
                 if (config->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::HelixSR)
@@ -11783,7 +11807,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             else
             {
                 // The combo fills its column minus its label: neither the names nor the label are cut
-                ImGui::SetNextItemWidth(std::max(ImGui::GetFontSize() * 8.0f, ImGui::GetContentRegionAvail().x - selectorLabel));
+                ImGui::SetNextItemWidth(FgSelectorWidth(selectorLabel));
                 PopulateCombo(TrL("FG Output"), config->FGOutput, outputOptions);
                 ShowTooltip("The FG that you will actually be using");
             }
@@ -11793,7 +11817,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                 ImGui::TableNextColumn();
 
                 // The combo fills its column minus its label: neither the names nor the label are cut
-                ImGui::SetNextItemWidth(std::max(ImGui::GetFontSize() * 8.0f, ImGui::GetContentRegionAvail().x - selectorLabel));
+                ImGui::SetNextItemWidth(FgSelectorWidth(selectorLabel));
                 PopulateCombo(TrL("FG Nvngx Replacement"), config->FGNvngxReplacement, nvngxOptions);
                 ShowTooltip("What backend to use instead of the real DLSSG");
                 if (config->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::HelixSR)
@@ -14800,7 +14824,9 @@ void MenuCommon::RenderIntelligentLatency(RenderMenuContext& ctx)
         ShowTooltip(tips[i]);
     }
 
-    // What fakenvapi and the game report
+    // What fakenvapi and the game report (the new interface: folded, the switches above stay in view)
+    if (!IlionTheme::shell || IlionTheme::CollapsingHeader(TrL("Technical report##IlionLat")))
+    {
     const auto vendor = IdentifyGpu::getPrimaryGpu().vendorId;
     const bool fakenvapiInUse = fakenvapi::isUsingAsMainNvapi();
     const LowLatencyMode tech = fakenvapiInUse ? fakenvapi::getCurrentMode() : LowLatencyMode::None;
@@ -14955,6 +14981,7 @@ void MenuCommon::RenderIntelligentLatency(RenderMenuContext& ctx)
                     Tr("More than one generated frame or dynamic DLSS-G: no Anti-Lag 2 or XeLL, Reflex off"));
         WrappedText(IlionTheme::TextDim, Tr("Force LatencyFlex skips Anti-Lag 2 and XeLL"));
         WrappedText(IlionTheme::TextDim, Tr("NVIDIA GPU: native Reflex, fakenvapi not used"));
+    }
     }
 }
 
@@ -15777,6 +15804,14 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
 
     // FPS OVERLAY -----------------------------
     SectionTitle("FPS Overlay");
+
+    // ILION dev.60: the new interface keeps the overlay's settings on the left and the hardware readings on the right
+    const bool overlayColumns = IlionTheme::shell && ImGui::GetContentRegionAvail().x > ImGui::GetFontSize() * 40.0f;
+    if (overlayColumns)
+    {
+        ImGui::BeginTable("##OverlayColumns", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings);
+        ImGui::TableNextColumn();
+    }
     {
         ScopedID sectionId { "FPS Overlay" };
 
@@ -15909,6 +15944,12 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
         // Hardware readings, every one can be shown on its own. A section that folds, like the others of the menu.
         ImGui::Spacing();
 
+        if (overlayColumns)
+        {
+            ImGui::TableNextColumn();
+            ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+        }
+
         auto hardwareHeader = ScopedCollapsingHeader(TrL("Hardware monitoring"));
 
         ShowTooltip("Readings come from HWiNFO or MSI Afterburner while they are running, about once per second.\n"
@@ -15988,6 +16029,9 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
         } // sensor sources
         }
     }
+
+    if (overlayColumns)
+        ImGui::EndTable();
 }
 
 void MenuCommon::RenderUpscalerInputsSettings(RenderMenuContext& ctx)
@@ -20008,9 +20052,20 @@ struct MenuCommon::ShellLayout
     bool settings = false;
 };
 
-bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, const ShellLayout* layout, bool flow)
+// ILION dev.60: the texts below are UTF-8 in the binary (accents, Cyrillic), as in ilion_lang.h
+#pragma execution_character_set(push, "utf-8")
+
+// Text of the new interface in the four languages of the menu, for the parts of it drawn here
+static const char* ShellText(const char* en, const char* es, const char* pt, const char* ru)
 {
-    if (!shellActive || (layout == nullptr && !flow))
+    const auto lang = Ilion::CurrentLang();
+    return lang == Ilion::Lang::ES ? es : lang == Ilion::Lang::PT ? pt : lang == Ilion::Lang::RU ? ru : en;
+}
+
+// flow: 0 none, -1 the cards split at half of their height, n the right column starts at the card n (0 based)
+bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, const ShellLayout* layout, int flow)
+{
+    if (!shellActive || (layout == nullptr && flow == 0))
         return false;
 
     const bool columns = ImGui::GetContentRegionAvail().x > ImGui::GetFontSize() * 44.0f;
@@ -20021,6 +20076,34 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
 
     const auto drawBox = [&](const char* id)
     {
+        if (strcmp(id, "@fg_quick") == 0)
+        {
+            ScopedCard card;
+            ScopedID quickId { "fg_quick" };
+            RenderFgQuickControls(ctx);
+            return;
+        }
+
+        if (strcmp(id, "@upscaler_diag") == 0)
+        {
+            ScopedCard card(ShellText("Upscaler: DLL and hot-swap", "Escalador: DLL y cambio en caliente", "Upscaler: DLL e troca a quente",
+                                      "Апскейлер: DLL и горячая замена"));
+            ScopedID diagId { "upscaler_diag" };
+            IFeature* feature = ctx.currentFeature;
+            const bool on = feature != nullptr && feature->IsInited();
+
+            if (on && ctx.state.dlssExternalBackend && feature->GetUpscalerType() == Upscaler::DLSS)
+                IlionD4rPanel::Draw(IlionD4rLogPath(), feature->Version().major, feature->Version().minor, feature->Version().patch);
+            else if (on && RunsSwitchedFfx(feature->GetUpscalerType()))
+                RenderUpscalerDllDiagnostics(ctx);
+            else
+                TextWrappedDisabled("%s", ShellText("No FFX upscaler or DLSS 4 (d4r) is running: nothing to diagnose here.",
+                                                    "No se está ejecutando un escalador FFX ni DLSS 4 (d4r): aquí no hay nada que diagnosticar.",
+                                                    "Nenhum upscaler FFX ou DLSS 4 (d4r) em execução: nada a diagnosticar aqui.",
+                                                    "Не работает ни FFX-апскейлер, ни DLSS 4 (d4r): диагностировать нечего."));
+            return;
+        }
+
         if (strcmp(id, "@fg_instruments") == 0)
         {
             ScopedID instrumentsId { "fg_instruments" };
@@ -20088,9 +20171,9 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
     for (const float h : ScopedCard::flowHeights)
         total += h;
 
-    int breakAt = 1;
+    int breakAt = flow > 0 ? flow : 1;
     float acc = 0.0f;
-    for (int i = 0; i < (int) ScopedCard::flowHeights.size(); i++)
+    for (int i = 0; flow < 0 && i < (int) ScopedCard::flowHeights.size(); i++)
     {
         acc += ScopedCard::flowHeights[i];
         breakAt = i + 1;
@@ -20099,7 +20182,7 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
     }
 
     // A tab of a single card keeps the whole width
-    const bool table = columns && ScopedCard::flowHeights.size() != 1 && ImGui::BeginTable("##ShellFlow", 2, tableFlags);
+    const bool table = columns && (flow > 0 || ScopedCard::flowHeights.size() != 1) && ImGui::BeginTable("##ShellFlow", 2, tableFlags);
 
     if (table)
     {
@@ -20108,7 +20191,7 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
         ScopedCard::flowTable = ImGui::GetCurrentTable();
         ScopedCard::flowBroken = false;
         ScopedCard::flowIndex = 0;
-        ScopedCard::flowBreak = (int) ScopedCard::flowHeights.size() > 1 ? breakAt : 1;
+        ScopedCard::flowBreak = flow > 0 || (int) ScopedCard::flowHeights.size() > 1 ? breakAt : 1;
     }
 
     if (tab.draw != nullptr)
@@ -20134,9 +20217,11 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
     return true;
 }
 
+#pragma execution_character_set(pop)
+
 // The content of one tab: what the tab draws, its boxes (Essential: the main ones, the secondary ones folded) and the
 // Personal or ReShade panel beside them. ILION dev.57: also drawn inside the sections of the new interface
-void MenuCommon::RenderMenuTabBody(RenderMenuContext& ctx, int tabIndex, bool scrollChild, const ShellLayout* layout, bool flow)
+void MenuCommon::RenderMenuTabBody(RenderMenuContext& ctx, int tabIndex, bool scrollChild, const ShellLayout* layout, int flow)
 {
     auto config = ctx.config;
     auto& menuResScale = ctx.menuResScale;

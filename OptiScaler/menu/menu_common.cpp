@@ -250,6 +250,10 @@ static bool shellSimple = false;                // ILION dev.71: the new interfa
 static bool shellCompact = false;               // ILION dev.73: the new interface draws its Compact presentation
 static float fgHomeComboWidth = 0.0f;           // ILION dev.71: width of the FG selectors, the XeMFG variant and the multiplier
                                                 // in the Home card when it is split in two zones (0: their usual width)
+static float fgCompactComboWidth = 0.0f;        // ILION dev.77: Compact's Generation: width of the FG selectors (0: usual)
+static float fgCompactSelTop = 0.0f;            // ILION dev.77: top of those selectors (screen), for the FG states beside them
+static float fgCompactSelRight = 0.0f;          // ILION dev.77: how far right those selectors and their labels reach
+static float fgCompactStatesWidth = 0.0f;       // ILION dev.77: width of the FG states' block, measured when drawn
 static bool shellActive = false;                // ILION dev.58: the new interface is drawing, in its single (Advanced) mode
 static bool shellSettingsTag = false;           // ILION dev.59: the cards drawn now change settings (marked on their name)
 static bool shellHidesUpscalerDiag = false;     // ILION dev.60: Upscaling shows its settings; DLL path and diagnostics are in Status
@@ -11506,8 +11510,8 @@ static void RenderXeMfgVariantSelector(decltype(Config::Instance()) config)
     ImGui::Spacing();
     ImGui::BeginDisabled(!config->LoadAsiPlugins.value_or_default());
     // ILION dev.62: in the new interface as wide as the FG selectors above it, their labels in one column
-    if (IlionTheme::shell && fgHomeComboWidth > 0.0f)
-        ImGui::SetNextItemWidth(fgHomeComboWidth);
+    if (IlionTheme::shell && (fgHomeComboWidth > 0.0f || fgCompactComboWidth > 0.0f))
+        ImGui::SetNextItemWidth(fgHomeComboWidth > 0.0f ? fgHomeComboWidth : fgCompactComboWidth);
     else if (IlionTheme::shell)
         ImGui::SetNextItemWidth(std::min(ImGui::GetFontSize() * 17.0f, std::max(ImGui::GetFontSize() * 8.0f, ImGui::GetContentRegionAvail().x - ImGui::GetFontSize() * 9.0f)));
     else
@@ -11935,12 +11939,32 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
         const ImVec2 selectionStart = ImGui::GetCursorScreenPos();
         const float selectionWidth = crtBeside ? selectionAvail - crtSize.x - crtGap : 0.0f;
 
+        // ILION dev.77: Compact's Generation: the selectors leave the right of the card to the FG states, which then
+        // start level with "FG Input" (RenderFgQuickControls). Only the width of the combos changes
+        fgCompactComboWidth = 0.0f;
+        fgCompactSelTop = 0.0f;
+        if (shellCompact && !fgSelectorsOnly)
+        {
+            float shownLabel = std::max(ImGui::CalcTextSize(Tr("FG Input")).x, ImGui::CalcTextSize(Tr(replaceFgOutputWithNvngx ? "FG Nvngx" : "FG Output")).x);
+            if (showNvngxFgDowndown)
+                shownLabel = std::max(shownLabel, ImGui::CalcTextSize(Tr("FG Nvngx Replacement")).x);
+            if (config->FGOutput.value_or_default() == FGOutput::XeFG)
+                shownLabel = std::max(shownLabel, ImGui::CalcTextSize(Tr("XeMFG variant")).x);
+            shownLabel += ImGui::GetStyle().ItemInnerSpacing.x * 2.0f;
+            const float statesWidth = fgCompactStatesWidth > 0.0f ? fgCompactStatesWidth : ImGui::GetFontSize() * 18.0f;
+            const float margins = ImGui::GetFontSize() * 2.25f; // the right margin and the gap between the two zones
+            fgCompactComboWidth = std::clamp(std::floor(selectionAvail - statesWidth - margins - shownLabel), ImGui::GetFontSize() * 8.0f,
+                                             ImGui::GetFontSize() * 17.0f);
+            fgCompactSelTop = selectionStart.y;
+            fgCompactSelRight = selectionStart.x + fgCompactComboWidth + shownLabel;
+        }
+
         if (ImGui::BeginTable("fgSelection", 1, ImGuiTableFlags_SizingStretchSame, ImVec2(selectionWidth, 0.0f)))
         {
             ImGui::TableNextColumn();
 
             // The combo fills its column minus its label: neither the names nor the label are cut
-            ImGui::SetNextItemWidth(fgHomeComboWidth > 0.0f ? fgHomeComboWidth : FgSelectorWidth(selectorLabel));
+            ImGui::SetNextItemWidth(fgHomeComboWidth > 0.0f ? fgHomeComboWidth : fgCompactComboWidth > 0.0f ? fgCompactComboWidth : FgSelectorWidth(selectorLabel));
             PopulateCombo(TrL("FG Input"), config->FGInput, inputOptions);
             ShowTooltip("The data source to be used for FG\n"
                         "The native FG which the game supports");
@@ -11951,7 +11975,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             {
                 // Disable None?
                 // The combo fills its column minus its label: neither the names nor the label are cut
-                ImGui::SetNextItemWidth(fgHomeComboWidth > 0.0f ? fgHomeComboWidth : FgSelectorWidth(selectorLabel));
+                ImGui::SetNextItemWidth(fgHomeComboWidth > 0.0f ? fgHomeComboWidth : fgCompactComboWidth > 0.0f ? fgCompactComboWidth : FgSelectorWidth(selectorLabel));
                 PopulateCombo(TrL("FG Nvngx"), config->FGNvngxReplacement, nvngxOptions);
                 ShowTooltip("What backend to use instead of the real DLSSG");
                 if (config->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::HelixSR)
@@ -11960,7 +11984,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             else
             {
                 // The combo fills its column minus its label: neither the names nor the label are cut
-                ImGui::SetNextItemWidth(fgHomeComboWidth > 0.0f ? fgHomeComboWidth : FgSelectorWidth(selectorLabel));
+                ImGui::SetNextItemWidth(fgHomeComboWidth > 0.0f ? fgHomeComboWidth : fgCompactComboWidth > 0.0f ? fgCompactComboWidth : FgSelectorWidth(selectorLabel));
                 PopulateCombo(TrL("FG Output"), config->FGOutput, outputOptions);
                 ShowTooltip("The FG that you will actually be using");
             }
@@ -11970,7 +11994,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                 ImGui::TableNextColumn();
 
                 // The combo fills its column minus its label: neither the names nor the label are cut
-                ImGui::SetNextItemWidth(fgHomeComboWidth > 0.0f ? fgHomeComboWidth : FgSelectorWidth(selectorLabel));
+                ImGui::SetNextItemWidth(fgHomeComboWidth > 0.0f ? fgHomeComboWidth : fgCompactComboWidth > 0.0f ? fgCompactComboWidth : FgSelectorWidth(selectorLabel));
                 PopulateCombo(TrL("FG Nvngx Replacement"), config->FGNvngxReplacement, nvngxOptions);
                 ShowTooltip("What backend to use instead of the real DLSSG");
                 if (config->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::HelixSR)

@@ -1028,16 +1028,53 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
         return;
     }
 
-    // ILION dev.76: the Compact presentation: two columns, the switch and under it the multiplier at the left, the four
-    // states at the right; the same controls and states
-    if (shellCompact && ImGui::BeginTable("##CompactFgControls", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings))
+    // ILION dev.76: the Compact presentation: the switch and under it the multiplier at the left, the four states at the
+    // right. dev.77: the states a little larger, against the card's right edge (20 px), from the height of "FG Input"
+    // when the selectors leave them room (they are narrowed for it in RenderFrameGenerationSelection)
+    if (shellCompact)
     {
-        ImGui::TableNextColumn();
+        const ImVec2 leftStart = ImGui::GetCursorScreenPos();
+        const float contentRight = leftStart.x + ImGui::GetContentRegionAvail().x;
         drawSwitch(Lx("Frame generation on###QuickFg", "Generación activada###QuickFg", "Geração ativada###QuickFg", "Генерация включена###QuickFg"));
+        float leftRight = ImGui::GetItemRectMax().x;
         drawMultiplier(U(130), "Frame Gen##QuickMult", true);
-        ImGui::TableNextColumn();
-        drawStates();
-        ImGui::EndTable();
+        leftRight = (std::max)(leftRight, ImGui::GetItemRectMax().x);
+        const float leftBottom = ImGui::GetCursorScreenPos().y;
+
+        ImGui::PushFont(ImGui::GetFont(), std::floor(ImGui::GetFontSize() * 1.15f));
+        labelWidth = 0.0f;
+        for (const char* name : names)
+            labelWidth = (std::max)(labelWidth, ImGui::CalcTextSize(name).x);
+        const float lh = ImGui::GetTextLineHeight();
+        float valueWidth = (std::max)({ ImGui::CalcTextSize(chosen.c_str()).x, ImGui::CalcTextSize(loaded.c_str()).x, ImGui::CalcTextSize(active.c_str()).x });
+        if (state.currentFGSwapchain != nullptr && state.activeFgInput == FGInput::DLSSG)
+        {
+            const char* streamlineNow = !ReflexHooks::isReflexHooked()                     ? Tr("Reflex not hooked")
+                                        : (state.fgLastFrame - state.dlssgLastFrame) >= 3 ? Tr("OFF")
+                                        : fg != nullptr && fg->IsActive()                  ? Tr("ON")
+                                                                                           : Tr("ACTIVATE FG");
+            valueWidth = (std::max)(valueWidth, ImGui::CalcTextSize(streamlineNow).x);
+        }
+        const float blockWidth = std::ceil(lh + U(6) + labelWidth + U(10) + valueWidth);
+        fgCompactStatesWidth = blockWidth;
+
+        const float statesX = std::floor(contentRight - blockWidth - U(20));
+        const bool fromTop = fgCompactSelTop > 0.0f && statesX >= fgCompactSelRight + U(16);
+        if (fromTop || statesX >= leftRight + U(16))
+        {
+            ImGui::SetCursorScreenPos(ImVec2(statesX, fromTop ? fgCompactSelTop : leftStart.y));
+            ImGui::BeginGroup();
+            drawStates();
+            ImGui::EndGroup();
+            const float rightBottom = ImGui::GetItemRectMax().y + ImGui::GetStyle().ItemSpacing.y;
+            ImGui::SetCursorScreenPos(ImVec2(leftStart.x, (std::max)(leftBottom, rightBottom)));
+            ImGui::Dummy(ImVec2(0.0f, 0.0f));
+        }
+        else
+            drawStates();
+        ImGui::PopFont();
+        fgCompactSelTop = 0.0f;
+
         if (!same)
             TextWrappedColored(Tone(pal::Orange), "%s", pendingNote);
         return;
@@ -2040,6 +2077,9 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                     // ILION Advisor: its confidence pilot, the suggested setting and the key to its diagnosis
                     ImGui::TableSetColumnIndex(1);
                     ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, Col(Mix(pal::Bg, ImVec4(0, 0, 0, 1), 0.25f)));
+                    // ILION dev.77: room around its texts: above, at the left, and between its name and the suggestion
+                    ImGui::Dummy(ImVec2(0.0f, U(6.f)));
+                    ImGui::Indent(U(11.f));
                     {
                         const ImVec2 p = ImGui::GetCursorScreenPos();
                         const float h = ImGui::GetTextLineHeight();
@@ -2050,6 +2090,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                     ImGui::TextColored(Tone(pal::Green), "ILION ADVISOR");
                     ImGui::SameLine(0, U(8));
                     ImGui::TextColored(Tone(pal::Dim), "%s", Lx("Suggested setting", "Configuración sugerida", "Configuração sugerida", "Рекомендация"));
+                    ImGui::Dummy(ImVec2(0.0f, U(3.f)));
 
                     const AdvisorSuggestion sug = advisorSuggestion();
                     if (!sug.ready)
@@ -2088,6 +2129,8 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                     if (IlionTheme::Button(Lx("Diagnosis###CompactAdvisorOpen", "Diagnóstico###CompactAdvisorOpen",
                                               "Diagnóstico###CompactAdvisorOpen", "Диагностика###CompactAdvisorOpen")))
                         openAdvisor = true;
+                    ImGui::Unindent(U(11.f));
+                    ImGui::Dummy(ImVec2(0.0f, U(4.f)));
                     ImGui::EndTable();
                 }
 
@@ -2231,6 +2274,74 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                 skipSectionTitle = nullptr;
                 shellHidesSelector = false;
                 shellHidesUpscalerDiag = false;
+
+                // ILION dev.77: the capabilities of the implementation that runs, as the catalogue knows them (the facts its
+                // tooltip states): whether it switches while playing, the DX12 interop, where an AMD driver dll comes from,
+                // HLX's identification. Nothing shown above is repeated; with nothing to say the part is not drawn
+                if (IsUpscalerActive(feature))
+                {
+                    const auto catalog = GatherUpscalers(feature);
+                    const UpscalerVariant* running = nullptr;
+                    for (const auto& v : catalog.variants)
+                        if (v.status.active && running == nullptr)
+                            running = &v;
+                    for (const auto& v : catalog.variants)
+                        if (v.status.loaded && running == nullptr)
+                            running = &v;
+
+                    std::vector<std::pair<Led, std::string>> facts;
+                    if (running != nullptr)
+                    {
+                        const IlionUpscalers::Entry* entry = running->entry;
+                        const bool hot = running->vkDriver || running->backend != Upscaler::Reset || running->ffxIndex >= 0 ||
+                                         (entry != nullptr && IlionUpscalers::SwitchesAsFfx(*entry));
+                        if (hot)
+                            facts.push_back({ Led::Green, Lx("Switches while the game runs.", "Se cambia en caliente, con el juego en marcha.",
+                                                             "Troca a quente, com o jogo em execução.", "Переключается на лету, во время игры.") });
+                        else if (entry != nullptr && entry->kind == IlionUpscalers::Kind::D4r)
+                            facts.push_back({ Led::Orange, Lx("d4r is loaded when the game starts: changing it needs a restart.",
+                                                              "d4r se carga al iniciar el juego: cambiarlo requiere reiniciar.",
+                                                              "O d4r é carregado ao iniciar o jogo: trocá-lo exige reiniciar.",
+                                                              "d4r загружается при запуске игры: для смены нужен перезапуск.") });
+                        if (entry != nullptr && IlionUpscalers::SwitchesAsFfx(*entry) && state.api != DX12)
+                            facts.push_back({ Led::Green, Lx("Runs through OptiScaler's DirectX 12 interop.", "Funciona a través del interop DirectX 12 de OptiScaler.",
+                                                             "Funciona pelo interop DirectX 12 do OptiScaler.", "Работает через интероп DirectX 12 OptiScaler.") });
+                        if (entry != nullptr && entry->kind == IlionUpscalers::Kind::Provider)
+                            facts.push_back({ Led::Off, entry->key == L"FSR4/AMD driver"
+                                                            ? Lx("AMD driver dll, used from the installed driver.", "DLL del driver de AMD, usada desde el driver instalado.",
+                                                                 "DLL do driver da AMD, usada a partir do driver instalado.", "DLL драйвера AMD из установленного драйвера.")
+                                                            : Lx("Copy of an AMD driver dll in an ILION folder.", "Copia de una DLL del driver de AMD en una carpeta de ILION.",
+                                                                 "Cópia de uma DLL do driver da AMD numa pasta do ILION.", "Копия DLL драйвера AMD в папке ILION.") });
+                        if (entry != nullptr && entry->family == IlionUpscalers::Family::HelixSR && entry->hlx)
+                            facts.push_back({ Led::Green, Lx("HLX FSR 4, identified by its file; ILION checks that it is the dll running.",
+                                                             "HLX FSR 4, identificado por su archivo; ILION comprueba que es la DLL en ejecución.",
+                                                             "HLX FSR 4, identificado pelo arquivo; o ILION verifica que é a DLL em execução.",
+                                                             "HLX FSR 4, опознан по файлу; ILION проверяет, что работает именно эта DLL.") });
+                        if (entry != nullptr && entry->forwardsToAmd)
+                            facts.push_back({ Led::Off, Lx("AMD's FSR is next to it; ILION starts HelixSR's own provider.",
+                                                           "El FSR de AMD está a su lado; ILION inicia el proveedor propio de HelixSR.",
+                                                           "O FSR da AMD está ao lado; o ILION inicia o provedor próprio do HelixSR.",
+                                                           "Рядом FSR от AMD; ILION запускает собственный провайдер HelixSR.") });
+                    }
+
+                    if (!facts.empty())
+                    {
+                        ImGui::Spacing();
+                        IlionTheme::SectionPlate(Lx("Capabilities of the active provider", "Capacidades del proveedor activo",
+                                                    "Capacidades do provedor ativo", "Возможности активного провайдера"));
+                        for (const auto& [led, text] : facts)
+                        {
+                            const ImVec2 p = ImGui::GetCursorScreenPos();
+                            const float h = ImGui::GetTextLineHeight();
+                            ShellLedAt(ImGui::GetWindowDrawList(), ImVec2(p.x + h * 0.5f, p.y + h * 0.5f), h * 0.22f, led);
+                            ImGui::Dummy(ImVec2(h, h));
+                            ImGui::SameLine(0, U(6));
+                            ImGui::PushStyleColor(ImGuiCol_Text, Tone(pal::Text2));
+                            ImGui::TextWrapped("%s", text.c_str());
+                            ImGui::PopStyleColor();
+                        }
+                    }
+                }
             }
             else if (compactSection < kDiag)
             {
@@ -2244,6 +2355,8 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                     RenderMenuTabBody(ctx, tabIndex(sub.tab), false, layout, sub.flow);
                     shellFgInstrumentsApart = false;
                     shellFgQuickInline = false;
+                    fgCompactComboWidth = 0.0f;
+                    fgCompactSelTop = 0.0f;
                 }
                 else
                     Label(Lx("Nothing to show in this section for this game.", "Nada que mostrar en esta sección para este juego.",

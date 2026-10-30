@@ -532,6 +532,7 @@ static int LangIndex()
 }
 
 static int section = 0;
+static bool fgQuickHome = false; // ILION dev.67: RenderFgQuickControls drawn for the Home card
 static int subTab[kSectionCount] = {};
 static int upFamily = -1;      // family shown in the upscaling panel
 static int upFilter = 0;       // filter of the catalogue
@@ -833,37 +834,44 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
     auto config = ctx.config;
     auto fg = state.currentFG;
     const bool running = fg != nullptr && fg->IsActive() && !fg->IsPaused();
+    const bool homeLayout = fgQuickHome; // ILION dev.67: the Home card's own arrangement (Generation keeps its own)
 
-    bool on = config->IsFGEnabled();
-    ImGui::BeginDisabled(!CanToggleFrameGeneration(state));
-    if (IlionTheme::Checkbox(Lx("Frame generation on###QuickFg", "Generación activada###QuickFg", "Geração ativada###QuickFg",
-                                "Генерация включена###QuickFg"),
-                             &on))
-        ToggleFrameGeneration(state, config);
-    ImGui::EndDisabled();
+    // On / off, the FG key's own function
+    const auto drawSwitch = [&](const char* label)
+    {
+        bool on = config->IsFGEnabled();
+        ImGui::BeginDisabled(!CanToggleFrameGeneration(state));
+        if (IlionTheme::Checkbox(label, &on))
+            ToggleFrameGeneration(state, config);
+        ImGui::EndDisabled();
+    };
 
     // Multiplier: only with an output loaded, up to what it can generate
-    ImGui::SameLine(0, U(24));
-    if (fg != nullptr && (state.activeFgOutput == FGOutput::XeFG || state.activeFgOutput == FGOutput::DLSSG ||
-                          state.activeFgOutput == FGOutput::FSRFG))
+    const auto drawMultiplier = [&](float width, const char* label, bool shortNote)
     {
-        ImGui::SetNextItemWidth(U(130));
-        if (state.activeFgOutput == FGOutput::XeFG)
-            RenderFGModeCombo(ctx, "Frame Gen##QuickMult", fg->GetMaxInterpolationCount(), &config->FGXeFGInterpolationCount);
-        else if (state.activeFgOutput == FGOutput::DLSSG)
-            RenderFGModeCombo(ctx, "Frame Gen##QuickMult", fg->GetMaxInterpolationCount(), &config->FGDLSSGInterpolationCount);
+        if (fg != nullptr && (state.activeFgOutput == FGOutput::XeFG || state.activeFgOutput == FGOutput::DLSSG ||
+                              state.activeFgOutput == FGOutput::FSRFG))
+        {
+            ImGui::SetNextItemWidth(width);
+            if (state.activeFgOutput == FGOutput::XeFG)
+                RenderFGModeCombo(ctx, label, fg->GetMaxInterpolationCount(), &config->FGXeFGInterpolationCount);
+            else if (state.activeFgOutput == FGOutput::DLSSG)
+                RenderFGModeCombo(ctx, label, fg->GetMaxInterpolationCount(), &config->FGDLSSGInterpolationCount);
+            else
+                RenderFGModeCombo(ctx, label, 1, nullptr);
+        }
         else
-            RenderFGModeCombo(ctx, "Frame Gen##QuickMult", 1, nullptr);
-    }
-    else
-    {
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled("%s", Lx("Multiplier: once an FG output is loaded", "Multiplicador: con una salida de FG cargada",
-                                     "Multiplicador: com uma saída de FG carregada", "Множитель: после загрузки выхода FG"));
-    }
+        {
+            const char* note = Lx("Multiplier: once an FG output is loaded", "Multiplicador: con una salida de FG cargada",
+                                  "Multiplicador: com uma saída de FG carregada", "Множитель: после загрузки выхода FG");
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("%s", shortNote ? Lx("Multiplier: -", "Multiplicador: -", "Multiplicador: -", "Множитель: -") : note);
+            if (shortNote && ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", note);
+        }
+    };
 
-    // Chosen, loaded and active, apart, a little below the switch row
-    ImGui::Dummy(Sz(0.f, 5.f));
+    // Chosen, loaded, generating and Streamline FG: labels in one column, their values starting at the same place
     const char* names[4] = { Lx("Chosen:", "Elegido:", "Escolhido:", "Выбрано:"), Lx("Loaded:", "Cargado:", "Carregado:", "Загружено:"),
                              Lx("Generating:", "Generando:", "Gerando:", "Генерирует:"), "Streamline FG:" };
     float labelWidth = 0.0f;
@@ -900,27 +908,72 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
         active = StrFmt("%s %ux", name.c_str(), multiplier);
     }
 
-    row(Led::Off, names[0], chosen);
-    row(same ? Led::Green : Led::Orange, names[1], loaded);
-    row(running ? Led::Green : Led::Off, names[2], active);
-
-    // Streamline FG (DLSSG of the game as input): its state, read the same way as its card of the classic menu
-    if (state.currentFGSwapchain != nullptr && state.activeFgInput == FGInput::DLSSG)
+    const auto drawStates = [&]()
     {
-        if (!ReflexHooks::isReflexHooked())
-            row(Led::Red, names[3], Tr("Reflex not hooked"));
-        else if ((state.fgLastFrame - state.dlssgLastFrame) < 3)
-            row(fg != nullptr && fg->IsActive() ? Led::Green : Led::Orange, names[3], fg != nullptr && fg->IsActive() ? Tr("ON") : Tr("ACTIVATE FG"));
-        else
-            row(Led::Off, names[3], std::string(Tr("OFF")) + "  ·  " + Lx("select DLSS Frame Generation in the game", "elige DLSS Frame Generation en el juego",
-                                                                         "escolha DLSS Frame Generation no jogo", "выберите DLSS Frame Generation в игре"));
+        row(Led::Off, names[0], chosen);
+        row(same ? Led::Green : Led::Orange, names[1], loaded);
+        row(running ? Led::Green : Led::Off, names[2], active);
+
+        // Streamline FG (DLSSG of the game as input): its state, read the same way as its card of the classic menu
+        if (state.currentFGSwapchain != nullptr && state.activeFgInput == FGInput::DLSSG)
+        {
+            if (!ReflexHooks::isReflexHooked())
+                row(Led::Red, names[3], Tr("Reflex not hooked"));
+            else if ((state.fgLastFrame - state.dlssgLastFrame) < 3)
+                row(fg != nullptr && fg->IsActive() ? Led::Green : Led::Orange, names[3], fg != nullptr && fg->IsActive() ? Tr("ON") : Tr("ACTIVATE FG"));
+            else
+                row(Led::Off, names[3], std::string(Tr("OFF")) + "  ·  " + Lx("select DLSS Frame Generation in the game", "elige DLSS Frame Generation en el juego",
+                                                                             "escolha DLSS Frame Generation no jogo", "выберите DLSS Frame Generation в игре"));
+        }
+    };
+
+    const char* pendingNote = Lx("The choice is not the one loaded yet: it applies when OptiScaler creates the FG again (in some games, after a restart).",
+                                 "La elección aún no es la cargada: se aplica cuando OptiScaler vuelve a crear la FG (en algunos juegos, tras reiniciar).",
+                                 "A escolha ainda não é a carregada: aplica-se quando o OptiScaler recria a FG (em alguns jogos, após reiniciar).",
+                                 "Выбор ещё не загружен: применится, когда OptiScaler заново создаст FG (в некоторых играх — после перезапуска).");
+
+    if (homeLayout)
+    {
+        // Home: the multiplier under the selectors, as wide as them (its arrow under theirs), "On" under it, and the
+        // states in a column at the right instead of under everything
+        float selectorLabel = 0.0f;
+        for (const char* label : { "FG Input", "FG Output", "FG Nvngx", "FG Nvngx Replacement" })
+            selectorLabel = (std::max)(selectorLabel, ImGui::CalcTextSize(Tr(label)).x);
+        selectorLabel += ImGui::GetStyle().ItemInnerSpacing.x * 2.0f;
+        const float width = FgSelectorWidth(selectorLabel);
+
+        if (ImGui::BeginTable("##HomeFgControl", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings))
+        {
+            ImGui::TableSetupColumn("##controls", ImGuiTableColumnFlags_WidthFixed, width + U(18));
+            ImGui::TableSetupColumn("##states", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableNextColumn();
+            drawMultiplier(width, "##HomeMult", true);
+            drawSwitch(Lx("On###QuickFg", "Activada###QuickFg", "Ativada###QuickFg", "Вкл.###QuickFg"));
+            ImGui::TableNextColumn();
+            drawStates();
+            ImGui::EndTable();
+        }
+
+        if (!same)
+        {
+            ImGui::TextColored(Tone(pal::Orange), "%s", Lx("Chosen FG not loaded yet", "FG elegida aún sin cargar", "FG escolhida ainda não carregada",
+                                                           "Выбранная FG ещё не загружена"));
+            if (ImGui::IsItemHovered())
+                WrappedTooltip("%s", pendingNote);
+        }
+        return;
     }
+
+    // Frame Gen > Generation: as approved (switch and multiplier on one row, the states under them)
+    drawSwitch(Lx("Frame generation on###QuickFg", "Generación activada###QuickFg", "Geração ativada###QuickFg", "Генерация включена###QuickFg"));
+    ImGui::SameLine(0, U(24));
+    drawMultiplier(U(130), "Frame Gen##QuickMult", false);
+
+    // Chosen, loaded and active, apart, a little below the switch row
+    ImGui::Dummy(Sz(0.f, 5.f));
+    drawStates();
     if (!same)
-        TextWrappedColored(Tone(pal::Orange), "%s",
-                           Lx("The choice is not the one loaded yet: it applies when OptiScaler creates the FG again (in some games, after a restart).",
-                              "La elección aún no es la cargada: se aplica cuando OptiScaler vuelve a crear la FG (en algunos juegos, tras reiniciar).",
-                              "A escolha ainda não é a carregada: aplica-se quando o OptiScaler recria a FG (em alguns jogos, após reiniciar).",
-                              "Выбор ещё не загружен: применится, когда OptiScaler заново создаст FG (в некоторых играх — после перезапуска)."));
+        TextWrappedColored(Tone(pal::Orange), "%s", pendingNote);
 }
 
 void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
@@ -1408,21 +1461,51 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         if (advX1 - advX0 > 200)
         {
             const ImVec2 m0(advX0, a.y + 10), m1(advX1, b.y - 10);
-            PanelRect(m0, m1);
             const float mid = std::floor((m0.x + m1.x) * 0.5f);
 
-            // Bulb: glass with a glow, a filament, the base
+            // A screen set into the console: a thin frame, a 1 px bevel (dark above and left, a little light below and
+            // right, so it reads as sunk), a matte surface a shade darker than the header
             {
-                const ImVec2 bc(m0.x + 18, m0.y + 15);
-                for (int k = 3; k >= 1; k--)
-                    dl->AddCircleFilled(P(bc), U(6.f + k * 2.2f), Col(pal::Yellow, 0.05f * (4 - k)));
-                dl->AddCircleFilled(P(bc), U(6.f), Col(Mix(pal::Yellow, pal::Text, 0.25f)));
-                dl->AddLine(P(bc.x - 2, bc.y), P(bc.x + 2, bc.y), Col(pal::Orange), U(1.2f));
-                dl->AddRectFilled(P(bc.x - 3, bc.y + 6), P(bc.x + 3, bc.y + 10), Col(pal::Text2), U(1.f));
+                const ImVec2 f0 = P(m0), f1 = P(m1);
+                const float r = U(4.f);
+                dl->AddRectFilled(f0, f1, Col(Mix(pal::Bg, ImVec4(0, 0, 0, 1), 0.25f)), r);
+                dl->AddRect(f0, f1, Col(pal::Line), r, 0, 1.f);
+                const ImVec2 i0(f0.x + 1.f, f0.y + 1.f), i1(f1.x - 1.f, f1.y - 1.f);
+                dl->AddLine(ImVec2(i0.x + r, i0.y), ImVec2(i1.x - r, i0.y), Col(ImVec4(0, 0, 0, 0.55f)), 1.f);
+                dl->AddLine(ImVec2(i0.x, i0.y + r), ImVec2(i0.x, i1.y - r), Col(ImVec4(0, 0, 0, 0.45f)), 1.f);
+                dl->AddLine(ImVec2(i0.x + r, i1.y), ImVec2(i1.x - r, i1.y), Col(ImVec4(1, 1, 1, 0.05f)), 1.f);
+                dl->AddLine(ImVec2(i1.x, i0.y + r), ImVec2(i1.x, i1.y - r), Col(ImVec4(1, 1, 1, 0.04f)), 1.f);
             }
-            Text(fBrand, 15.f, ImVec2(m0.x + 32, m0.y + 6), pal::Green, "ILION ADVISOR");
-            dl->AddLine(P(m0.x + 8, m0.y + 30), P(m1.x - 8, m0.y + 30), Col(pal::Line));
-            dl->AddLine(P(mid, m0.y + 36), P(mid, m1.y - 8), Col(pal::Line));
+
+            // Pilot lamp of a Soviet panel: dark metal ring with a light edge above, a domed lens in the colour of the
+            // suggestion's confidence (green verified, yellow estimate, amber insufficient), a small reflection
+            {
+                IlionAdvisor::Level level = IlionAdvisor::Level::Insufficient;
+                if (advHasShown)
+                    level = (std::max)({ advShown.scalingLevel, advShown.fgLevel, advShown.nrLevel });
+                const ImVec4 lens = level == IlionAdvisor::Level::Verified ? pal::Green
+                                    : level == IlionAdvisor::Level::Estimate ? pal::Yellow
+                                                                             : pal::Orange;
+                const ImVec2 c = P(m0.x + 19, m0.y + 16);
+                const float rl = U(5.5f);
+                for (int k = 3; k >= 1; k--)
+                    dl->AddCircleFilled(c, rl + U(2.f) + k * U(1.6f), Col(lens, 0.035f * (4 - k)));
+                dl->AddCircleFilled(c, rl + U(2.6f), Col(ImVec4(0.16f, 0.17f, 0.16f, 1.f)));
+                dl->AddCircle(c, rl + U(2.6f), Col(ImVec4(0.02f, 0.02f, 0.02f, 1.f)), 0, 1.f);
+                dl->PathArcTo(c, rl + U(2.0f), 3.6f, 5.6f, 12);
+                dl->PathStroke(Col(ImVec4(0.55f, 0.57f, 0.53f, 0.55f)), 0, 1.f);
+                dl->AddCircleFilled(c, rl + U(0.6f), Col(ImVec4(0, 0, 0, 1.f)));
+                dl->AddCircleFilled(c, rl, Col(Mix(lens, ImVec4(0, 0, 0, 1), 0.45f)));
+                dl->AddCircleFilled(c, rl * 0.68f, Col(lens));
+                dl->AddCircleFilled(ImVec2(c.x - rl * 0.38f, c.y - rl * 0.38f), rl * 0.26f, Col(ImVec4(1, 1, 1, 0.55f)));
+            }
+            Text(fBrand, 15.f, ImVec2(m0.x + 34, m0.y + 7), pal::Green, "ILION ADVISOR");
+
+            // Slots, not bright lines: a dark line with a faint light one beside it
+            dl->AddLine(P(m0.x + 8, m0.y + 30), P(m1.x - 8, m0.y + 30), Col(ImVec4(0, 0, 0, 0.6f)));
+            dl->AddLine(P(m0.x + 8, m0.y + 31), P(m1.x - 8, m0.y + 31), Col(ImVec4(1, 1, 1, 0.05f)));
+            dl->AddLine(P(mid, m0.y + 37), P(mid, m1.y - 8), Col(ImVec4(0, 0, 0, 0.6f)));
+            dl->AddLine(P(mid + 1, m0.y + 37), P(mid + 1, m1.y - 8), Col(ImVec4(1, 1, 1, 0.05f)));
 
             const auto rows = [&](float x0, float x1, const char* head, const auto& draw)
             {
@@ -1491,10 +1574,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                      std::string fgText;
                      ImVec4 fgColour = off;
                      if (adv.fg)
-                     {
-                         fgText = StrFmt("%s x%d", FgOutName(adv.fgOut), adv.multiplier);
-                         fgColour = pal::Green;
-                     }
+                         fgColour = pal::Green; // drawn below in two parts: the technology and its multiplier
                      else if (adv.fgLevel == IlionAdvisor::Level::Insufficient)
                      {
                          fgText = Lx("not determinable yet", "aún no determinable", "ainda não determinável", "пока не определить");
@@ -1515,7 +1595,17 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                      Text(fUi, 13.f, ImVec2(x, m0.y + 54), pal::Text2, Lx("Upscaling", "Escalado", "Escala", "Масштаб"));
                      Text(fUi, 13.f, ImVec2(x + lw, m0.y + 54), upColour, up.c_str());
                      Text(fUi, 13.f, ImVec2(x, m0.y + 76), pal::Text2, "FG");
-                     Text(fUi, 13.f, ImVec2(x + lw, m0.y + 76), fgColour, fgText.c_str());
+                     if (adv.fg)
+                     {
+                         // The technology in its colour (XeFG in Intel blue, the others as before), the multiplier green
+                         const char* tech = FgOutName(adv.fgOut);
+                         const ImVec4 techColour = adv.fgOut == IlionAdvisor::XeFG ? ImVec4(0.30f, 0.62f, 1.00f, 1.f) : pal::Green;
+                         Text(fUi, 13.f, ImVec2(x + lw, m0.y + 76), techColour, tech);
+                         const std::string mult = StrFmt(" x%d", adv.multiplier);
+                         Text(fUi, 13.f, ImVec2(x + lw + Measure(fUi, 13.f, tech).x, m0.y + 76), pal::Green, mult.c_str());
+                     }
+                     else
+                         Text(fUi, 13.f, ImVec2(x + lw, m0.y + 76), fgColour, fgText.c_str());
                      Text(fUi, 13.f, ImVec2(x, m0.y + 98), pal::Text2, "NR");
                      Text(fUi, 13.f, ImVec2(x + lw, m0.y + 98), nrColour, nrText.c_str());
                  });
@@ -1979,8 +2069,9 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                  RenderFrameGenerationSelection(ctx);
                  fgSelectorsOnly = false;
                  shellFgInstrumentsApart = false;
-                 ImGui::Spacing();
+                 fgQuickHome = true;
                  RenderFgQuickControls(ctx);
+                 fgQuickHome = false;
              });
 
         // Latency and FPS: the quick switches of fakenvapi (XeLL, LatencyFleX, Reflex), V-Sync, the FPS limit and the overlay

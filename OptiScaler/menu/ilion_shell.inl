@@ -419,9 +419,9 @@ static void PushContentStyle()
 
     // Sizes of the new interface: no small keys or cramped rows
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, Sz(10.f, 7.f));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, Sz(10.f, 9.f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, Sz(10.f, 7.f));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, Sz(8.f, 6.f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, Sz(16.f, 14.f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, Sz(14.f, 11.f));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, U(4.f));
     ImGui::PushStyleVar(ImGuiStyleVar_GrabRounding, U(4.f));
     ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, U(14.f));
@@ -536,7 +536,6 @@ static int subTab[kSectionCount] = {};
 static int upFamily = -1;      // family shown in the upscaling panel
 static int upFilter = 0;       // filter of the catalogue
 static bool upAdvanced = false; // folds of the upscaling panel
-static bool upDiagnostics = false;
 
 // Family of the selector: badge, colour, where it comes from, filter of the catalogue (1 AMD, 2 NVIDIA, 3 Intel, 4 community)
 struct FamilyLook
@@ -649,8 +648,8 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
     }
 
     // Chosen, loaded and active, apart
-    const char* names[3] = { Lx("Chosen:", "Elegido:", "Escolhido:", "Выбрано:"), Lx("Loaded:", "Cargado:", "Carregado:", "Загружено:"),
-                             Lx("Generating:", "Generando:", "Gerando:", "Генерирует:") };
+    const char* names[4] = { Lx("Chosen:", "Elegido:", "Escolhido:", "Выбрано:"), Lx("Loaded:", "Cargado:", "Carregado:", "Загружено:"),
+                             Lx("Generating:", "Generando:", "Gerando:", "Генерирует:"), "Streamline FG:" };
     float labelWidth = 0.0f;
     for (const char* name : names)
         labelWidth = (std::max)(labelWidth, ImGui::CalcTextSize(name).x);
@@ -688,6 +687,18 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
     row(Led::Off, names[0], chosen);
     row(same ? Led::Green : Led::Orange, names[1], loaded);
     row(running ? Led::Green : Led::Off, names[2], active);
+
+    // Streamline FG (DLSSG of the game as input): its state, read the same way as its card of the classic menu
+    if (state.currentFGSwapchain != nullptr && state.activeFgInput == FGInput::DLSSG)
+    {
+        if (!ReflexHooks::isReflexHooked())
+            row(Led::Red, names[3], Tr("Reflex not hooked"));
+        else if ((state.fgLastFrame - state.dlssgLastFrame) < 3)
+            row(fg != nullptr && fg->IsActive() ? Led::Green : Led::Orange, names[3], fg != nullptr && fg->IsActive() ? Tr("ON") : Tr("ACTIVATE FG"));
+        else
+            row(Led::Off, names[3], std::string(Tr("OFF")) + "  ·  " + Lx("select DLSS Frame Generation in the game", "elige DLSS Frame Generation en el juego",
+                                                                         "escolha DLSS Frame Generation no jogo", "выберите DLSS Frame Generation в игре"));
+    }
     if (!same)
         TextWrappedColored(Tone(pal::Orange), "%s",
                            Lx("The choice is not the one loaded yet: it applies when OptiScaler creates the FG again (in some games, after a restart).",
@@ -755,8 +766,8 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
 
     // Sub-sections of the modules: a tab of the menu and the layout the new interface gives it --------------------
     // clang-format off
-    static const ShellLayout lFrameGen { { "fg_selection", "@fg_quick", "fg_optifg", "fg_reprojection", "fg_nvngx", "fg_fsrfg_inputs",
-                                           "fg_sl_inputs" },
+    // Streamline FG's state is a line of the FG control card (its own card made the column scroll for one line)
+    static const ShellLayout lFrameGen { { "fg_selection", "@fg_quick", "fg_optifg", "fg_reprojection", "fg_nvngx", "fg_fsrfg_inputs" },
                                          { "@fg_instruments", "fg_xefg", "fg_fsrfg", "fg_dlssg" } };
     static const ShellLayout lLatency { { "framerate", "vsync", "low_latency" }, { "ilion_latency", "ilion_regulator", "@latency_monitor" } };
     static const ShellLayout lImage { { "gfx_color", "gfx_advanced" }, { "sharpness", "mipmap", "anisotropy" } };
@@ -765,10 +776,10 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
     static const ShellLayout lOverlay { { "fps_overlay" }, {} };
     static const ShellLayout lBenchmark { { "benchmark" }, {} };
     static const ShellLayout lMenu { { "theme" }, { "menu_scale", "keybinds" } };
-    static const ShellLayout lStatus { { "status_summary", "@fg_status", "status_system", "status_init" },
+    static const ShellLayout lStatus { { "status_summary", "@fg_status", "@nr_status", "status_system", "status_init" },
                                        { "@upscaler_diag", "@latency_report", "status_detected", "status_hooks" } };
-    static const ShellLayout lCompat { { "init_flags", "fsr_common", "upscaler_inputs" },
-                                       { "spoofing", "plugins", "shaders_limits", "barriers", "root_signatures" }, true };
+    static const ShellLayout lCompat { { "init_flags", "fsr_common", "upscaler_inputs", "shaders_limits" },
+                                       { "spoofing", "plugins", "barriers", "root_signatures" }, true };
     static const ShellLayout lLog { { "logging" }, {}, true };
 
     struct Sub
@@ -782,7 +793,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
 
     static const Sub subs[] = {
         { 2, { "Generation", "Generación", "Geração", "Генерация" }, "Frame Gen", &lFrameGen, 0 },
-        { 2, { "External FG", "FG externo", "FG externo", "Внешний FG" }, "External FG", nullptr, -1 },
+        { 2, { "External FG", "FG externo", "FG externo", "Внешний FG" }, "External FG", nullptr, 0 },
         { 2, { "Anti-Ghosting", "Anti-Ghosting", "Anti-Ghosting", "Anti-Ghosting" }, "Anti-Ghosting", nullptr, -1 },
         { 3, { "Latency & FPS", "Latencia y FPS", "Latência e FPS", "Задержка и FPS" }, "Latency & FPS", &lLatency, 0 },
         { 4, { "Image", "Imagen", "Imagem", "Изображение" }, "Graphics", &lImage, 0 },
@@ -792,7 +803,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         { 5, { "Overlay", "Overlay", "Overlay", "Оверлей" }, "Overlay", &lOverlay, 0 },
         { 5, { "Benchmark", "Benchmark", "Benchmark", "Бенчмарк" }, "Benchmark", &lBenchmark, 0 },
         { 6, { "Appearance and menu", "Apariencia y menú", "Aparência e menu", "Внешний вид и меню" }, "Menu", &lMenu, 0 },
-        { 6, { "Custom panel", "Panel personalizado", "Painel personalizado", "Своя панель" }, "Custom", nullptr, 0 },
+        { 6, { "Pinned cards", "Tarjetas ancladas", "Cartões fixados", "Закреплённые карточки" }, "Custom", nullptr, 0 },
         { 7, { "Status", "Estado", "Estado", "Состояние" }, "Help / Status", &lStatus, 0 },
         { 7, { "Compatibility", "Compatibilidad", "Compatibilidade", "Совместимость" }, "Compatibility", &lCompat, 0 },
         { 7, { "Log", "Registro", "Registro", "Журнал" }, "Help / Status", &lLog, 0 },
@@ -1158,6 +1169,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         Text(fUi, 19.f, ImVec2(ia.x + 66, ia.y + 16), pal::Yellow, on ? "INFO ILION" : "INFO ILION  (OFF)");
 
         const float buttons = 110 + 12 + 160 + 12 + 130;
+        IlionInfo::flatText = true;
         IlionInfo::Draw(dl, P(ia.x + 66, ia.y + 46), P(ib.x - buttons - 40, ia.y + 82), on, fUi, U(17.f), &Ilion::Tr,
                         Tone(pal::Text), Tone(pal::Yellow), Tone(pal::Bg), Tone(pal::Line));
 
@@ -1532,9 +1544,6 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
               usable ? pal::Text2 : pal::Red, 16.f);
         dl->PopClipRect();
 
-        At(pb.x - 176, pa.y + 28);
-        if (Button("##UpInfo", Lx("Information", "Información", "Informação", "Информация"), ImVec2(156, 46), upDiagnostics))
-            upDiagnostics = !upDiagnostics;
 
         const ImVec2 c(pa.x, pa.y + 118), dFull(pb.x, pb.y - 118);
         const float mx = c.x + (dFull.x - c.x) * 0.57f;
@@ -1551,28 +1560,59 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
             LedAt(dl, ImVec2(m1.x - 32, m0.y + 26), 6.f, upscalerOn ? Led::Green : upscalerIdle ? Led::Yellow : Led::Off);
 
             const std::string tech = upscalerOn || upscalerIdle ? UpscalerLabel(feature) : std::string(Tr("None"));
-            Text(fUi, 30.f, ImVec2(m0.x + 18, m0.y + 40), pal::Text, tech.c_str());
+            const ImVec4 techColour = catalog.current >= 0 && (upscalerOn || upscalerIdle) ? Mix(pal::Text, LookOf(catalog.current).tint, 0.45f) : pal::Text;
+            Text(fUi, 30.f, ImVec2(m0.x + 18, m0.y + 40), techColour, tech.c_str());
 
             std::string impl = "-";
             if (upscalerOn && RunsSwitchedFfx(feature->GetUpscalerType()))
                 impl = Tr(FfxApiProxy::SrDiagGetSnapshot().activeName.c_str());
             else if (best != nullptr && rank == 3)
                 impl = best->name;
-            Text(fUi, 17.f, ImVec2(m0.x + 18, m0.y + 82), pal::Text2,
+            Text(fUi, 17.f, ImVec2(m0.x + 18, m0.y + 80), pal::Text2,
                  (std::string(Lx("Implementation", "Implementación", "Implementação", "Реализация")) + ":  " + impl).c_str());
 
             const char* runState = upscalerOn     ? Lx("Running", "En ejecución", "Em execução", "Работает")
                                    : upscalerIdle ? Tr("Idle")
                                                   : Lx("Not running", "Sin ejecutar", "Sem executar", "Не работает");
-            At(m0.x + 18, m0.y + 112);
+            At(m0.x + 18, m0.y + 108);
             Pill(runState, upscalerOn ? Led::Green : upscalerIdle ? Led::Yellow : Led::Off);
+
+            // The file that runs: its version and its path, as the loader reports them
+            std::wstring dllPath;
+            std::string fileVersion;
+            if (upscalerOn && RunsSwitchedFfx(feature->GetUpscalerType()))
+                dllPath = FfxApiProxy::Dx12Module_SR_Path();
+            if (best != nullptr && rank == 3 && best->entry != nullptr)
+            {
+                if (dllPath.empty())
+                    dllPath = best->entry->path;
+                fileVersion = best->entry->fileVersion;
+            }
+            if (!fileVersion.empty())
+            {
+                const std::string version = std::string(Tr("File version")) + ": " + fileVersion;
+                Text(fUi, 15.f, ImVec2(m1.x - 18 - Measure(fUi, 15.f, version.c_str()).x, m0.y + 114), pal::Text2, version.c_str());
+            }
+            if (!dllPath.empty())
+            {
+                const std::string path = wstring_to_string(dllPath);
+                const ImVec2 t0 = P(m0.x + 18, m0.y + 146), t1 = P(m1.x - 18, m0.y + 164);
+                ImGui::PushFont(fUi, U(13.f));
+                ImGui::PushStyleColor(ImGuiCol_Text, Tone(pal::Dim));
+                ImGui::RenderTextEllipsis(dl, t0, t1, t1.x, path.c_str(), nullptr, nullptr);
+                ImGui::PopStyleColor();
+                const bool cut = ImGui::CalcTextSize(path.c_str()).x > t1.x - t0.x;
+                ImGui::PopFont();
+                if (cut && ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(t0, t1))
+                    ImGui::SetTooltip("%s", path.c_str());
+            }
 
             if (upscalerOn && feature->RenderWidth() > 0)
             {
-                Text(fUi, 24.f, ImVec2(m0.x + 18, m0.y + 160), pal::Text,
+                Text(fUi, 24.f, ImVec2(m0.x + 18, m0.y + 172), pal::Text,
                      StrFmt("%ux%u  ->  %ux%u", feature->RenderWidth(), feature->RenderHeight(), feature->TargetWidth(), feature->TargetHeight()).c_str());
                 const float factor = (float) feature->TargetWidth() / feature->RenderWidth();
-                Text(fUi, 16.f, ImVec2(m0.x + 18, m0.y + 194), pal::Text2,
+                Text(fUi, 16.f, ImVec2(m0.x + 18, m0.y + 204), pal::Text2,
                      StrFmt("%s %.2fx  ·  %s %.0f%%", Lx("Factor", "Factor", "Fator", "Коэффициент"), factor,
                             Lx("rendered pixels", "píxeles renderizados", "pixels renderizados", "отрисовано пикселей"), 100.0f / (factor * factor))
                          .c_str());
@@ -1594,7 +1634,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
             }
             if (upscalerOn && valid > 0)
             {
-                const float gy = m0.y + 228;
+                const float gy = m0.y + 234;
                 Text(fUi, 16.f, ImVec2(m0.x + 18, gy), pal::Text2, Lx("Upscaler time", "Tiempo del escalador", "Tempo do upscaler", "Время апскейлера"));
                 const std::string avg = StrFmt("%.2f ms", sum / valid);
                 Text(fUi, 20.f, ImVec2(m1.x - 18 - Measure(fUi, 20.f, avg.c_str()).x, gy - 2), pal::Green, avg.c_str());
@@ -1613,11 +1653,25 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
 
                 // Share of the frame the upscaler takes, from the same two measurements as the header and this graph
                 const double frame = ctx.frameTime;
-                if (std::isfinite(frame) && frame > 0.0 && gb.y + 30 < m1.y)
-                    Text(fUi, 16.f, ImVec2(m0.x + 18, gb.y + 12), pal::Text2,
-                         StrFmt("%s %.0f%%", Lx("Share of the frame time:", "Parte del tiempo de fotograma:", "Parte do tempo de quadro:", "Доля времени кадра:"),
-                                std::clamp(sum / valid / frame * 100.0, 0.0, 100.0))
-                             .c_str());
+                std::string share;
+                if (std::isfinite(frame) && frame > 0.0)
+                    share = StrFmt("%s %.0f%%", Lx("Upscaler time / frame time:", "Tiempo del escalador / frametime:", "Tempo do upscaler / frametime:",
+                                                   "Время апскейлера / время кадра:"),
+                                   std::clamp(sum / valid / frame * 100.0, 0.0, 100.0));
+                int shaders = 0;
+                double shaderMs = 0.0;
+                for (const auto& [name, time, included] : state.detailedGpuTimes)
+                {
+                    if (included)
+                    {
+                        shaders++;
+                        shaderMs += time;
+                    }
+                }
+                if (shaders > 0)
+                    share += StrFmt("%s%d %s %.2f ms", share.empty() ? "" : "  ·  ", shaders, Lx("shaders", "shaders", "shaders", "шейдеров"), shaderMs);
+                if (!share.empty() && gb.y + 30 < m1.y)
+                    Text(fUi, 15.f, ImVec2(m0.x + 18, gb.y + 10), pal::Text2, share.c_str());
             }
 
             // What the game feeds the upscaler
@@ -1741,53 +1795,6 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                 PopContentStyle();
             }
 
-            ImGui::Dummy(Sz(0, 6));
-
-            if (Fold("##UpDiag", Lx("Technical diagnostics", "Diagnóstico técnico", "Diagnóstico técnico", "Техническая диагностика"),
-                     &upDiagnostics, 8, fw))
-            {
-                ImGui::Indent(U(10));
-                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + U(fw - 30));
-                if (best != nullptr && best->entry != nullptr && !best->entry->fileVersion.empty())
-                    Label(StrFmt("%s: %s", Tr("File version"), best->entry->fileVersion.c_str()).c_str(), pal::Dim, 16.f);
-                Label(Lx("DLL path, hash and hot-swap diagnostics: Status & compatibility > Status.",
-                         "Ruta de la DLL, hash y diagnóstico del cambio en caliente: Estado y compatibilidad > Estado.",
-                         "Caminho da DLL, hash e diagnóstico da troca a quente: Estado e compatibilidade > Estado.",
-                         "Путь DLL, хеш и диагностика горячей замены: Состояние и совместимость > Состояние."),
-                      pal::Dim, 15.f);
-
-                if (upscalerOn)
-                {
-                    Label(StrFmt("%s  %ux%u -> %ux%u", UpscalerLabel(feature).c_str(), feature->RenderWidth(), feature->RenderHeight(),
-                                 feature->TargetWidth(), feature->TargetHeight())
-                              .c_str(),
-                          pal::Dim, 16.f);
-
-                    if (RunsSwitchedFfx(feature->GetUpscalerType()))
-                    {
-                        const auto diag = FfxApiProxy::SrDiagGetSnapshot();
-                        std::string value = Tr(diag.activeName.c_str());
-                        if (diag.statusLevel != 0)
-                            value += std::string("  (") + Tr(diag.status.c_str()) + ")";
-                        Label(StrFmt("%s: %s", Tr("Implementation"), value.c_str()).c_str(), diag.statusLevel == 0 ? pal::Dim : pal::Yellow,
-                              16.f);
-                    }
-                }
-                if (upscalerOn && !state.detailedGpuTimes.empty())
-                {
-                    PushContentStyle();
-                    ImGui::PushFont(fUi, U(16.f));
-                    RenderShaderTimes(ctx);
-                    ImGui::PopFont();
-                    PopContentStyle();
-                }
-                if (!upscalerOn)
-                    Label(Lx("No upscaler is running in this game right now.", "Ningún escalador se está ejecutando ahora en este juego.",
-                             "Nenhum upscaler está em execução neste jogo agora.", "Сейчас в этой игре апскейлер не работает."),
-                          pal::Dim, 16.f);
-                ImGui::PopTextWrapPos();
-                ImGui::Unindent(U(10));
-            }
         }
         ImGui::EndChild();
         ImGui::PopStyleColor(3);
@@ -1838,7 +1845,23 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                 }
             }
 
-            const float top = shownCount > 1 ? a.y + 60 : a.y;
+            float top = shownCount > 1 ? a.y + 60 : a.y;
+
+            // The pinned cards: say what they are (the same controls as in their modules, gathered on one page)
+            if (strcmp(sub.tab, "Custom") == 0)
+            {
+                At(a.x + 4, top);
+                Label(Lx("Cards you pin from the other modules, gathered on one page. They are the same controls, not copies: a change "
+                         "here is the change there. Choose which ones with Customise.",
+                         "Tarjetas que fijas desde los demás módulos, reunidas en una sola página. Son los mismos controles, no copias: "
+                         "un cambio aquí es el cambio allí. Elige cuáles con Personalizar.",
+                         "Cartões que você fixa a partir dos outros módulos, reunidos numa página. São os mesmos controles, não cópias: "
+                         "uma mudança aqui é a mudança lá. Escolha quais em Personalizar.",
+                         "Карточки, закреплённые из других модулей, на одной странице. Это те же элементы управления, а не копии: "
+                         "изменение здесь — то же изменение там. Выберите их через «Настроить»."),
+                      pal::Text2, 15.f);
+                top += 30;
+            }
             shellFgInstrumentsApart = sub.layout == &lFrameGen;
             tabPanel(tabIndex(sub.tab), ImVec2(a.x, top), ImVec2(b.x, b.y - 118), "##ShellTab", sub.layout, sub.flow);
             shellFgInstrumentsApart = false;

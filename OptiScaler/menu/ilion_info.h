@@ -115,6 +115,9 @@ inline constexpr double kCharsPerSecond = 38.0;
 inline constexpr double kPan = 70.0; // pixels per second a long message slides when it doesn't fit
 
 // Draws the line in the rectangle given. `on` false: the glass stays, empty, and nothing is updated.
+// ILION dev.62: the new interface draws its letters once (the half-pixel glow under white letters read as doubled text)
+inline bool flatText = false;
+
 inline void Draw(ImDrawList* draw, const ImVec2& min, const ImVec2& max, bool on, ImFont* font, float fontSize,
                  const char* (*translate)(const char*), const ImVec4& phosphor, const ImVec4& amber,
                  const ImVec4& glass, const ImVec4& rim)
@@ -221,8 +224,9 @@ inline void Draw(ImDrawList* draw, const ImVec2& min, const ImVec2& max, bool on
         const ImVec4& colour = run.amber ? amber : phosphor;
 
         // A faint glow under the letters, then the letters
-        draw->AddText(font, fontSize, ImVec2(x, y + 0.5f), ImGui::GetColorU32(ImVec4(colour.x, colour.y, colour.z, 0.25f)),
-                      part.c_str());
+        if (!flatText)
+            draw->AddText(font, fontSize, ImVec2(x, y + 0.5f), ImGui::GetColorU32(ImVec4(colour.x, colour.y, colour.z, 0.25f)),
+                          part.c_str());
         draw->AddText(font, fontSize, ImVec2(x, y), ImGui::GetColorU32(colour), part.c_str());
 
         x += font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, part.c_str()).x;

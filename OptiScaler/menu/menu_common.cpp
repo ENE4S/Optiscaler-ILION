@@ -11409,7 +11409,11 @@ static void RenderXeMfgVariantSelector(decltype(Config::Instance()) config)
 
     ImGui::Spacing();
     ImGui::BeginDisabled(!config->LoadAsiPlugins.value_or_default());
-    ImGui::SetNextItemWidth(std::min(ImGui::GetFontSize() * 18.0f, ImGui::GetContentRegionAvail().x * 0.6f));
+    // ILION dev.62: in the new interface as wide as the FG selectors above it, their labels in one column
+    if (IlionTheme::shell)
+        ImGui::SetNextItemWidth(std::min(ImGui::GetFontSize() * 17.0f, std::max(ImGui::GetFontSize() * 8.0f, ImGui::GetContentRegionAvail().x - ImGui::GetFontSize() * 9.0f)));
+    else
+        ImGui::SetNextItemWidth(std::min(ImGui::GetFontSize() * 18.0f, ImGui::GetContentRegionAvail().x * 0.6f));
 
     static std::wstring startVariant = chosen;
 
@@ -11512,7 +11516,7 @@ static void FgModeValue(const CustomOptional<int>* countConfig)
 static float FgSelectorWidth(float selectorLabel)
 {
     const float width = std::max(ImGui::GetFontSize() * 8.0f, ImGui::GetContentRegionAvail().x - selectorLabel);
-    return IlionTheme::shell ? std::min(width, ImGui::GetFontSize() * 15.0f) : width;
+    return IlionTheme::shell ? std::min(width, ImGui::GetFontSize() * 17.0f) : width;
 }
 // ILION dev.59: only the selectors of FG (input, output, nvngx, XeMFG variant), for the Home of the new interface
 static bool fgSelectorsOnly = false;
@@ -18842,14 +18846,28 @@ void MenuCommon::RenderExternalFgTab(RenderMenuContext& ctx)
 
     // Two segments: MFG SUPER MOTION (a program) and AMD AFMF (the Radeon driver)
     static int segment = 0;
-    const char* segments[] = { "MFG SUPER MOTION", "AMD AFMF" };
-    ExtKeyRow("##ExtFgSegments", segments, 2, segment);
-    ImGui::Dummy(ImVec2(0.0f, std::floor(4.0f * scale)));
 
-    if (segment == 1)
+    // ILION dev.62: the new interface shows both at once, MFG SUPER MOTION on the left and AMD AFMF on the right; each
+    // keeps its own keys and rules (showing them together starts neither)
+    const bool bothPanels = IlionTheme::shell && ImGui::GetContentRegionAvail().x > ImGui::GetFontSize() * 44.0f &&
+                            ImGui::BeginTable("##ExtFgBoth", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings);
+
+    if (bothPanels)
     {
-        RenderAfmfSegment(scale, warnColour, running, optiFgOn);
-        return;
+        ImGui::TableNextColumn();
+        IlionTheme::SectionPlate("MFG SUPER MOTION");
+    }
+    else
+    {
+        const char* segments[] = { "MFG SUPER MOTION", "AMD AFMF" };
+        ExtKeyRow("##ExtFgSegments", segments, 2, segment);
+        ImGui::Dummy(ImVec2(0.0f, std::floor(4.0f * scale)));
+
+        if (segment == 1)
+        {
+            RenderAfmfSegment(scale, warnColour, running, optiFgOn);
+            return;
+        }
     }
 
     // Only one frame generation at a time (AFMF is known only once its segment was opened)
@@ -19097,6 +19115,14 @@ void MenuCommon::RenderExternalFgTab(RenderMenuContext& ctx)
                                      "segment at the top of this tab."));
         break;
     }
+    }
+
+    if (bothPanels)
+    {
+        ImGui::TableNextColumn();
+        IlionTheme::SectionPlate("AMD AFMF");
+        RenderAfmfSegment(scale, warnColour, running, optiFgOn);
+        ImGui::EndTable();
     }
 }
 
@@ -19728,7 +19754,21 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
         if (ImGui::BeginTable("##NrControls", columns, ImGuiTableFlags_SizingStretchSame)) {
             auto label = [&](const char* text) {
                 ImGui::TableNextColumn();
-                ImGui::TextWrapped("%s", Tr(text));
+                // ILION dev.62: one line for every label (a long one ends in "..." and shows whole in its tooltip), so
+                // the sliders of both columns start on the same rows
+                {
+                    const char* shown = Tr(text);
+                    const ImVec2 pos = ImGui::GetCursorScreenPos();
+                    const float width = ImGui::GetContentRegionAvail().x;
+                    const float height = ImGui::GetTextLineHeight();
+                    ImGui::Dummy(ImVec2(width, height));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_Text));
+                    ImGui::RenderTextEllipsis(ImGui::GetWindowDrawList(), pos, ImVec2(pos.x + width, pos.y + height), pos.x + width, shown,
+                                              nullptr, nullptr);
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered() && ImGui::CalcTextSize(shown).x > width)
+                        ImGui::SetTooltip("%s", shown);
+                }
                 ImGui::SetNextItemWidth(-FLT_MIN);
                 ImGui::PushID(text);
                 // Local slider scope only; preserve the theme's geometry and neighbouring widgets.
@@ -20126,6 +20166,10 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
                 IlionD4rPanel::Draw(IlionD4rLogPath(), feature->Version().major, feature->Version().minor, feature->Version().patch);
             else if (on && RunsSwitchedFfx(feature->GetUpscalerType()))
                 RenderUpscalerDllDiagnostics(ctx);
+
+            // GPU time of every shader of the upscaler, when OptiScaler measures it
+            if (on && !ctx.state.detailedGpuTimes.empty())
+                RenderShaderTimes(ctx);
             else
                 TextWrappedDisabled("%s", ShellText("No FFX upscaler or DLSS 4 (d4r) is running: nothing to diagnose here.",
                                                     "No se está ejecutando un escalador FFX ni DLSS 4 (d4r): aquí no hay nada que diagnosticar.",
@@ -20197,6 +20241,26 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
             latencyReportOnly = true;
             RenderIntelligentLatency(ctx);
             latencyReportOnly = false;
+            return;
+        }
+
+        if (strcmp(id, "@nr_status") == 0)
+        {
+            ScopedCard card(ShellText("Neural Rendering: state", "Neural Rendering: estado", "Neural Rendering: estado", "Neural Rendering: состояние"));
+            ScopedID nrId { "nr_status" };
+            const auto nr = NrSwitchStateNow();
+            const auto& cfg = *ctx.config;
+            const std::string backend = cfg.DlssNrBackend.value_or_default();
+            ImGui::Text("%s: %s", ShellText("Chosen", "Elegido", "Escolhido", "Выбрано"),
+                        cfg.DlssNrEnabled.value_or_default() ? (backend.empty() ? ShellText("on, runtime not chosen", "activado, motor sin elegir", "ativado, motor não escolhido", "вкл., движок не выбран") : backend.c_str())
+                                                             : ShellText("off", "desactivado", "desligado", "выкл."));
+            ImGui::Text("%s: %s", ShellText("Runtime ready", "Motor listo", "Motor pronto", "Движок готов"), nr.ready ? ShellText("yes", "sí", "sim", "да") : ShellText("no", "no", "não", "нет"));
+            if (nr.restart)
+                ImGui::TextColored(IlionTheme::ShellPal::Orange, "%s", ShellText("Another runtime is loaded: restart the game to change it.",
+                                                                                   "Hay otro motor cargado: reinicia el juego para cambiarlo.",
+                                                                                   "Outro motor está carregado: reinicie o jogo para trocá-lo.",
+                                                                                   "Загружен другой движок: перезапустите игру."));
+            ImGui::Text("%s: %s", ShellText("Running", "En ejecución", "Em execução", "Работает"), nr.active ? ShellText("yes", "sí", "sim", "да") : ShellText("no", "no", "não", "нет"));
             return;
         }
 

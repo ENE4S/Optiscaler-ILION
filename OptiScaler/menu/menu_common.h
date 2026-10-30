@@ -230,6 +230,12 @@ class MenuCommon
     struct MenuBox;
     static const MenuBox* GetMenuBoxes(size_t& count);
     static void RenderMenuBox(RenderMenuContext& ctx, const MenuBox& box);
+    // ILION dev.57: the tabs, the content of one tab and the new interface drawn around them
+    struct MenuTab;
+    static const MenuTab* MenuTabs(size_t& count);
+    static void RenderMenuTabBody(RenderMenuContext& ctx, int tabIndex, bool scrollChild = true);
+    static void RenderIlionShell(RenderMenuContext& ctx);
+    static void CloseMainMenu(ImGuiIO& io);
     static void RenderCustomTab(RenderMenuContext& ctx);
     static void RenderAntiGhostingTab(RenderMenuContext& ctx); // ILION: existing ghosting options, grouped
     static void RenderExternalFgTab(RenderMenuContext& ctx); // ILION: MFG SUPER MOTION engine, Advanced mode only

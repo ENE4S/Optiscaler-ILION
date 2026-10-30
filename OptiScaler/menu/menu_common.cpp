@@ -207,6 +207,7 @@ static int selectedMenuTab = 0;
 static const char* requestedMenuTab = nullptr; // Label of a tab to switch to on the next frame
 static bool personalPanelOpen = false;          // ILION: Customise panel of Personal, at the right of its boxes
 static bool reshadePanelOpen = false;           // ILION: ReShade panel, joined to the right of the window (Graphics)
+static bool shellHidesSelector = false;         // ILION dev.57: the new interface chooses the upscaler in its catalogue
 
 static void DedupeSrVariants(std::vector<FfxApiProxy::SrVariant>& list);
 
@@ -989,18 +990,42 @@ static void SameLineIfRoom(float nextWidth, float spacing = -1.0f);
 static void TextWrappedDisabled(const char* fmt, ...);
 static void TextWrappedColored(const ImVec4& colour, const char* fmt, ...);
 
-static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
+enum FamilyId { FamFsr4, FamFsr31, FamFsr2, FamXess, FamDlss4, FamHelix, FamFfx, FamCount };
+static const char* familyNames[FamCount] = { "FSR 4", "FSR 3.1", "FSR 2", "XeSS", "DLSS", "HelixSR", "FFX" };
+
+// One upscaler the menu can choose: an FFX or d4r upscaler of the list, a built-in backend, or a provider of an FFX list
+struct UpscalerVariant
 {
-    ImGui::PushID(id);
+    const IlionUpscalers::Entry* entry = nullptr; // FFX or d4r upscaler of the list
+    Upscaler backend = Upscaler::Reset;            // or a backend OptiScaler has built in
+    bool isDefault = false;
+    std::string name;
+    UpscalerStatus status;
+    bool usable = true;
+    std::string reason;  // why it can't be used: API, hardware, dll or dependency
+    int ffxIndex = -1;   // FSR 3.1 as a provider of the FFX dll in use (DX12), or a Vulkan FFX provider
+    bool vkDriver = false; // an FSR 4 of the Vulkan native list (the AMD Vulkan driver's)
+    bool vkDirect = false; // through ILION's own provider of amdvkffx64, not handed over by amd_fidelityfx_vk.dll
+    int family = 0;        // FamilyId
+};
+
+// Every upscaler of every family with its state, as the selector shows them (ILION dev.57: the catalogue of the
+// new menu reads the same list)
+struct UpscalerCatalog
+{
+    std::vector<UpscalerVariant> variants;
+    bool present[FamCount] = {};
+    int current = -1; // family of what runs or is chosen
+};
+
+static UpscalerCatalog GatherUpscalers(IFeature* feature)
+{
+    using Variant = UpscalerVariant;
+    UpscalerCatalog catalog;
 
     auto& entries = SharedSrVariants();
     const auto& defaultDll = SharedDefaultSrDll();
     const bool showDefault = !defaultDll.empty() && SharedDefaultTwin().empty();
-    const bool locked = FfxApiProxy::SrSwitchLocked();
-
-    // Families in their order; the FFX ones and DLSS (native DLSS, DLSS 4 through d4r) only when something of them is there
-    enum FamilyId { FamFsr4, FamFsr31, FamFsr2, FamXess, FamDlss4, FamHelix, FamFfx, FamCount };
-    static const char* familyNames[FamCount] = { "FSR 4", "FSR 3.1", "FSR 2", "XeSS", "DLSS", "HelixSR", "FFX" };
 
     const auto api = State::Instance().api;
 
@@ -1154,43 +1179,6 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
             consider(FamFsr4, VkFsr4Status(vk.index, vk.direct, feature));
     }
 
-    static int shown[2] = { -1, -1 };
-    int& family = shown[strcmp(id, "benchmark") == 0 ? 1 : 0];
-
-    if (family < 0 || family >= FamCount || !present[family])
-        family = current >= 0 ? current : FamFsr4;
-
-    ImGui::BeginDisabled(locked);
-    ImGui::PushItemWidth(110.0f * scale);
-
-    if (IlionTheme::BeginCombo(TrL("Upscaler##IlionFamily"), familyNames[family]))
-    {
-        for (int i = 0; i < FamCount; i++)
-        {
-            if (present[i] && ImGui::Selectable(familyNames[i], family == i))
-                family = i;
-        }
-
-        ImGui::EndCombo();
-    }
-
-    ImGui::PopItemWidth();
-    SameLineIfRoom(std::min(190.0f * scale, ImGui::GetContentRegionAvail().x));
-
-    // Variants of the family shown, with their state; what runs is the preview
-    struct Variant
-    {
-        const IlionUpscalers::Entry* entry = nullptr; // FFX or d4r upscaler of the list
-        Upscaler backend = Upscaler::Reset;            // or a backend OptiScaler has built in
-        bool isDefault = false;
-        std::string name;
-        UpscalerStatus status;
-        bool usable = true;
-        std::string reason;  // why it can't be used: API, hardware, dll or dependency
-        int ffxIndex = -1;   // FSR 3.1 as a provider of the FFX dll in use (DX12), or a Vulkan FFX provider
-        bool vkDriver = false; // an FSR 4 of the Vulkan native list (the AMD Vulkan driver's)
-        bool vkDirect = false; // through ILION's own provider of amdvkffx64, not handed over by amd_fidelityfx_vk.dll
-    };
 
     // Why an upscaler of the list can't be used here, in the words of the four reasons
     const auto entryReason = [&](const IlionUpscalers::Entry& entry) -> std::string
@@ -1228,9 +1216,9 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
         return "";
     };
 
-    std::vector<Variant> variants;
+    std::vector<Variant>& variants = catalog.variants;
 
-    if (family == FamFsr4 && showDefault)
+    if (showDefault)
     {
         // Usable on any GPU: it also provides FSR 3.1, and FSR 4 runs only where the dll itself allows it
         Variant variant { nullptr, Upscaler::Reset, true, Tr("FSR (default dll)"), StatusOf(nullptr, feature) };
@@ -1241,14 +1229,12 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
             variant.reason = std::string(Tr("DLL not available")) + ": " + Tr("no native Vulkan FSR 4 provider was found");
         }
 
+        variant.family = FamFsr4;
         variants.push_back(variant);
     }
 
     for (const auto& entry : entries)
     {
-        if (familyOf(entry) != family)
-            continue;
-
         auto status = StatusOf(&entry, feature);
 
         // The default dll is this file: its state is this entry's
@@ -1262,14 +1248,13 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
 
         const auto reason = entryReason(entry);
         variants.push_back({ &entry, Upscaler::Reset, false, EntryName(entry), status, reason.empty(), reason });
+        variants.back().family = familyOf(entry);
     }
 
     for (const auto& builtIn : builtIns)
     {
-        if (builtIn.family != family)
-            continue;
-
         Variant variant { nullptr, builtIn.backend, false, Tr(builtIn.name), BackendStatus(builtIn.backend, feature) };
+        variant.family = builtIn.family;
 
         if (builtIn.reason != nullptr)
         {
@@ -1286,19 +1271,21 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
 
     for (const auto& vk : vkFsr4)
     {
-        if (family != FamFsr4 || driverListed)
+        if (driverListed)
             break;
 
         Variant variant { nullptr, Upscaler::Reset, false, vk.name, VkFsr4Status(vk.index, vk.direct, feature) };
         variant.ffxIndex = vk.index;
         variant.vkDriver = true;
         variant.vkDirect = vk.direct;
+        variant.family = FamFsr4;
         variants.push_back(variant);
     }
 
-    if (family == FamFsr31 && (api == DX12 || api == Vulkan))
+    if (api == DX12 || api == Vulkan)
     {
         Variant variant { nullptr, Upscaler::Reset, false, "FSR 3.1", FfxProviderStatus(fsr31Index, feature) };
+        variant.family = FamFsr31;
         variant.ffxIndex = fsr31Index;
 
         if (fsr31Index < 0)
@@ -1308,6 +1295,186 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
         }
 
         variants.push_back(variant);
+    }
+
+    std::copy(std::begin(present), std::end(present), std::begin(catalog.present));
+    catalog.current = current;
+    return catalog;
+}
+
+// Chooses one upscaler of the catalogue, by the way it switches
+static void ChooseUpscalerVariant(const UpscalerVariant& variant)
+{
+    if (variant.ffxIndex >= 0)
+        SelectFfxProvider(variant.ffxIndex);
+    else if (variant.backend != Upscaler::Reset)
+        SelectBackend(variant.backend);
+    else if (variant.entry != nullptr && variant.entry->kind == IlionUpscalers::Kind::D4r && !GameGpuIsRdna3())
+    {
+        d4rWarningKey = variant.entry->key;
+        d4rWarningOpen = true;
+    }
+    else
+        SelectUpscaler(variant.isDefault ? nullptr : variant.entry);
+}
+
+// What an upscaler of the catalogue is and how it switches, for the item just drawn
+static void UpscalerVariantTip(const UpscalerVariant& variant)
+{
+    const auto api = State::Instance().api;
+
+    if (!variant.usable)
+    {
+        WrappedTooltip("%s", variant.reason.c_str());
+        return;
+    }
+
+    if (variant.vkDriver && variant.vkDirect)
+    {
+        WrappedTooltip("%s\nFSR %s\n%s", Tr("FSR 4 of AMD's Vulkan driver, native Vulkan. Switches while the game runs; its "
+                                            "network is chosen with the FSR 4 model."),
+                       FSR4DriverProviderVk::VersionName(), wstring_to_string(FSR4DriverProviderVk::Path()).c_str());
+        return;
+    }
+
+    if (variant.vkDriver)
+    {
+        WrappedTooltip("%s", Tr("FSR 4 of AMD's Vulkan driver, native Vulkan, as amd_fidelityfx_vk.dll lists it and hands "
+                                "the upscale over. Switches while the game runs."));
+        return;
+    }
+
+    if (variant.backend != Upscaler::Reset || variant.ffxIndex >= 0)
+    {
+        WrappedTooltip("%s", Tr("Built into OptiScaler, switches while the game runs."));
+        return;
+    }
+
+    if (variant.entry == nullptr)
+    {
+        WrappedTooltip("%s", Tr("AMD's FSR dll next to OptiScaler, or the game's own."));
+        return;
+    }
+
+    const auto& entry = *variant.entry;
+    std::string tip = StrFmt("%s: %s\n%s", Tr("Technology"), FamilyName(entry.family), wstring_to_string(entry.path).c_str());
+
+    if (!entry.fileVersion.empty())
+        tip += StrFmt("\n%s: %s", Tr("File version"), entry.fileVersion.c_str());
+
+    // Where an AMD driver dll comes from: the installed driver or a copy in an ILION folder
+    if (entry.kind == IlionUpscalers::Kind::Provider)
+        tip += std::string("\n") + Tr(entry.key == L"FSR4/AMD driver" ? "AMD driver dll, used from the installed driver."
+                                                                     : "Copy of an AMD driver dll in an ILION folder.");
+
+    if (IlionUpscalers::SwitchesAsFfx(entry))
+        tip += std::string("\n") + Tr("Switches while the game runs.");
+
+    if (IlionUpscalers::SwitchesAsFfx(entry) && api != DX12)
+        tip += std::string("\n") + Tr("Runs through OptiScaler's DirectX 12 interop.");
+    else if (!variant.status.loaded)
+        tip += std::string("\n") + Tr("Needs a restart of the game: d4r is loaded when the game starts.");
+
+    if (entry.forwardsToAmd)
+        tip += std::string("\n") + Tr("AMD's FSR is next to it: HelixSR lists it after itself. ILION always "
+                                      "starts HelixSR's own provider.");
+
+    // What is checked and what is only stated, kept apart
+    if (entry.family == IlionUpscalers::Family::HelixSR && entry.hlx)
+    {
+        tip += std::string("\n") + Tr("Identified as HLX FSR 4 by its file. While upscaling, ILION also checks "
+                                      "that this dll is the one running.");
+        const auto hlxRuntime = IlionUpscalers::ReadHlxRuntime(entry.path);
+        if (!hlxRuntime.runtime.empty())
+            tip += std::string("\n") + StrFmt(Tr("Runtime in its log: %s"), hlxRuntime.runtime.c_str());
+        if (hlxRuntime.fallback)
+            tip += std::string("\n") + Tr("Its log says it gave the upscale to AMD's FSR");
+    }
+    else if (entry.family == IlionUpscalers::Family::HelixSR)
+        tip += std::string("\n") + Tr("Identified as HelixSR by its file. While upscaling, ILION also checks "
+                                      "that this dll is the one running.\nDLSS 3.7: the version its author "
+                                      "states, it can't be verified from ILION.");
+
+    WrappedTooltip("%s", tip.c_str());
+}
+
+// The warning before DLSS 4 through d4r on a GPU other than AMD RDNA 3, asked once before it is chosen
+static void DrawD4rWarning()
+{
+    if (d4rWarningOpen)
+    {
+        ImGui::OpenPopup("DLSS 4 (d4r)###d4rWarning");
+        d4rWarningOpen = false;
+    }
+
+    if (ImGui::BeginPopupModal("DLSS 4 (d4r)###d4rWarning", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
+        ImGui::TextUnformatted(Tr("Currently only available on AMD RDNA 3. Enabling it on other architectures may cause crashes"));
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+
+        if (IlionTheme::Button(TrL("Continue##d4rWarning")))
+        {
+            if (const auto entry = IlionUpscalers::FindByKey(d4rWarningKey); entry.has_value())
+                SelectUpscaler(&*entry);
+
+            d4rWarningKey.clear();
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::SameLine();
+
+        if (IlionTheme::Button(TrL("Cancel##d4rWarning")))
+        {
+            d4rWarningKey.clear();
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+}
+
+static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
+{
+    ImGui::PushID(id);
+
+    using Variant = UpscalerVariant;
+    const auto catalog = GatherUpscalers(feature);
+    const bool locked = FfxApiProxy::SrSwitchLocked();
+    const auto& present = catalog.present;
+    const int current = catalog.current;
+
+    static int shown[2] = { -1, -1 };
+    int& family = shown[strcmp(id, "benchmark") == 0 ? 1 : 0];
+
+    if (family < 0 || family >= FamCount || !present[family])
+        family = current >= 0 ? current : FamFsr4;
+
+    ImGui::BeginDisabled(locked);
+    ImGui::PushItemWidth(110.0f * scale);
+
+    if (IlionTheme::BeginCombo(TrL("Upscaler##IlionFamily"), familyNames[family]))
+    {
+        for (int i = 0; i < FamCount; i++)
+        {
+            if (present[i] && ImGui::Selectable(familyNames[i], family == i))
+                family = i;
+        }
+
+        ImGui::EndCombo();
+    }
+
+    ImGui::PopItemWidth();
+    SameLineIfRoom(std::min(190.0f * scale, ImGui::GetContentRegionAvail().x));
+
+    // Variants of the family shown, with their state; what runs is the preview
+    std::vector<Variant> variants;
+
+    for (const auto& variant : catalog.variants)
+    {
+        if (variant.family == family)
+            variants.push_back(variant);
     }
 
     std::string preview = "-";
@@ -1346,17 +1513,7 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
             if (ImGui::Selectable(label.c_str(), variant.status.selected || variant.status.active) &&
                 !(variant.status.selected && variant.status.loaded))
             {
-                if (variant.ffxIndex >= 0)
-                    SelectFfxProvider(variant.ffxIndex);
-                else if (variant.backend != Upscaler::Reset)
-                    SelectBackend(variant.backend);
-                else if (variant.entry != nullptr && variant.entry->kind == IlionUpscalers::Kind::D4r && !GameGpuIsRdna3())
-                {
-                    d4rWarningKey = variant.entry->key;
-                    d4rWarningOpen = true;
-                }
-                else
-                    SelectUpscaler(variant.isDefault ? nullptr : variant.entry);
+                ChooseUpscalerVariant(variant);
             }
 
             ImGui::EndDisabled();
@@ -1364,79 +1521,7 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
             if (!ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 continue;
 
-            if (!variant.usable)
-            {
-                WrappedTooltip("%s", variant.reason.c_str());
-                continue;
-            }
-
-            if (variant.vkDriver && variant.vkDirect)
-            {
-                WrappedTooltip("%s\nFSR %s\n%s", Tr("FSR 4 of AMD's Vulkan driver, native Vulkan. Switches while the game runs; its "
-                                                    "network is chosen with the FSR 4 model."),
-                               FSR4DriverProviderVk::VersionName(), wstring_to_string(FSR4DriverProviderVk::Path()).c_str());
-                continue;
-            }
-
-            if (variant.vkDriver)
-            {
-                WrappedTooltip("%s", Tr("FSR 4 of AMD's Vulkan driver, native Vulkan, as amd_fidelityfx_vk.dll lists it and hands "
-                                        "the upscale over. Switches while the game runs."));
-                continue;
-            }
-
-            if (variant.backend != Upscaler::Reset || variant.ffxIndex >= 0)
-            {
-                WrappedTooltip("%s", Tr("Built into OptiScaler, switches while the game runs."));
-                continue;
-            }
-
-            if (variant.entry == nullptr)
-            {
-                WrappedTooltip("%s", Tr("AMD's FSR dll next to OptiScaler, or the game's own."));
-                continue;
-            }
-
-            const auto& entry = *variant.entry;
-            std::string tip = StrFmt("%s: %s\n%s", Tr("Technology"), FamilyName(entry.family), wstring_to_string(entry.path).c_str());
-
-            if (!entry.fileVersion.empty())
-                tip += StrFmt("\n%s: %s", Tr("File version"), entry.fileVersion.c_str());
-
-            // Where an AMD driver dll comes from: the installed driver or a copy in an ILION folder
-            if (entry.kind == IlionUpscalers::Kind::Provider)
-                tip += std::string("\n") + Tr(entry.key == L"FSR4/AMD driver" ? "AMD driver dll, used from the installed driver."
-                                                                             : "Copy of an AMD driver dll in an ILION folder.");
-
-            if (IlionUpscalers::SwitchesAsFfx(entry))
-                tip += std::string("\n") + Tr("Switches while the game runs.");
-
-            if (IlionUpscalers::SwitchesAsFfx(entry) && api != DX12)
-                tip += std::string("\n") + Tr("Runs through OptiScaler's DirectX 12 interop.");
-            else if (!variant.status.loaded)
-                tip += std::string("\n") + Tr("Needs a restart of the game: d4r is loaded when the game starts.");
-
-            if (entry.forwardsToAmd)
-                tip += std::string("\n") + Tr("AMD's FSR is next to it: HelixSR lists it after itself. ILION always "
-                                              "starts HelixSR's own provider.");
-
-            // What is checked and what is only stated, kept apart
-            if (entry.family == IlionUpscalers::Family::HelixSR && entry.hlx)
-            {
-                tip += std::string("\n") + Tr("Identified as HLX FSR 4 by its file. While upscaling, ILION also checks "
-                                              "that this dll is the one running.");
-                const auto hlxRuntime = IlionUpscalers::ReadHlxRuntime(entry.path);
-                if (!hlxRuntime.runtime.empty())
-                    tip += std::string("\n") + StrFmt(Tr("Runtime in its log: %s"), hlxRuntime.runtime.c_str());
-                if (hlxRuntime.fallback)
-                    tip += std::string("\n") + Tr("Its log says it gave the upscale to AMD's FSR");
-            }
-            else if (entry.family == IlionUpscalers::Family::HelixSR)
-                tip += std::string("\n") + Tr("Identified as HelixSR by its file. While upscaling, ILION also checks "
-                                              "that this dll is the one running.\nDLSS 3.7: the version its author "
-                                              "states, it can't be verified from ILION.");
-
-            WrappedTooltip("%s", tip.c_str());
+            UpscalerVariantTip(variant);
         }
 
         ImGui::EndCombo();
@@ -1445,39 +1530,7 @@ static void DrawUpscalerSelector(IFeature* feature, float scale, const char* id)
     ImGui::PopItemWidth();
     ImGui::EndDisabled();
 
-    // The warning before DLSS 4 through d4r on a GPU other than AMD RDNA 3
-    if (d4rWarningOpen)
-    {
-        ImGui::OpenPopup("DLSS 4 (d4r)###d4rWarning");
-        d4rWarningOpen = false;
-    }
-
-    if (ImGui::BeginPopupModal("DLSS 4 (d4r)###d4rWarning", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
-    {
-        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
-        ImGui::TextUnformatted(Tr("Currently only available on AMD RDNA 3. Enabling it on other architectures may cause crashes"));
-        ImGui::PopTextWrapPos();
-        ImGui::Spacing();
-
-        if (IlionTheme::Button(TrL("Continue##d4rWarning")))
-        {
-            if (const auto entry = IlionUpscalers::FindByKey(d4rWarningKey); entry.has_value())
-                SelectUpscaler(&*entry);
-
-            d4rWarningKey.clear();
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::SameLine();
-
-        if (IlionTheme::Button(TrL("Cancel##d4rWarning")))
-        {
-            d4rWarningKey.clear();
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::EndPopup();
-    }
+    DrawD4rWarning();
 
     UpscalerTip("Upscalers ILION found in ILION\\Escaladores (next to the game exe):\n"
                 "  FSR4\\<name>\\amd_fidelityfx_upscaler_dx12.dll   FSR 4 builds, switch while playing\n"
@@ -9435,7 +9488,8 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
     if (!usesDlssd)
     {
         ImGui::Spacing();
-        DrawUpscalerSelector(currentFeature, menuResScale, "upscaling");
+        if (!shellHidesSelector)
+            DrawUpscalerSelector(currentFeature, menuResScale, "upscaling");
 
         // ILION: the FSR 4 model, in every mode (the same state and checks; its diagnosis only in Advanced)
         RenderFsr4ModelControls(currentBackend, currentFeature, menuResScale);
@@ -19498,29 +19552,21 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
     }
 }
 
-void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
+// Tabs of the menu, in their order. Boxes of a tab come from GetMenuBoxes, by the label of the tab
+struct MenuCommon::MenuTab
 {
-    ExternalFg(); // ILION: the search for MFG SUPER MOTION starts with the menu
-    auto& state = ctx.state;
-    auto config = ctx.config;
-    auto& currentFeature = ctx.currentFeature;
-    auto& menuResScale = ctx.menuResScale;
+    const char* group;
+    const char* label;
+    const char* description;
+    void (*draw)(RenderMenuContext&); // Drawn above the boxes of the tab
+    bool hideLabelInMenu;
+    bool (*visible)(RenderMenuContext&) = nullptr; // Tab hidden when returned false
+};
 
-    using DrawFn = void (*)(RenderMenuContext&);
-
-    struct Tab
-    {
-        const char* group;
-        const char* label;
-        const char* description;
-        DrawFn draw; // Drawn above the boxes of the tab
-        bool hideLabelInMenu;
-        bool (*visible)(RenderMenuContext&) = nullptr; // Tab hidden when returned false
-    };
-
-    // Boxes of a tab come from GetMenuBoxes, by the label of the tab
+const MenuCommon::MenuTab* MenuCommon::MenuTabs(size_t& count)
+{
     // clang-format off
-    static const Tab tabs[] = {
+    static const MenuTab tabs[] = {
         { "MAIN", "Custom", "Boxes picked in Menu > Custom Tab.", RenderCustomTab },
         { "MAIN", "Upscaling", "Backend and output scaling.", RenderUpscalerStateMessage },
         { "MAIN", "Frame Gen", "Frame generation source, output and pacing." },
@@ -19544,6 +19590,21 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
     };
     // clang-format on
 
+    count = std::size(tabs);
+    return tabs;
+}
+
+void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
+{
+    ExternalFg(); // ILION: the search for MFG SUPER MOTION starts with the menu
+    auto& state = ctx.state;
+    auto config = ctx.config;
+    auto& currentFeature = ctx.currentFeature;
+    auto& menuResScale = ctx.menuResScale;
+
+    size_t tabCount = 0;
+    const MenuTab* tabs = MenuTabs(tabCount);
+
     constexpr int customTab = 0;
     const bool customTabEnabled = config->CustomTabEnabled.value_or_default();
 
@@ -19561,7 +19622,7 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
 
     if (requestedMenuTab != nullptr)
     {
-        for (int i = 0; i < (int) std::size(tabs); i++)
+        for (int i = 0; i < (int) tabCount; i++)
         {
             if (strcmp(tabs[i].label, requestedMenuTab) == 0)
                 selectedMenuTab = i;
@@ -19570,12 +19631,12 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
         requestedMenuTab = nullptr;
     }
 
-    selectedMenuTab = std::clamp(selectedMenuTab, 0, (int) std::size(tabs) - 1);
+    selectedMenuTab = std::clamp(selectedMenuTab, 0, (int) tabCount - 1);
 
     // Selected tab can disappear, pick the first one that's visible
     if (!isTabVisible(selectedMenuTab))
     {
-        for (int i = 0; i < (int) std::size(tabs); i++)
+        for (int i = 0; i < (int) tabCount; i++)
         {
             if (isTabVisible(i))
             {
@@ -19600,7 +19661,7 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
     {
         const char* lastGroup = nullptr;
 
-        for (int i = 0; i < (int) std::size(tabs); i++)
+        for (int i = 0; i < (int) tabCount; i++)
         {
             if (!isTabVisible(i))
                 continue;
@@ -19746,157 +19807,180 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
     ImGui::BeginChild("##MenuContent", ImVec2(0.0f, -footerHeight), ImGuiChildFlags_NavFlattened,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     {
-        const Tab& tab = tabs[selectedMenuTab];
-
-        // if (!tab.hideLabelInMenu)
-        //{
-        //     if (config->UseHQFont.value_or_default())
-        //         ImGui::PushFontSize(std::round(fontSize * menuResScale * 1.3f));
-
-        //    ImGui::TextUnformatted(tab.label);
-
-        //    if (config->UseHQFont.value_or_default())
-        //        ImGui::PopFontSize();
-        //}
-
-        // ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        // ImGui::TextWrapped("%s", tab.description);
-        // ImGui::PopStyleColor();
-
-        // ImGui::Separator();
-
-        // Own ID per tab, so every tab remembers its scroll position
-        // ILION: Personal with its Customise panel open, the boxes at the left and the panel at the right
-        // ILION: the ReShade panel only beside Graphics; leaving the tab closes it
-        if (strcmp(tab.label, "Graphics") != 0)
-        {
-            reshadePanelOpen = false;
-            reshadePanelAmount = 0.0f;
-        }
-
-        const bool reshadePanel = reshadePanelAmount > 0.0f;
-        const bool personalPanel = selectedMenuTab == customTab && personalPanelOpen;
-        float panelWidth = 0.0f;
-
-        if (personalPanel)
-        {
-            // As wide as its longest name or key, between 32% and 55% of the content: the boxes stay in view
-            size_t boxCount = 0;
-            const MenuBox* boxes = GetMenuBoxes(boxCount);
-            float need = std::max(ButtonWidth(TrL("Restore default layout")), ButtonWidth(TrL("Close##personal")));
-
-            for (size_t i = 0; i < boxCount; i++)
-            {
-                if (boxes[i].pinnable)
-                    need = std::max(need, ImGui::GetFrameHeight() * 1.5f + style.ItemSpacing.x +
-                                              ImGui::CalcTextSize(Tr(boxes[i].name)).x);
-            }
-
-            need += style.WindowPadding.x * 2.0f + style.ScrollbarSize + style.ItemSpacing.x;
-
-            const float avail = ImGui::GetContentRegionAvail().x;
-            panelWidth = ImFloor(std::clamp(need, avail * 0.32f, avail * 0.55f));
-        }
-        else if (reshadePanel)
-        {
-            // The window grew by this width (see the main window), so the tab keeps its own
-            // The same amount the window grows by (width and gap), so the tab keeps its width while the panel slides
-            panelWidth = std::max(1.0f, std::floor((ReShadePanelWidth(menuResScale) + style.ItemSpacing.x) * reshadePanelAmount) - style.ItemSpacing.x);
-        }
-
-        // Catalogue installs finish in the background: their result is taken whichever tab is shown
-        ProcessReShadeCatalogue();
-
-        ImGui::PushID(selectedMenuTab);
-        ImGui::BeginChild("##MenuTabBody", ImVec2((personalPanel || reshadePanel) ? -(panelWidth + style.ItemSpacing.x) : 0.0f, 0.0f));
-
-        if (tab.draw != nullptr)
-            tab.draw(ctx);
-
-        size_t boxCount = 0;
-        const MenuBox* boxes = GetMenuBoxes(boxCount);
-        DrawFn lastSource = nullptr;
-
-        // Essential: the everyday boxes of the tab, the secondary ones folded under "More options", the diagnostic and
-        // very specialised ones left to Advanced. Each box is drawn by its own code, nothing changes in what it does.
-        std::vector<const MenuBox*> secondary;
-
-        for (size_t i = 0; i < boxCount; i++)
-        {
-            if (strcmp(boxes[i].tab, tab.label) != 0)
-                continue;
-
-            if (essential)
-            {
-                const EssentialRole role = EssentialRoleOf(boxes[i].id);
-
-                if (role == EssentialRole::Main)
-                {
-                    ImGui::PushID(boxes[i].id);
-                    RenderMenuBox(ctx, boxes[i]);
-                    ImGui::PopID();
-                }
-                else if (role == EssentialRole::Secondary)
-                {
-                    secondary.push_back(&boxes[i]);
-                }
-
-                continue;
-            }
-
-            // A function with several boxes is drawn once for all of them
-            if (boxes[i].draw == nullptr)
-            {
-                if (boxes[i].source != lastSource)
-                    boxes[i].source(ctx);
-            }
-            else
-            {
-                boxes[i].draw(ctx);
-            }
-
-            lastSource = boxes[i].source;
-        }
-
-        if (!secondary.empty())
-        {
-            ImGui::Spacing();
-
-            if (auto ch = ScopedCollapsingHeader(TrL("More options##Essential")); ch.IsHeaderOpen())
-            {
-                ScopedIndent indent {};
-
-                for (const MenuBox* box : secondary)
-                {
-                    ImGui::PushID(box->id);
-                    RenderMenuBox(ctx, *box);
-                    ImGui::PopID();
-                }
-            }
-        }
-
-        ImGui::EndChild();
-        ImGui::PopID();
-
-        if (personalPanel)
-        {
-            ImGui::SameLine();
-            ImGui::BeginChild("##PersonalPanel", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
-            RenderPersonalPanel(ctx);
-            ImGui::EndChild();
-        }
-        else if (reshadePanel)
-        {
-            ImGui::SameLine();
-            ImGui::BeginChild("##ReShadePanel", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
-            // The controls only once it is fully open: nothing is drawn cut while it slides
-            if (reshadePanelAmount >= 1.0f)
-                RenderReShadePanel(ctx);
-            ImGui::EndChild();
-        }
+        RenderMenuTabBody(ctx, selectedMenuTab);
     }
     ImGui::EndChild();
     ImGui::PopStyleColor();
+}
+
+// The content of one tab: what the tab draws, its boxes (Essential: the main ones, the secondary ones folded) and the
+// Personal or ReShade panel beside them. ILION dev.57: also drawn inside the sections of the new interface
+void MenuCommon::RenderMenuTabBody(RenderMenuContext& ctx, int tabIndex, bool scrollChild)
+{
+    auto config = ctx.config;
+    auto& menuResScale = ctx.menuResScale;
+    using DrawFn = void (*)(RenderMenuContext&);
+    const auto& style = ImGui::GetStyle();
+
+    size_t tabCount = 0;
+    const MenuTab* tabs = MenuTabs(tabCount);
+    tabIndex = std::clamp(tabIndex, 0, (int) tabCount - 1);
+
+    constexpr int customTab = 0;
+    const bool essential = !config->MenuBasicMode.value_or_default() && config->MenuEssentialMode.value_or_default();
+
+    const MenuTab& tab = tabs[tabIndex];
+
+    // if (!tab.hideLabelInMenu)
+    //{
+    //     if (config->UseHQFont.value_or_default())
+    //         ImGui::PushFontSize(std::round(fontSize * menuResScale * 1.3f));
+
+    //    ImGui::TextUnformatted(tab.label);
+
+    //    if (config->UseHQFont.value_or_default())
+    //        ImGui::PopFontSize();
+    //}
+
+    // ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    // ImGui::TextWrapped("%s", tab.description);
+    // ImGui::PopStyleColor();
+
+    // ImGui::Separator();
+
+    // Own ID per tab, so every tab remembers its scroll position
+    // ILION: Personal with its Customise panel open, the boxes at the left and the panel at the right
+    // ILION: the ReShade panel only beside Graphics; leaving the tab closes it
+    if (strcmp(tab.label, "Graphics") != 0)
+    {
+        reshadePanelOpen = false;
+        reshadePanelAmount = 0.0f;
+    }
+
+    const bool reshadePanel = reshadePanelAmount > 0.0f;
+    const bool personalPanel = tabIndex == customTab && personalPanelOpen;
+    float panelWidth = 0.0f;
+
+    if (personalPanel)
+    {
+        // As wide as its longest name or key, between 32% and 55% of the content: the boxes stay in view
+        size_t boxCount = 0;
+        const MenuBox* boxes = GetMenuBoxes(boxCount);
+        float need = std::max(ButtonWidth(TrL("Restore default layout")), ButtonWidth(TrL("Close##personal")));
+
+        for (size_t i = 0; i < boxCount; i++)
+        {
+            if (boxes[i].pinnable)
+                need = std::max(need, ImGui::GetFrameHeight() * 1.5f + style.ItemSpacing.x +
+                                          ImGui::CalcTextSize(Tr(boxes[i].name)).x);
+        }
+
+        need += style.WindowPadding.x * 2.0f + style.ScrollbarSize + style.ItemSpacing.x;
+
+        const float avail = ImGui::GetContentRegionAvail().x;
+        panelWidth = ImFloor(std::clamp(need, avail * 0.32f, avail * 0.55f));
+    }
+    else if (reshadePanel)
+    {
+        // The window grew by this width (see the main window), so the tab keeps its own
+        // The same amount the window grows by (width and gap), so the tab keeps its width while the panel slides
+        panelWidth = std::max(1.0f, std::floor((ReShadePanelWidth(menuResScale) + style.ItemSpacing.x) * reshadePanelAmount) - style.ItemSpacing.x);
+    }
+
+    // Catalogue installs finish in the background: their result is taken whichever tab is shown
+    ProcessReShadeCatalogue();
+
+    ImGui::PushID(tabIndex);
+    // Without its own child (scrollChild false) the content follows the cursor, inside a child of the caller
+    const bool ownChild = scrollChild || personalPanel || reshadePanel;
+    if (ownChild)
+        ImGui::BeginChild("##MenuTabBody", ImVec2((personalPanel || reshadePanel) ? -(panelWidth + style.ItemSpacing.x) : 0.0f, 0.0f));
+
+    if (tab.draw != nullptr)
+        tab.draw(ctx);
+
+    size_t boxCount = 0;
+    const MenuBox* boxes = GetMenuBoxes(boxCount);
+    DrawFn lastSource = nullptr;
+
+    // Essential: the everyday boxes of the tab, the secondary ones folded under "More options", the diagnostic and
+    // very specialised ones left to Advanced. Each box is drawn by its own code, nothing changes in what it does.
+    std::vector<const MenuBox*> secondary;
+
+    for (size_t i = 0; i < boxCount; i++)
+    {
+        if (strcmp(boxes[i].tab, tab.label) != 0)
+            continue;
+
+        if (essential)
+        {
+            const EssentialRole role = EssentialRoleOf(boxes[i].id);
+
+            if (role == EssentialRole::Main)
+            {
+                ImGui::PushID(boxes[i].id);
+                RenderMenuBox(ctx, boxes[i]);
+                ImGui::PopID();
+            }
+            else if (role == EssentialRole::Secondary)
+            {
+                secondary.push_back(&boxes[i]);
+            }
+
+            continue;
+        }
+
+        // A function with several boxes is drawn once for all of them
+        if (boxes[i].draw == nullptr)
+        {
+            if (boxes[i].source != lastSource)
+                boxes[i].source(ctx);
+        }
+        else
+        {
+            boxes[i].draw(ctx);
+        }
+
+        lastSource = boxes[i].source;
+    }
+
+    if (!secondary.empty())
+    {
+        ImGui::Spacing();
+
+        if (auto ch = ScopedCollapsingHeader(TrL("More options##Essential")); ch.IsHeaderOpen())
+        {
+            ScopedIndent indent {};
+
+            for (const MenuBox* box : secondary)
+            {
+                ImGui::PushID(box->id);
+                RenderMenuBox(ctx, *box);
+                ImGui::PopID();
+            }
+        }
+    }
+
+    if (ownChild)
+        ImGui::EndChild();
+    ImGui::PopID();
+
+    if (personalPanel)
+    {
+        ImGui::SameLine();
+        ImGui::BeginChild("##PersonalPanel", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
+        RenderPersonalPanel(ctx);
+        ImGui::EndChild();
+    }
+    else if (reshadePanel)
+    {
+        ImGui::SameLine();
+        ImGui::BeginChild("##ReShadePanel", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
+        // The controls only once it is fully open: nothing is drawn cut while it slides
+        if (reshadePanelAmount >= 1.0f)
+            RenderReShadePanel(ctx);
+        ImGui::EndChild();
+    }
 }
 
 void MenuCommon::PlotLinesWithRange(const char* label, float (*values_getter)(void* data, int idx), void* data,
@@ -20110,18 +20194,22 @@ void MenuCommon::RenderMainMenuBottomBar(RenderMenuContext& ctx)
     SameLineIfRoom(ButtonWidth(TrL("Close")), 6.0f);
 
     if (IlionTheme::Button(TrL("Close")))
-    {
-        _isVisible = false;
-        hasGamepad = (io.BackendFlags | ImGuiBackendFlags_HasGamepad) > 0;
-        io.BackendFlags &= 30;
-        io.ConfigFlags = ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoMouseCursorChange | ImGuiConfigFlags_NoKeyboard;
+        CloseMainMenu(io);
+}
 
-        _showMipmapCalcWindow = false;
-        _showHudlessWindow = false;
-        io.MouseDrawCursor = false;
-        io.WantCaptureKeyboard = false;
-        io.WantCaptureMouse = false;
-    }
+// The Close button of the menu
+void MenuCommon::CloseMainMenu(ImGuiIO& io)
+{
+    _isVisible = false;
+    hasGamepad = (io.BackendFlags | ImGuiBackendFlags_HasGamepad) > 0;
+    io.BackendFlags &= 30;
+    io.ConfigFlags = ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoMouseCursorChange | ImGuiConfigFlags_NoKeyboard;
+
+    _showMipmapCalcWindow = false;
+    _showHudlessWindow = false;
+    io.MouseDrawCursor = false;
+    io.WantCaptureKeyboard = false;
+    io.WantCaptureMouse = false;
 }
 
 void MenuCommon::RenderMipmapBiasWindow(RenderMenuContext& ctx, ImGuiWindowFlags flags)
@@ -21058,6 +21146,8 @@ void MenuCommon::RenderBasicPanel(RenderMenuContext& ctx)
     RenderMainMenuBottomBar(ctx);
 }
 
+#include "ilion_shell.inl"
+
 void MenuCommon::RenderMainMenuWindow(RenderMenuContext& ctx)
 {
     auto& state = ctx.state;
@@ -21126,6 +21216,24 @@ void MenuCommon::RenderMainMenuWindow(RenderMenuContext& ctx)
     // Height can be changed by the user with the resize grip and is stored unscaled in the config
     ImGuiWindowFlags mainFlags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse |
                                  ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+
+    // ILION dev.57: the new interface, in Essential and Advanced unless the classic layout is asked for in the ini
+    if (!config->MenuBasicMode.value_or_default() && !config->MenuClassicLayout.value_or_default())
+    {
+        RenderIlionShell(ctx);
+
+        // The same windows the classic layout opens beside the menu
+        RenderMipmapBiasWindow(ctx, flags);
+        RenderHudlessResourcesWindow(ctx, flags);
+        DrawBenchmarkCompareWindow(menuResScale, io);
+        DrawVisualCompareWindow(menuResScale, io);
+        DrawFinalReportWindow(menuResScale, io);
+
+        if (config->UseHQFont.value_or_default())
+            ImGui::PopFontSize();
+
+        return;
+    }
 
     // ILION: with the ReShade panel open the window grows by the panel to its right (Basic has no tabs, no panel)
     if (config->MenuBasicMode.value_or_default())

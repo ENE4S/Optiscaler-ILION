@@ -798,7 +798,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         { 2, { "Anti-Ghosting", "Anti-Ghosting", "Anti-Ghosting", "Anti-Ghosting" }, "Anti-Ghosting", nullptr, -1 },
         { 3, { "Latency & FPS", "Latencia y FPS", "Latência e FPS", "Задержка и FPS" }, "Latency & FPS", &lLatency, 0 },
         { 4, { "Image", "Imagen", "Imagem", "Изображение" }, "Graphics", &lImage, 0 },
-        { 4, { "Neural Rendering", "Neural Rendering", "Neural Rendering", "Neural Rendering" }, "Neural Rendering", nullptr, 3 },
+        { 4, { "Neural Rendering", "Neural Rendering", "Neural Rendering", "Neural Rendering" }, "Neural Rendering", nullptr, 4 },
         { 4, { "ReShade", "ReShade", "ReShade", "ReShade" }, "Graphics", &lReShade, 0 },
         { 4, { "Comparison", "Comparación", "Comparação", "Сравнение" }, "Graphics", &lCompare, 0 },
         { 5, { "Overlay", "Overlay", "Overlay", "Оверлей" }, "Overlay", &lOverlay, 0 },
@@ -1051,14 +1051,25 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         const float sep = a.x + 22 + Measure(fUi, 20.f, api.c_str()).x + 18;
         dl->AddLine(P(sep, a.y + 110), P(sep, a.y + 130), Col(pal::Line), 1.f);
         // The menu is drawn by ILION inside the game: ILION is running
-        LedAt(dl, ImVec2(sep + 20, a.y + 120), 6.f, Led::Green);
-        Text(fUi, 20.f, ImVec2(sep + 34, a.y + 108), pal::Green, Lx("ILION ACTIVE", "ILION ACTIVO", "ILION ATIVO", "ILION АКТИВЕН"));
+        // The pilot centred on the line of its text, its glow clear of the letters
+        const float activeY = a.y + 108 + Measure(fUi, 20.f, "I").y * 0.5f;
+        LedAt(dl, ImVec2(sep + 24, activeY), 6.f, Led::Green);
+        Text(fUi, 20.f, ImVec2(sep + 44, a.y + 108), pal::Green, Lx("ILION ACTIVE", "ILION ACTIVO", "ILION ATIVO", "ILION АКТИВЕН"));
 
         // FPS and frame time measured by ILION in this game
         const double ft = ctx.frameTime;
         const bool measured = std::isfinite(ft) && ft > 0.0;
         Text(fUi, 18.f, ImVec2(fx, a.y + 16), pal::Text2, "FPS");
-        Text(fUi, 64.f, ImVec2(fx - 4, a.y + 34), pal::Text, measured ? StrFmt("%.0f", 1000.0 / ft).c_str() : "-");
+        // The FPS figure in the colour of its band (the same counter, no smoothing added)
+        const double fpsNow = measured ? 1000.0 / ft : 0.0;
+        const ImVec4 fpsColour = !measured     ? pal::Text
+                                 : fpsNow < 60  ? pal::Red
+                                 : fpsNow < 90  ? pal::Text
+                                 : fpsNow < 111 ? ImVec4(0.25f, 0.70f, 1.00f, 1.f) // electric blue
+                                 : fpsNow < 145 ? pal::Green
+                                 : fpsNow < 200 ? pal::Yellow
+                                                : pal::Orange;
+        Text(fUi, 64.f, ImVec2(fx - 4, a.y + 34), fpsColour, measured ? StrFmt("%.0f", fpsNow).c_str() : "-");
         Text(fUi, 16.f, ImVec2(fx, a.y + 110), pal::Text2, "Frame Time");
         const std::string ftText = measured ? StrFmt("%.1f ms", ft) : std::string("-");
         Text(fUi, 16.f, ImVec2(fx + 92, a.y + 110), pal::Green, ftText.c_str());
@@ -1115,18 +1126,29 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         const auto* cpu = reading(HwTelemetry::CpuUsage);
         const auto* vramUsed = reading(HwTelemetry::VramUsed);
         const auto* vramTotal = reading(HwTelemetry::VramTotal);
-        const std::string vram = vramUsed == nullptr ? std::string("-")
-                                 : vramTotal != nullptr
-                                     ? StrFmt("%.1f/%.0f GB", vramUsed->value / 1024.0f, vramTotal->value / 1024.0f)
-                                     : StrFmt("%.1f GB", vramUsed->value / 1024.0f);
         const std::string ram = memory.ullTotalPhys == 0 ? std::string("-")
                                                          : StrFmt("%.1f/%.0f GB",
                                                                   (memory.ullTotalPhys - memory.ullAvailPhys) / 1073741824.0,
                                                                   memory.ullTotalPhys / 1073741824.0);
-        const std::string line = StrFmt("GPU %s  |  CPU %s  |  VRAM %s  |  RAM %s",
-                                        gpu != nullptr ? StrFmt("%.0f%%", gpu->value).c_str() : "-",
-                                        cpu != nullptr ? StrFmt("%.0f%%", cpu->value).c_str() : "-", vram.c_str(), ram.c_str());
-        Text(fUi, 15.f, ImVec2(ga.x, a.y + 124), pal::Text2, line.c_str());
+        const std::string head = StrFmt("GPU %s  |  CPU %s  |  VRAM ", gpu != nullptr ? StrFmt("%.0f%%", gpu->value).c_str() : "-",
+                                        cpu != nullptr ? StrFmt("%.0f%%", cpu->value).c_str() : "-");
+        const std::string usedText = vramUsed == nullptr ? std::string("-") : StrFmt("%.1f", vramUsed->value / 1024.0f);
+        const std::string totalText = vramUsed == nullptr ? std::string() : vramTotal != nullptr ? StrFmt("/%.0f GB", vramTotal->value / 1024.0f) : std::string(" GB");
+        const std::string tail = StrFmt("  |  RAM %s", ram.c_str());
+
+        // The VRAM in use: white under 8 GB, yellow up to 12, electric blue up to 16, red above
+        const float usedGb = vramUsed != nullptr ? vramUsed->value / 1024.0f : 0.0f;
+        const ImVec4 vramColour = vramUsed == nullptr ? pal::Text2
+                                  : usedGb < 8.0f     ? pal::Text
+                                  : usedGb <= 12.0f   ? pal::Yellow
+                                  : usedGb <= 16.0f   ? ImVec4(0.25f, 0.70f, 1.00f, 1.f)
+                                                      : pal::Red;
+        float hx = ga.x;
+        Text(fUi, 15.f, ImVec2(hx, a.y + 124), pal::Text2, head.c_str());
+        hx += Measure(fUi, 15.f, head.c_str()).x;
+        Text(fUi, 15.f, ImVec2(hx, a.y + 124), vramColour, usedText.c_str());
+        hx += Measure(fUi, 15.f, usedText.c_str()).x;
+        Text(fUi, 15.f, ImVec2(hx, a.y + 124), pal::Text2, (totalText + tail).c_str());
     }
 
     // Section header with the interface mode -----------------------------------------------------------------------
@@ -1170,8 +1192,13 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         Text(fUi, 19.f, ImVec2(ia.x + 66, ia.y + 16), pal::Yellow, on ? "INFO ILION" : "INFO ILION  (OFF)");
 
         const float buttons = 110 + 12 + 160 + 12 + 130;
+        // The line advances its own animation with every draw: once a frame, so two calls can't mix two messages
+        static int infoFrame = -1;
+        const bool drawLine = infoFrame != ImGui::GetFrameCount();
+        infoFrame = ImGui::GetFrameCount();
         IlionInfo::flatText = true;
-        IlionInfo::Draw(dl, P(ia.x + 66, ia.y + 46), P(ib.x - buttons - 40, ia.y + 82), on, fUi, U(17.f), &Ilion::Tr,
+        if (drawLine)
+            IlionInfo::Draw(dl, P(ia.x + 66, ia.y + 46), P(ib.x - buttons - 40, ia.y + 82), on, fUi, U(17.f), &Ilion::Tr,
                         Tone(pal::Text), Tone(pal::Yellow), Tone(pal::Bg), Tone(pal::Line));
 
         // The Wiki of OptiScaler, as the footer of the classic menu had it
@@ -1558,11 +1585,21 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
             dl->PushClipRect(P(m0.x + 2, m0.y + 2), P(m1.x - 2, m1.y - 2), true);
             Text(fUi, 15.f, ImVec2(m0.x + 18, m0.y + 14), pal::Text2,
                  Lx("UPSCALING MONITOR", "MONITOR DE ESCALADO", "MONITOR DE ESCALA", "МОНИТОР МАСШТАБИРОВАНИЯ"));
-            LedAt(dl, ImVec2(m1.x - 32, m0.y + 26), 6.f, upscalerOn ? Led::Green : upscalerIdle ? Led::Yellow : Led::Off);
+            LedAt(dl, ImVec2(m1.x - 40, m0.y + 30), 6.f, upscalerOn ? Led::Green : upscalerIdle ? Led::Yellow : Led::Off);
 
             // The technology in the radioactive yellow of ILION
             const std::string tech = upscalerOn || upscalerIdle ? UpscalerLabel(feature) : std::string(Tr("None"));
-            Text(fUi, 28.f, ImVec2(m0.x + 18, m0.y + 38), upscalerOn || upscalerIdle ? pal::Yellow : pal::Text2, tech.c_str());
+            // "FSR 4.1.2" in yellow, what follows it ("· Driver (via SDK)") in white
+            {
+                const size_t cut = tech.find(" \xC2\xB7");
+                const size_t paren = tech.find(" (");
+                const size_t split = cut != std::string::npos ? cut : paren;
+                const bool known = upscalerOn || upscalerIdle;
+                const std::string first = split != std::string::npos ? tech.substr(0, split) : tech;
+                Text(fUi, 28.f, ImVec2(m0.x + 18, m0.y + 38), known ? pal::Yellow : pal::Text2, first.c_str());
+                if (split != std::string::npos)
+                    Text(fUi, 28.f, ImVec2(m0.x + 18 + Measure(fUi, 28.f, first.c_str()).x, m0.y + 38), pal::Text, tech.substr(split).c_str());
+            }
 
             std::string impl = "-";
             if (upscalerOn && RunsSwitchedFfx(feature->GetUpscalerType()))
@@ -1644,7 +1681,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                         const double v = std::clamp(times[times.size() - count + k], 0.0, top);
                         pts[k] = P(ga.x + (gb.x - ga.x) * k / (float) (count - 1), gb.y - (gb.y - ga.y) * (float) (v / top));
                     }
-                    dl->AddPolyline(pts, (int) count, Col(pal::Green), 0, U(1.3f));
+                    dl->AddPolyline(pts, (int) count, Col(pal::Orange), 0, U(1.3f));
                 }
                 y = gb.y + 8;
 
@@ -1685,11 +1722,27 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                 y += 6;
                 const std::string path = wstring_to_string(dllPath);
                 Text(fUi, 13.f, ImVec2(m0.x + 18, y), pal::Dim, "DLL");
-                const ImVec2 t0 = P(m0.x + 18, y + 16), t1 = P(m1.x - 18, y + 16 + 34);
-                dl->PushClipRect(t0, t1, true);
-                dl->AddText(fUi, U(13.f), t0, Col(pal::Text2), path.c_str(), nullptr, t1.x - t0.x);
-                dl->PopClipRect();
-                if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(t0, t1))
+                const ImVec2 t0 = P(m0.x + 18, y + 16), t1 = P(m1.x - 18, m1.y - 34);
+                const float lineHeight = U(15.f);
+                const float room = t1.x - t0.x;
+                float ly = t0.y;
+                size_t from = 0;
+                bool cut = false;
+                while (from < path.size())
+                {
+                    if (ly + lineHeight > t1.y)
+                    {
+                        cut = true;
+                        break;
+                    }
+                    size_t to = from + 1;
+                    while (to < path.size() && fUi->CalcTextSizeA(U(13.f), FLT_MAX, 0.0f, path.c_str() + from, path.c_str() + to + 1).x <= room)
+                        to++;
+                    dl->AddText(fUi, U(13.f), ImVec2(t0.x, ly), Col(pal::Text2), path.c_str() + from, path.c_str() + to);
+                    from = to;
+                    ly += lineHeight;
+                }
+                if (cut && ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(t0, t1))
                     ImGui::SetTooltip("%s", path.c_str());
             }
 
@@ -1882,8 +1935,10 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                 top += 30;
             }
             shellFgInstrumentsApart = sub.layout == &lFrameGen;
+            shellFgQuickInline = sub.layout == &lFrameGen;
             tabPanel(tabIndex(sub.tab), ImVec2(a.x, top), ImVec2(b.x, b.y - 118), "##ShellTab", sub.layout, sub.flow);
             shellFgInstrumentsApart = false;
+            shellFgQuickInline = false;
         }
         else
         {

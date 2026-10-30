@@ -47,9 +47,19 @@ inline uint64_t QpcFrequency()
 inline double QpcToMs(int64_t ticks) { return (double) ticks * 1000.0 / (double) QpcFrequency(); }
 
 // Only while the overlay shows the ILION estimated latency
+// ILION dev.64: the Latency panel of the menu asks for the measure while it shows its meter (GetTickCount64 of its
+// last frame); it stops a second after the panel closes. The overlay's own condition is unchanged
+inline std::atomic<uint64_t> menuWantsTick { 0 };
+
+inline void MenuWants() { menuWantsTick.store(GetTickCount64(), std::memory_order_relaxed); }
+
 inline bool Enabled()
 {
-    return Config::Instance()->ShowFps.value_or_default() && IlionOverlay::Shows(IlionOverlay::IlionLatency);
+    if (Config::Instance()->ShowFps.value_or_default() && IlionOverlay::Shows(IlionOverlay::IlionLatency))
+        return true;
+
+    const uint64_t wanted = menuWantsTick.load(std::memory_order_relaxed);
+    return wanted != 0 && GetTickCount64() - wanted < 1000;
 }
 
 // Why frames of the last second gave no full figure (the most frequent one)

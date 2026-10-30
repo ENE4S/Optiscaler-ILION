@@ -2390,8 +2390,9 @@ static void RenderFsr4ModelControls(Upscaler currentBackend, IFeature* feature, 
         const ImVec4 modelItemColour = toneMapColor(IlionTheme::Fsr4ModelAmber(ImGui::GetStyleColorVec4(ImGuiCol_PopupBg)));
 
         ImGui::SetNextItemWidth(150.0f * scale);
+        static const ImVec4 int8Orange = toneMapColor(IlionTheme::ShellPal::Orange);
         if (IlionTheme::BeginCombo(TrL("FSR4 Model"), previousModel.has_value() ? FSR4Models::Name(*previousModel) : automatic, 0,
-                                   &modelColour))
+                                   &modelColour, IlionTheme::shell ? "INT8" : nullptr, &int8Orange))
         {
             ImGui::PushStyleColor(ImGuiCol_Text, modelItemColour);
 
@@ -2437,9 +2438,35 @@ static void RenderFsr4ModelControls(Upscaler currentBackend, IFeature* feature, 
 
         if (determined.has_value() || config->Fsr4Model.has_value())
         {
-            ImGui::TextDisabled("%s: %s  |  %s: %s", Tr("Requested model"),
-                                config->Fsr4Model.has_value() ? FSR4Models::Name(config->Fsr4Model.value()) : Tr("Automatic"),
-                                Tr("Determined model"), determined.has_value() ? FSR4Models::Name(*determined) : Tr("not determined"));
+            const std::string modelLine =
+                StrFmt("%s: %s  |  %s: %s", Tr("Requested model"),
+                       config->Fsr4Model.has_value() ? FSR4Models::Name(config->Fsr4Model.value()) : Tr("Automatic"), Tr("Determined model"),
+                       determined.has_value() ? FSR4Models::Name(*determined) : Tr("not determined"));
+
+            // ILION dev.64: the INT8 network marked in bright orange in the new interface
+            if (IlionTheme::shell && modelLine.find("INT8") != std::string::npos)
+            {
+                const ImVec2 pos = ImGui::GetCursorScreenPos();
+                ImDrawList* draw = ImGui::GetWindowDrawList();
+                const ImU32 base = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+                const ImU32 orange = ImGui::GetColorU32(toneMapColor(IlionTheme::ShellPal::Orange));
+                float x = pos.x;
+                size_t from = 0;
+                for (size_t at = modelLine.find("INT8"); ; at = modelLine.find("INT8", from))
+                {
+                    const size_t end = at == std::string::npos ? modelLine.size() : at;
+                    draw->AddText(ImVec2(x, pos.y), base, modelLine.c_str() + from, modelLine.c_str() + end);
+                    x += ImGui::CalcTextSize(modelLine.c_str() + from, modelLine.c_str() + end).x;
+                    if (at == std::string::npos)
+                        break;
+                    draw->AddText(ImVec2(x, pos.y), orange, modelLine.c_str() + at, modelLine.c_str() + at + 4);
+                    x += ImGui::CalcTextSize(modelLine.c_str() + at, modelLine.c_str() + at + 4).x;
+                    from = at + 4;
+                }
+                ImGui::Dummy(ImGui::CalcTextSize(modelLine.c_str()));
+            }
+            else
+                ImGui::TextDisabled("%s", modelLine.c_str());
             UpscalerTip("Requested: the network chosen above.\n"
                         "Determined: the one FFX picked in its support checks when it made the context.\n"
                         "It isn't a reading of what the GPU runs: not confirmed in execution.");
@@ -11540,16 +11567,20 @@ static void FgModeValue(const CustomOptional<int>* countConfig)
 {
     const int mode = countConfig != nullptr ? countConfig->value_or_default() : 1;
     const std::string value = mode < 0 ? std::string(Tr("Default")) : mode == 0 ? std::string(Tr("Off")) : StrFmt("%dx", mode + 1);
+    // Requested: the configuration. Effective: the count the FG feature applies (with the Vulkan bridge, the one its
+    // SDK confirmed), a different variable; shown only while frames are being generated
     ImGui::AlignTextToFramePadding();
-    ImGui::TextDisabled("%s %s: %s", Tr("Frame Gen"), ShellText("configured", "configurado", "configurado", "настроено"), value.c_str());
+    ImGui::TextDisabled("%s: %s", ShellText("Requested", "Solicitado", "Solicitado", "Запрошено"), value.c_str());
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
 
     const auto fg = State::Instance().currentFG;
     if (fg != nullptr && fg->IsActive() && !fg->IsPaused())
-    {
-        ImGui::SameLine();
-        ImGui::TextColored(toneMapColor(IlionTheme::ShellPal::Green), "·  %s %ux", ShellText("generating", "generando", "gerando", "генерирует"),
+        ImGui::TextColored(toneMapColor(IlionTheme::ShellPal::Green), "%s: %ux", ShellText("Effective", "Efectivo", "Efetivo", "Фактически"),
                            (unsigned) fg->GetInterpolatedFrameCount() + 1);
-    }
+    else
+        ImGui::TextDisabled("%s: -", ShellText("Effective", "Efectivo", "Efetivo", "Фактически"));
 }
 #pragma execution_character_set(pop)
 
@@ -11561,6 +11592,9 @@ static float FgSelectorWidth(float selectorLabel)
 }
 // ILION dev.59: only the selectors of FG (input, output, nvngx, XeMFG variant), for the Home of the new interface
 static bool fgSelectorsOnly = false;
+// ILION dev.64: the FG control (on/off, multiplier, states) inside the selection, before its advanced settings
+static bool shellFgQuickInline = false;
+static bool fgQuickDrawn = false;
 
 static void DrawFgInstrumentsColumn(State& state)
 {
@@ -12094,6 +12128,15 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             ShowTooltip("If UI is too faint, disable this option");
 
             ImGui::EndDisabled();
+        }
+
+        // ILION dev.64: the new interface's FG control here: after the UI options, before the advanced settings
+        if (shellFgQuickInline && !fgQuickDrawn)
+        {
+            ImGui::Spacing();
+            RenderFgQuickControls(ctx);
+            ImGui::Spacing();
+            fgQuickDrawn = true;
         }
 
         const bool showOutputSpecificFGSettings = state.activeFgInput == FGInput::DLSSG ||
@@ -17697,113 +17740,9 @@ static const char* ShellReShadeWaiting()
 }
 #pragma execution_character_set(pop)
 
-void MenuCommon::RenderReShadePanel(RenderMenuContext& ctx)
+// Add effect (the techniques ReShade has loaded that aren't in the panel yet) and the catalogue to install more
+static void ReShadeAddAndCatalogue(const IlionReShade::Snapshot& rs, const ImVec4& good, const ImVec4& warn)
 {
-    IlionReShade::Poll();
-    SyncReShadeEffects();
-    const auto rs = IlionReShade::Get();
-    const ImVec4 good = toneMapColor(IlionTheme::Themed(ImVec4(0.35f, 0.85f, 0.45f, 1.f), IlionTheme::Role::Good));
-    const ImVec4 warn = toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn));
-
-    // ILION dev.63: the new interface shows the effects in use on the left (part 1) and the state, the adding and the
-    // catalogue on the right (part 2); the classic panel keeps them all (part 0)
-    if (reshadePanelPart == 1 && (!rs.moduleFound || !rs.registered || !rs.runtime))
-    {
-        TextWrappedDisabled("%s", ShellReShadeWaiting());
-        return;
-    }
-
-    if (reshadePanelPart != 1)
-    {
-        SectionTitle("ReShade");
-
-        // The close key against the right edge of the panel
-        ImGui::SameLine();
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - ButtonWidth(TrL("Close##reshade"))));
-        if (IlionTheme::Button(TrL("Close##reshade")))
-            reshadePanelOpen = false;
-
-        // Status and connection
-        if (ImGui::BeginTable("##reshadeStatus", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings))
-        {
-            ImGui::TableSetupColumn("##l");
-            ImGui::TableSetupColumn("##v", ImGuiTableColumnFlags_WidthStretch);
-
-            const auto row = [](const char* label, const ImVec4* colour, const std::string& value)
-            {
-                ImGui::TableNextColumn();
-                ImGui::TextDisabled("%s", Tr(label));
-                ImGui::TableNextColumn();
-                if (colour != nullptr)
-                    TextWrappedColored(*colour, "%s", value.c_str());
-                else
-                    ImGui::TextWrapped("%s", value.c_str());
-            };
-
-            row("ReShade", rs.moduleFound ? &good : &warn,
-                rs.moduleFound ? std::string(Tr("detected")) + (rs.version.empty() ? "" : " " + rs.version) : std::string(Tr("not detected")));
-            row("Bridge", rs.registered ? &good : &warn,
-                rs.registered ? std::string(Tr("connected")) : std::string(Tr(rs.error.empty() ? "disconnected" : rs.error.c_str())));
-            row("Runtime", rs.runtime ? &good : &warn,
-                rs.runtime ? std::string(Tr("presenting frames")) : std::string(Tr("waiting for ReShade to present a frame")));
-
-            if (rs.moduleFound && !rs.path.empty())
-                row("File", nullptr, rs.path);
-
-            ImGui::EndTable();
-        }
-
-        const char* diagnosis = ReShadeDiagnosis(rs);
-
-        if (!rs.moduleFound)
-        {
-            TextWrappedDisabled("%s", Tr(diagnosis));
-            return;
-        }
-
-        if (diagnosis != nullptr)
-            TextWrappedColored(warn, "%s", Tr(diagnosis));
-
-        if (!rs.registered || !rs.runtime)
-            return;
-    }
-
-    if (reshadePanelPart != 2)
-    {
-        // ReShade's processing, as ReShade reports it
-        bool effectsOn = rs.effectsOn;
-        if (IlionTheme::Checkbox(TrL("ReShade processing"), &effectsOn))
-            IlionReShade::SetEffectsState(effectsOn);
-
-        if (rs.pending > 0)
-        {
-            ImGui::SameLine();
-            ImGui::TextDisabled("%s", Tr("applying..."));
-        }
-
-        TextWrappedDisabled("%s", Tr("Each active effect costs GPU time; switched off, an effect costs nothing."));
-
-        // Default catalogue, then the effects the user added
-        const size_t catalogue = std::size(IlionReShade::kCatalogue);
-
-        ImGui::Spacing();
-        SectionTitle("Default effects");
-        for (size_t i = 0; i < rs.effects.size() && i < catalogue; i++)
-            RenderReShadeEffect(rs.effects[i], false);
-
-        ImGui::Spacing();
-        SectionTitle("Added effects");
-
-        if (rs.effects.size() <= catalogue)
-            TextWrappedDisabled("%s", Tr("None yet: pick an installed effect below."));
-
-        for (size_t i = catalogue; i < rs.effects.size(); i++)
-            RenderReShadeEffect(rs.effects[i], true);
-    }
-
-    if (reshadePanelPart == 1)
-        return;
-
     // Add effect: the techniques ReShade has loaded that aren't in the panel yet
     ImGui::Spacing();
     SectionTitle("Add effect");
@@ -17864,6 +17803,140 @@ void MenuCommon::RenderReShadePanel(RenderMenuContext& ctx)
         TextWrappedDisabled("%s", Tr("Every effect ReShade has loaded is already in the panel."));
 
     RenderReShadeCatalogue(rs, good, warn);
+}
+
+void MenuCommon::RenderReShadePanel(RenderMenuContext& ctx)
+{
+    IlionReShade::Poll();
+    SyncReShadeEffects();
+    const auto rs = IlionReShade::Get();
+    const ImVec4 good = toneMapColor(IlionTheme::Themed(ImVec4(0.35f, 0.85f, 0.45f, 1.f), IlionTheme::Role::Good));
+    const ImVec4 warn = toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn));
+
+    // ILION dev.63: the new interface shows the effects in use on the left (part 1) and the state, the adding and the
+    // catalogue on the right (part 2); the classic panel keeps them all (part 0)
+    if (reshadePanelPart == 1 && (!rs.moduleFound || !rs.registered || !rs.runtime))
+    {
+        TextWrappedDisabled("%s", ShellReShadeWaiting());
+        return;
+    }
+
+    // The new interface's management column: adding an effect and the catalogue first, the connection rows under them
+    if (reshadePanelPart == 2 && rs.moduleFound && rs.registered && rs.runtime)
+    {
+        ReShadeAddAndCatalogue(rs, good, warn);
+        ImGui::Spacing();
+    }
+
+    if (reshadePanelPart != 1)
+    {
+        // The new interface: the card above already names ReShade and has the key that closes its panel
+        if (reshadePanelPart != 2)
+        {
+        SectionTitle("ReShade");
+
+        // The close key against the right edge of the panel
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - ButtonWidth(TrL("Close##reshade"))));
+        if (IlionTheme::Button(TrL("Close##reshade")))
+            reshadePanelOpen = false;
+        }
+
+        // Status and connection
+        if (ImGui::BeginTable("##reshadeStatus", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings))
+        {
+            ImGui::TableSetupColumn("##l");
+            ImGui::TableSetupColumn("##v", ImGuiTableColumnFlags_WidthStretch);
+
+            const auto row = [](const char* label, const ImVec4* colour, const std::string& value)
+            {
+                ImGui::TableNextColumn();
+                ImGui::TextDisabled("%s", Tr(label));
+                ImGui::TableNextColumn();
+                if (colour != nullptr)
+                    TextWrappedColored(*colour, "%s", value.c_str());
+                else
+                    ImGui::TextWrapped("%s", value.c_str());
+            };
+
+            row("ReShade", rs.moduleFound ? &good : &warn,
+                rs.moduleFound ? std::string(Tr("detected")) + (rs.version.empty() ? "" : " " + rs.version) : std::string(Tr("not detected")));
+            row("Bridge", rs.registered ? &good : &warn,
+                rs.registered ? std::string(Tr("connected")) : std::string(Tr(rs.error.empty() ? "disconnected" : rs.error.c_str())));
+            row("Runtime", rs.runtime ? &good : &warn,
+                rs.runtime ? std::string(Tr("presenting frames")) : std::string(Tr("waiting for ReShade to present a frame")));
+
+            if (rs.moduleFound && !rs.path.empty())
+            {
+                // The new interface: the file's name, its whole path in the tooltip
+                if (reshadePanelPart == 2)
+                {
+                    row("File", nullptr, std::filesystem::path(rs.path).filename().string());
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", rs.path.c_str());
+                }
+                else
+                    row("File", nullptr, rs.path);
+            }
+
+            ImGui::EndTable();
+        }
+
+        const char* diagnosis = ReShadeDiagnosis(rs);
+
+        if (!rs.moduleFound)
+        {
+            TextWrappedDisabled("%s", Tr(diagnosis));
+            return;
+        }
+
+        if (diagnosis != nullptr)
+            TextWrappedColored(warn, "%s", Tr(diagnosis));
+
+        if (!rs.registered || !rs.runtime)
+            return;
+    }
+
+    if (reshadePanelPart != 2)
+    {
+        // ReShade's processing, as ReShade reports it
+        bool effectsOn = rs.effectsOn;
+        if (IlionTheme::Checkbox(TrL("ReShade processing"), &effectsOn))
+            IlionReShade::SetEffectsState(effectsOn);
+
+        if (rs.pending > 0)
+        {
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", Tr("applying..."));
+        }
+
+        TextWrappedDisabled("%s", Tr("Each active effect costs GPU time; switched off, an effect costs nothing."));
+
+        // Default catalogue, then the effects the user added
+        const size_t catalogue = std::size(IlionReShade::kCatalogue);
+
+        ImGui::Spacing();
+        SectionTitle("Default effects");
+        for (size_t i = 0; i < rs.effects.size() && i < catalogue; i++)
+            RenderReShadeEffect(rs.effects[i], false);
+
+        ImGui::Spacing();
+        SectionTitle("Added effects");
+
+        if (rs.effects.size() <= catalogue)
+            TextWrappedDisabled("%s", Tr("None yet: pick an installed effect below."));
+
+        for (size_t i = catalogue; i < rs.effects.size(); i++)
+            RenderReShadeEffect(rs.effects[i], true);
+    }
+
+    if (reshadePanelPart == 1)
+        return;
+
+    if (reshadePanelPart == 2)
+        return;
+
+    ReShadeAddAndCatalogue(rs, good, warn);
 }
 
 // CUSTOM TAB -----------------------------
@@ -19575,6 +19648,75 @@ static void SetNeuralRendering(Config& cfg, bool enabled)
     InvalidateHistory();
 }
 
+// ILION dev.64: a compact NR state for the left column of the new interface. Only figures the bridge reports: whether a
+// model ran in the last second, the runtime built, the adaptive profile asked for and the level it runs, the model's
+// working size and the share of frames the model ran on. No NR time: the bridge doesn't measure one
+#pragma execution_character_set(push, "utf-8")
+static void DrawNrSummary(const Config& cfg)
+{
+    using namespace DlssNr::AmdBridge;
+    using namespace DlssNr::RuntimeCaps;
+
+    const bool running = RecentlyActive();
+    const auto runtime = ActiveRuntime();
+    const auto dyn = DynamicNrState();
+    const auto stats = Stats();
+
+    SectionTitle(ShellText("NR state", "Estado NR", "Estado NR", "Состояние NR"));
+
+    if (!ImGui::BeginTable("##NrSummary", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings))
+        return;
+
+    const auto row = [](const ImVec4& colour, bool lit, const char* name, const std::string& value)
+    {
+        ImGui::TableNextColumn();
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const float h = ImGui::GetTextLineHeight();
+        IlionTheme::ShellLed(ImGui::GetWindowDrawList(), ImVec2(p.x + h * 0.4f, p.y + h * 0.5f), h * 0.2f, colour, lit);
+        ImGui::Dummy(ImVec2(h, h));
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", name);
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(value.c_str());
+    };
+
+    const bool enabled = cfg.DlssNrEnabled.value_or_default();
+    row(running ? IlionTheme::ShellPal::Green : IlionTheme::ShellPal::Yellow, running || enabled,
+        ShellText("Neural Rendering", "Neural Rendering", "Neural Rendering", "Neural Rendering"),
+        running   ? ShellText("model running", "modelo en ejecución", "modelo em execução", "модель работает")
+        : enabled ? ShellText("enabled, no model frames yet", "activado, sin fotogramas del modelo aún", "ativado, ainda sem quadros do modelo",
+                              "включён, кадров модели ещё нет")
+                  : ShellText("off", "apagado", "desligado", "выкл."));
+
+    const char* runtimeName = runtime == NeuralRuntime::Lmxxf ? "lmxxf" : runtime == NeuralRuntime::Daniel ? "Daniel" : nullptr;
+    row(IlionTheme::ShellPal::Green, runtimeName != nullptr, ShellText("Runtime", "Motor", "Motor", "Движок"),
+        runtimeName != nullptr ? std::string(runtimeName) : std::string(ShellText("none built", "ninguno creado", "nenhum criado", "не создан")));
+
+    // Adaptive NR: the profile asked for (by its target) and the level the controller runs
+    const bool adaptive = cfg.AmdDynamicRes.value_or_default();
+    std::string asked = ShellText("off", "apagado", "desligado", "выкл.");
+    if (adaptive)
+        asked = StrFmt("%s %d FPS", ShellText("target", "objetivo", "alvo", "цель"), cfg.AmdDynamicTargetFps.value_or_default());
+    row(IlionTheme::ShellPal::Yellow, adaptive, ShellText("Adaptive NR", "NR adaptativo", "NR adaptativo", "Адаптивный NR"), asked);
+
+    if (adaptive && dyn.running)
+        row(dyn.level == 0 ? IlionTheme::ShellPal::Green : IlionTheme::ShellPal::Orange, true,
+            ShellText("Level running", "Nivel en uso", "Nível em uso", "Текущий уровень"),
+            StrFmt("%d / %d  ·  %d%%  ·  %s %d%s", dyn.level + 1, std::max(1, dyn.levels), (int) std::lround(dyn.scale * 100.0f),
+                   ShellText("interval", "intervalo", "intervalo", "интервал"), dyn.interleave, dyn.fast ? "  ·  Fast" : ""));
+
+    if (stats.width > 0 && stats.height > 0)
+        row(IlionTheme::ShellPal::Green, running, ShellText("Model size", "Tamaño del modelo", "Tamanho do modelo", "Размер модели"),
+            StrFmt("%ux%u", stats.width, stats.height));
+
+    if (stats.recorded > 0)
+        row(IlionTheme::ShellPal::Green, running, ShellText("Frames with model", "Fotogramas con modelo", "Quadros com modelo", "Кадров с моделью"),
+            StrFmt("%.0f%%", 100.0 * (double) stats.modelFrames / (double) stats.recorded));
+
+    ImGui::EndTable();
+}
+#pragma execution_character_set(pop)
+
 void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
 {
     using namespace DlssNr::AmdBridge;
@@ -19824,6 +19966,12 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
             WrappedText(IlionTheme::TextDim, Tr("See the effect in the overlay with ILION's estimated latency"));
             ImGui::Unindent();
         }
+    }
+    // ILION dev.64: the compact NR state under the controls (left column of the new interface)
+    if (IlionTheme::shell)
+    {
+        ScopedCard card;
+        DrawNrSummary(cfg);
     }
     // ILION dev.50: the neural monitor, only in Advanced (not Essential, not Basic)
     if (AdvancedView())
@@ -20232,6 +20380,9 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
     {
         if (strcmp(id, "@fg_quick") == 0)
         {
+            // Already drawn inside the selection (its usual place); its own card only when the selection had no room for it
+            if (fgQuickDrawn)
+                return;
             ScopedCard card;
             ScopedID quickId { "fg_quick" };
             RenderFgQuickControls(ctx);
@@ -20293,23 +20444,30 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
 
             if (ImGui::BeginTable("##LatencyMonitor", 2, ImGuiTableFlags_SizingFixedFit))
             {
-                const auto row = [&](bool lit, const char* name, const std::string& value)
+                const auto row = [&](bool lit, const char* name, const std::string& value, const ImVec4& colour = IlionTheme::ShellPal::Green)
                 {
                     ImGui::TableNextColumn();
                     const ImVec2 p = ImGui::GetCursorScreenPos();
                     const float h = ImGui::GetTextLineHeight();
-                    IlionTheme::ShellLed(ImGui::GetWindowDrawList(), ImVec2(p.x + h * 0.4f, p.y + h * 0.5f), h * 0.2f, IlionTheme::ShellPal::Green, lit);
+                    IlionTheme::ShellLed(ImGui::GetWindowDrawList(), ImVec2(p.x + h * 0.4f, p.y + h * 0.5f), h * 0.2f, colour, lit);
                     ImGui::Dummy(ImVec2(h, h));
                     ImGui::SameLine();
                     ImGui::TextDisabled("%s", name);
                     ImGui::TableNextColumn();
                     ImGui::TextUnformatted(value.c_str());
                 };
-                row(mode != 2, ShellText("Intelligent activation", "Activación inteligente", "Ativação inteligente", "Умная активация"), modeName);
+                row(mode != 2, ShellText("Intelligent activation", "Activación inteligente", "Ativação inteligente", "Умная активация"), modeName,
+                    mode == IlionLatency::Manual ? IlionTheme::ShellPal::Yellow : IlionTheme::ShellPal::Green);
                 row(lowLatency, ShellText("Method in use", "Método en uso", "Método em uso", "Используемый метод"),
                     tech != nullptr ? std::string(tech) : std::string("-"));
-                row(regulator == IlionRegulator::Status::Active, ShellText("Latency regulator", "Regulador de latencia", "Regulador de latência", "Регулятор задержки"),
-                    regulatorName);
+                // Regulator: green working, yellow paused by frame generation, orange not possible here, red failed
+                const bool regulatorLit = regulator != IlionRegulator::Status::Off && regulator != IlionRegulator::Status::NoFrames;
+                const ImVec4 regulatorColour = regulator == IlionRegulator::Status::Active            ? IlionTheme::ShellPal::Green
+                                               : regulator == IlionRegulator::Status::FrameGeneration ? IlionTheme::ShellPal::Yellow
+                                               : regulator == IlionRegulator::Status::Failed          ? IlionTheme::ShellPal::Red
+                                                                                                      : IlionTheme::ShellPal::Orange;
+                row(regulatorLit, ShellText("Latency regulator", "Regulador de latencia", "Regulador de latência", "Регулятор задержки"),
+                    regulatorName, regulatorColour);
                 row(limit > 0.0f, ShellText("FPS limit", "Límite de FPS", "Limite de FPS", "Лимит FPS"),
                     limit > 0.0f ? StrFmt("%.0f FPS", limit) : std::string(ShellText("none", "sin límite", "sem limite", "нет")));
                 row(cfg.OverrideVsync.value_or_default(), "V-Sync", vsync);
@@ -20346,16 +20504,19 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
                 reflexMs = -1.0;
 #ifdef LOW_LATENCY_INPUTS
                 static TimingData timing {};
-                if (InputCommon::get_timing_data(timing) && timing.timeRange.has_value())
-                    reflexMs = (double) timing.timeRange.value().length / 1000000.0;
+                if (InputCommon::get_timing_data(timing) && timing.timeRange.has_value() && timing.timeRange.value().length > 0)
+                    reflexMs = (double) timing.timeRange.value().length / 1000.0; // the overlay's own unit and scale
 #else
-                if (ReflexHooks::updateTimingData() && ReflexHooks::timingData[TimingType::TimeRange].has_value())
-                    reflexMs = (double) ReflexHooks::timingData[TimingType::TimeRange].value().length / 1000000.0;
+                if (ReflexHooks::updateTimingData() && ReflexHooks::timingData[TimingType::TimeRange].has_value() &&
+                    ReflexHooks::timingData[TimingType::TimeRange].value().length > 0)
+                    reflexMs = (double) ReflexHooks::timingData[TimingType::TimeRange].value().length / 1000.0; // as the overlay
 #endif
                 lastPoll = ctx.now;
             }
 
-            // ILION's estimated latency (misc/IlionLatency.h), with the same reducer key as the overlay's meter
+            // ILION's estimated latency (misc/IlionLatency.h), with the same reducer key as the overlay's meter. It is
+            // measured only while something shows it: this panel asks for it while it is on screen
+            IlionLatency::MenuWants();
             int reducerId = 0;
             if (fakenvapi::isUsingAsMainNvapi())
                 reducerId = 1 + (int) fakenvapi::getCurrentMode() * 2 + (fakenvapi::isLowLatencyActive() ? 1 : 0);
@@ -20381,9 +20542,7 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
                     ImGui::PopFont();
                     ImGui::TextDisabled("%s", detail);
                 };
-                meter("Reflex timings", ShellText("frame range of the last report", "rango del fotograma del último informe",
-                                                  "intervalo do quadro do último relatório", "диапазон кадра в последнем отчёте"),
-                      reflexMs, blue);
+                meter("Reflex timings", Tr("Frame markers (CPU)"), reflexMs, blue);
                 meter(ShellText("ILION latency", "Latencia ILION", "Latência ILION", "Задержка ILION"),
                       latency.onScreen ? ShellText("estimated, simulation to screen", "estimada, de simulación a pantalla", "estimada, da simulação à tela",
                                                    "оценка, от симуляции до экрана")
@@ -20514,6 +20673,8 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
 
     if (layout != nullptr)
     {
+        fgQuickDrawn = false;
+
         // One box alone keeps the whole width (its own controls keep a proportionate length)
         const bool table = columns && layout->right[0] != nullptr && ImGui::BeginTable("##ShellColumns", 2, tableFlags);
 

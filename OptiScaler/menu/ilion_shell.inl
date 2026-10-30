@@ -1028,18 +1028,20 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
         return;
     }
 
-    // ILION dev.76: the Compact presentation: the switch and under it the multiplier at the left, the four states at the
-    // right. dev.77: the states a little larger, against the card's right edge (20 px), from the height of "FG Input"
-    // when the selectors leave them room (they are narrowed for it in RenderFrameGenerationSelection)
+    // ILION dev.76: the Compact presentation. dev.78: in the two columns RenderFrameGenerationSelection opens: part 1
+    // the switch and under it the multiplier (left), part 2 the four states, 15% larger, against the right edge of
+    // their column with a 20 px margin
     if (shellCompact)
     {
-        const ImVec2 leftStart = ImGui::GetCursorScreenPos();
-        const float contentRight = leftStart.x + ImGui::GetContentRegionAvail().x;
-        drawSwitch(Lx("Frame generation on###QuickFg", "Generación activada###QuickFg", "Geração ativada###QuickFg", "Генерация включена###QuickFg"));
-        float leftRight = ImGui::GetItemRectMax().x;
-        drawMultiplier(U(130), "Frame Gen##QuickMult", true);
-        leftRight = (std::max)(leftRight, ImGui::GetItemRectMax().x);
-        const float leftBottom = ImGui::GetCursorScreenPos().y;
+        if (fgCompactPart != 2)
+        {
+            drawSwitch(Lx("Frame generation on###QuickFg", "Generación activada###QuickFg", "Geração ativada###QuickFg", "Генерация включена###QuickFg"));
+            drawMultiplier(U(130), "Frame Gen##QuickMult", true);
+            if (!same)
+                TextWrappedColored(Tone(pal::Orange), "%s", pendingNote);
+            if (fgCompactPart == 1)
+                return;
+        }
 
         ImGui::PushFont(ImGui::GetFont(), std::floor(ImGui::GetFontSize() * 1.15f));
         labelWidth = 0.0f;
@@ -1058,25 +1060,13 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
         const float blockWidth = std::ceil(lh + U(6) + labelWidth + U(10) + valueWidth);
         fgCompactStatesWidth = blockWidth;
 
-        const float statesX = std::floor(contentRight - blockWidth - U(20));
-        const bool fromTop = fgCompactSelTop > 0.0f && statesX >= fgCompactSelRight + U(16);
-        if (fromTop || statesX >= leftRight + U(16))
-        {
-            ImGui::SetCursorScreenPos(ImVec2(statesX, fromTop ? fgCompactSelTop : leftStart.y));
-            ImGui::BeginGroup();
-            drawStates();
-            ImGui::EndGroup();
-            const float rightBottom = ImGui::GetItemRectMax().y + ImGui::GetStyle().ItemSpacing.y;
-            ImGui::SetCursorScreenPos(ImVec2(leftStart.x, (std::max)(leftBottom, rightBottom)));
-            ImGui::Dummy(ImVec2(0.0f, 0.0f));
-        }
-        else
-            drawStates();
+        const float indent = (std::max)(0.0f, std::floor(ImGui::GetContentRegionAvail().x - blockWidth - U(20)));
+        if (indent > 0.0f)
+            ImGui::Indent(indent);
+        drawStates();
+        if (indent > 0.0f)
+            ImGui::Unindent(indent);
         ImGui::PopFont();
-        fgCompactSelTop = 0.0f;
-
-        if (!same)
-            TextWrappedColored(Tone(pal::Orange), "%s", pendingNote);
         return;
     }
 
@@ -2341,6 +2331,31 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                             ImGui::PopStyleColor();
                         }
                     }
+
+                    // ILION dev.78: the dll of the implementation that runs, on one discreet line: its file name and file
+                    // version as the catalogue reads them (the whole path and the checks are in Diagnostics)
+                    if (running != nullptr)
+                    {
+                        std::string dll;
+                        if (running->entry != nullptr)
+                        {
+                            dll = wstring_to_string(std::filesystem::path(running->entry->path).filename().wstring());
+                            if (!running->entry->fileVersion.empty())
+                                dll += "  ·  " + running->entry->fileVersion;
+                        }
+                        else if (running->backend != Upscaler::Reset || running->ffxIndex >= 0 || running->vkDriver)
+                            dll = Lx("Built into OptiScaler", "Integrado en OptiScaler", "Integrado ao OptiScaler", "Встроен в OptiScaler");
+                        else
+                            dll = Lx("AMD's FSR dll next to OptiScaler, or the game's own", "DLL de FSR de AMD junto a OptiScaler, o la del juego",
+                                     "DLL do FSR da AMD junto ao OptiScaler, ou a do jogo", "DLL FSR от AMD рядом с OptiScaler или игровая");
+                        ImGui::Spacing();
+                        ImGui::Separator();
+                        ImGui::TextColored(Tone(pal::Dim), "DLL");
+                        ImGui::SameLine(0, U(8));
+                        ImGui::PushStyleColor(ImGuiCol_Text, Tone(pal::Text2));
+                        ImGui::TextWrapped("%s", dll.c_str());
+                        ImGui::PopStyleColor();
+                    }
                 }
             }
             else if (compactSection < kDiag)
@@ -2356,7 +2371,6 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                     shellFgInstrumentsApart = false;
                     shellFgQuickInline = false;
                     fgCompactComboWidth = 0.0f;
-                    fgCompactSelTop = 0.0f;
                 }
                 else
                     Label(Lx("Nothing to show in this section for this game.", "Nada que mostrar en esta sección para este juego.",

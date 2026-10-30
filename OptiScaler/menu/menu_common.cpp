@@ -251,8 +251,7 @@ static bool shellCompact = false;               // ILION dev.73: the new interfa
 static float fgHomeComboWidth = 0.0f;           // ILION dev.71: width of the FG selectors, the XeMFG variant and the multiplier
                                                 // in the Home card when it is split in two zones (0: their usual width)
 static float fgCompactComboWidth = 0.0f;        // ILION dev.77: Compact's Generation: width of the FG selectors (0: usual)
-static float fgCompactSelTop = 0.0f;            // ILION dev.77: top of those selectors (screen), for the FG states beside them
-static float fgCompactSelRight = 0.0f;          // ILION dev.77: how far right those selectors and their labels reach
+static int fgCompactPart = 0;                   // ILION dev.78: RenderFgQuickControls in Compact's two columns: 1 left, 2 states
 static float fgCompactStatesWidth = 0.0f;       // ILION dev.77: width of the FG states' block, measured when drawn
 static bool shellActive = false;                // ILION dev.58: the new interface is drawing, in its single (Advanced) mode
 static bool shellSettingsTag = false;           // ILION dev.59: the cards drawn now change settings (marked on their name)
@@ -10044,7 +10043,13 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             ImGui::Spacing();
 
             // ILION dev.63: colour space, preset, debug view and watermark are secondary: one fold in the new interface
-            if (!shellSimple && (!IlionTheme::shell || IlionTheme::CollapsingHeader(TrL("Additional FFX options##FfxExtras"))))
+            // ILION dev.78: the Compact presentation shows them (FSR 4 only), unfolded under a plate of their own
+#pragma execution_character_set(push, "utf-8")
+            if (shellCompact)
+                IlionTheme::SectionPlate(ShellText("FSR 4 options", "Opciones de FSR 4", "Opções do FSR 4", "Параметры FSR 4"));
+#pragma execution_character_set(pop)
+            if ((!shellSimple || shellCompact) &&
+                (!IlionTheme::shell || shellCompact || IlionTheme::CollapsingHeader(TrL("Additional FFX options##FfxExtras"))))
             {
                 // Colorspaces
                 const char* colorSpaces[] = { Tr("Linear (Default)"), Tr("Non-Linear"), Tr("Non-Linear sRGB"), Tr("Non-Linear PQ") };
@@ -11922,6 +11927,30 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             ShowTooltip("Which copium do you choose?");
         }
 
+        // ILION dev.78: Compact's Generation: two real columns. Left: the selectors, the switch and the multiplier; right:
+        // the four states, against the card's edge, from the row of "FG Input". The right column is as wide as the
+        // states measured last frame; the selectors take the rest minus their label
+        fgCompactComboWidth = 0.0f;
+        const bool compactColumns = shellCompact && !fgSelectorsOnly && shellFgQuickInline && !fgQuickDrawn &&
+                                    ImGui::BeginTable("##CompactFgColumns", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings);
+        if (compactColumns)
+        {
+            const float statesWidth = (fgCompactStatesWidth > 0.0f ? fgCompactStatesWidth : ImGui::GetFontSize() * 18.0f) + ImGui::GetFontSize() * 1.25f;
+            ImGui::TableSetupColumn("##fgLeft", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("##fgStates", ImGuiTableColumnFlags_WidthFixed, statesWidth);
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+
+            float shownLabel = std::max(ImGui::CalcTextSize(Tr("FG Input")).x, ImGui::CalcTextSize(Tr(replaceFgOutputWithNvngx ? "FG Nvngx" : "FG Output")).x);
+            if (showNvngxFgDowndown)
+                shownLabel = std::max(shownLabel, ImGui::CalcTextSize(Tr("FG Nvngx Replacement")).x);
+            if (config->FGOutput.value_or_default() == FGOutput::XeFG)
+                shownLabel = std::max(shownLabel, ImGui::CalcTextSize(Tr("XeMFG variant")).x);
+            shownLabel += ImGui::GetStyle().ItemInnerSpacing.x * 2.0f;
+            fgCompactComboWidth = std::clamp(std::floor(ImGui::GetContentRegionAvail().x - shownLabel), ImGui::GetFontSize() * 8.0f,
+                                             ImGui::GetFontSize() * 17.0f);
+        }
+
         // ILION: the FG screen next to the input and output (to their right when there is room, else centred below)
         const ImVec2 crtSize = FgCrtSize();
         const float crtGap = ImGui::GetStyle().ItemSpacing.x * 2.0f;
@@ -11938,26 +11967,6 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                                selectionAvail >= crtSize.x + crtGap + selectorLabel + ImGui::GetFontSize() * 14.0f;
         const ImVec2 selectionStart = ImGui::GetCursorScreenPos();
         const float selectionWidth = crtBeside ? selectionAvail - crtSize.x - crtGap : 0.0f;
-
-        // ILION dev.77: Compact's Generation: the selectors leave the right of the card to the FG states, which then
-        // start level with "FG Input" (RenderFgQuickControls). Only the width of the combos changes
-        fgCompactComboWidth = 0.0f;
-        fgCompactSelTop = 0.0f;
-        if (shellCompact && !fgSelectorsOnly)
-        {
-            float shownLabel = std::max(ImGui::CalcTextSize(Tr("FG Input")).x, ImGui::CalcTextSize(Tr(replaceFgOutputWithNvngx ? "FG Nvngx" : "FG Output")).x);
-            if (showNvngxFgDowndown)
-                shownLabel = std::max(shownLabel, ImGui::CalcTextSize(Tr("FG Nvngx Replacement")).x);
-            if (config->FGOutput.value_or_default() == FGOutput::XeFG)
-                shownLabel = std::max(shownLabel, ImGui::CalcTextSize(Tr("XeMFG variant")).x);
-            shownLabel += ImGui::GetStyle().ItemInnerSpacing.x * 2.0f;
-            const float statesWidth = fgCompactStatesWidth > 0.0f ? fgCompactStatesWidth : ImGui::GetFontSize() * 18.0f;
-            const float margins = ImGui::GetFontSize() * 2.25f; // the right margin and the gap between the two zones
-            fgCompactComboWidth = std::clamp(std::floor(selectionAvail - statesWidth - margins - shownLabel), ImGui::GetFontSize() * 8.0f,
-                                             ImGui::GetFontSize() * 17.0f);
-            fgCompactSelTop = selectionStart.y;
-            fgCompactSelRight = selectionStart.x + fgCompactComboWidth + shownLabel;
-        }
 
         if (ImGui::BeginTable("fgSelection", 1, ImGuiTableFlags_SizingStretchSame, ImVec2(selectionWidth, 0.0f)))
         {
@@ -12034,6 +12043,22 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
         // the route XeMFG uses (another generator hides it, the choice stays in the config)
         if (config->FGOutput.value_or_default() == FGOutput::XeFG)
             RenderXeMfgVariantSelector(config);
+
+        // ILION dev.78: Compact's two columns: the switch and the multiplier under the selectors, the states at the right
+        if (compactColumns)
+        {
+            ImGui::Spacing();
+            fgCompactPart = 1;
+            RenderFgQuickControls(ctx);
+            ImGui::TableSetColumnIndex(1);
+            fgCompactPart = 2;
+            RenderFgQuickControls(ctx);
+            fgCompactPart = 0;
+            ImGui::EndTable();
+            fgCompactComboWidth = 0.0f;
+            fgQuickDrawn = true;
+            ImGui::Spacing();
+        }
 
         // Home of the new interface: the selectors only, the module keeps the rest
         if (fgSelectorsOnly)

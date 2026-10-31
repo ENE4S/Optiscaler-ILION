@@ -9800,6 +9800,60 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
         IlionD4rPanel::Draw(IlionD4rLogPath(), currentFeature->Version().major, currentFeature->Version().minor,
                             currentFeature->Version().patch);
 
+    // ILION dev.79: the provider inside the FFX dll in use (FSR 4.1.2, 4.0.x...), drawn in Advanced selectors and, in
+    // the Compact presentation, among FSR 4's options. The same control, config and logic in both places
+    const auto ffxProviderSelector = [&]()
+    {
+            if (currentBackend == Upscaler::FFX || currentBackend == Upscaler::FFX_on12)
+            {
+            if (auto versions = GetFfxVersionList(currentBackend, state.api);
+                versions != nullptr && !versions->names.empty())
+            {
+                ImGui::Spacing();
+    
+                auto& ffxIndexConfig = FfxIndexFor(currentBackend, state.api);
+                const int ffxIndex = ffxIndexConfig.value_or_default();
+                auto currentName =
+                    ffxIndex >= 0 && ffxIndex < versions->names.size() ? StrFmt("FSR %s", versions->names[ffxIndex]) : "";
+    
+                ImGui::PushItemWidth(150.0f * menuResScale);
+    
+                if (IlionTheme::BeginCombo(TrL("FFX provider"), currentName.c_str()))
+                {
+                    for (auto n : FfxVersionsNewestFirst(*versions))
+                    {
+                        if (ImGui::Selectable(StrFmt("FSR %s##%d", versions->names[n], n).c_str(), ffxIndex == n) &&
+                            ffxIndex != n)
+                        {
+                            ffxIndexConfig = n;
+
+                            // A provider picked by hand in Advanced stays until an implementation is chosen again
+                            if (&ffxIndexConfig == &config->FfxUpscalerIndex)
+                                FfxApiProxy::SetSrIndexManual(true);
+
+                            state.newBackend = currentBackend;
+                            MARK_ALL_BACKENDS_CHANGED();
+                        }
+                    }
+    
+                    ImGui::EndCombo();
+                }
+    
+                ImGui::PopItemWidth();
+    
+                ShowTooltip("Provider inside the FFX dll in use, as that dll lists them: e.g. the AMD driver's FSR 4.1.2 that "
+                            "AMD's SDK dll hands the upscale to, or the SDK's own 4.1.1. The selector above picks the dll.");
+
+                // ILION: a provider picked here by hand, until an implementation is chosen again in the selector
+                if (FfxApiProxy::SrIndexManual() && &ffxIndexConfig == &config->FfxUpscalerIndex)
+                {
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("%s", Tr("(manual)"));
+                }
+            }
+            }
+    };
+
     // ILION's upscalers: every FFX upscaler found and DLSS 4 through d4r, whatever runs now
     if (!usesDlssd)
     {
@@ -9849,54 +9903,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
         }
 
         ImGui::PopItemWidth();
-            if (currentBackend == Upscaler::FFX || currentBackend == Upscaler::FFX_on12)
-            {
-            if (auto versions = GetFfxVersionList(currentBackend, state.api);
-                versions != nullptr && !versions->names.empty())
-            {
-                ImGui::Spacing();
-    
-                auto& ffxIndexConfig = FfxIndexFor(currentBackend, state.api);
-                const int ffxIndex = ffxIndexConfig.value_or_default();
-                auto currentName =
-                    ffxIndex >= 0 && ffxIndex < versions->names.size() ? StrFmt("FSR %s", versions->names[ffxIndex]) : "";
-    
-                ImGui::PushItemWidth(150.0f * menuResScale);
-    
-                if (IlionTheme::BeginCombo(TrL("FFX provider"), currentName.c_str()))
-                {
-                    for (auto n : FfxVersionsNewestFirst(*versions))
-                    {
-                        if (ImGui::Selectable(StrFmt("FSR %s##%d", versions->names[n], n).c_str(), ffxIndex == n) &&
-                            ffxIndex != n)
-                        {
-                            ffxIndexConfig = n;
-
-                            // A provider picked by hand in Advanced stays until an implementation is chosen again
-                            if (&ffxIndexConfig == &config->FfxUpscalerIndex)
-                                FfxApiProxy::SetSrIndexManual(true);
-
-                            state.newBackend = currentBackend;
-                            MARK_ALL_BACKENDS_CHANGED();
-                        }
-                    }
-    
-                    ImGui::EndCombo();
-                }
-    
-                ImGui::PopItemWidth();
-    
-                ShowTooltip("Provider inside the FFX dll in use, as that dll lists them: e.g. the AMD driver's FSR 4.1.2 that "
-                            "AMD's SDK dll hands the upscale to, or the SDK's own 4.1.1. The selector above picks the dll.");
-
-                // ILION: a provider picked here by hand, until an implementation is chosen again in the selector
-                if (FfxApiProxy::SrIndexManual() && &ffxIndexConfig == &config->FfxUpscalerIndex)
-                {
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("%s", Tr("(manual)"));
-                }
-            }
-            }
+            ffxProviderSelector();
         }
     }
 
@@ -10048,6 +10055,9 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             if (shellCompact)
                 IlionTheme::SectionPlate(ShellText("FSR 4 options", "Opciones de FSR 4", "Opções do FSR 4", "Параметры FSR 4"));
 #pragma execution_character_set(pop)
+            // ILION dev.79: the FSR 4 version (provider of the FFX dll), next to the colour space and the preset
+            if (shellCompact && !basicView)
+                ffxProviderSelector();
             if ((!shellSimple || shellCompact) &&
                 (!IlionTheme::shell || shellCompact || IlionTheme::CollapsingHeader(TrL("Additional FFX options##FfxExtras"))))
             {

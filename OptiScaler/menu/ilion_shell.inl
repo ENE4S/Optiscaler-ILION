@@ -547,6 +547,7 @@ static int LangIndex()
 
 static int section = 0;
 static bool fgQuickHome = false; // ILION dev.67: RenderFgQuickControls drawn for the Home card
+static bool compactHomeTight = false; // ILION dev.79: Compact's Home measured taller than its area: tighter spacing
 static bool upSelectOnly = false; // ILION dev.74: homeUpscaling draws only its selectors (Compact's Upscaling, its monitor below)
 static int fgHomePart = 0;            // ILION dev.70: Home FG card, 0 everything, 1 the left zone's controls, 2 the states
 static float fgHomeStatesWidth = 0.0f; // ILION dev.70: width of the states' block, measured when drawn
@@ -2124,6 +2125,11 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                     ImGui::EndTable();
                 }
 
+                // ILION dev.79: Home fits its area with no scroll: under the header the vertical spacing is 4 (2, with
+                // tighter frames, if it was measured taller than the area)
+                ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, compactHomeTight ? Sz(8.f, 2.f) : Sz(8.f, 4.f));
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, compactHomeTight ? Sz(8.f, 3.f) : Sz(8.f, 4.f));
+
                 ImGui::Spacing();
                 IlionTheme::SectionPlate(kSections[1].name[li]);
                 homeUpscaling();
@@ -2132,38 +2138,54 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                 IlionTheme::SectionPlate(kSections[2].name[li]);
                 homeFrameGen();
 
-                // Latency and Neural Rendering: their state on two lines (their controls are in their tabs)
+                // Latency and Neural Rendering. ILION dev.79: in two columns, the latency methods (the very controls of
+                // Latency & FPS) at the left, their state, NR's state and the note of the intelligent activation at the right
                 ImGui::Spacing();
                 IlionTheme::SectionPlate(Lx("Latency and Neural Rendering", "Latencia y Neural Rendering", "Latência e Neural Rendering",
                                             "Задержка и Neural Rendering"));
-                // ILION dev.75: the latency methods (Reflex, LatencyFleX, XeLL...) with the very controls of Latency & FPS;
-                // the intelligent activation chooses them unless it is set to Manual, as in Home's latency card
-                ImGui::BeginDisabled(IlionLatency::Current() != IlionLatency::Manual);
-#ifdef LOW_LATENCY_INPUTS
-                RenderLowLatencySettings(ctx);
-#else
-                RenderFakenvapiSettings(ctx);
-#endif
-                ImGui::EndDisabled();
-                if (IlionLatency::Current() != IlionLatency::Manual)
-                    TextWrappedColored(Tone(pal::Text2), "%s",
-                                       Lx("Intelligent activation chooses these: set it to Manual in Latency & FPS to change them.",
-                                          "La activación inteligente los elige: ponla en Manual en Latencia y FPS para cambiarlos.",
-                                          "A ativação inteligente os escolhe: coloque em Manual em Latência e FPS para alterá-los.",
-                                          "Их выбирает умная активация: переключите её в Ручной режим в «Задержка и FPS»."));
-                ImGui::Spacing();
-                if (beginRows("##CompactHome"))
+                if (ImGui::BeginTable("##CompactHomeLatency", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings))
                 {
-                    stateRow(latencyOn ? Led::Green : Led::Off, Lx("Latency", "Latencia", "Latência", "Задержка"),
-                             (latencyTech != nullptr ? std::string(latencyTech) : std::string("-")) +
-                                 (fpsLimit > 0.0f ? StrFmt("  ·  %s %.0f FPS", Lx("limit", "límite", "limite", "лимит"), fpsLimit) : std::string()));
-                    stateRow(sectionLed[4], "Neural Rendering",
-                             nrRunning   ? Lx("Running", "En ejecución", "Em execução", "Работает")
-                             : nrEnabled ? Lx("On, not running yet", "Activado, aún sin ejecutarse", "Ativado, ainda sem executar", "Включён, ещё не работает")
-                                         : Lx("Off", "Desactivado", "Desligado", "Выкл."));
+                    ImGui::TableSetupColumn("##latControls", ImGuiTableColumnFlags_WidthStretch, 1.35f);
+                    ImGui::TableSetupColumn("##latState", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                    ImGui::TableNextRow();
+
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::PushItemWidth(std::floor(ImGui::GetContentRegionAvail().x * 0.5f));
+                    ImGui::BeginDisabled(IlionLatency::Current() != IlionLatency::Manual);
+#ifdef LOW_LATENCY_INPUTS
+                    RenderLowLatencySettings(ctx);
+#else
+                    RenderFakenvapiSettings(ctx);
+#endif
+                    ImGui::EndDisabled();
+                    ImGui::PopItemWidth();
+
+                    ImGui::TableSetColumnIndex(1);
+                    if (beginRows("##CompactHome"))
+                    {
+                        stateRow(latencyOn ? Led::Green : Led::Off, Lx("Latency", "Latencia", "Latência", "Задержка"),
+                                 (latencyTech != nullptr ? std::string(latencyTech) : std::string("-")) +
+                                     (fpsLimit > 0.0f ? StrFmt("  ·  %s %.0f FPS", Lx("limit", "límite", "limite", "лимит"), fpsLimit) : std::string()));
+                        stateRow(sectionLed[4], "NR",
+                                 nrRunning   ? Lx("Running", "En ejecución", "Em execução", "Работает")
+                                 : nrEnabled ? Lx("On, not running yet", "Activado, aún sin ejecutarse", "Ativado, ainda sem executar", "Включён, ещё не работает")
+                                             : Lx("Off", "Desactivado", "Desligado", "Выкл."));
+                        ImGui::EndTable();
+                    }
+                    if (IlionLatency::Current() != IlionLatency::Manual)
+                        TextWrappedColored(Tone(pal::Text2), "%s",
+                                           Lx("Intelligent activation chooses these: set it to Manual in Latency & FPS to change them.",
+                                              "La activación inteligente los elige: ponla en Manual en Latencia y FPS para cambiarlos.",
+                                              "A ativação inteligente os escolhe: coloque em Manual em Latência e FPS para alterá-los.",
+                                              "Их выбирает умная активация: переключите её в Ручной режим в «Задержка и FPS»."));
                     ImGui::EndTable();
                 }
 
+                ImGui::PopStyleVar(2);
+
+                // Measured: if the content reaches below the area, the next frames use the tighter spacing
+                if (ImGui::GetCursorPosY() > ImGui::GetWindowHeight())
+                    compactHomeTight = true;
             }
             else if (compactSection == 1)
             {
@@ -2368,6 +2390,32 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                     shellFgInstrumentsApart = layout == &lFrameGenC;
                     shellFgQuickInline = layout == &lFrameGenC;
                     RenderMenuTabBody(ctx, tabIndex(sub.tab), false, layout, sub.flow);
+
+                    // ILION dev.79: under the FG monitors, the API FG works on and the FG outputs its selector offers here
+                    // (as the selection itself enables them: selectable, not a promise that they generate)
+                    if (layout == &lFrameGenC && fgOptionsSnapshot.evaluated)
+                    {
+                        std::string outputs;
+                        const auto add = [&](FGOutput o, const char* name)
+                        {
+                            if (fgOptionsSnapshot.outputUsable[(int) o])
+                                outputs += (outputs.empty() ? "" : ", ") + std::string(name);
+                        };
+                        add(FGOutput::XeFG, "XeFG");
+                        add(FGOutput::FSRFG, "FSR FG");
+                        add(FGOutput::DLSSG, "DLSSG");
+                        std::string strip = StrFmt("API %s", ApiName(state.swapchainApi));
+                        if (state.swapchainApi == Vulkan && state.activeFgOutput == FGOutput::XeFG)
+                            strip += std::string("  ·  ") + Lx("XeFG through the Vulkan bridge", "XeFG por el puente Vulkan", "XeFG pela ponte Vulkan",
+                                                               "XeFG через мост Vulkan");
+                        strip += std::string("  ·  ") + Lx("Outputs selectable here: ", "Salidas seleccionables aquí: ", "Saídas selecionáveis aqui: ",
+                                                           "Доступные выходы: ") +
+                                 (outputs.empty() ? std::string("-") : outputs);
+                        ImGui::Separator();
+                        ImGui::PushStyleColor(ImGuiCol_Text, Tone(pal::Text2));
+                        ImGui::TextWrapped("%s", strip.c_str());
+                        ImGui::PopStyleColor();
+                    }
                     shellFgInstrumentsApart = false;
                     shellFgQuickInline = false;
                     fgCompactComboWidth = 0.0f;

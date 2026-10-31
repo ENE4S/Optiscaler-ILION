@@ -547,6 +547,8 @@ static int LangIndex()
 
 static int section = 0;
 static bool fgQuickHome = false; // ILION dev.67: RenderFgQuickControls drawn for the Home card
+static float compactHomeGap = 0.0f; // ILION v1.3.0: Compact's Home: the room left at the bottom, shared above its sections
+static float compactUpGap = 0.0f;   // ILION v1.3.0: the same for Compact's Upscaling
 static bool compactHomeTight = false; // ILION dev.79: Compact's Home measured taller than its area: tighter spacing
 static bool upSelectOnly = false; // ILION dev.74: homeUpscaling draws only its selectors (Compact's Upscaling, its monitor below)
 static int fgHomePart = 0;            // ILION dev.70: Home FG card, 0 everything, 1 the left zone's controls, 2 the states
@@ -2131,16 +2133,19 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                 ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, compactHomeTight ? Sz(8.f, 3.f) : Sz(8.f, 4.f));
 
                 ImGui::Spacing();
+                ImGui::Dummy(ImVec2(0.0f, compactHomeGap));
                 IlionTheme::SectionPlate(kSections[1].name[li]);
                 homeUpscaling();
 
                 ImGui::Spacing();
+                ImGui::Dummy(ImVec2(0.0f, compactHomeGap));
                 IlionTheme::SectionPlate(kSections[2].name[li]);
                 homeFrameGen();
 
                 // Latency and Neural Rendering. ILION dev.79: in two columns, the latency methods (the very controls of
                 // Latency & FPS) at the left, their state, NR's state and the note of the intelligent activation at the right
                 ImGui::Spacing();
+                ImGui::Dummy(ImVec2(0.0f, compactHomeGap));
                 IlionTheme::SectionPlate(Lx("Latency and Neural Rendering", "Latencia y Neural Rendering", "Latência e Neural Rendering",
                                             "Задержка и Neural Rendering"));
                 if (ImGui::BeginTable("##CompactHomeLatency", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings))
@@ -2183,9 +2188,21 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
 
                 ImGui::PopStyleVar(2);
 
-                // Measured: if the content reaches below the area, the next frames use the tighter spacing
-                if (ImGui::GetCursorPosY() > ImGui::GetWindowHeight())
-                    compactHomeTight = true;
+                // Measured. ILION v1.3.0: the room left under the content is shared between the three gaps above the
+                // sections (up to 28 each, 16 kept free at the bottom). If the content reaches below the area, the gaps go
+                // first and then the spacing tightens: never a scroll bar for Home
+                {
+                    const float content = ImGui::GetCursorPosY() - 3.0f * compactHomeGap;
+                    const float spare = ImGui::GetWindowHeight() - content - U(16.f);
+                    if (spare < 0.0f)
+                    {
+                        if (compactHomeGap <= 0.0f)
+                            compactHomeTight = true;
+                        compactHomeGap = 0.0f;
+                    }
+                    else
+                        compactHomeGap = std::floor((std::min)(spare / 3.0f, U(28.f)));
+                }
             }
             else if (compactSection == 1)
             {
@@ -2198,6 +2215,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                 // ILION dev.74: the upscaling monitor of the Compact presentation: the same readings as Full's (running
                 // feature, its resolutions, factor and measured time), laid out for this width. No path, no log
                 ImGui::Spacing();
+                ImGui::Dummy(ImVec2(0.0f, compactUpGap));
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, Tone(Mix(pal::Bg, ImVec4(0, 0, 0, 1), 0.25f)));
                 ImGui::PushStyleColor(ImGuiCol_Border, Tone(pal::Line));
                 if (ImGui::BeginChild("##CompactUpMonitor", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY))
@@ -2261,7 +2279,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                                 peak = (std::max)(peak, graph[k]);
                             ImGui::PushStyleColor(ImGuiCol_PlotLines, Tone(pal::Green));
                             ImGui::PushStyleColor(ImGuiCol_FrameBg, Tone(ImVec4(0, 0, 0, 0.25f)));
-                            ImGui::PlotLines("##CompactUpTimes", graph, count, 0, nullptr, 0.0f, (std::max)(0.1f, peak * 1.2f), ImVec2(-1.0f, U(84.f)));
+                            ImGui::PlotLines("##CompactUpTimes", graph, count, 0, nullptr, 0.0f, (std::max)(0.1f, peak * 1.2f), ImVec2(-1.0f, U(96.f)));
                             ImGui::PopStyleColor(2);
                         }
                         else
@@ -2275,6 +2293,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
 
                 // The settings of the upscaler that runs (model, presets and the options of its technology)
                 ImGui::Spacing();
+                ImGui::Dummy(ImVec2(0.0f, compactUpGap));
                 if (IsUpscalerActive(feature))
                     IlionTheme::SectionPlate(Lx("Upscaler settings", "Ajustes del escalador", "Ajustes do upscaler", "Настройки апскейлера"));
                 shellHidesSelector = true;
@@ -2286,6 +2305,8 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                 skipSectionTitle = nullptr;
                 shellHidesSelector = false;
                 shellHidesUpscalerDiag = false;
+
+                ImGui::Dummy(ImVec2(0.0f, compactUpGap));
 
                 // ILION dev.77: the capabilities of the implementation that runs, as the catalogue knows them (the facts its
                 // tooltip states): whether it switches while playing, the DX12 interop, where an AMD driver dll comes from,
@@ -2378,6 +2399,14 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                         ImGui::TextWrapped("%s", dll.c_str());
                         ImGui::PopStyleColor();
                     }
+                }
+
+                // ILION v1.3.0: the room left at the bottom (measured) shared between the three gaps above, up to 24 each,
+                // 16 kept free. A provider with more settings than the area holds gets no gaps (and scrolls, as before)
+                {
+                    const float content = ImGui::GetCursorPosY() - 3.0f * compactUpGap;
+                    const float spare = ImGui::GetWindowHeight() - content - U(16.f);
+                    compactUpGap = spare > 0.0f ? std::floor((std::min)(spare / 3.0f, U(24.f))) : 0.0f;
                 }
             }
             else if (compactSection < kDiag)

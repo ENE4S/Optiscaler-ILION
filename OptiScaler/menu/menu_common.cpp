@@ -10055,6 +10055,10 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
             if (shellCompact)
                 IlionTheme::SectionPlate(ShellText("FSR 4 options", "Opciones de FSR 4", "Opções do FSR 4", "Параметры FSR 4"));
 #pragma execution_character_set(pop)
+            // ILION v1.3.0: Compact only: a little more vertical room between FSR 4's options (popped below)
+            if (shellCompact)
+                ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
+                                    ImVec2(ImGui::GetStyle().ItemSpacing.x, std::floor(ImGui::GetStyle().ItemSpacing.y * 1.6f)));
             // ILION dev.79: the FSR 4 version (provider of the FFX dll), next to the colour space and the preset
             if (shellCompact && !basicView)
                 ffxProviderSelector();
@@ -10139,6 +10143,8 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                     ImGui::TextDisabled(Tr("(Failed to hook)"));
 
             }
+            if (shellCompact)
+                ImGui::PopStyleVar();
 
             // ILION dev.74: not in the Compact presentation (their values stay as they are)
             if (majorFsrVersion >= 3 && !shellCompact)

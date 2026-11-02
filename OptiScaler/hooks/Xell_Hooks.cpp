@@ -78,7 +78,7 @@ bool XellHooks::update()
 
     static float lastFpslimit = 0.0f;
     static xell_context_handle_t dynamicCapContext = nullptr;
-    const auto targetFps = FrameLimit::targetFps();
+    const auto targetFps = FrameLimit::outsideLimitFps(); // a target cap is held by OptiScaler's limiter (FG_Hooks), which knows the multiplier
     const auto configuredFps = Config::Instance()->FramerateLimit.value_or_default();
     const bool dynamicCap = targetFps != configuredFps; // a target cap of any FG provider (IlionDynamicMfg::CapFps)
     // Restore only a context on which this feature actually installed a cap, even if LL was just disabled.

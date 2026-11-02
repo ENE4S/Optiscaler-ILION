@@ -5,6 +5,7 @@
 #include <State.h>
 #include <low_latency/input/input_common.h>
 #include <misc/IlionDynamicMfg.h>
+#include <misc/FrameLimit.h>
 
 XeFG_DynamicMFG::Result XeFG_DynamicMFG::Update(int targetCount, int framesToInterpolate, bool generationOff,
                                                 double presentWaitMs, HWND window)
@@ -28,6 +29,7 @@ XeFG_DynamicMFG::Result XeFG_DynamicMFG::Update(int targetCount, int framesToInt
             _unfocused = false;
             state.xefgDynamicCapFps = 0.0f;
             InputCommon::take_sleep_ms();
+            FrameLimit::takeSleepMs();
             _active = true;
             result.ownChange = true; // Apply live; no WAR context reset on entry.
             result.count = 1; // SDK generated count: one generated frame = 2X.
@@ -41,7 +43,7 @@ XeFG_DynamicMFG::Result XeFG_DynamicMFG::Update(int targetCount, int framesToInt
         const auto refresh = DisplayRefreshFps(now, window);
 
         // What the game waited in OptiScaler: the low latency / FPS limiter sleep and the output's present path
-        const double sleepMs = InputCommon::take_sleep_ms();
+        const double sleepMs = InputCommon::take_sleep_ms() + FrameLimit::takeSleepMs(); // also OptiScaler's limiter, which holds a target cap
 
         // In the background the game is throttled: keep the count, start over once it is back in front
         const int focus = Focused(window);
@@ -124,6 +126,7 @@ XeFG_DynamicMFG::Result XeFG_DynamicMFG::Update(int targetCount, int framesToInt
         state.xefgDynamicCapFps = 0.0f;
         state.lastFGPresentMs = 0.0;
         InputCommon::take_sleep_ms();
+        FrameLimit::takeSleepMs();
     }
 
     _active = result.dynamic;

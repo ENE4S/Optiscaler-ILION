@@ -1366,9 +1366,10 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
     if (state.swapchainInteropApi == SwapchainInteropApi::None)
         Hudfix_Dx12::PresentEnd();
 
-    // DXVK's DXGI presents through Vulkan where the limiter already sleeps
-    if (willPresent && !state.reflexLimitsFps && state.activeFgOutput != FGOutput::NoFG &&
-        !IdentifyGpu::getPrimaryGpu().dxgiIsDxvk && !XellHooks::canLimit())
+    // DXVK's DXGI presents through Vulkan where the limiter already sleeps. ILION: a target cap ("Use target as cap")
+    // is always this limiter's: it counts the real multiplier, Reflex and XeLL pace real frames with the FPS limit only
+    if (willPresent && state.activeFgOutput != FGOutput::NoFG && !IdentifyGpu::getPrimaryGpu().dxgiIsDxvk &&
+        (FrameLimit::targetCapActive() || (!state.reflexLimitsFps && !XellHooks::canLimit())))
     {
         FrameLimit::sleep(fg != nullptr ? fg->IsActive() && !fg->IsPaused() : false);
     }

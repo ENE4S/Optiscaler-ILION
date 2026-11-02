@@ -12,6 +12,7 @@
 #include <menu/menu_overlay_dx.h>
 
 #include <misc/FrameLimit.h>
+#include <misc/IlionDynamicMfg.h>
 #include <misc/IlionLatency.h>
 #include <misc/IlionRegulator.h>
 
@@ -802,9 +803,11 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::Present(UINT SyncInterval, UIN
         result = LocalPresent(_real, SyncInterval, Flags, nullptr, _device, _handle, _uwp);
 
         // When Reflex can't be used to limit, sleep in present
-        // DXVK's DXGI presents through Vulkan where the limiter already sleeps
-        if (!State::Instance().reflexLimitsFps && State::Instance().activeFgOutput == FGOutput::NoFG &&
-            !IdentifyGpu::getPrimaryGpu().dxgiIsDxvk && !XellHooks::canLimit())
+        // DXVK's DXGI presents through Vulkan where the limiter already sleeps. ILION: a target cap with the game's
+        // DLSSG generating (DLSS Enabler...) is always this limiter's, which counts its multiplier (FrameLimit)
+        IlionDynamicMfg::NoteWrappedPresent();
+        if (State::Instance().activeFgOutput == FGOutput::NoFG && !IdentifyGpu::getPrimaryGpu().dxgiIsDxvk &&
+            (FrameLimit::targetCapActive() || (!State::Instance().reflexLimitsFps && !XellHooks::canLimit())))
             FrameLimit::sleep(false);
     }
     else
@@ -1161,9 +1164,11 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::Present1(UINT SyncInterval, UI
         result = LocalPresent(_real1, SyncInterval, Flags, pPresentParameters, _device, _handle, _uwp);
 
         // When Reflex can't be used to limit, sleep in present
-        // DXVK's DXGI presents through Vulkan where the limiter already sleeps
-        if (!State::Instance().reflexLimitsFps && State::Instance().activeFgOutput == FGOutput::NoFG &&
-            !IdentifyGpu::getPrimaryGpu().dxgiIsDxvk && !XellHooks::canLimit())
+        // DXVK's DXGI presents through Vulkan where the limiter already sleeps. ILION: a target cap with the game's
+        // DLSSG generating (DLSS Enabler...) is always this limiter's, which counts its multiplier (FrameLimit)
+        IlionDynamicMfg::NoteWrappedPresent();
+        if (State::Instance().activeFgOutput == FGOutput::NoFG && !IdentifyGpu::getPrimaryGpu().dxgiIsDxvk &&
+            (FrameLimit::targetCapActive() || (!State::Instance().reflexLimitsFps && !XellHooks::canLimit())))
             FrameLimit::sleep(false);
     }
     else

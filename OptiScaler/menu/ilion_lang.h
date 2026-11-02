@@ -654,6 +654,7 @@ inline constexpr Translation kSpanish[] = {
     { "Maximum multiplier##dmfg", "Multiplicador máximo" },
     { "Use target as cap##dmfg", "Usar objetivo como límite" },
     { "Provider:", "Proveedor:" },
+    { "Type a value and press Enter", "Escribe un valor y pulsa Intro" },
     { "State:", "Estado:" },
     { "generating (confirmed)", "generando (confirmado)" },
     { "generating (detected)", "generando (detectado)" },

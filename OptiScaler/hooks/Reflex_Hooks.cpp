@@ -595,7 +595,7 @@ void ReflexHooks::update(bool fgActive, bool isVulkan)
     static bool dynamicCapApplied = false;
     const auto configuredFps = Config::Instance()->FramerateLimit.value_or_default();
     // Undo our own override before early returns (for example when Reflex markers stop).
-    if (dynamicCapApplied && FrameLimit::targetFps() == configuredFps)
+    if (dynamicCapApplied && FrameLimit::outsideLimitFps() == configuredFps)
     {
         setFPSLimit(configuredFps);
         lastFps = configuredFps;
@@ -667,7 +667,7 @@ void ReflexHooks::update(bool fgActive, bool isVulkan)
     if (!State::Instance().reflexLimitsFps)
         return;
 
-    float currentFps = FrameLimit::targetFps();
+    float currentFps = FrameLimit::outsideLimitFps(); // a target cap is held by OptiScaler's limiter (FG_Hooks), which knows the multiplier
     dynamicCapApplied = currentFps != configuredFps; // a target cap of any FG provider (IlionDynamicMfg::CapFps)
     static uint8_t lastFgNumFramesToGenerate = 0;
 

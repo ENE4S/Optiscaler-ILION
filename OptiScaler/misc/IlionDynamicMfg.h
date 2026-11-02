@@ -81,5 +81,12 @@ float CapFps();
 // External generator (the game's DLSSG): seen generating in the last second
 bool ExternalGenerating(int* multiplier = nullptr);
 
+// A present of ILION's wrapped swapchain (the game's present path when ILION has no FG output)
+void NoteWrappedPresent();
+// For OptiScaler's limiter at the wrapped swapchain with the game's DLSSG generating: how many presented frames one
+// limited present stands for. The multiplier when that swapchain sees only the game's frames, 1 when it sees every
+// presented frame; measured from its presents per DLSSG evaluation (1 until measured)
+int ExternalLimiterFactor();
+
 Status Get();
 } // namespace IlionDynamicMfg

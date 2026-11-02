@@ -12564,24 +12564,33 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
     const bool supported = Dmfg::DynamicSupported(&reason);
     const bool enabled = supported && Dmfg::DynamicEnabled();
 
-    // Final FPS target: slider and editable number, one value (IlionDynamicMfg::SetTargetFps)
-    const auto drawTarget = [&](float sliderWidth)
+    // Final FPS target: its name on its own line, then the slider and the editable number sharing the width of the
+    // card (no label beside them to overflow), one value (IlionDynamicMfg::SetTargetFps). maxWidth 0: all the width
+    const auto drawTarget = [&](float maxWidth)
     {
+        const char* label = Tr("Final FPS target##dmfg");
+        ImGui::TextUnformatted(label, ImGui::FindRenderedTextEnd(label));
+        ShowTooltip("Final frames per second. 0 = automatic (XeFG: the FPS limit, else just under the refresh rate).\n"
+                    "It is not a cap unless \"Use target as cap\" is on.");
+
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const float spacing = style.ItemInnerSpacing.x;
+        const float inputWidth = std::ceil(ImGui::CalcTextSize("0000").x + style.FramePadding.x * 2.0f);
+        float room = ImGui::GetContentRegionAvail().x;
+        if (maxWidth > 0.0f)
+            room = std::min(room, maxWidth);
+        const float sliderWidth = std::max(room - inputWidth - spacing, ImGui::GetFontSize() * 4.0f);
+
         float target = Dmfg::TargetFps();
-        const float inputWidth = 58.0f * scale;
         ImGui::SetNextItemWidth(sliderWidth);
         if (IlionTheme::SliderFloat("##dmfgTargetSlider", &target, 0.0f, 500.0f, "%.0f"))
             Dmfg::SetTargetFps(target);
-        ImGui::SameLine(0.0f, 6.0f * scale);
+        ImGui::SameLine(0.0f, spacing);
         float typed = Dmfg::TargetFps();
         ImGui::SetNextItemWidth(inputWidth);
         if (ImGui::InputFloat("##dmfgTargetInput", &typed, 0.0f, 0.0f, "%.0f", ImGuiInputTextFlags_EnterReturnsTrue))
             Dmfg::SetTargetFps(typed);
-        ImGui::SameLine(0.0f, 6.0f * scale);
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(TrL("Final FPS target##dmfg"));
-        ShowTooltip("Final frames per second. 0 = automatic (XeFG: the FPS limit, else just under the refresh rate).\n"
-                    "It is not a cap unless \"Use target as cap\" is on.");
+        ShowTooltip("Type a value and press Enter");
     };
 
     // Highest multiplier: the same setting as the provider's manual multiplier
@@ -12620,20 +12629,20 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
 
     if (compact)
     {
-        // Home: switch, target and maximum on one row when they fit, else stacked
+        // Home: the switch with the maximum beside it (while Dynamic is on), then the target across the card
         drawSwitch();
-        ImGui::SameLine(0.0f, 12.0f * scale);
-        const float room = ImGui::GetContentRegionAvail().x;
-        const float sliderWidth = std::clamp(room * 0.30f, 70.0f * scale, 160.0f * scale);
-        drawTarget(sliderWidth);
         if (enabled)
         {
-            if (ImGui::GetContentRegionAvail().x > 190.0f * scale)
-                ImGui::SameLine(0.0f, 12.0f * scale);
+            const char* maxLabel = Tr("Maximum multiplier##dmfg");
+            const float maxWidth = 70.0f * scale + ImGui::GetStyle().ItemInnerSpacing.x +
+                                   ImGui::CalcTextSize(maxLabel, ImGui::FindRenderedTextEnd(maxLabel)).x;
+            if (ImGui::GetContentRegionAvail().x - ImGui::GetItemRectSize().x > maxWidth + 24.0f * scale)
+                ImGui::SameLine(0.0f, 24.0f * scale);
             drawMax(70.0f * scale);
         }
         if (!supported && reason != nullptr)
             TextWrappedDisabled("%s", Tr(reason));
+        drawTarget(0.0f);
         return;
     }
 
@@ -12644,8 +12653,7 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
     if (!supported && reason != nullptr)
         TextWrappedDisabled("%s", Tr(reason));
 
-    const float sliderWidth = std::min(170.0f * scale, ImGui::GetContentRegionAvail().x * 0.45f);
-    drawTarget(sliderWidth);
+    drawTarget(320.0f * scale);
 
     ImGui::BeginDisabled(!enabled);
     drawMax(95.0f * scale);

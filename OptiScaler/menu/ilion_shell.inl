@@ -918,6 +918,33 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
             else
                 RenderFGModeCombo(ctx, label, 1, nullptr);
         }
+        else if (externalFg)
+        {
+            // The game's DLSSG (DLSS Enabler...): its multiplier is the "Override DLSSG Ratio" setting (Game = the
+            // game's own choice); the preview shows what it generates now
+            const int limit = IlionDynamicMfg::MaxCountLimit();
+            const bool overridden = config->FGDLSSGOverrideInterpolationCount.has_value() &&
+                                    config->FGDLSSGOverrideInterpolationCount.value() > 0;
+            const std::string preview = fgStatus.multiplier > 0 ? StrFmt("%dX", fgStatus.multiplier)
+                                        : overridden ? StrFmt("%dX", config->FGDLSSGOverrideInterpolationCount.value() + 1)
+                                                     : std::string(Lx("Game", "Juego", "Jogo", "Игра"));
+            ImGui::SetNextItemWidth(width);
+            ImGui::BeginDisabled(limit < 1);
+            if (IlionTheme::BeginCombo(label, preview.c_str()))
+            {
+                if (ImGui::Selectable(Lx("Game", "Juego", "Jogo", "Игра"), !overridden))
+                {
+                    config->FGDLSSGOverrideInterpolationCount.reset();
+                    StreamlineHooks::updateDlssgOptions();
+                }
+                for (int count = 1; count <= limit; ++count)
+                    if (ImGui::Selectable(StrFmt("%dX", count + 1).c_str(),
+                                          overridden && config->FGDLSSGOverrideInterpolationCount.value() == count))
+                        IlionDynamicMfg::SetMaxCount(count);
+                ImGui::EndCombo();
+            }
+            ImGui::EndDisabled();
+        }
         else
         {
             const char* note = Lx("Multiplier: once an FG output is loaded", "Multiplicador: con una salida de FG cargada",

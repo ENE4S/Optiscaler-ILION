@@ -20,6 +20,8 @@ namespace
 // The game's DLSSG counts as generating while it evaluated with frames to generate in the last second
 constexpr uint64_t kExternalWindowMs = 1000;
 
+std::atomic<uint64_t> wrappedPresents { 0 };
+
 bool OwnRunning()
 {
     auto fg = State::Instance().currentFG;
@@ -270,12 +272,64 @@ bool ExternalGenerating(int* multiplier)
     return recent && count > 0;
 }
 
+void NoteWrappedPresent() { wrappedPresents.fetch_add(1, std::memory_order_relaxed); }
+
+int ExternalLimiterFactor()
+{
+    int multiplier = 0;
+    if (!ExternalGenerating(&multiplier) || multiplier < 2)
+        return 1;
+
+    // Present thread only (OptiScaler's limiter at the wrapped swapchain)
+    static uint64_t lastPresents = 0;
+    static uint64_t lastEvaluations = 0;
+    static double lastMs = 0.0;
+    static int factor = 1;
+
+    const double now = Util::MillisecondsNow();
+    const uint64_t presents = wrappedPresents.load(std::memory_order_relaxed);
+    const uint64_t evaluations = State::Instance().dlssgFgEvaluations.load();
+
+    if (lastMs <= 0.0 || now - lastMs > 3000.0)
+    {
+        lastPresents = presents;
+        lastEvaluations = evaluations;
+        lastMs = now;
+        return factor;
+    }
+
+    if (now - lastMs >= 500.0)
+    {
+        const uint64_t frames = evaluations - lastEvaluations;
+        if (frames >= 10)
+        {
+            // About one present per rendered frame: it sees only the game's frames
+            const double perFrame = (double) (presents - lastPresents) / (double) frames;
+            const int measured = perFrame < (double) multiplier - 0.5 ? multiplier : 1;
+            if (measured != factor)
+                LOG_INFO("ILION target cap: {:.2f} wrapped presents per DLSSG frame at {}X, limiter factor {}", perFrame,
+                         multiplier, measured);
+            factor = measured;
+        }
+
+        lastPresents = presents;
+        lastEvaluations = evaluations;
+        lastMs = now;
+    }
+
+    return factor;
+}
+
 float CapFps()
 {
     if (!TargetAsCap())
         return 0.0f;
 
     const auto& state = State::Instance();
+
+    // The Vulkan -> D3D12 XeFG bridge keeps its limiter as it was until it is validated
+    if (state.swapchainInteropApi == SwapchainInteropApi::VkwDx12)
+        return 0.0f;
     const float target = TargetFps();
 
     switch (Current())
@@ -394,9 +448,12 @@ Status Get()
     if (!s.finalMeasured && s.baseFps > 0.0f && s.multiplier > 0)
         s.finalFps = s.baseFps * (float) s.multiplier;
 
-    // The limiter FG_Hooks / the wrapped swapchain choose: Reflex, else XeLL, else OptiScaler's own
+    // The limiter FG_Hooks / the wrapped swapchain choose: a target cap is always OptiScaler's own (it knows the
+    // multiplier); else Reflex, else XeLL, else OptiScaler's
     s.limitFps = FrameLimit::targetFps();
-    if (state.reflexLimitsFps)
+    if (FrameLimit::targetCapActive())
+        s.limiter = Limiter::OptiScaler;
+    else if (state.reflexLimitsFps)
         s.limiter = Limiter::Reflex;
     else if (XellHooks::canLimit())
         s.limiter = Limiter::XeLL;

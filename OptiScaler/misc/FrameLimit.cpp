@@ -67,11 +67,24 @@ float FrameLimit::targetFps()
     return fpsLimit;
 }
 
+float FrameLimit::outsideLimitFps() { return Config::Instance()->FramerateLimit.value_or_default(); }
+
+bool FrameLimit::targetCapActive() { return targetFps() != outsideLimitFps(); }
+
+static std::atomic<double> limiterSleepMs { 0.0 };
+
+double FrameLimit::takeSleepMs() { return limiterSleepMs.exchange(0.0); }
+
 void FrameLimit::sleep(bool fgActive)
 {
     if (auto fpsCap = targetFps(); fpsCap != 0.0f)
     {
         uint64_t min_interval_us = std::clamp((uint64_t) (1'000'000 / fpsCap), 0ULL, 100'000'000ULL);
+
+        // The game's DLSSG generating (DLSS Enabler...) with a target cap: one real frame per batch of presented
+        // frames when this limiter sees only the game's frames, 1 when it sees every presented frame (measured)
+        if (!fgActive && targetCapActive() && IlionDynamicMfg::Current() == IlionDynamicMfg::Provider::DlssgGame)
+            min_interval_us *= (uint64_t) std::max(IlionDynamicMfg::ExternalLimiterFactor(), 1);
 
         // The limit counts presented frames, the real frames come once per batch: one real frame per generated
         // frames + 1. ILION used a fixed 2 outside Dynamic, so manual 3X/4X presented above the limit. The real count
@@ -108,6 +121,9 @@ void FrameLimit::sleep(bool fgActive)
         {
             if (auto res = combined_sleep(deadline - current_time); res)
                 LOG_ERROR("Sleep command failed: {}", res);
+
+            // Dynamic MFG counts this as waiting, as it does the low latency sleep (XeFG_DynamicMFG)
+            limiterSleepMs.store(limiterSleepMs.load() + (Util::GetTimestamp() - current_time) / 1'000'000.0);
         }
 
         previous_deadline = deadline;

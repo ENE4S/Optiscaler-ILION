@@ -460,7 +460,7 @@ static bool BeginArea(const char* id, ImVec2 a, ImVec2 b)
 }
 
 // The state of the last change, for a few seconds: applied, the upscaler created again, or waiting for a restart
-static void ApplyState(ImVec2 p)
+static void ApplyState(ImVec2 p, float wrapWidth = 0.0f)
 {
     if (ImGui::GetTime() - lastApplyAt > 6.0)
         return;
@@ -475,7 +475,18 @@ static void ApplyState(ImVec2 p)
                                                       "Pendente: requer reiniciar o jogo", "Сохранено: нужен перезапуск игры");
     const Led l = lastApply == Apply::Hot ? Led::Green : lastApply == Apply::Reinit ? Led::Yellow : Led::Orange;
     ImGui::SetCursorScreenPos(P(p));
-    Pill(t, l);
+    if (wrapWidth > 0.0f)
+    {
+        ImGui::PushFont(fUi, U(15.f));
+        ImGui::PushStyleColor(ImGuiCol_Text, Col(lastApply == Apply::Hot ? pal::Green : pal::Yellow));
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + U(wrapWidth));
+        ImGui::TextWrapped("%s", t);
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+    }
+    else
+        Pill(t, l);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -1993,7 +2004,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
 
         // Content: one column that scrolls
         bool openAdvisor = false;
-        const ImVec2 ca(12, top), cb(CW - 12, CH - 62);
+        const ImVec2 ca(12, top), cb(CW - 12, CH - 108);
         PanelRect(ca, cb);
         PushContentStyle();
         ImGui::PushFont(fUi, U(16.f));
@@ -2515,7 +2526,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         At(CW - 16 - 130, CH - 52);
         if (Button("##CompactClose", Tr("Close"), ImVec2(130, 40), false, pal::Green, 15.f))
             CloseMainMenu(io);
-        ApplyState(ImVec2(190, CH - 46));
+        ApplyState(ImVec2(20, CH - 100), CW - 40); // Dedicated wrapped status row, away from Save/Close.
 
         // The Advisor's diagnosis, opened from the same ID stack it is drawn in
         if (openAdvisor)

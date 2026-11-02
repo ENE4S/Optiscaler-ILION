@@ -52,6 +52,7 @@ class InputCommon
     inline static FrameReport frame_reports[FRAME_REPORTS_BUFFER_SIZE] {};
     inline static std::atomic_uint64_t last_present_start_frame_id = 0;
     inline static std::atomic_uint32_t delay_deinit = 0;
+    inline static std::atomic<double> last_sleep_ms = 0.0;
     inline static std::array<SleepMode, static_cast<size_t>(LowLatencyInput::_)> sleep_mode_copies {};
 
     inline static flag_set<LowLatencyInput> avaliableInputs {};
@@ -67,6 +68,7 @@ class InputCommon
     static SleepMode& get_sleep_copy(LowLatencyInput input) { return sleep_mode_copies[static_cast<size_t>(input)]; }
 
   public:
+    static double take_sleep_ms() { return last_sleep_ms.exchange(0.0); }
     static InputResult set_low_latency_tech(IUnknown* pDevice, LowLatencyMode mode);
 
     static InputResult sleep(const InputContext& inputContext, IUnknown* pDevice,

@@ -1,8 +1,9 @@
 ﻿#pragma once
 
 // This file is saved as UTF-8 with BOM and its literals have to stay UTF-8 in the binary, ImGui expects that.
-// Popped at the end of the file so the files that include this one keep their own setting.
-#pragma execution_character_set(push, "utf-8")
+// The shared translation literals must also use UTF-8 in units compiled without /utf-8.
+// MSVC execution_character_set has no push/pop syntax; use its supported form.
+#pragma execution_character_set("utf-8")
 
 #include <atomic>
 #include <string>
@@ -626,6 +627,30 @@ inline constexpr Translation kSpanish[] = {
     { "Extended", "Ampliado" },
     { "Extended FSR FG Settings", "Ajustes ampliados de FSR FG" },
     { "Extended XeFG Settings", "Ajustes ampliados de XeFG" },
+    { "R3: hold within 92-100% of target; up after 500 ms low, ordinary changes at least 1.5 s apart.", "R3: mantiene el multiplicador entre el 92 y el 100 % del objetivo; sube tras 500 ms de déficit y separa los cambios ordinarios al menos 1,5 s." },
+    { "Nearest", "Más cercano" },
+    { "Up", "Hacia arriba" },
+    { "Down", "Hacia abajo" },
+    { "Dynamic uses all multipliers admitted by XeFG, independently of the saved manual multiplier. It starts at 2X; the controller can reduce to 1X when allowed. Requires live control and manual FG mode.", "Dynamic utiliza todos los multiplicadores admitidos por XeFG, sin depender del multiplicador manual guardado. Empieza en 2X y puede bajar a 1X si se permite. Requiere control en ejecución y modo manual de FG." },
+    { "0 = automatic: existing FPS limit, otherwise just below the display refresh rate. Target counts final frames; it is not a cap unless enabled below.", "0 = automático: utiliza el límite de FPS existente o un objetivo ligeramente inferior al refresco de la pantalla. El objetivo cuenta fotogramas finales; no impone un límite salvo que se active la opción inferior." },
+    { "With a maximum of 2X, official Dynamic MFG always allows 1X. Target-as-cap uses at least 2X and ignores rounding.", "Con un máximo admitido de 2X, el controlador oficial permite siempre 1X. Usar el objetivo como límite requiere al menos 2X efectivos e ignora el redondeo." },
+    { "Uses OptiScaler's existing limiter, requires a maximum of at least 3X. No extra limiter is added.", "Utiliza el limitador existente de OptiScaler y requiere capacidad para al menos 3X. No añade otro limitador." },
+    { "Selected mode: %s", "Modo seleccionado: %s" },
+    { "Applied multiplier: %uX", "Multiplicador aplicado: %uX" },
+    { "Applied multiplier: unavailable", "Multiplicador aplicado: no disponible" },
+    { "Base FPS (game Present): %.1f", "FPS base (Present del juego): %.1f" },
+    { "Base FPS: unavailable", "FPS base: no disponibles" },
+    { "Final FPS (SDK submissions): %.1f", "FPS finales (envíos del SDK): %.1f" },
+    { "Final FPS: unavailable", "FPS finales: no disponibles" },
+    { "Generation GPU cost: unavailable", "Coste GPU de generación: no disponible" },
+    { "Base FPS includes generation overhead and waits; it is not raster-only FPS. SDK submissions do not prove display scanout. No measured GPU generation cost is available.", "Los FPS base incluyen el coste de generación y las esperas; no miden el rasterizado aislado. Los envíos del SDK no demuestran la visualización en pantalla. No hay una medición disponible del coste GPU de generación." },
+
+    { "Dynamic MFG##xefg", "MFG dinámico" },
+    { "Final FPS target##xefg", "FPS finales objetivo" },
+    { "Multiplier rounding##xefg", "Redondeo del multiplicador" },
+    { "Allow 1X##xefg", "Permitir 1X" },
+    { "Use target as cap##xefg", "Usar objetivo como límite" },
+
     { "Extended format checks for possible HUDless\nMight cause crashes and slowdowns!", "Comprobación ampliada de formatos para posibles HUDless\n¡Puede causar cierres y ralentizaciones!" },
     { "Extended sliders limit for quality presets\n\nUsing this option changes resolution detection logic\nand might cause issues and crashes!", "Amplía el límite de los deslizadores de los presets de calidad\n\nCambia cómo se detecta la resolución\n¡y puede causar problemas y cierres!" },
     { "Extra shaders:", "Shaders adicionales:" },
@@ -2318,7 +2343,8 @@ inline constexpr Translation kSpanish[] = {
     { "Stop##ExtFg", "Detener" },
     { "Could not start", "No se pudo iniciar" },
     { "Stop and start again to apply the generator or the window mode.",
-      "Detén e inicia de nuevo para aplicar el generador o el modo de ventana." },
+      "Detén e inicia de nuevo para aplicar el generador o el modo de ventana." },
+
     // ILION dev.50: neural monitor and NR states
     { "Not available: Neural Rendering needs DirectX 12", "No disponible: Neural Rendering necesita DirectX 12" },
     { "Not available: Neural Rendering needs an AMD Radeon GPU", "No disponible: Neural Rendering necesita una GPU AMD Radeon" },
@@ -2519,4 +2545,4 @@ inline const char* TrOwn(const char* english)
 }
 } // namespace Ilion
 
-#pragma execution_character_set(pop)
+

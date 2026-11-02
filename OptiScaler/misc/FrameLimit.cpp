@@ -2,6 +2,8 @@
 #include "FrameLimit.h"
 
 #include "Config.h"
+#include <State.h>
+#include <framegen/IFGFeature.h>
 // #include "hooks/D3D11Hooks.h"
 
 // https://learn.microsoft.com/en-us/windows/win32/sync/using-waitable-timer-objects
@@ -51,14 +53,37 @@ inline int FrameLimit::combined_sleep(int64_t ns)
     return status;
 }
 
+bool FrameLimit::xeFGDynamicActive()
+{
+    auto config = Config::Instance();
+    return State::Instance().activeFgOutput == FGOutput::XeFG &&
+           config->FGXeFGDynamicMFG.value_or_default() && !config->FGFollowsGame();
+}
+
+float FrameLimit::targetFps()
+{
+    auto& state = State::Instance();
+    const auto fpsLimit = Config::Instance()->FramerateLimit.value_or_default();
+    // Re-check switches here: a stale per-frame cap must never survive toggling either option off.
+    if (xeFGDynamicActive() && Config::Instance()->FGXeFGTargetAsCapDMFG.value_or_default())
+        if (auto fg = state.currentFG; fg != nullptr && fg->IsActive() && !fg->IsPaused() &&
+            state.xefgDynamicCapFps > 0.0f && (fpsLimit <= 0.0f || state.xefgDynamicCapFps < fpsLimit))
+            return state.xefgDynamicCapFps;
+    return fpsLimit;
+}
+
 void FrameLimit::sleep(bool fgActive)
 {
-    if (auto fpsCap = Config::Instance()->FramerateLimit.value_or_default(); fpsCap != 0.0f)
+    if (auto fpsCap = targetFps(); fpsCap != 0.0f)
     {
         uint64_t min_interval_us = std::clamp((uint64_t) (1'000'000 / fpsCap), 0ULL, 100'000'000ULL);
 
         if (fgActive)
-            min_interval_us *= 2;
+        {
+            // Preserve ILION's original factor for every non-Dynamic path.
+            auto fg = State::Instance().currentFG;
+            min_interval_us *= xeFGDynamicActive() && fg != nullptr ? fg->GetInterpolatedFrameCount() + 1 : 2;
+        }
 
         static uint64_t previous_frame_time = 0;
         uint64_t current_time = Util::GetTimestamp();

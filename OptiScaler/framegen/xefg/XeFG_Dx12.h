@@ -1,6 +1,7 @@
 #pragma once
 
 #include <framegen/IFGFeature_Dx12.h>
+#include "XeFG_DynamicMFG.h"
 
 #include <proxies/XeLL_Proxy.h>
 #include <proxies/XeFG_Proxy.h>
@@ -33,6 +34,9 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
     bool DestroySwapchainContext();
     xefg_swapchain_d3d12_resource_data_t GetResourceData(FG_ResourceType type, int index = -1);
 
+    XeFG_DynamicMFG _dynamic;
+    int _transitionTraceFrames = 0;
+    void SetGenerationOff(bool off);
     bool Dispatch();
 
   protected:

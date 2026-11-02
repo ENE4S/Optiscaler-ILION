@@ -72,6 +72,7 @@ class IFGFeature
     UINT64 _lastFGFrame = 0;
     bool _waitingNewFrameData = false;
     int _framesToInterpolate = -1;
+    bool _generationOff = false; // XeFG Dynamic MFG 1X only
     int _maxInterpolationCount = 1;
     bool _supportsDMFG = false;
 

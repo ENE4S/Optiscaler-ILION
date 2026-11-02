@@ -1,4 +1,5 @@
 #include "pch.h"
+#include <misc/FrameLimit.h>
 #include "Reflex_Hooks.h"
 #include <Config.h>
 
@@ -590,6 +591,17 @@ bool ReflexHooks::updateTimingData()
 // For updating information about Reflex hooks
 void ReflexHooks::update(bool fgActive, bool isVulkan)
 {
+    static float lastFps = 0;
+    static bool dynamicCapApplied = false;
+    const auto configuredFps = Config::Instance()->FramerateLimit.value_or_default();
+    // Undo our own override before early returns (for example when Reflex markers stop).
+    if (dynamicCapApplied && FrameLimit::targetFps() == configuredFps)
+    {
+        setFPSLimit(configuredFps);
+        lastFps = configuredFps;
+        dynamicCapApplied = false;
+    }
+
     // We can still use just the markers to limit the fps with Reflex disabled
     // But need to fallback in case a game stops sending them for some reason
     _updatesWithoutMarker++;
@@ -635,7 +647,6 @@ void ReflexHooks::update(bool fgActive, bool isVulkan)
     //    State::Instance().reflexLimitsFps = false;
     //}
 
-    static float lastFps = 0;
     static bool lastReflexLimitsFps = State::Instance().reflexLimitsFps;
     static LowLatencyMode lastLowLatencyMode = fakenvapi::getCurrentMode();
 
@@ -656,7 +667,8 @@ void ReflexHooks::update(bool fgActive, bool isVulkan)
     if (!State::Instance().reflexLimitsFps)
         return;
 
-    float currentFps = Config::Instance()->FramerateLimit.value_or_default();
+    float currentFps = FrameLimit::targetFps();
+    dynamicCapApplied = FrameLimit::xeFGDynamicActive() && currentFps != configuredFps;
     static uint8_t lastFgNumFramesToGenerate = 0;
 
     if (lastFgNumFramesToGenerate != _FgNumFramesToGenerate)

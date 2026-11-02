@@ -1,4 +1,5 @@
 #include "pch.h"
+#include <misc/FrameLimit.h>
 
 #include <misc/IdentifyGpu.h>
 
@@ -321,7 +322,19 @@ InputResult InputCommon::sleep(const InputContext& inputContext, IUnknown* pDevi
         return InputResult::UsingDifferentInput;
 
     if (auto current_tech = currently_active_tech.load())
-        current_tech->sleep(frame_id);
+    {
+        if (FrameLimit::xeFGDynamicActive())
+        {
+            const auto start = std::chrono::steady_clock::now();
+            current_tech->sleep(frame_id);
+            last_sleep_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        }
+        else
+        {
+            last_sleep_ms = 0.0;
+            current_tech->sleep(frame_id);
+        }
+    }
     else
         return InputResult::NoReadyOutput;
 

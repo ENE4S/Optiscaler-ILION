@@ -1,4 +1,5 @@
-﻿#include "pch.h"
+#include "pch.h"
+#include <misc/FrameLimit.h>
 #include "Xell_Hooks.h"
 #include <detours/detours.h>
 #include <magic_enum.hpp>
@@ -75,21 +76,42 @@ bool XellHooks::update()
     xell_sleep_params_t currentParams;
     o_xellGetSleepMode(gamesContext, &currentParams);
 
+    static float lastFpslimit = 0.0f;
+    static xell_context_handle_t dynamicCapContext = nullptr;
+    const auto targetFps = FrameLimit::targetFps();
+    const auto configuredFps = Config::Instance()->FramerateLimit.value_or_default();
+    const bool dynamicCap = FrameLimit::xeFGDynamicActive() && targetFps != configuredFps;
+    // Restore only a context on which this feature actually installed a cap, even if LL was just disabled.
+    if (dynamicCapContext == gamesContext && !dynamicCap)
+    {
+        currentParams.minimumIntervalUs = configuredFps > 0.0f ?
+            static_cast<uint32_t>(std::round(1'000'000 / configuredFps)) : 0u;
+        if (o_xellSetSleepMode(gamesContext, &currentParams) == XELL_RESULT_SUCCESS)
+        {
+            dynamicCapContext = nullptr;
+            lastFpslimit = configuredFps;
+        }
+    }
+    else if (dynamicCapContext != gamesContext)
+        dynamicCapContext = nullptr;
+
     if (!currentParams.bLowLatencyMode)
         return false;
 
     gamesContextCanLimitFps = true;
 
-    static float lastFpslimit = 0.0f;
-    if (lastFpslimit == Config::Instance()->FramerateLimit.value_or_default())
+    if (lastFpslimit == targetFps)
         return false;
-    lastFpslimit = Config::Instance()->FramerateLimit.value_or_default();
+    lastFpslimit = targetFps;
     if (lastFpslimit <= 0.0f)
         currentParams.minimumIntervalUs = 0u;
     else
         currentParams.minimumIntervalUs = static_cast<uint32_t>(std::round(1'000'000 / lastFpslimit));
 
-    return o_xellSetSleepMode(gamesContext, &currentParams) == XELL_RESULT_SUCCESS;
+    const bool success = o_xellSetSleepMode(gamesContext, &currentParams) == XELL_RESULT_SUCCESS;
+    if (success)
+        dynamicCapContext = dynamicCap ? gamesContext : nullptr;
+    return success;
 }
 
 xell_result_t XellHooks::hkxellDestroyContext(xell_context_handle_t context)

@@ -270,6 +270,16 @@ LmxxfFullNetwork.set_from_config(readBool("DlssNr", "LmxxfFullNetwork"));
         }
 
         {
+            FGXeFGDynamicMFG.set_from_config(readBool("XeFG", "DynamicMFG"));
+            FGXeFGFramerateTargetDMFG.set_from_config(readFloat("XeFG", "FramerateTargetDMFG"));
+            if (FGXeFGFramerateTargetDMFG.has_value() && FGXeFGFramerateTargetDMFG.value() < 10.0f)
+                FGXeFGFramerateTargetDMFG.reset();
+            FGXeFGRoundingDMFG.set_from_config(readInt("XeFG", "RoundingDMFG"));
+            if (FGXeFGRoundingDMFG.has_value() &&
+                (FGXeFGRoundingDMFG.value() < 0 || FGXeFGRoundingDMFG.value() > 2))
+                FGXeFGRoundingDMFG.reset();
+            FGXeFGDynamicAllow1X.set_from_config(readBool("XeFG", "DynamicAllow1X"));
+            FGXeFGTargetAsCapDMFG.set_from_config(readBool("XeFG", "TargetAsCapDMFG"));
             FGXeFGInterpolationCount.set_from_config(readInt("XeFG", "InterpolationCount"));
             if (FGXeFGInterpolationCount.has_value() && FGXeFGInterpolationCount.value() < 1)
                 FGXeFGInterpolationCount.reset();
@@ -1162,6 +1172,12 @@ bool Config::SaveIni()
 
     // XeFG output
     {
+        ini.SetValue("XeFG", "DynamicMFG", GetBoolValue(Instance()->FGXeFGDynamicMFG.value_for_config()).c_str());
+        ini.SetValue("XeFG", "FramerateTargetDMFG", GetFloatValue(Instance()->FGXeFGFramerateTargetDMFG.value_for_config()).c_str());
+        ini.SetValue("XeFG", "RoundingDMFG", GetIntValue(Instance()->FGXeFGRoundingDMFG.value_for_config()).c_str());
+        ini.SetValue("XeFG", "DynamicAllow1X", GetBoolValue(Instance()->FGXeFGDynamicAllow1X.value_for_config()).c_str());
+        ini.SetValue("XeFG", "TargetAsCapDMFG", GetBoolValue(Instance()->FGXeFGTargetAsCapDMFG.value_for_config()).c_str());
+
         ini.SetValue("XeFG", "InterpolationCount",
                      GetIntValue(Instance()->FGXeFGInterpolationCount.value_for_config()).c_str());
         ini.SetValue("XeFG", "IgnoreInitChecks",
@@ -1928,6 +1944,12 @@ ini.SetValue("DlssNr", "LmxxfFullNetwork", GetBoolValue(Instance()->LmxxfFullNet
 
 bool Config::SaveXeFG()
 {
+    ini.SetValue("XeFG", "DynamicMFG", GetBoolValue(Instance()->FGXeFGDynamicMFG.value_for_config()).c_str());
+    ini.SetValue("XeFG", "FramerateTargetDMFG", GetFloatValue(Instance()->FGXeFGFramerateTargetDMFG.value_for_config()).c_str());
+    ini.SetValue("XeFG", "RoundingDMFG", GetIntValue(Instance()->FGXeFGRoundingDMFG.value_for_config()).c_str());
+    ini.SetValue("XeFG", "DynamicAllow1X", GetBoolValue(Instance()->FGXeFGDynamicAllow1X.value_for_config()).c_str());
+    ini.SetValue("XeFG", "TargetAsCapDMFG", GetBoolValue(Instance()->FGXeFGTargetAsCapDMFG.value_for_config()).c_str());
+
     ini.SetValue("XeFG", "DepthInverted", GetBoolValue(Instance()->FGXeFGDepthInverted.value_for_config()).c_str());
     ini.SetValue("XeFG", "JitteredMV", GetBoolValue(Instance()->FGXeFGJitteredMV.value_for_config()).c_str());
     ini.SetValue("XeFG", "HighResMV", GetBoolValue(Instance()->FGXeFGHighResMV.value_for_config()).c_str());

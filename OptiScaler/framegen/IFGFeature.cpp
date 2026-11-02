@@ -325,6 +325,8 @@ void IFGFeature::SetResourceReady(FG_ResourceType type, int index)
 
 UINT IFGFeature::GetInterpolatedFrameCount() const
 {
+    if (_generationOff)
+        return 0;
     // The Vulkan bridge must not report the old synthetic 2x before SDK confirmation.
     if (VulkanXeFGDiagnostics::FixActive())
         return VulkanXeFGDiagnostics::ReportedGeneratedFrames();

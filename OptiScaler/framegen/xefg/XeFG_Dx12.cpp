@@ -1,4 +1,5 @@
 #include "pch.h"
+#include <low_latency/input/input_common.h>
 #include "XeFG_Dx12.h"
 #include <with_dx12/vk_xefg_diagnostics.h>
 
@@ -644,11 +645,28 @@ void XeFG_Dx12::Activate()
         (IsLowResMV() || nativeAA || (State::Instance().gameQuirks & GameQuirk::ForceFGRenderSizeMVs) ||
          Config::Instance()->FGXeFGIgnoreInitChecks.value_or_default()))
     {
+        if (Config::Instance()->FGXeFGDynamicMFG.value_or_default() && !Config::Instance()->FGFollowsGame() &&
+            XeFGProxy::SetNumInterpolatedFrames() != nullptr)
+        {
+#ifndef DONT_USE_XMX
+            ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
+#endif
+            const auto seed = XeFGProxy::SetNumInterpolatedFrames()(_swapChainContext, 1);
+            if (seed != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+            {
+                LOG_ERROR("Dynamic MFG: initial 2X rejected: {}", (int) seed);
+                return; // Do not enable the runtime at its maximum after a failed seed.
+            }
+            _framesToInterpolate = 1;
+        }
         auto result = XeFGProxy::SetEnabled()(_swapChainContext, true);
 
         if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
         {
             _isActive = true;
+            _generationOff = false;
+            _dynamic.Restart();
+            State::Instance().xefgPresentTelemetry.Reset();
             _lastDispatchedFrame = 0;
         }
 
@@ -656,8 +674,33 @@ void XeFG_Dx12::Activate()
     }
 }
 
+void XeFG_Dx12::SetGenerationOff(bool off)
+{
+    if (_swapChainContext == nullptr || XeFGProxy::SetEnabled() == nullptr)
+        return;
+
+#ifndef DONT_USE_XMX
+    ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
+#endif // !DONT_USE_XMX
+
+    // Only frame generation: OptiScaler's FG stays active and keeps dispatching, XeFG keeps its count
+    const auto result = XeFGProxy::SetEnabled()(_swapChainContext, !off);
+
+    if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
+        _generationOff = off;
+
+    LOG_INFO("Dynamic MFG 1X: frame generation {}, result: {} ({})", off ? "off" : "on", magic_enum::enum_name(result),
+             (UINT) result);
+}
+
 void XeFG_Dx12::Deactivate()
 {
+    _transitionTraceFrames = 0;
+    State::Instance().xefgDynamicCapFps = 0.0f;
+    State::Instance().lastFGPresentMs = 0.0;
+    State::Instance().xefgPresentTelemetry.Reset();
+    InputCommon::take_sleep_ms();
+    _generationOff = false;
     if (VulkanXeFGDiagnostics::FixActive())
         VulkanXeFGDiagnostics::ResetPresentation();
     LOG_DEBUG("");
@@ -774,6 +817,14 @@ bool XeFG_Dx12::Dispatch()
             _maxInterpolationCount + 1);
 
     auto& state = State::Instance();
+    if (_transitionTraceFrames > 0 && Config::Instance()->FGXeFGDynamicMFG.value_or_default() &&
+        !Config::Instance()->FGFollowsGame())
+    {
+        LOG_INFO("Dynamic MFG R3 post-transition: sample={}, applied={}X, base_interval_ms={:.3f}, present_wait_ms={:.3f}",
+                 9 - _transitionTraceFrames, _generationOff ? 1 : _framesToInterpolate + 1,
+                 state.lastFGFrameTime, state.lastFGPresentMs);
+        --_transitionTraceFrames;
+    }
 
     if (XeFGProxy::SetUiCompositionState() != nullptr &&
         Config::Instance()->FGXeFGUIComposition.value_or_default() != _uiComposition && IsUsingHudless(fIndex))
@@ -799,7 +850,9 @@ bool XeFG_Dx12::Dispatch()
 
     if (XeFGProxy::SetNumInterpolatedFrames() != nullptr)
     {
-        if (Config::Instance()->FGXeFGInterpolationCount.value_or_default() > _maxInterpolationCount)
+        const bool dynamicEnabled = Config::Instance()->FGXeFGDynamicMFG.value_or_default() &&
+                                    !Config::Instance()->FGFollowsGame();
+        if (!dynamicEnabled && Config::Instance()->FGXeFGInterpolationCount.value_or_default() > _maxInterpolationCount)
         {
             if (VulkanXeFGDiagnostics::Enabled()) VulkanXeFGDiagnostics::Record("reduction",
                 "reason=request_exceeds_sdk_capacity requested_x={} admitted_x={} reduced_to_x={}",
@@ -810,21 +863,36 @@ bool XeFG_Dx12::Dispatch()
                      _maxInterpolationCount);
         }
 
-        const int targetCount = std::clamp(
+        int targetCount = dynamicEnabled ? std::max(_maxInterpolationCount, 1) : std::clamp(
             Config::Instance()->FGInterpolationCount(Config::Instance()->FGXeFGInterpolationCount.value_or_default()),
             1, std::max(_maxInterpolationCount, 1));
+
+        HWND window = _hwnd != nullptr ? _hwnd : state.currentSwapchainDesc.OutputWindow;
+        const auto dynamic = _dynamic.Update(targetCount, _framesToInterpolate, _generationOff,
+                                             state.lastFGPresentMs, window);
+        if (_generationOff != dynamic.generationOff)
+            SetGenerationOff(dynamic.generationOff);
+        targetCount = dynamic.count;
 
         if (_framesToInterpolate != targetCount)
         {
             LOG_INFO("Interpolation count changed {} -> {}", _framesToInterpolate, targetCount);
 
-            state.WAR_xefgRequestFGToggle = true;
+            if (!dynamic.ownChange)
+                state.WAR_xefgRequestFGToggle = true;
 
 #ifndef DONT_USE_XMX
             ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
 #endif // !DONT_USE_XMX
 
+            const double sdkStart = dynamicEnabled ? Util::MillisecondsNow() : 0.0;
             auto intResult = XeFGProxy::SetNumInterpolatedFrames()(_swapChainContext, targetCount);
+            if (dynamicEnabled)
+                LOG_INFO("Dynamic MFG R3 SDK transition: {}X -> {}X, sdk_cpu_ms={:.3f}, base_interval_ms={:.3f}, "
+                         "present_wait_ms={:.3f}, cap_fps={:.1f}, sdk_result={}",
+                         _generationOff ? 1 : _framesToInterpolate + 1, targetCount + 1,
+                         Util::MillisecondsNow() - sdkStart, state.lastFGFrameTime, state.lastFGPresentMs,
+                         state.xefgDynamicCapFps, (int) intResult);
 
             if (VulkanXeFGDiagnostics::Enabled()) VulkanXeFGDiagnostics::Record("apply",
                 "context={:X} requested_x={} effective_request_x={} admitted_x={} target_x={} applied_x={} previous_backend_raw={} sdk_result={} reason={}",
@@ -835,7 +903,11 @@ bool XeFG_Dx12::Dispatch()
                 _framesToInterpolate, (int) intResult,
                 intResult != XEFG_SWAPCHAIN_RESULT_SUCCESS ? "sdk_rejected_count" :
                 (Config::Instance()->FGFollowsGame() ? "follow_game" : "accepted"));
-            _framesToInterpolate = targetCount;
+            if (dynamicEnabled && intResult == XEFG_SWAPCHAIN_RESULT_SUCCESS)
+                _transitionTraceFrames = 8;
+            // Dynamic must never report a rejected count as applied. Preserve the legacy manual path.
+            if (!dynamicEnabled || intResult == XEFG_SWAPCHAIN_RESULT_SUCCESS)
+                _framesToInterpolate = targetCount;
 
             if (intResult != XEFG_SWAPCHAIN_RESULT_SUCCESS)
             {

@@ -11633,7 +11633,10 @@ static bool shellFgInstrumentsApart = false;
 static void FgModeValue(const CustomOptional<int>* countConfig)
 {
     const int mode = countConfig != nullptr ? countConfig->value_or_default() : 1;
-    const std::string value = mode < 0 ? std::string(Tr("Default")) : mode == 0 ? std::string(Tr("Off")) : StrFmt("%dx", mode + 1);
+    const bool xeFGDynamic = countConfig == &Config::Instance()->FGXeFGInterpolationCount &&
+                            Config::Instance()->FGXeFGDynamicMFG.value_or_default() &&
+                            !Config::Instance()->FGFollowsGame();
+    const std::string value = xeFGDynamic ? "Dynamic" : mode < 0 ? std::string(Tr("Default")) : mode == 0 ? std::string(Tr("Off")) : StrFmt("%dx", mode + 1);
     // Requested: the configuration. Effective: the count the FG feature applies (with the Vulkan bridge, the one its
     // SDK confirmed), a different variable; shown only while frames are being generated
     ImGui::AlignTextToFramePadding();
@@ -12293,6 +12296,17 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                     {
                         ImGui::BeginDisabled(!fgOutput->IsActive());
 
+                        // Fixed columns align both switches and labels across all three rows/themes.
+                        float cellWidth = 0.0f;
+                        for (const char* key : { "Disable UI texture", "Disable HUDless", "Depth as ValidNow",
+                                                  "Velocity as ValidNow", "HUDless as ValidNow", "Accept First HUDless" })
+                            cellWidth = std::max(cellWidth, CheckboxWidth(TrL(key)));
+                        const int columns = ImGui::GetContentRegionAvail().x >= cellWidth * 2.0f +
+                                            ImGui::GetStyle().CellPadding.x * 4.0f +
+                                            ImGui::GetStyle().ItemSpacing.x ? 2 : 1;
+                        const bool flagGrid = ImGui::BeginTable("##FgInputFlagGrid", columns,
+                            ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings);
+                        if (flagGrid) ImGui::TableNextColumn();
                         const auto isUsingUIAny = fgOutput->IsUsingUIAny();
                         const auto isUsingHudlessAny = fgOutput->IsUsingHudlessAny();
 
@@ -12309,7 +12323,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
                         ImGui::EndDisabled();
 
-                        SameLineIfRoom(CheckboxWidth(TrL("Disable HUDless")), 16.0f);
+                        if (flagGrid) ImGui::TableNextColumn();
 
                         bool disableHudless = config->FGDisableHudless.value_or_default();
                         ImGui::BeginDisabled(!isUsingHudlessAny && !disableHudless);
@@ -12323,6 +12337,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
                         ImGui::EndDisabled();
 
+                        if (flagGrid) ImGui::TableNextColumn();
                         bool depthValidNow = config->FGDepthValidNow.value_or_default();
                         if (IlionTheme::Checkbox(TrL("Depth as ValidNow"), &depthValidNow))
                             config->FGDepthValidNow = depthValidNow;
@@ -12330,7 +12345,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                         ShowTooltip("Will use more VRAM, but Uniscaler needs this\n"
                                     "Maybe some other games might need too");
 
-                        SameLineIfRoom(CheckboxWidth(TrL("Velocity as ValidNow")), 16.0f);
+                        if (flagGrid) ImGui::TableNextColumn();
 
                         bool velocityValidNow = config->FGVelocityValidNow.value_or_default();
                         if (IlionTheme::Checkbox(TrL("Velocity as ValidNow"), &velocityValidNow))
@@ -12339,19 +12354,22 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                         ShowTooltip("Will use more VRAM, but Uniscaler needs this\n"
                                     "Maybe some other games might need too");
 
+                        if (flagGrid) ImGui::TableNextColumn();
                         bool hudlessValidNow = config->FGHudlessValidNow.value_or_default();
                         if (IlionTheme::Checkbox(TrL("HUDless as ValidNow"), &hudlessValidNow))
                             config->FGHudlessValidNow = hudlessValidNow;
 
                         ShowTooltip("Will use more VRAM, but some games might need this");
 
-                        SameLineIfRoom(CheckboxWidth(TrL("Accept First HUDless")), 16.0f);
+                        if (flagGrid) ImGui::TableNextColumn();
 
                         bool firstHudless = config->FGOnlyAcceptFirstHudless.value_or_default();
                         if (IlionTheme::Checkbox(TrL("Accept First HUDless"), &firstHudless))
                             config->FGOnlyAcceptFirstHudless = firstHudless;
 
                         ShowTooltip("If source tags more than one HUDless, only use the first one");
+
+                        if (flagGrid) ImGui::EndTable();
 
                         if (bool skipReset = config->FGSkipReset.value_or_default();
                             IlionTheme::Checkbox(TrL("Skip Reset"), &skipReset))
@@ -12435,6 +12453,11 @@ void MenuCommon::RenderFGModeCombo(RenderMenuContext& ctx, const char* label, in
     auto& state = ctx.state;
     auto config = ctx.config;
 
+    const bool xeFGSelector = countConfig == &config->FGXeFGInterpolationCount;
+    const bool dynamicSelected = xeFGSelector && config->FGXeFGDynamicMFG.value_or_default() &&
+                                 !config->FGFollowsGame() && config->FGEnabled.value_or_default();
+    const bool dynamicSupported = xeFGSelector && maxInterpolationCount >= 1 &&
+                                  XeFGProxy::SetNumInterpolatedFrames() != nullptr && XeFGProxy::SetEnabled() != nullptr;
     // -1 = Default (follow game), 0 = Off, >0 = interpolated frame count
     auto modeName = [&](int mode) -> std::string
     {
@@ -12458,7 +12481,7 @@ void MenuCommon::RenderFGModeCombo(RenderMenuContext& ctx, const char* label, in
     else if (config->FGEnabled.value_or_default())
         current = countConfig != nullptr ? std::clamp(countConfig->value_or_default(), 1, maxMode) : 1;
 
-    std::string preview = modeName(current);
+    std::string preview = dynamicSelected ? "Dynamic" : modeName(current);
     if (current < 0)
     {
         const int gameMode =
@@ -12470,14 +12493,30 @@ void MenuCommon::RenderFGModeCombo(RenderMenuContext& ctx, const char* label, in
 
     if (IlionTheme::BeginCombo(label, preview.c_str()))
     {
+        if (xeFGSelector)
+        {
+            ImGui::BeginDisabled(!dynamicSupported);
+            if (ImGui::Selectable("Dynamic", dynamicSelected) && !dynamicSelected)
+            {
+                config->FGXeFGDynamicMFG = true;
+                config->FGXeFGTargetAsCapDMFG = false; // Selection never installs an FPS cap.
+                config->FGEnabled = true;
+                fgHotkeyLeftDefault = false;
+                // Live count API applies the transition; no swapchain/FG restart.
+            }
+            ImGui::EndDisabled();
+        }
         const int firstMode = Config::FGCanFollowGame() ? -1 : 0;
 
         for (int mode = firstMode; mode <= maxMode; mode++)
         {
-            if (!ImGui::Selectable(modeName(mode).c_str(), current == mode) || current == mode)
+            if (!ImGui::Selectable(modeName(mode).c_str(), current == mode && !dynamicSelected) ||
+                (current == mode && !dynamicSelected))
                 continue;
 
             fgHotkeyLeftDefault = false;
+            if (xeFGSelector)
+                config->FGXeFGDynamicMFG = false; // Manual choice restores its original fixed-count path.
 
             if (mode < 0)
             {
@@ -12506,6 +12545,96 @@ void MenuCommon::RenderFGModeCombo(RenderMenuContext& ctx, const char* label, in
         ShowTooltip("Frame Generation mode\nDefault follows the game's DLSS FG setting");
     else
         ShowTooltip("Frame Generation mode");
+}
+
+// XeFG only. Uses the existing themed widgets and the existing section/scroll container.
+void MenuCommon::RenderXeFGDynamicMfgControls(int maxCount, float scale)
+{
+    auto config = Config::Instance();
+    const bool supported = maxCount >= 1 && XeFGProxy::SetNumInterpolatedFrames() != nullptr &&
+                           XeFGProxy::SetEnabled() != nullptr;
+    ImGui::BeginDisabled(!supported || config->FGFollowsGame());
+    bool enabled = config->FGXeFGDynamicMFG.value_or_default();
+    if (IlionTheme::Checkbox(TrL("Dynamic MFG##xefg"), &enabled))
+    {
+        config->FGXeFGDynamicMFG = enabled;
+        if (enabled)
+        {
+            config->FGEnabled = true;
+            config->FGXeFGTargetAsCapDMFG = false;
+        }
+    }
+    MenuCommon::ShowTooltip("Dynamic uses all multipliers admitted by XeFG, independently of the saved manual multiplier. It starts at 2X; the controller can reduce to 1X when allowed. Requires live control and manual FG mode.");
+
+    ImGui::BeginDisabled(!enabled);
+    // Keep both long translated labels inside narrow/compact cards without changing panel dimensions.
+    const auto fieldLabel = [scale](const char* key, const char* id) -> const char*
+    {
+        const char* label = TrL(key);
+        const float available = ImGui::GetContentRegionAvail().x;
+        const float labelWidth = ImGui::CalcTextSize(label, nullptr, true).x + ImGui::GetStyle().ItemInnerSpacing.x;
+        if (available < labelWidth + 100.0f * scale)
+        {
+            ImGui::TextUnformatted(label, ImGui::FindRenderedTextEnd(label));
+            ImGui::SetNextItemWidth(std::min(190.0f * scale, available));
+            return id;
+        }
+        ImGui::SetNextItemWidth(std::min(190.0f * scale, available - labelWidth));
+        return label;
+    };
+    float target = config->FGXeFGFramerateTargetDMFG.value_or_default();
+    if (IlionTheme::SliderFloat(fieldLabel("Final FPS target##xefg", "##xefgTarget"), &target, 0.0f, 500.0f, "%.0f"))
+        config->FGXeFGFramerateTargetDMFG = target < 10.0f ? 0.0f : target;
+    MenuCommon::ShowTooltip("0 = automatic: existing FPS limit, otherwise just below the display refresh rate. Target counts final frames; it is not a cap unless enabled below.");
+
+    ImGui::TextWrapped("%s", Tr("R3: hold within 92-100% of target; up after 500 ms low, ordinary changes at least 1.5 s apart."));
+
+    const bool cap = config->FGXeFGTargetAsCapDMFG.value_or_default() && maxCount > 1;
+    ImGui::BeginDisabled(cap);
+    int rounding = std::clamp(config->FGXeFGRoundingDMFG.value_or_default(), 0, 2);
+    const char* names[] = { "Down", "Nearest", "Up" }; // Official INI values: 0, 1, 2.
+    if (IlionTheme::BeginCombo(fieldLabel("Multiplier rounding##xefg", "##xefgRounding"), Tr(names[rounding])))
+    {
+        for (int i = 0; i < 3; ++i)
+            if (ImGui::Selectable(TrL(names[i]), i == rounding))
+                config->FGXeFGRoundingDMFG = i;
+        ImGui::EndCombo();
+    }
+    ImGui::BeginDisabled(maxCount == 1);
+    bool allow1x = config->FGXeFGDynamicAllow1X.value_or_default();
+    if (IlionTheme::Checkbox(TrL("Allow 1X##xefg"), &allow1x))
+        config->FGXeFGDynamicAllow1X = allow1x;
+    ImGui::EndDisabled();
+    MenuCommon::ShowTooltip("With a maximum of 2X, official Dynamic MFG always allows 1X. Target-as-cap uses at least 2X and ignores rounding.");
+    ImGui::EndDisabled();
+
+    ImGui::BeginDisabled(maxCount <= 1);
+    bool targetCap = config->FGXeFGTargetAsCapDMFG.value_or_default();
+    if (IlionTheme::Checkbox(TrL("Use target as cap##xefg"), &targetCap))
+        config->FGXeFGTargetAsCapDMFG = targetCap;
+    ImGui::EndDisabled();
+    MenuCommon::ShowTooltip("Uses OptiScaler's existing limiter, requires a maximum of at least 3X. No extra limiter is added.");
+    ImGui::EndDisabled();
+    ImGui::EndDisabled();
+
+    const auto fg = State::Instance().currentFG;
+    ImGui::TextWrapped(Tr("Selected mode: %s"), enabled ? "Dynamic" : Tr("Manual"));
+    if (fg != nullptr && fg->IsActive() && !fg->IsPaused())
+        ImGui::TextWrapped(Tr("Applied multiplier: %uX"), fg->GetInterpolatedFrameCount() + 1);
+    else
+        ImGui::TextWrapped("%s", Tr("Applied multiplier: unavailable"));
+    const auto measured = State::Instance().xefgPresentTelemetry.Read(Util::MillisecondsNow());
+    const bool metricsActive = enabled && fg != nullptr && fg->IsActive() && !fg->IsPaused();
+    if (metricsActive && measured.baseValid)
+        ImGui::TextWrapped(Tr("Base FPS (game Present): %.1f"), measured.baseFps);
+    else
+        ImGui::TextWrapped("%s", Tr("Base FPS: unavailable"));
+    if (metricsActive && measured.outputValid)
+        ImGui::TextWrapped(Tr("Final FPS (SDK submissions): %.1f"), measured.outputFps);
+    else
+        ImGui::TextWrapped("%s", Tr("Final FPS: unavailable"));
+    ImGui::TextWrapped("%s", Tr("Generation GPU cost: unavailable"));
+    ImGui::TextWrapped("%s", Tr("Base FPS includes generation overhead and waits; it is not raster-only FPS. SDK submissions do not prove display scanout. No measured GPU generation cost is available."));
 }
 
 void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
@@ -12846,6 +12975,8 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         if (basicView)
         {
             ImGui::EndDisabled();
+            if (auto ch = ScopedCollapsingHeader(TrL("Extended XeFG Settings")); ch.IsHeaderOpen())
+                RenderXeFGDynamicMfgControls(fgOutput->GetMaxInterpolationCount(), menuResScale);
             return;
         }
 
@@ -12900,10 +13031,11 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
         if (!shellSimple)
             ImGui::Spacing();
-        if (!EssentialView() && !shellSimple)
         if (auto ch = ScopedCollapsingHeader(TrL("Extended XeFG Settings")); ch.IsHeaderOpen())
         {
+            RenderXeFGDynamicMfgControls(fgOutput->GetMaxInterpolationCount(), menuResScale);
             ImGui::Spacing();
+            if (!EssentialView() && !shellSimple)
             if (ImGui::TreeNode(TrL("Rectangle Settings")))
             {
                 ImGui::PushItemWidth(95.0f * menuResScale);
@@ -17384,8 +17516,11 @@ static float FooterHeight()
     const auto& style = ImGui::GetStyle();
 
     // The last frame height and item spacing are the INFO line
+    const float buttons = ImGui::CalcTextSize(Tr("Open Wiki")).x + ImGui::CalcTextSize(Tr("Save Settings")).x +
+                          ImGui::CalcTextSize(Tr("Close")).x + style.FramePadding.x * 6.0f + style.ItemSpacing.x * 2.0f + 6.0f;
+    const float extra = ImGui::GetContentRegionAvail().x < buttons ? ImGui::GetFrameHeight() + style.ItemSpacing.y : 0.0f;
     return 1.0f + style.ItemSpacing.y * 6.0f + ImGui::GetTextLineHeight() + FooterPlotHeight() +
-           ImGui::GetFrameHeight() * 2.0f;
+           ImGui::GetFrameHeight() * 2.0f + extra;
 }
 
 // ILION: ReShade inside ILION (misc/IlionReShade.h). A card in Graphics and a wide side panel joined to the main
@@ -21403,15 +21538,15 @@ void MenuCommon::RenderMainMenuBottomBar(RenderMenuContext& ctx)
                 "Compatibility list with known game issues\nand workarounds, FG options explained\n"
                 "and other useful info");
 
-    ImGui::SameLine();
-
     auto& style = ImGui::GetStyle();
     float rightButtonsWidth =
         ImGui::CalcTextSize(Tr("Save Settings")).x + ImGui::CalcTextSize(Tr("Close")).x +
         style.FramePadding.x * 4.0f + 6.0f;
 
-    float avail = ImGui::GetContentRegionAvail().x;
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail - rightButtonsWidth);
+    SameLineIfRoom(rightButtonsWidth, style.ItemSpacing.x);
+    const float avail = ImGui::GetContentRegionAvail().x;
+    if (avail > rightButtonsWidth)
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail - rightButtonsWidth);
 
     if (IlionTheme::Button(TrL("Save Settings")))
         config->SaveIni();

@@ -4,6 +4,7 @@
 #include "misc/Quirks.h"
 #include "misc/SkipSpoof.h"
 #include "framegen/IFGFeature_Dx12.h"
+#include <framegen/xefg/XeFG_PresentTelemetry.h>
 #include <inputs/FG/Streamline_Inputs_Dx12.h>
 #include <inputs/FG/Streamline_Inputs_Sl1_Dx12.h>
 
@@ -368,6 +369,9 @@ class State
     std::deque<double> frameTimes;
     std::vector<DetailedGpuTime> detailedGpuTimes;
     double lastFGFrameTime = 0.0;
+    double lastFGPresentMs = 0.0;
+    float xefgDynamicCapFps = 0.0f;
+    XeFG_PresentTelemetry xefgPresentTelemetry;
     double presentFrameTime = 0.0;
     std::mutex frameTimeMutex;
 

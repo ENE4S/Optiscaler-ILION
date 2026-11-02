@@ -1319,11 +1319,28 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
     if (willPresent)
         state.fgPresentIsCalled = true;
 
+    const bool measureDynamicPresent = willPresent && FrameLimit::xeFGDynamicActive();
+    const double dynamicPresentStart = measureDynamicPresent ? Util::MillisecondsNow() : 0.0;
     HRESULT result;
     if (pPresentParameters == nullptr)
         result = o_FGSCPresent(This, SyncInterval, Flags);
     else
         result = o_FGSCPresent1((IDXGISwapChain1*) This, SyncInterval, Flags, pPresentParameters);
+
+    state.lastFGPresentMs = measureDynamicPresent ? Util::MillisecondsNow() - dynamicPresentStart : 0.0;
+    if (measureDynamicPresent && fgFeatureActive && state.currentFG != nullptr)
+    {
+        xefg_swapchain_present_status_t status {};
+        bool valid = false;
+        if (result == S_OK && XeFGProxy::GetLastPresentStatus() != nullptr &&
+            state.currentFG->SwapchainContext() != nullptr)
+        {
+            valid = XeFGProxy::GetLastPresentStatus()(
+                        static_cast<xefg_swapchain_handle_t>(state.currentFG->SwapchainContext()), &status) ==
+                    XEFG_SWAPCHAIN_RESULT_SUCCESS;
+        }
+        state.xefgPresentTelemetry.Record(Util::MillisecondsNow(), result == S_OK, valid, status.framesPresented);
+    }
 
     if (result == S_OK)
     {

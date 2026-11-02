@@ -769,6 +769,12 @@ class Config
     // XeFG
     CustomOptional<bool> FGXeFGIgnoreInitChecks { false };
     CustomOptional<int> FGXeFGInterpolationCount { 1 };
+    CustomOptional<bool> FGXeFGDynamicMFG { false };
+    CustomOptional<float> FGXeFGFramerateTargetDMFG { 0.0f };
+    CustomOptional<int> FGXeFGRoundingDMFG { 1 }; // 0 Down, 1 Nearest, 2 Up
+    CustomOptional<bool> FGXeFGDynamicAllow1X { true };
+    CustomOptional<bool> FGXeFGTargetAsCapDMFG { false };
+
     CustomOptional<bool> FGXeFGUIComposition { false };
     CustomOptional<bool> FGXeFGDepthInverted { true };
     CustomOptional<bool> FGXeFGJitteredMV { false };

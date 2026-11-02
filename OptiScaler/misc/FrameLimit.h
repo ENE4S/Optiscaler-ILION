@@ -8,5 +8,7 @@ class FrameLimit
     static int combined_sleep(int64_t ns);
 
   public:
+    static bool xeFGDynamicActive();
+    static float targetFps();
     static void sleep(bool fgActive);
 };

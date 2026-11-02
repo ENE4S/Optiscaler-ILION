@@ -184,6 +184,7 @@ class MenuCommon
     inline static bool _bgBlurUsed = false;
 
     inline static void ShowTooltip(const char* tip);
+    static void RenderXeFGDynamicMfgControls(int maxCount, float scale);
 
     inline static void ShowResetButton(CustomOptional<bool, NoDefault>* initFlag, std::string buttonName);
     inline static void ReInitUpscaler();

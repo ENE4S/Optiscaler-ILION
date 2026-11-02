@@ -4,6 +4,7 @@
 #include "Config.h"
 #include <State.h>
 #include <framegen/IFGFeature.h>
+#include <framegen/xefg/XeFG_DynamicMFG.h>
 // #include "hooks/D3D11Hooks.h"
 
 // https://learn.microsoft.com/en-us/windows/win32/sync/using-waitable-timer-objects
@@ -53,12 +54,7 @@ inline int FrameLimit::combined_sleep(int64_t ns)
     return status;
 }
 
-bool FrameLimit::xeFGDynamicActive()
-{
-    auto config = Config::Instance();
-    return State::Instance().activeFgOutput == FGOutput::XeFG &&
-           config->FGXeFGDynamicMFG.value_or_default() && !config->FGFollowsGame();
-}
+bool FrameLimit::xeFGDynamicActive() { return XeFG_DynamicMFG::Allowed(); }
 
 float FrameLimit::targetFps()
 {
@@ -78,21 +74,43 @@ void FrameLimit::sleep(bool fgActive)
     {
         uint64_t min_interval_us = std::clamp((uint64_t) (1'000'000 / fpsCap), 0ULL, 100'000'000ULL);
 
+        // The limit counts presented frames, the real frames come once per batch: one real frame per generated
+        // frames + 1. ILION used a fixed 2 outside Dynamic, so manual 3X/4X presented above the limit. The real count
+        // now holds on D3D12 swapchains; the Vulkan -> D3D12 XeFG bridge keeps the fixed 2 until it is validated.
+        // A count of 0 is Dynamic's 1X (generation off); other outputs that report 0 (reprojection) keep 2.
         if (fgActive)
         {
-            // Preserve ILION's original factor for every non-Dynamic path.
-            auto fg = State::Instance().currentFG;
-            min_interval_us *= xeFGDynamicActive() && fg != nullptr ? fg->GetInterpolatedFrameCount() + 1 : 2;
+            auto& state = State::Instance();
+            auto fg = state.currentFG;
+            uint64_t factor = 2;
+
+            if (fg != nullptr && state.swapchainInteropApi != SwapchainInteropApi::VkwDx12)
+            {
+                const auto generated = fg->GetInterpolatedFrameCount();
+                factor = generated >= 1 ? generated + 1 : xeFGDynamicActive() ? 1 : 2;
+            }
+
+            min_interval_us *= factor;
         }
 
-        static uint64_t previous_frame_time = 0;
-        uint64_t current_time = Util::GetTimestamp();
-        uint64_t frame_time = current_time - previous_frame_time;
-        if (frame_time < 1000 * min_interval_us)
+        // R4: each frame is due one interval after the previous deadline, not after the previous sleep ended, so the
+        // overshoot of each sleep no longer adds up (the real rate stayed a little under the limit). A frame more
+        // than one interval late (a hitch, a load, a lower limit) starts over from now, so no burst catches up.
+        static uint64_t previous_deadline = 0;
+        const uint64_t interval_ns = min_interval_us * 1000;
+        const uint64_t current_time = Util::GetTimestamp();
+        uint64_t deadline = previous_deadline + interval_ns;
+
+        if (previous_deadline == 0 || current_time > deadline + interval_ns)
         {
-            if (auto res = combined_sleep(min_interval_us * 1000 - frame_time); res)
+            deadline = current_time;
+        }
+        else if (current_time < deadline)
+        {
+            if (auto res = combined_sleep(deadline - current_time); res)
                 LOG_ERROR("Sleep command failed: {}", res);
         }
-        previous_frame_time = Util::GetTimestamp();
+
+        previous_deadline = deadline;
     }
 }

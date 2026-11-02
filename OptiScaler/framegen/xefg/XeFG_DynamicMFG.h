@@ -17,11 +17,20 @@ class XeFG_DynamicMFG
         bool generationOff = false; // 1X: no frames generated
     };
 
+    // Dynamic MFG may run: XeFG output, Dynamic chosen, not following the game, and not on the Vulkan -> D3D12 XeFG
+    // bridge (Dynamic is validated on D3D12 swapchains only; there the manual multiplier is used). The one check
+    // shared by the controller, XeFG_Dx12, FrameLimit and the menu.
+    static bool Allowed();
+
     // presentWaitMs: what the game waited in the output's present path this frame
     Result Update(int targetCount, int framesToInterpolate, bool generationOff, double presentWaitMs, HWND window);
 
     // FG back on: the averages start over, what was learned stays
     void Restart();
+
+    // The output kept another count than the one asked for (XeFG rejected it): averages and the pending check start
+    // over on the count in use, without the 2X restart of Restart()
+    void Resync() { _count.Restart(); }
 
   private:
     XeFG_DynamicCount _count;

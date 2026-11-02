@@ -12,8 +12,7 @@ XeFG_DynamicMFG::Result XeFG_DynamicMFG::Update(int targetCount, int framesToInt
     auto& state = State::Instance();
 
     Result result;
-    result.dynamic = state.activeFgOutput == FGOutput::XeFG &&
-                     config->FGXeFGDynamicMFG.value_or_default() && !config->FGFollowsGame();
+    result.dynamic = Allowed();
     result.ownChange = result.dynamic && _active;
     result.count = targetCount;
 
@@ -128,6 +127,14 @@ XeFG_DynamicMFG::Result XeFG_DynamicMFG::Update(int targetCount, int framesToInt
 
     _active = result.dynamic;
     return result;
+}
+
+bool XeFG_DynamicMFG::Allowed()
+{
+    auto config = Config::Instance();
+    auto& state = State::Instance();
+    return state.activeFgOutput == FGOutput::XeFG && config->FGXeFGDynamicMFG.value_or_default() &&
+           !config->FGFollowsGame() && state.swapchainInteropApi != SwapchainInteropApi::VkwDx12;
 }
 
 void XeFG_DynamicMFG::Restart()

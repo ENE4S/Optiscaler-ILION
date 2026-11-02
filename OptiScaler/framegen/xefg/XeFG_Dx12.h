@@ -36,6 +36,10 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
 
     XeFG_DynamicMFG _dynamic;
     int _transitionTraceFrames = 0;
+    // Dynamic MFG: a count XeFG rejected is not asked for again until this back-off ends (5 s doubling to 60 s)
+    int _rejectedCount = -1;
+    double _rejectedUntilMs = 0.0;
+    double _rejectBackoffMs = 0.0;
     void SetGenerationOff(bool off);
     bool Dispatch();
 

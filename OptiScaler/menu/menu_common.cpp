@@ -12454,9 +12454,11 @@ void MenuCommon::RenderFGModeCombo(RenderMenuContext& ctx, const char* label, in
     auto config = ctx.config;
 
     const bool xeFGSelector = countConfig == &config->FGXeFGInterpolationCount;
-    const bool dynamicSelected = xeFGSelector && config->FGXeFGDynamicMFG.value_or_default() &&
+    // Not on the Vulkan -> D3D12 XeFG bridge: Dynamic is validated on D3D12 swapchains only (XeFG_DynamicMFG::Allowed)
+    const bool vulkanBridge = state.swapchainInteropApi == SwapchainInteropApi::VkwDx12;
+    const bool dynamicSelected = xeFGSelector && config->FGXeFGDynamicMFG.value_or_default() && !vulkanBridge &&
                                  !config->FGFollowsGame() && config->FGEnabled.value_or_default();
-    const bool dynamicSupported = xeFGSelector && maxInterpolationCount >= 1 &&
+    const bool dynamicSupported = xeFGSelector && maxInterpolationCount >= 1 && !vulkanBridge &&
                                   XeFGProxy::SetNumInterpolatedFrames() != nullptr && XeFGProxy::SetEnabled() != nullptr;
     // -1 = Default (follow game), 0 = Off, >0 = interpolated frame count
     auto modeName = [&](int mode) -> std::string
@@ -12552,7 +12554,8 @@ void MenuCommon::RenderXeFGDynamicMfgControls(int maxCount, float scale)
 {
     auto config = Config::Instance();
     const bool supported = maxCount >= 1 && XeFGProxy::SetNumInterpolatedFrames() != nullptr &&
-                           XeFGProxy::SetEnabled() != nullptr;
+                           XeFGProxy::SetEnabled() != nullptr &&
+                           State::Instance().swapchainInteropApi != SwapchainInteropApi::VkwDx12;
     ImGui::BeginDisabled(!supported || config->FGFollowsGame());
     bool enabled = config->FGXeFGDynamicMFG.value_or_default();
     if (IlionTheme::Checkbox(TrL("Dynamic MFG##xefg"), &enabled))
@@ -12564,9 +12567,26 @@ void MenuCommon::RenderXeFGDynamicMfgControls(int maxCount, float scale)
             config->FGXeFGTargetAsCapDMFG = false;
         }
     }
-    MenuCommon::ShowTooltip("Dynamic uses all multipliers admitted by XeFG, independently of the saved manual multiplier. It starts at 2X; the controller can reduce to 1X when allowed. Requires live control and manual FG mode.");
+    MenuCommon::ShowTooltip("Dynamic chooses up to the maximum multiplier below (never more than XeFG admits). It starts at 2X; the controller can reduce to 1X when allowed. Requires live control and manual FG mode.");
 
     ImGui::BeginDisabled(!enabled);
+
+    // R2: Dynamic's ceiling is the user's multiplier (FGXeFGInterpolationCount), clamped to the context in XeFG_Dx12
+    if (maxCount >= 1)
+    {
+        const int maxSetting = std::clamp(config->FGXeFGInterpolationCount.value_or_default(), 1, maxCount);
+        const auto preview = std::format("{}X", maxSetting + 1);
+        ImGui::SetNextItemWidth(115.0f * scale);
+        if (IlionTheme::BeginCombo(TrL("Maximum multiplier##xefg"), preview.c_str()))
+        {
+            for (int count = 1; count <= maxCount; ++count)
+                if (ImGui::Selectable(std::format("{}X", count + 1).c_str(), count == maxSetting) && count != maxSetting)
+                    config->FGXeFGInterpolationCount = count;
+            ImGui::EndCombo();
+        }
+        MenuCommon::ShowTooltip("Highest multiplier Dynamic may use. It is the same setting as the manual multiplier.");
+    }
+
     // Keep both long translated labels inside narrow/compact cards without changing panel dimensions.
     const auto fieldLabel = [scale](const char* key, const char* id) -> const char*
     {

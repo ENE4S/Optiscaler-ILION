@@ -7,6 +7,7 @@
 #include <hudfix/Hudfix_Dx12.h>
 
 #include <menu/menu_overlay_dx.h>
+#include <imgui/ImGuiNotify.hpp>
 #include <resource_tracking/ResTrack_dx12.h>
 
 #include <nvapi/fakenvapi.h>
@@ -645,8 +646,7 @@ void XeFG_Dx12::Activate()
         (IsLowResMV() || nativeAA || (State::Instance().gameQuirks & GameQuirk::ForceFGRenderSizeMVs) ||
          Config::Instance()->FGXeFGIgnoreInitChecks.value_or_default()))
     {
-        if (Config::Instance()->FGXeFGDynamicMFG.value_or_default() && !Config::Instance()->FGFollowsGame() &&
-            XeFGProxy::SetNumInterpolatedFrames() != nullptr)
+        if (XeFG_DynamicMFG::Allowed() && XeFGProxy::SetNumInterpolatedFrames() != nullptr)
         {
 #ifndef DONT_USE_XMX
             ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
@@ -654,10 +654,19 @@ void XeFG_Dx12::Activate()
             const auto seed = XeFGProxy::SetNumInterpolatedFrames()(_swapChainContext, 1);
             if (seed != XEFG_SWAPCHAIN_RESULT_SUCCESS)
             {
-                LOG_ERROR("Dynamic MFG: initial 2X rejected: {}", (int) seed);
-                return; // Do not enable the runtime at its maximum after a failed seed.
+                // R7: returning here made EvaluateState call Activate (and log) every frame with FG never on.
+                // Dynamic is turned off for this session only (not saved) and FG starts on the manual path, the
+                // count the user validated; the menu shows "Manual" and a notice says why.
+                LOG_ERROR("Dynamic MFG: initial 2X rejected: {} ({}), Dynamic off for this session, manual count used",
+                          magic_enum::enum_name(seed), (int) seed);
+                Config::Instance()->FGXeFGDynamicMFG.set_volatile_value(false);
+                ImGui::InsertNotification({ ImGuiToastType::Warning, 15000,
+                                            "Dynamic MFG unavailable: XeFG rejected 2X.\nThe manual multiplier is used." });
             }
-            _framesToInterpolate = 1;
+            else
+            {
+                _framesToInterpolate = 1;
+            }
         }
         auto result = XeFGProxy::SetEnabled()(_swapChainContext, true);
 
@@ -817,8 +826,7 @@ bool XeFG_Dx12::Dispatch()
             _maxInterpolationCount + 1);
 
     auto& state = State::Instance();
-    if (_transitionTraceFrames > 0 && Config::Instance()->FGXeFGDynamicMFG.value_or_default() &&
-        !Config::Instance()->FGFollowsGame())
+    if (_transitionTraceFrames > 0 && XeFG_DynamicMFG::Allowed())
     {
         LOG_INFO("Dynamic MFG R3 post-transition: sample={}, applied={}X, base_interval_ms={:.3f}, present_wait_ms={:.3f}",
                  9 - _transitionTraceFrames, _generationOff ? 1 : _framesToInterpolate + 1,
@@ -850,9 +858,8 @@ bool XeFG_Dx12::Dispatch()
 
     if (XeFGProxy::SetNumInterpolatedFrames() != nullptr)
     {
-        const bool dynamicEnabled = Config::Instance()->FGXeFGDynamicMFG.value_or_default() &&
-                                    !Config::Instance()->FGFollowsGame();
-        if (!dynamicEnabled && Config::Instance()->FGXeFGInterpolationCount.value_or_default() > _maxInterpolationCount)
+        const bool dynamicEnabled = XeFG_DynamicMFG::Allowed();
+        if (Config::Instance()->FGXeFGInterpolationCount.value_or_default() > _maxInterpolationCount)
         {
             if (VulkanXeFGDiagnostics::Enabled()) VulkanXeFGDiagnostics::Record("reduction",
                 "reason=request_exceeds_sdk_capacity requested_x={} admitted_x={} reduced_to_x={}",
@@ -863,7 +870,9 @@ bool XeFG_Dx12::Dispatch()
                      _maxInterpolationCount);
         }
 
-        int targetCount = dynamicEnabled ? std::max(_maxInterpolationCount, 1) : std::clamp(
+        // R2: manual and Dynamic share the user's multiplier, never above what the XeFG context admits. In Dynamic
+        // it is the highest count the controller may choose (upstream's "Max Frame Gen").
+        int targetCount = std::clamp(
             Config::Instance()->FGInterpolationCount(Config::Instance()->FGXeFGInterpolationCount.value_or_default()),
             1, std::max(_maxInterpolationCount, 1));
 
@@ -873,6 +882,10 @@ bool XeFG_Dx12::Dispatch()
         if (_generationOff != dynamic.generationOff)
             SetGenerationOff(dynamic.generationOff);
         targetCount = dynamic.count;
+
+        // R1: a count XeFG rejected stays on the last confirmed one until its back-off ends, no retry every frame
+        if (dynamicEnabled && targetCount == _rejectedCount && Util::MillisecondsNow() < _rejectedUntilMs)
+            targetCount = _framesToInterpolate;
 
         if (_framesToInterpolate != targetCount)
         {
@@ -909,10 +922,31 @@ bool XeFG_Dx12::Dispatch()
             if (!dynamicEnabled || intResult == XEFG_SWAPCHAIN_RESULT_SUCCESS)
                 _framesToInterpolate = targetCount;
 
-            if (intResult != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+            if (intResult == XEFG_SWAPCHAIN_RESULT_SUCCESS)
+            {
+                if (targetCount == _rejectedCount)
+                {
+                    _rejectedCount = -1;
+                    _rejectBackoffMs = 0.0;
+                }
+            }
+            else
             {
                 LOG_ERROR("SetNumInterpolatedFrames error: {} ({})", magic_enum::enum_name(intResult),
                           (UINT) intResult);
+
+                if (dynamicEnabled)
+                {
+                    // R1: keep the last confirmed count, ask for this one again only after a back-off, and let the
+                    // controller judge from the count really in use (what it learned stays)
+                    _rejectBackoffMs = targetCount == _rejectedCount ? std::min(_rejectBackoffMs * 2.0, 60000.0)
+                                                                     : 5000.0;
+                    _rejectedCount = targetCount;
+                    _rejectedUntilMs = Util::MillisecondsNow() + _rejectBackoffMs;
+                    _dynamic.Resync();
+                    LOG_WARN("Dynamic MFG: {}X rejected by XeFG, staying at {}X for {:.0f} s", targetCount + 1,
+                             _framesToInterpolate + 1, _rejectBackoffMs / 1000.0);
+                }
             }
         }
     }

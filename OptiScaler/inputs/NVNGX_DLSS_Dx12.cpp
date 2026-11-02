@@ -24,6 +24,7 @@
 #include "detours/detours.h"
 #include <ankerl/unordered_dense.h>
 #include <misc/IdentifyGpu.h>
+#include <misc/FrameLimit.h>
 
 static ankerl::unordered_dense::map<unsigned int, ContextData<IFeature_Dx12>> Dx12Contexts;
 static std::unordered_map<unsigned int, NVSDK_NGX_Feature> HandleToFeature;
@@ -1176,6 +1177,10 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D12_EvaluateFeature(ID3D12GraphicsCom
         State::Instance().dlssgFgEvaluations++;
         State::Instance().dlssgFgLastEvaluateTick = GetTickCount64();
         ReflexHooks::setDlssgFrameCount(frameCount);
+
+        // ILION: the game's DLSSG (DLSS Enabler...) with a target cap is held here, once per real frame on the game's
+        // render thread, at target / the multiplier the backend applies (FrameLimit::sleepExternalFg)
+        FrameLimit::sleepExternalFg();
 
         float dlssgCameraNear = 0.0f;
         float dlssgCameraFar = 0.0f;

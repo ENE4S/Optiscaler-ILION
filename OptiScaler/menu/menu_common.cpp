@@ -12694,10 +12694,24 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
                       : status.gen == Dmfg::Gen::Detected ? Tr("generating (detected)")
                       : status.gen == Dmfg::Gen::Unknown  ? Tr("unknown")
                                                           : Tr("Off");
+    ImGui::Text("%s %s", Tr("State:"), gen);
+
+    // Asked for and really applied, kept apart: the game's DLSSG backend (DLSS Enabler...) can apply another count
     if (status.multiplier > 0)
-        ImGui::Text("%s %s  |  %dX", Tr("State:"), gen, status.multiplier);
-    else
-        ImGui::Text("%s %s", Tr("State:"), gen);
+    {
+        const char* source = status.appliedSource == Dmfg::AppliedSource::Own        ? "ILION"
+                             : status.appliedSource == Dmfg::AppliedSource::Measured ? Tr("measured")
+                             : status.appliedSource == Dmfg::AppliedSource::Reported ? Tr("reported by the backend")
+                                                                                     : Tr("not confirmed");
+        ImGui::Text(Tr("Multiplier: asked %dX  |  applied %dX (%s)"), status.requested, status.multiplier, source);
+
+        if (!status.own && status.requested > 0 && status.multiplier != status.requested &&
+            status.appliedSource != Dmfg::AppliedSource::Requested)
+            TextWrappedColored(ImVec4(1.f, 0.8f, 0.f, 1.f),
+                               Tr("The backend generates %dX although %dX was asked for: its own settings decide the "
+                                  "multiplier, ILION can't change it"),
+                               status.multiplier, status.requested);
+    }
 
     if (status.baseFps > 0.0f)
         ImGui::Text(Tr("Base FPS: %.1f (%s)  |  final FPS: %.1f (%s)"), status.baseFps,
@@ -12714,6 +12728,9 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
         ImGui::Text(Tr("Limiter: %s at %.0f final FPS"), limiter, status.limitFps);
     else
         ImGui::Text(Tr("Limiter: %s"), limiter);
+
+    if (status.capWaiting)
+        TextWrappedDisabled("%s", Tr("Target cap waiting: the multiplier the backend applies isn't confirmed yet, so it isn't limited by guesswork"));
 }
 
 void MenuCommon::RenderDynamicMfgCard(RenderMenuContext& ctx)

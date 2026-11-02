@@ -75,16 +75,40 @@ static std::atomic<double> limiterSleepMs { 0.0 };
 
 double FrameLimit::takeSleepMs() { return limiterSleepMs.exchange(0.0); }
 
+// R4: each frame is due one interval after the previous deadline, not after the previous sleep ended, so the overshoot
+// of each sleep no longer adds up (the real rate stayed a little under the limit). A frame more than one interval late
+// (a hitch, a load, a lower limit) starts over from now, so no burst catches up. One deadline per place that limits.
+// Returns the time slept, in ms.
+double FrameLimit::waitUntilDue(uint64_t& previous_deadline, uint64_t min_interval_us)
+{
+    const uint64_t interval_ns = min_interval_us * 1000;
+    const uint64_t current_time = Util::GetTimestamp();
+    uint64_t deadline = previous_deadline + interval_ns;
+    double slept = 0.0;
+
+    if (previous_deadline == 0 || current_time > deadline + interval_ns)
+    {
+        deadline = current_time;
+    }
+    else if (current_time < deadline)
+    {
+        if (auto res = combined_sleep(deadline - current_time); res)
+            LOG_ERROR("Sleep command failed: {}", res);
+
+        slept = (Util::GetTimestamp() - current_time) / 1'000'000.0;
+    }
+
+    previous_deadline = deadline;
+    return slept;
+}
+
 void FrameLimit::sleep(bool fgActive)
 {
-    if (auto fpsCap = targetFps(); fpsCap != 0.0f)
+    // The target cap belongs to ILION's own FG here (fgActive, FG_Hooks); the game's DLSSG (DLSS Enabler...) has its
+    // own place, once per real frame (sleepExternalFg). Without ILION's FG this keeps the plain FPS limit.
+    if (auto fpsCap = fgActive ? targetFps() : outsideLimitFps(); fpsCap != 0.0f)
     {
         uint64_t min_interval_us = std::clamp((uint64_t) (1'000'000 / fpsCap), 0ULL, 100'000'000ULL);
-
-        // The game's DLSSG generating (DLSS Enabler...) with a target cap: one real frame per batch of presented
-        // frames when this limiter sees only the game's frames, 1 when it sees every presented frame (measured)
-        if (!fgActive && targetCapActive() && IlionDynamicMfg::Current() == IlionDynamicMfg::Provider::DlssgGame)
-            min_interval_us *= (uint64_t) std::max(IlionDynamicMfg::ExternalLimiterFactor(), 1);
 
         // The limit counts presented frames, the real frames come once per batch: one real frame per generated
         // frames + 1. ILION used a fixed 2 outside Dynamic, so manual 3X/4X presented above the limit. The real count
@@ -105,27 +129,27 @@ void FrameLimit::sleep(bool fgActive)
             min_interval_us *= factor;
         }
 
-        // R4: each frame is due one interval after the previous deadline, not after the previous sleep ended, so the
-        // overshoot of each sleep no longer adds up (the real rate stayed a little under the limit). A frame more
-        // than one interval late (a hitch, a load, a lower limit) starts over from now, so no burst catches up.
         static uint64_t previous_deadline = 0;
-        const uint64_t interval_ns = min_interval_us * 1000;
-        const uint64_t current_time = Util::GetTimestamp();
-        uint64_t deadline = previous_deadline + interval_ns;
+        const double slept = waitUntilDue(previous_deadline, min_interval_us);
 
-        if (previous_deadline == 0 || current_time > deadline + interval_ns)
-        {
-            deadline = current_time;
-        }
-        else if (current_time < deadline)
-        {
-            if (auto res = combined_sleep(deadline - current_time); res)
-                LOG_ERROR("Sleep command failed: {}", res);
-
-            // Dynamic MFG counts this as waiting, as it does the low latency sleep (XeFG_DynamicMFG)
-            limiterSleepMs.store(limiterSleepMs.load() + (Util::GetTimestamp() - current_time) / 1'000'000.0);
-        }
-
-        previous_deadline = deadline;
+        // Dynamic MFG counts this as waiting, as it does the low latency sleep (XeFG_DynamicMFG)
+        if (slept > 0.0)
+            limiterSleepMs.store(limiterSleepMs.load() + slept);
     }
+}
+
+void FrameLimit::sleepExternalFg()
+{
+    // The game's DLSSG (DLSS Enabler...) with a target cap: the game's real frames are held at target / the
+    // multiplier it applies, here on the game's render thread once per DLSSG evaluation, never in its presenter.
+    // Reflex and XeLL keep the plain FPS limit, so the cap is counted once.
+    if (IlionDynamicMfg::Current() != IlionDynamicMfg::Provider::DlssgGame)
+        return;
+
+    const float realFps = IlionDynamicMfg::ExternalCapRealFps();
+    if (realFps <= 0.0f)
+        return;
+
+    static uint64_t previous_deadline = 0;
+    waitUntilDue(previous_deadline, std::clamp((uint64_t) (1'000'000 / realFps), 0ULL, 100'000'000ULL));
 }

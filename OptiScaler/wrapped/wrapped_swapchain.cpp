@@ -803,11 +803,11 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::Present(UINT SyncInterval, UIN
         result = LocalPresent(_real, SyncInterval, Flags, nullptr, _device, _handle, _uwp);
 
         // When Reflex can't be used to limit, sleep in present
-        // DXVK's DXGI presents through Vulkan where the limiter already sleeps. ILION: a target cap with the game's
-        // DLSSG generating (DLSS Enabler...) is always this limiter's, which counts its multiplier (FrameLimit)
+        // DXVK's DXGI presents through Vulkan where the limiter already sleeps. ILION: the wrapped presents are counted
+        // to measure the multiplier the game's DLSSG applies (IlionDynamicMfg); its target cap is not held here
         IlionDynamicMfg::NoteWrappedPresent();
         if (State::Instance().activeFgOutput == FGOutput::NoFG && !IdentifyGpu::getPrimaryGpu().dxgiIsDxvk &&
-            (FrameLimit::targetCapActive() || (!State::Instance().reflexLimitsFps && !XellHooks::canLimit())))
+            !State::Instance().reflexLimitsFps && !XellHooks::canLimit())
             FrameLimit::sleep(false);
     }
     else
@@ -1164,11 +1164,11 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::Present1(UINT SyncInterval, UI
         result = LocalPresent(_real1, SyncInterval, Flags, pPresentParameters, _device, _handle, _uwp);
 
         // When Reflex can't be used to limit, sleep in present
-        // DXVK's DXGI presents through Vulkan where the limiter already sleeps. ILION: a target cap with the game's
-        // DLSSG generating (DLSS Enabler...) is always this limiter's, which counts its multiplier (FrameLimit)
+        // DXVK's DXGI presents through Vulkan where the limiter already sleeps. ILION: the wrapped presents are counted
+        // to measure the multiplier the game's DLSSG applies (IlionDynamicMfg); its target cap is not held here
         IlionDynamicMfg::NoteWrappedPresent();
         if (State::Instance().activeFgOutput == FGOutput::NoFG && !IdentifyGpu::getPrimaryGpu().dxgiIsDxvk &&
-            (FrameLimit::targetCapActive() || (!State::Instance().reflexLimitsFps && !XellHooks::canLimit())))
+            !State::Instance().reflexLimitsFps && !XellHooks::canLimit())
             FrameLimit::sleep(false);
     }
     else

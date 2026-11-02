@@ -680,6 +680,7 @@ copy NUL "$(SolutionDir)x64\Release\a\!! EXTRACT ALL FILES TO GAME FOLDER !!" /Y
     <ClCompile Include="menu\input\input_system_windows_hooks.cpp" />
     <ClCompile Include="menu\input\input_system_xinput.cpp" />
     <ClCompile Include="misc\IdentifyGpu.cpp" />
+    <ClCompile Include="misc\IlionDynamicMfg.cpp" />
     <ClCompile Include="misc\IlionReShade.cpp" />
     <ClCompile Include="misc\IlionReShadeCatalog.cpp" />
     <ClCompile Include="scanner\rtti.cpp" />

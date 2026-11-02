@@ -5,6 +5,7 @@
 #include <State.h>
 #include <framegen/IFGFeature.h>
 #include <framegen/xefg/XeFG_DynamicMFG.h>
+#include <misc/IlionDynamicMfg.h>
 // #include "hooks/D3D11Hooks.h"
 
 // https://learn.microsoft.com/en-us/windows/win32/sync/using-waitable-timer-objects
@@ -58,13 +59,11 @@ bool FrameLimit::xeFGDynamicActive() { return XeFG_DynamicMFG::Allowed(); }
 
 float FrameLimit::targetFps()
 {
-    auto& state = State::Instance();
     const auto fpsLimit = Config::Instance()->FramerateLimit.value_or_default();
-    // Re-check switches here: a stale per-frame cap must never survive toggling either option off.
-    if (xeFGDynamicActive() && Config::Instance()->FGXeFGTargetAsCapDMFG.value_or_default())
-        if (auto fg = state.currentFG; fg != nullptr && fg->IsActive() && !fg->IsPaused() &&
-            state.xefgDynamicCapFps > 0.0f && (fpsLimit <= 0.0f || state.xefgDynamicCapFps < fpsLimit))
-            return state.xefgDynamicCapFps;
+    // "Use target as cap" of any FG provider (IlionDynamicMfg): re-checked every call, so a stale cap never survives
+    // turning it, Dynamic or the generation off. The FPS limit stays the ceiling.
+    if (const float cap = IlionDynamicMfg::CapFps(); cap > 0.0f && (fpsLimit <= 0.0f || cap < fpsLimit))
+        return cap;
     return fpsLimit;
 }
 

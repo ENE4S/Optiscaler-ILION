@@ -80,7 +80,7 @@ bool XellHooks::update()
     static xell_context_handle_t dynamicCapContext = nullptr;
     const auto targetFps = FrameLimit::targetFps();
     const auto configuredFps = Config::Instance()->FramerateLimit.value_or_default();
-    const bool dynamicCap = FrameLimit::xeFGDynamicActive() && targetFps != configuredFps;
+    const bool dynamicCap = targetFps != configuredFps; // a target cap of any FG provider (IlionDynamicMfg::CapFps)
     // Restore only a context on which this feature actually installed a cap, even if LL was just disabled.
     if (dynamicCapContext == gamesContext && !dynamicCap)
     {

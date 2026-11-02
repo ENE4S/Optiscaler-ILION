@@ -668,7 +668,7 @@ void ReflexHooks::update(bool fgActive, bool isVulkan)
         return;
 
     float currentFps = FrameLimit::targetFps();
-    dynamicCapApplied = FrameLimit::xeFGDynamicActive() && currentFps != configuredFps;
+    dynamicCapApplied = currentFps != configuredFps; // a target cap of any FG provider (IlionDynamicMfg::CapFps)
     static uint8_t lastFgNumFramesToGenerate = 0;
 
     if (lastFgNumFramesToGenerate != _FgNumFramesToGenerate)

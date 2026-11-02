@@ -1450,12 +1450,17 @@ sl::Result StreamlineHooks::hkslDLSSGGetState(const sl::ViewportHandle& viewport
         }
 
         State::Instance().dlssgGameDMFGSupported = newState.bIsDynamicMFGSupported == sl::eTrue;
+        State::Instance().dlssgFramesActuallyPresented = newState.numFramesActuallyPresented;
     }
     else
     {
         result = o_slDLSSGGetState(viewport, state, options);
         State::Instance().dlssgGameDMFGSupported = state.bIsDynamicMFGSupported == sl::eTrue;
+        State::Instance().dlssgFramesActuallyPresented = state.numFramesActuallyPresented;
     }
+
+    if (result == sl::Result::eOk)
+        State::Instance().dlssgFramesPresentedTick = GetTickCount64();
 
     if (!State::Instance().dlssgGameDMFGSupported)
     {

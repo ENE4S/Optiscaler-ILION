@@ -299,6 +299,10 @@ class State
     // ILION: calls of the game's DLSSG evaluate (one per game frame) and the tick of the last one, for the MFG cost screen
     std::atomic<uint64_t> dlssgFgEvaluations { 0 };
     std::atomic<uint64_t> dlssgFgLastEvaluateTick { 0 };
+    // ILION: Streamline's DLSSGState::numFramesActuallyPresented from the game's last slDLSSGGetState and its tick, the
+    // backend's own report that frames were presented (IlionDynamicMfg: "confirmed")
+    std::atomic<uint32_t> dlssgFramesActuallyPresented { 0 };
+    std::atomic<uint64_t> dlssgFramesPresentedTick { 0 };
 
     // What the game requested from DLSSG when it's used as FG Input
     // This might need to get moved to Sl_Inputs_Dx12

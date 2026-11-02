@@ -21,6 +21,7 @@
 #include <misc/HwTelemetry.h>
 #include <misc/IlionBenchmark.h>
 #include <misc/IlionAdvisor.h>
+#include <misc/IlionDynamicMfg.h>
 #include <misc/IlionCompare.h>
 #include <misc/IlionCapture.h>
 #include <misc/IlionReShade.h>
@@ -12192,254 +12193,249 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
         if (basicView)
             return;
 
-        if (state.dlssgGameDMFGSupported && !dlssgInputOrOutput)
+        // ILION: Dynamic MFG (the game's Force Dynamic MFG and its target) is in the Dynamic MFG card, shared by every FG
+        // provider (RenderDynamicMfgPanel). The detected UI view, the UI drawing options and the advanced FG settings:
+        // here in the classic menu, in the right column of the new interface ("@fg_ui_advanced")
+        if (!shellActive)
+            RenderFgUiAndAdvanced(ctx);
+    }
+}
+
+// ILION: the detected UI view, the UI drawing options and the advanced FG settings, out of the FG selection so the new
+// interface can show them in the right column, under the output's own settings. Same code and conditions as before.
+bool MenuCommon::FgUiAdvancedHasContent(RenderMenuContext& ctx)
+{
+    const auto& state = ctx.state;
+    const bool uiOptions = state.activeFgOutput != FGOutput::Reprojection && state.activeFgOutput != FGOutput::NoFG &&
+                           state.activeFgInput != FGInput::NoFG && state.activeFgInput != FGInput::NvngxFG &&
+                           state.currentFG != nullptr && !EssentialView() && !shellSimple;
+    const bool advanced = (state.activeFgInput == FGInput::DLSSG || state.activeFgInput == FGInput::FSRFG ||
+                           state.activeFgInput == FGInput::FSRFG30 || state.activeFgInput == FGInput::NvngxFG ||
+                           state.activeFgOutput == FGOutput::FSRFG) &&
+                          !shellSimple;
+    return state.activeFgInput != FGInput::ForceXeLL && (uiOptions || advanced);
+}
+
+void MenuCommon::RenderFgUiAndAdvanced(RenderMenuContext& ctx)
+{
+    auto& state = ctx.state;
+    auto config = ctx.config;
+    auto& menuResScale = ctx.menuResScale;
+    (void) menuResScale;
+
+    // The detected UI view and the UI drawing options are for Advanced
+    auto fgOutput = reinterpret_cast<IFGFeature_Dx12*>(state.currentFG);
+    if ((state.activeFgOutput != FGOutput::Reprojection && state.activeFgOutput != FGOutput::NoFG &&
+         state.activeFgInput != FGInput::NoFG && state.activeFgInput != FGInput::NvngxFG) &&
+        fgOutput && !EssentialView() && !shellSimple)
+    {
+        IlionTheme::Checkbox(TrL("Show Detected UI"), &state.fgHudlessCompare);
+        ShowTooltip("Needs HUDless texture to compare with final image.\n"
+                    "UI elements and ONLY UI elements should have a pink tint!");
+
+        const auto isUsingUIAny = fgOutput->IsUsingUIAny();
+
+        ImGui::BeginDisabled(!isUsingUIAny);
+
+        if (bool drawUIOverFG = config->FGDrawUIOverFG.value_or_default();
+            IlionTheme::Checkbox(TrL("Draw UI over"), &drawUIOverFG))
         {
-            ImGui::SameLine(0.0f, 16.0f);
+            config->FGDrawUIOverFG = drawUIOverFG;
+        }
+        ShowTooltip("Draws UI resource over the final image\n"
+                    "If no UI visible, enable this!");
 
-            if (bool dynamicMFG = config->FGDLSSGOverrideForceDMFG.value_or_default();
-                IlionTheme::Checkbox(TrL("Force Dynamic MFG"), &dynamicMFG))
-            {
-                config->FGDLSSGOverrideForceDMFG = dynamicMFG;
-                StreamlineHooks::updateDlssgOptions();
-            }
+        ImGui::EndDisabled();
 
-            ImGui::BeginDisabled(state.dlssgLastSetMode != sl::DLSSGMode::eDynamic);
-            static float fpsTarget = config->FGDLSSGFramerateTargetDMFG.value_or_default();
-            IlionTheme::SliderFloat(TrL("DMFG FPS Target"), &fpsTarget, 0, 200, "%.0f");
+        ImGui::SameLine(0.0f, 16.0f);
 
-            ShowTooltip("An active limit of 0 means auto-detect the display refresh rate");
+        // ILION dev.65: it only applies while "Draw UI over" is on and the game hands a UI texture to FG. Until
+        // then the key is greyed; the new interface shows it off (it doesn't act) and says why, the saved value stays
+        const bool premultApplies = isUsingUIAny && config->FGDrawUIOverFG.value_or_default();
+        ImGui::BeginDisabled(!premultApplies);
 
-            if (IlionTheme::Button(TrL("Apply Target")))
-            {
-                config->FGDLSSGFramerateTargetDMFG = fpsTarget;
-                StreamlineHooks::updateDlssgOptions();
-            }
-
-            SameLineIfRoom(ButtonWidth(TrL("Reset Target")), 16.0f);
-
-            if (IlionTheme::Button(TrL("Reset Target")))
-            {
-                fpsTarget = 0.0f;
-                config->FGDLSSGFramerateTargetDMFG.reset();
-            }
-
-            ImGui::EndDisabled();
+        if (bool uiPremultipliedAlpha = (premultApplies || !IlionTheme::shell) && config->FGUIPremultipliedAlpha.value_or_default();
+            IlionTheme::Checkbox(TrL("UI Premult. alpha"), &uiPremultipliedAlpha))
+        {
+            config->FGUIPremultipliedAlpha = uiPremultipliedAlpha;
         }
 
-        // The detected UI view and the UI drawing options are for Advanced
-        auto fgOutput = reinterpret_cast<IFGFeature_Dx12*>(state.currentFG);
-        if ((state.activeFgOutput != FGOutput::Reprojection && state.activeFgOutput != FGOutput::NoFG &&
-             state.activeFgInput != FGInput::NoFG && state.activeFgInput != FGInput::NvngxFG) &&
-            fgOutput && !EssentialView() && !shellSimple)
-        {
-            IlionTheme::Checkbox(TrL("Show Detected UI"), &state.fgHudlessCompare);
-            ShowTooltip("Needs HUDless texture to compare with final image.\n"
-                        "UI elements and ONLY UI elements should have a pink tint!");
-
-            const auto isUsingUIAny = fgOutput->IsUsingUIAny();
-
-            ImGui::BeginDisabled(!isUsingUIAny);
-
-            if (bool drawUIOverFG = config->FGDrawUIOverFG.value_or_default();
-                IlionTheme::Checkbox(TrL("Draw UI over"), &drawUIOverFG))
-            {
-                config->FGDrawUIOverFG = drawUIOverFG;
-            }
-            ShowTooltip("Draws UI resource over the final image\n"
-                        "If no UI visible, enable this!");
-
-            ImGui::EndDisabled();
-
-            ImGui::SameLine(0.0f, 16.0f);
-
-            // ILION dev.65: it only applies while "Draw UI over" is on and the game hands a UI texture to FG. Until
-            // then the key is greyed; the new interface shows it off (it doesn't act) and says why, the saved value stays
-            const bool premultApplies = isUsingUIAny && config->FGDrawUIOverFG.value_or_default();
-            ImGui::BeginDisabled(!premultApplies);
-
-            if (bool uiPremultipliedAlpha = (premultApplies || !IlionTheme::shell) && config->FGUIPremultipliedAlpha.value_or_default();
-                IlionTheme::Checkbox(TrL("UI Premult. alpha"), &uiPremultipliedAlpha))
-            {
-                config->FGUIPremultipliedAlpha = uiPremultipliedAlpha;
-            }
-
-            ImGui::EndDisabled();
+        ImGui::EndDisabled();
 
 #pragma execution_character_set(push, "utf-8")
-            if (!premultApplies && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                WrappedTooltip("%s", ShellText("Only with \"Draw UI over\" on and a UI texture from the game. Saved value: kept.",
-                                               "Solo con \"Dibujar UI encima\" activado y una textura de UI del juego. El valor guardado se conserva.",
-                                               "Só com \"Desenhar UI por cima\" ativo e uma textura de UI do jogo. O valor salvo é mantido.",
-                                               "Только при включённом «Рисовать UI поверх» и текстуре UI от игры. Сохранённое значение не меняется."));
-            else
-                ShowTooltip("If UI is too faint, disable this option");
+        if (!premultApplies && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            WrappedTooltip("%s", ShellText("Only with \"Draw UI over\" on and a UI texture from the game. Saved value: kept.",
+                                           "Solo con \"Dibujar UI encima\" activado y una textura de UI del juego. El valor guardado se conserva.",
+                                           "Só com \"Desenhar UI por cima\" ativo e uma textura de UI do jogo. O valor salvo é mantido.",
+                                           "Только при включённом «Рисовать UI поверх» и текстуре UI от игры. Сохранённое значение не меняется."));
+        else
+            ShowTooltip("If UI is too faint, disable this option");
 #pragma execution_character_set(pop)
-        }
+    }
 
-        const bool showOutputSpecificFGSettings = state.activeFgInput == FGInput::DLSSG ||
-                                                  state.activeFgInput == FGInput::FSRFG ||
-                                                  state.activeFgInput == FGInput::FSRFG30;
+    const bool showOutputSpecificFGSettings = state.activeFgInput == FGInput::DLSSG ||
+                                              state.activeFgInput == FGInput::FSRFG ||
+                                              state.activeFgInput == FGInput::FSRFG30;
 
-        const bool showHudCutoff = state.activeFgInput == FGInput::NvngxFG || state.activeFgOutput == FGOutput::FSRFG;
+    const bool showHudCutoff = state.activeFgInput == FGInput::NvngxFG || state.activeFgOutput == FGOutput::FSRFG;
 
-        if ((showOutputSpecificFGSettings || showHudCutoff) && !shellSimple)
+    if ((showOutputSpecificFGSettings || showHudCutoff) && !shellSimple)
+    {
+        if (auto ch = ScopedCollapsingHeader(TrL("Advanced FG Settings")); ch.IsHeaderOpen())
         {
-            if (auto ch = ScopedCollapsingHeader(TrL("Advanced FG Settings")); ch.IsHeaderOpen())
+            ScopedIndent indent {};
+            ImGui::Spacing();
+
+            if (showOutputSpecificFGSettings)
             {
-                ScopedIndent indent {};
-                ImGui::Spacing();
-
-                if (showOutputSpecificFGSettings)
+                auto fgOutput = reinterpret_cast<IFGFeature_Dx12*>(state.currentFG);
+                if (fgOutput)
                 {
-                    auto fgOutput = reinterpret_cast<IFGFeature_Dx12*>(state.currentFG);
-                    if (fgOutput)
+                    ImGui::BeginDisabled(!fgOutput->IsActive());
+
+                    // Fixed columns align both switches and labels across all three rows/themes.
+                    float cellWidth = 0.0f;
+                    for (const char* key : { "Disable UI texture", "Disable HUDless", "Depth as ValidNow",
+                                              "Velocity as ValidNow", "HUDless as ValidNow", "Accept First HUDless" })
+                        cellWidth = std::max(cellWidth, CheckboxWidth(TrL(key)));
+                    const int columns = ImGui::GetContentRegionAvail().x >= cellWidth * 2.0f +
+                                        ImGui::GetStyle().CellPadding.x * 4.0f +
+                                        ImGui::GetStyle().ItemSpacing.x ? 2 : 1;
+                    const bool flagGrid = ImGui::BeginTable("##FgInputFlagGrid", columns,
+                        ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings);
+                    if (flagGrid) ImGui::TableNextColumn();
+                    const auto isUsingUIAny = fgOutput->IsUsingUIAny();
+                    const auto isUsingHudlessAny = fgOutput->IsUsingHudlessAny();
+
+                    bool disableUI = config->FGDisableUI.value_or_default();
+                    ImGui::BeginDisabled(!isUsingUIAny && !disableUI);
+
+                    if (IlionTheme::Checkbox(TrL("Disable UI texture"), &disableUI))
                     {
-                        ImGui::BeginDisabled(!fgOutput->IsActive());
+                        config->FGDisableUI = disableUI;
+                        fgOutput->UpdateTarget();
+                    }
 
-                        // Fixed columns align both switches and labels across all three rows/themes.
-                        float cellWidth = 0.0f;
-                        for (const char* key : { "Disable UI texture", "Disable HUDless", "Depth as ValidNow",
-                                                  "Velocity as ValidNow", "HUDless as ValidNow", "Accept First HUDless" })
-                            cellWidth = std::max(cellWidth, CheckboxWidth(TrL(key)));
-                        const int columns = ImGui::GetContentRegionAvail().x >= cellWidth * 2.0f +
-                                            ImGui::GetStyle().CellPadding.x * 4.0f +
-                                            ImGui::GetStyle().ItemSpacing.x ? 2 : 1;
-                        const bool flagGrid = ImGui::BeginTable("##FgInputFlagGrid", columns,
-                            ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings);
-                        if (flagGrid) ImGui::TableNextColumn();
-                        const auto isUsingUIAny = fgOutput->IsUsingUIAny();
-                        const auto isUsingHudlessAny = fgOutput->IsUsingHudlessAny();
+                    ShowTooltip("For when the game sends a UI texture, but you want to disable it");
 
-                        bool disableUI = config->FGDisableUI.value_or_default();
-                        ImGui::BeginDisabled(!isUsingUIAny && !disableUI);
+                    ImGui::EndDisabled();
 
-                        if (IlionTheme::Checkbox(TrL("Disable UI texture"), &disableUI))
+                    if (flagGrid) ImGui::TableNextColumn();
+
+                    bool disableHudless = config->FGDisableHudless.value_or_default();
+                    ImGui::BeginDisabled(!isUsingHudlessAny && !disableHudless);
+
+                    if (IlionTheme::Checkbox(TrL("Disable HUDless"), &disableHudless))
+                    {
+                        config->FGDisableHudless = disableHudless;
+                    }
+
+                    ShowTooltip("For when the game sends HUDless, but you want to disable it");
+
+                    ImGui::EndDisabled();
+
+                    if (flagGrid) ImGui::TableNextColumn();
+                    bool depthValidNow = config->FGDepthValidNow.value_or_default();
+                    if (IlionTheme::Checkbox(TrL("Depth as ValidNow"), &depthValidNow))
+                        config->FGDepthValidNow = depthValidNow;
+
+                    ShowTooltip("Will use more VRAM, but Uniscaler needs this\n"
+                                "Maybe some other games might need too");
+
+                    if (flagGrid) ImGui::TableNextColumn();
+
+                    bool velocityValidNow = config->FGVelocityValidNow.value_or_default();
+                    if (IlionTheme::Checkbox(TrL("Velocity as ValidNow"), &velocityValidNow))
+                        config->FGVelocityValidNow = velocityValidNow;
+
+                    ShowTooltip("Will use more VRAM, but Uniscaler needs this\n"
+                                "Maybe some other games might need too");
+
+                    if (flagGrid) ImGui::TableNextColumn();
+                    bool hudlessValidNow = config->FGHudlessValidNow.value_or_default();
+                    if (IlionTheme::Checkbox(TrL("HUDless as ValidNow"), &hudlessValidNow))
+                        config->FGHudlessValidNow = hudlessValidNow;
+
+                    ShowTooltip("Will use more VRAM, but some games might need this");
+
+                    if (flagGrid) ImGui::TableNextColumn();
+
+                    bool firstHudless = config->FGOnlyAcceptFirstHudless.value_or_default();
+                    if (IlionTheme::Checkbox(TrL("Accept First HUDless"), &firstHudless))
+                        config->FGOnlyAcceptFirstHudless = firstHudless;
+
+                    ShowTooltip("If source tags more than one HUDless, only use the first one");
+
+                    if (flagGrid) ImGui::EndTable();
+
+                    if (bool skipReset = config->FGSkipReset.value_or_default();
+                        IlionTheme::Checkbox(TrL("Skip Reset"), &skipReset))
+                    {
+                        config->FGSkipReset = skipReset;
+                    }
+
+                    ShowTooltip("Don't use reset signals from FG Inputs");
+
+                    ImGui::EndDisabled();
+
+                    ImGui::PushItemWidth(80.0f * menuResScale);
+
+                    auto frameAhead = config->FGAllowedFrameAhead.value_or_default();
+                    if (ImGui::InputInt(TrL("Frame Ahead"), &frameAhead, 1, 1) && frameAhead > 0 && frameAhead < 4)
+                    {
+                        config->FGAllowedFrameAhead = frameAhead;
+                    }
+
+                    ShowTooltip("Number of frames the FG is allowed to be ahead of the game\n"
+                                "Might prevent FG on/off switching, but also might cause issues");
+
+                    ImGui::PopItemWidth();
+
+                    ImGui::SameLine(0.0f, 16.0f);
+
+                    const char* ftSources[] = { Tr("Input"), Tr("Opti"), Tr("Zero") };
+                    const char* ftSourceInfos[] = { Tr("Uses frametimes provided by\nDLSSG or FSR-FG "),
+                                                    Tr("Uses frametimes calculated by Opti"),
+                                                    Tr("Let XeFG to handle frametimes") };
+
+                    auto currentSet = (int) config->FTInput.value_or_default();
+                    auto currentSourceCount = state.activeFgOutput == FGOutput::XeFG ? 3 : 2;
+
+                    ImGui::PushItemWidth(95.0f * menuResScale);
+
+                    if (IlionTheme::BeginCombo(TrL("FT Input"), ftSources[currentSet]))
+                    {
+                        for (size_t i = 0; i < currentSourceCount; i++)
                         {
-                            config->FGDisableUI = disableUI;
-                            fgOutput->UpdateTarget();
-                        }
 
-                        ShowTooltip("For when the game sends a UI texture, but you want to disable it");
-
-                        ImGui::EndDisabled();
-
-                        if (flagGrid) ImGui::TableNextColumn();
-
-                        bool disableHudless = config->FGDisableHudless.value_or_default();
-                        ImGui::BeginDisabled(!isUsingHudlessAny && !disableHudless);
-
-                        if (IlionTheme::Checkbox(TrL("Disable HUDless"), &disableHudless))
-                        {
-                            config->FGDisableHudless = disableHudless;
-                        }
-
-                        ShowTooltip("For when the game sends HUDless, but you want to disable it");
-
-                        ImGui::EndDisabled();
-
-                        if (flagGrid) ImGui::TableNextColumn();
-                        bool depthValidNow = config->FGDepthValidNow.value_or_default();
-                        if (IlionTheme::Checkbox(TrL("Depth as ValidNow"), &depthValidNow))
-                            config->FGDepthValidNow = depthValidNow;
-
-                        ShowTooltip("Will use more VRAM, but Uniscaler needs this\n"
-                                    "Maybe some other games might need too");
-
-                        if (flagGrid) ImGui::TableNextColumn();
-
-                        bool velocityValidNow = config->FGVelocityValidNow.value_or_default();
-                        if (IlionTheme::Checkbox(TrL("Velocity as ValidNow"), &velocityValidNow))
-                            config->FGVelocityValidNow = velocityValidNow;
-
-                        ShowTooltip("Will use more VRAM, but Uniscaler needs this\n"
-                                    "Maybe some other games might need too");
-
-                        if (flagGrid) ImGui::TableNextColumn();
-                        bool hudlessValidNow = config->FGHudlessValidNow.value_or_default();
-                        if (IlionTheme::Checkbox(TrL("HUDless as ValidNow"), &hudlessValidNow))
-                            config->FGHudlessValidNow = hudlessValidNow;
-
-                        ShowTooltip("Will use more VRAM, but some games might need this");
-
-                        if (flagGrid) ImGui::TableNextColumn();
-
-                        bool firstHudless = config->FGOnlyAcceptFirstHudless.value_or_default();
-                        if (IlionTheme::Checkbox(TrL("Accept First HUDless"), &firstHudless))
-                            config->FGOnlyAcceptFirstHudless = firstHudless;
-
-                        ShowTooltip("If source tags more than one HUDless, only use the first one");
-
-                        if (flagGrid) ImGui::EndTable();
-
-                        if (bool skipReset = config->FGSkipReset.value_or_default();
-                            IlionTheme::Checkbox(TrL("Skip Reset"), &skipReset))
-                        {
-                            config->FGSkipReset = skipReset;
-                        }
-
-                        ShowTooltip("Don't use reset signals from FG Inputs");
-
-                        ImGui::EndDisabled();
-
-                        ImGui::PushItemWidth(80.0f * menuResScale);
-
-                        auto frameAhead = config->FGAllowedFrameAhead.value_or_default();
-                        if (ImGui::InputInt(TrL("Frame Ahead"), &frameAhead, 1, 1) && frameAhead > 0 && frameAhead < 4)
-                        {
-                            config->FGAllowedFrameAhead = frameAhead;
-                        }
-
-                        ShowTooltip("Number of frames the FG is allowed to be ahead of the game\n"
-                                    "Might prevent FG on/off switching, but also might cause issues");
-
-                        ImGui::PopItemWidth();
-
-                        ImGui::SameLine(0.0f, 16.0f);
-
-                        const char* ftSources[] = { Tr("Input"), Tr("Opti"), Tr("Zero") };
-                        const char* ftSourceInfos[] = { Tr("Uses frametimes provided by\nDLSSG or FSR-FG "),
-                                                        Tr("Uses frametimes calculated by Opti"),
-                                                        Tr("Let XeFG to handle frametimes") };
-
-                        auto currentSet = (int) config->FTInput.value_or_default();
-                        auto currentSourceCount = state.activeFgOutput == FGOutput::XeFG ? 3 : 2;
-
-                        ImGui::PushItemWidth(95.0f * menuResScale);
-
-                        if (IlionTheme::BeginCombo(TrL("FT Input"), ftSources[currentSet]))
-                        {
-                            for (size_t i = 0; i < currentSourceCount; i++)
+                            if (ImGui::Selectable(ftSources[i], currentSet == i))
                             {
-
-                                if (ImGui::Selectable(ftSources[i], currentSet == i))
-                                {
-                                    LOG_DEBUG("FTInput has changed {} -> {}", ftSources[currentSet], ftSources[i]);
-                                    config->FTInput = (FrameTimeSource) i;
-                                }
-
-                                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                                    WrappedTooltip(ftSourceInfos[i]);
+                                LOG_DEBUG("FTInput has changed {} -> {}", ftSources[currentSet], ftSources[i]);
+                                config->FTInput = (FrameTimeSource) i;
                             }
 
-                            ImGui::EndCombo();
+                            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                                WrappedTooltip(ftSourceInfos[i]);
                         }
 
-                        ImGui::PopItemWidth();
-
-                        ShowTooltip("Select source for frametime\n"
-                                    "Might help frame pacing and stutter issues");
+                        ImGui::EndCombo();
                     }
-                }
 
-                if (showHudCutoff)
-                {
-                    float fgHudCutoff = config->FGHudCutoff.value_or_default();
-                    if (IlionTheme::SliderFloat(TrL("Hud Cutoff"), &fgHudCutoff, 0.00f, 1.0f, "%.2f"))
-                        config->FGHudCutoff = fgHudCutoff;
+                    ImGui::PopItemWidth();
 
-                    ShowTooltip("Cutoffs transparency from UI to help with interpolation\n"
-                                "You can use Show Detected UI to see the difference\n0.0 is auto");
+                    ShowTooltip("Select source for frametime\n"
+                                "Might help frame pacing and stutter issues");
                 }
+            }
+
+            if (showHudCutoff)
+            {
+                float fgHudCutoff = config->FGHudCutoff.value_or_default();
+                if (IlionTheme::SliderFloat(TrL("Hud Cutoff"), &fgHudCutoff, 0.00f, 1.0f, "%.2f"))
+                    config->FGHudCutoff = fgHudCutoff;
+
+                ShowTooltip("Cutoffs transparency from UI to help with interpolation\n"
+                            "You can use Show Detected UI to see the difference\n0.0 is auto");
             }
         }
     }
@@ -12549,112 +12545,173 @@ void MenuCommon::RenderFGModeCombo(RenderMenuContext& ctx, const char* label, in
         ShowTooltip("Frame Generation mode");
 }
 
-// XeFG only. Uses the existing themed widgets and the existing section/scroll container.
-void MenuCommon::RenderXeFGDynamicMfgControls(int maxCount, float scale)
+// ILION: Dynamic MFG of every FG provider in one card (IlionDynamicMfg): the same controls and states for XeFG,
+// the game's DLSSG (DLSS Enabler...) and ILION's DLSSG output. Each control maps to the setting its backend already
+// reads; what a backend can't do is shown disabled with the reason, never as if it worked.
+void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
 {
-    auto config = Config::Instance();
-    const bool supported = maxCount >= 1 && XeFGProxy::SetNumInterpolatedFrames() != nullptr &&
-                           XeFGProxy::SetEnabled() != nullptr &&
-                           State::Instance().swapchainInteropApi != SwapchainInteropApi::VkwDx12;
-    ImGui::BeginDisabled(!supported || config->FGFollowsGame());
-    bool enabled = config->FGXeFGDynamicMFG.value_or_default();
-    if (IlionTheme::Checkbox(TrL("Dynamic MFG##xefg"), &enabled))
+    namespace Dmfg = IlionDynamicMfg;
+    const auto provider = Dmfg::Current();
+    const float scale = ctx.menuResScale;
+
+    if (provider == Dmfg::Provider::None)
     {
-        config->FGXeFGDynamicMFG = enabled;
-        if (enabled)
-        {
-            config->FGEnabled = true;
-            config->FGXeFGTargetAsCapDMFG = false;
-        }
+        TextWrappedDisabled("%s", Tr("Dynamic MFG: no frame generation is loaded"));
+        return;
     }
-    MenuCommon::ShowTooltip("Dynamic chooses up to the maximum multiplier below (never more than XeFG admits). It starts at 2X; the controller can reduce to 1X when allowed. Requires live control and manual FG mode.");
 
-    ImGui::BeginDisabled(!enabled);
+    const char* reason = nullptr;
+    const bool supported = Dmfg::DynamicSupported(&reason);
+    const bool enabled = supported && Dmfg::DynamicEnabled();
 
-    // R2: Dynamic's ceiling is the user's multiplier (FGXeFGInterpolationCount), clamped to the context in XeFG_Dx12
-    if (maxCount >= 1)
+    // Final FPS target: slider and editable number, one value (IlionDynamicMfg::SetTargetFps)
+    const auto drawTarget = [&](float sliderWidth)
     {
-        const int maxSetting = std::clamp(config->FGXeFGInterpolationCount.value_or_default(), 1, maxCount);
-        const auto preview = std::format("{}X", maxSetting + 1);
-        ImGui::SetNextItemWidth(115.0f * scale);
-        if (IlionTheme::BeginCombo(TrL("Maximum multiplier##xefg"), preview.c_str()))
+        float target = Dmfg::TargetFps();
+        const float inputWidth = 58.0f * scale;
+        ImGui::SetNextItemWidth(sliderWidth);
+        if (IlionTheme::SliderFloat("##dmfgTargetSlider", &target, 0.0f, 500.0f, "%.0f"))
+            Dmfg::SetTargetFps(target);
+        ImGui::SameLine(0.0f, 6.0f * scale);
+        float typed = Dmfg::TargetFps();
+        ImGui::SetNextItemWidth(inputWidth);
+        if (ImGui::InputFloat("##dmfgTargetInput", &typed, 0.0f, 0.0f, "%.0f", ImGuiInputTextFlags_EnterReturnsTrue))
+            Dmfg::SetTargetFps(typed);
+        ImGui::SameLine(0.0f, 6.0f * scale);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(TrL("Final FPS target##dmfg"));
+        ShowTooltip("Final frames per second. 0 = automatic (XeFG: the FPS limit, else just under the refresh rate).\n"
+                    "It is not a cap unless \"Use target as cap\" is on.");
+    };
+
+    // Highest multiplier: the same setting as the provider's manual multiplier
+    const auto drawMax = [&](float width)
+    {
+        const int limit = Dmfg::MaxCountLimit();
+        if (limit < 1)
         {
-            for (int count = 1; count <= maxCount; ++count)
-                if (ImGui::Selectable(std::format("{}X", count + 1).c_str(), count == maxSetting) && count != maxSetting)
-                    config->FGXeFGInterpolationCount = count;
+            ImGui::AlignTextToFramePadding();
+            TextWrappedDisabled("%s", Tr("Maximum multiplier: unknown until the provider reports it"));
+            return;
+        }
+
+        const int current = Dmfg::MaxCount();
+        ImGui::SetNextItemWidth(width);
+        if (IlionTheme::BeginCombo(TrL("Maximum multiplier##dmfg"), std::format("{}X", current + 1).c_str()))
+        {
+            for (int count = 1; count <= limit; ++count)
+                if (ImGui::Selectable(std::format("{}X", count + 1).c_str(), count == current) && count != current)
+                    Dmfg::SetMaxCount(count);
             ImGui::EndCombo();
         }
-        MenuCommon::ShowTooltip("Highest multiplier Dynamic may use. It is the same setting as the manual multiplier.");
-    }
-
-    // Keep both long translated labels inside narrow/compact cards without changing panel dimensions.
-    const auto fieldLabel = [scale](const char* key, const char* id) -> const char*
-    {
-        const char* label = TrL(key);
-        const float available = ImGui::GetContentRegionAvail().x;
-        const float labelWidth = ImGui::CalcTextSize(label, nullptr, true).x + ImGui::GetStyle().ItemInnerSpacing.x;
-        if (available < labelWidth + 100.0f * scale)
-        {
-            ImGui::TextUnformatted(label, ImGui::FindRenderedTextEnd(label));
-            ImGui::SetNextItemWidth(std::min(190.0f * scale, available));
-            return id;
-        }
-        ImGui::SetNextItemWidth(std::min(190.0f * scale, available - labelWidth));
-        return label;
+        ShowTooltip("Highest multiplier Dynamic may use. It is the same setting as the manual multiplier.");
     };
-    float target = config->FGXeFGFramerateTargetDMFG.value_or_default();
-    if (IlionTheme::SliderFloat(fieldLabel("Final FPS target##xefg", "##xefgTarget"), &target, 0.0f, 500.0f, "%.0f"))
-        config->FGXeFGFramerateTargetDMFG = target < 10.0f ? 0.0f : target;
-    MenuCommon::ShowTooltip("0 = automatic: existing FPS limit, otherwise just below the display refresh rate. Target counts final frames; it is not a cap unless enabled below.");
 
-    ImGui::TextWrapped("%s", Tr("R3: hold within 92-100% of target; up after 500 ms low, ordinary changes at least 1.5 s apart."));
-
-    const bool cap = config->FGXeFGTargetAsCapDMFG.value_or_default() && maxCount > 1;
-    ImGui::BeginDisabled(cap);
-    int rounding = std::clamp(config->FGXeFGRoundingDMFG.value_or_default(), 0, 2);
-    const char* names[] = { "Down", "Nearest", "Up" }; // Official INI values: 0, 1, 2.
-    if (IlionTheme::BeginCombo(fieldLabel("Multiplier rounding##xefg", "##xefgRounding"), Tr(names[rounding])))
+    const auto drawSwitch = [&]()
     {
-        for (int i = 0; i < 3; ++i)
-            if (ImGui::Selectable(TrL(names[i]), i == rounding))
-                config->FGXeFGRoundingDMFG = i;
-        ImGui::EndCombo();
+        ImGui::BeginDisabled(!supported);
+        bool on = enabled;
+        if (IlionTheme::Checkbox(TrL("Dynamic MFG##dmfg"), &on))
+            Dmfg::SetDynamicEnabled(on);
+        ImGui::EndDisabled();
+        if (!supported && reason != nullptr && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            WrappedTooltip("%s", Tr(reason));
+    };
+
+    if (compact)
+    {
+        // Home: switch, target and maximum on one row when they fit, else stacked
+        drawSwitch();
+        ImGui::SameLine(0.0f, 12.0f * scale);
+        const float room = ImGui::GetContentRegionAvail().x;
+        const float sliderWidth = std::clamp(room * 0.30f, 70.0f * scale, 160.0f * scale);
+        drawTarget(sliderWidth);
+        if (enabled)
+        {
+            if (ImGui::GetContentRegionAvail().x > 190.0f * scale)
+                ImGui::SameLine(0.0f, 12.0f * scale);
+            drawMax(70.0f * scale);
+        }
+        if (!supported && reason != nullptr)
+            TextWrappedDisabled("%s", Tr(reason));
+        return;
     }
-    ImGui::BeginDisabled(maxCount == 1);
-    bool allow1x = config->FGXeFGDynamicAllow1X.value_or_default();
-    if (IlionTheme::Checkbox(TrL("Allow 1X##xefg"), &allow1x))
-        config->FGXeFGDynamicAllow1X = allow1x;
-    ImGui::EndDisabled();
-    MenuCommon::ShowTooltip("With a maximum of 2X, official Dynamic MFG always allows 1X. Target-as-cap uses at least 2X and ignores rounding.");
+
+    const auto status = Dmfg::Get();
+    ImGui::TextDisabled("%s %s", Tr("Provider:"), status.name);
+
+    drawSwitch();
+    if (!supported && reason != nullptr)
+        TextWrappedDisabled("%s", Tr(reason));
+
+    const float sliderWidth = std::min(170.0f * scale, ImGui::GetContentRegionAvail().x * 0.45f);
+    drawTarget(sliderWidth);
+
+    ImGui::BeginDisabled(!enabled);
+    drawMax(95.0f * scale);
+
+    if (Dmfg::RoundingSupported())
+    {
+        auto config = Config::Instance();
+        const bool xefgCap = Dmfg::TargetAsCap();
+        ImGui::BeginDisabled(xefgCap);
+        int rounding = std::clamp(config->FGXeFGRoundingDMFG.value_or_default(), 0, 2);
+        const char* names[] = { "Down", "Nearest", "Up" }; // ini values 0, 1, 2
+        ImGui::SetNextItemWidth(120.0f * scale);
+        if (IlionTheme::BeginCombo(TrL("Multiplier rounding##xefg"), Tr(names[rounding])))
+        {
+            for (int i = 0; i < 3; ++i)
+                if (ImGui::Selectable(TrL(names[i]), i == rounding))
+                    config->FGXeFGRoundingDMFG = i;
+            ImGui::EndCombo();
+        }
+
+        bool allow1x = config->FGXeFGDynamicAllow1X.value_or_default();
+        if (IlionTheme::Checkbox(TrL("Allow 1X##xefg"), &allow1x))
+            config->FGXeFGDynamicAllow1X = allow1x;
+        ShowTooltip("With a maximum of 2X, official Dynamic MFG always allows 1X. Target-as-cap uses at least 2X and ignores rounding.");
+        ImGui::EndDisabled();
+    }
     ImGui::EndDisabled();
 
-    ImGui::BeginDisabled(maxCount <= 1);
-    bool targetCap = config->FGXeFGTargetAsCapDMFG.value_or_default();
-    if (IlionTheme::Checkbox(TrL("Use target as cap##xefg"), &targetCap))
-        config->FGXeFGTargetAsCapDMFG = targetCap;
-    ImGui::EndDisabled();
-    MenuCommon::ShowTooltip("Uses OptiScaler's existing limiter, requires a maximum of at least 3X. No extra limiter is added.");
-    ImGui::EndDisabled();
-    ImGui::EndDisabled();
+    // The cap: also without Dynamic (a fixed multiplier held at the target), through the limiter already in use
+    bool cap = Dmfg::TargetAsCap();
+    if (IlionTheme::Checkbox(TrL("Use target as cap##dmfg"), &cap))
+        Dmfg::SetTargetAsCap(cap);
+    ShowTooltip("The limiter already in use (Reflex, XeLL or OptiScaler's) holds the final FPS at the target.\n"
+                "No other limiter is added. Needs a target above 0, except with XeFG Dynamic.");
 
-    const auto fg = State::Instance().currentFG;
-    ImGui::TextWrapped(Tr("Selected mode: %s"), enabled ? "Dynamic" : Tr("Manual"));
-    if (fg != nullptr && fg->IsActive() && !fg->IsPaused())
-        ImGui::TextWrapped(Tr("Applied multiplier: %uX"), fg->GetInterpolatedFrameCount() + 1);
+    // State: confirmed (the provider reports presented frames), detected (asked for / evaluating), unknown, off
+    const char* gen = status.gen == Dmfg::Gen::Confirmed  ? Tr("generating (confirmed)")
+                      : status.gen == Dmfg::Gen::Detected ? Tr("generating (detected)")
+                      : status.gen == Dmfg::Gen::Unknown  ? Tr("unknown")
+                                                          : Tr("Off");
+    if (status.multiplier > 0)
+        ImGui::Text("%s %s  |  %dX", Tr("State:"), gen, status.multiplier);
     else
-        ImGui::TextWrapped("%s", Tr("Applied multiplier: unavailable"));
-    const auto measured = State::Instance().xefgPresentTelemetry.Read(Util::MillisecondsNow());
-    const bool metricsActive = enabled && fg != nullptr && fg->IsActive() && !fg->IsPaused();
-    if (metricsActive && measured.baseValid)
-        ImGui::TextWrapped(Tr("Base FPS (game Present): %.1f"), measured.baseFps);
+        ImGui::Text("%s %s", Tr("State:"), gen);
+
+    if (status.baseFps > 0.0f)
+        ImGui::Text(Tr("Base FPS: %.1f (%s)  |  final FPS: %.1f (%s)"), status.baseFps,
+                    status.baseMeasured ? Tr("measured") : Tr("estimated"), status.finalFps,
+                    status.finalMeasured ? Tr("measured") : Tr("estimated"));
     else
-        ImGui::TextWrapped("%s", Tr("Base FPS: unavailable"));
-    if (metricsActive && measured.outputValid)
-        ImGui::TextWrapped(Tr("Final FPS (SDK submissions): %.1f"), measured.outputFps);
+        TextWrappedDisabled("%s", Tr("Base and final FPS: unavailable"));
+
+    const char* limiter = status.limiter == Dmfg::Limiter::Reflex  ? "Reflex"
+                          : status.limiter == Dmfg::Limiter::XeLL  ? "XeLL"
+                          : status.limiter == Dmfg::Limiter::OptiScaler ? "OptiScaler"
+                                                                        : Tr("none");
+    if (status.limitFps > 0.0f)
+        ImGui::Text(Tr("Limiter: %s at %.0f final FPS"), limiter, status.limitFps);
     else
-        ImGui::TextWrapped("%s", Tr("Final FPS: unavailable"));
-    ImGui::TextWrapped("%s", Tr("Generation GPU cost: unavailable"));
-    ImGui::TextWrapped("%s", Tr("Base FPS includes generation overhead and waits; it is not raster-only FPS. SDK submissions do not prove display scanout. No measured GPU generation cost is available."));
+        ImGui::Text(Tr("Limiter: %s"), limiter);
+}
+
+void MenuCommon::RenderDynamicMfgCard(RenderMenuContext& ctx)
+{
+    ScopedCard card { "Dynamic MFG" };
+    RenderDynamicMfgPanel(ctx, false);
 }
 
 void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
@@ -12996,7 +13053,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         {
             ImGui::EndDisabled();
             if (auto ch = ScopedCollapsingHeader(TrL("Extended XeFG Settings")); ch.IsHeaderOpen())
-                RenderXeFGDynamicMfgControls(fgOutput->GetMaxInterpolationCount(), menuResScale);
+                RenderDynamicMfgPanel(ctx, false);
             return;
         }
 
@@ -13053,8 +13110,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             ImGui::Spacing();
         if (auto ch = ScopedCollapsingHeader(TrL("Extended XeFG Settings")); ch.IsHeaderOpen())
         {
-            RenderXeFGDynamicMfgControls(fgOutput->GetMaxInterpolationCount(), menuResScale);
-            ImGui::Spacing();
+            // ILION: Dynamic MFG is in its own card, shared by every FG provider (RenderDynamicMfgPanel)
             if (!EssentialView() && !shellSimple)
             if (ImGui::TreeNode(TrL("Rectangle Settings")))
             {
@@ -13138,42 +13194,8 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         if (basicView)
             return;
 
-        if (fgOutput->GetMaxInterpolationCount() > 1)
-        {
-            if (fgOutput->GetDMFGSupport())
-            {
-                ImGui::SameLine(0.0f, 16.0f);
-
-                if (bool dynamicMFG = config->FGDLSSGForceDMFG.value_or_default();
-                    IlionTheme::Checkbox(TrL("Force Dynamic MFG"), &dynamicMFG))
-                {
-                    config->FGDLSSGForceDMFG = dynamicMFG;
-                    state.fgChanged = true;
-                }
-
-                ImGui::BeginDisabled(!config->FGDLSSGForceDMFG.value_or_default());
-                static float fpsTarget = config->FGDLSSGFramerateTargetDMFG.value_or_default();
-                float fpsSliderMax = (float) std::max(200, refreshRate);
-                IlionTheme::SliderFloat(TrL("DMFG FPS Target"), &fpsTarget, 0, fpsSliderMax, "%.0f");
-
-                ShowTooltip("An active limit of 0 means auto-detect the display refresh rate");
-
-                if (IlionTheme::Button(TrL("Apply Target")))
-                {
-                    config->FGDLSSGFramerateTargetDMFG = fpsTarget;
-                }
-
-                SameLineIfRoom(ButtonWidth(TrL("Reset Target")), 16.0f);
-
-                if (IlionTheme::Button(TrL("Reset Target")))
-                {
-                    fpsTarget = 0.0f;
-                    config->FGDLSSGFramerateTargetDMFG.reset();
-                }
-
-                ImGui::EndDisabled();
-            }
-        }
+        // ILION: Dynamic MFG of this output (Force Dynamic MFG, its target) is in the Dynamic MFG card, shared by every
+        // FG provider (RenderDynamicMfgPanel)
 
         bool useGamesMarkers = config->FGDLSSGUseGamesReflexMarkers.value_or_default();
         ImGui::BeginDisabled(!ReflexHooks::gameIsSendingMarkers());
@@ -18338,6 +18360,8 @@ const MenuCommon::MenuBox* MenuCommon::GetMenuBoxes(size_t& count)
         { "reshade", "Graphics", "ReShade", [](RenderMenuContext& c) { RenderCard(c, RenderReShadeCard); } },
 
         { "fg_selection", "Frame Gen", "Frame Generation", [](RenderMenuContext& c) { RenderCard(c, RenderFrameGenerationSelection); } },
+        { "fg_dynamic", "Frame Gen", "Dynamic MFG",
+          [](RenderMenuContext& c) { if (IlionDynamicMfg::Current() != IlionDynamicMfg::Provider::None) RenderDynamicMfgCard(c); } },
         { "fg_fsrfg", "Frame Gen", "FSR FG Settings", nullptr, RenderFrameGenerationRuntimeSettings },
         { "fg_xefg", "Frame Gen", "XeFG Settings", nullptr, RenderFrameGenerationRuntimeSettings },
         { "fg_dlssg", "Frame Gen", "DLSSG Settings", nullptr, RenderFrameGenerationRuntimeSettings },
@@ -20772,6 +20796,19 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
             return;
         }
 
+        // ILION: the detected UI view, the UI drawing options and the advanced FG settings, under the output's own
+        // settings in the right column (in the classic menu they stay in the FG selection)
+        if (strcmp(id, "@fg_ui_advanced") == 0)
+        {
+            if (!FgUiAdvancedHasContent(ctx))
+                return;
+            ScopedCard card(ShellText("Frame generation: UI and advanced", "Frame Generation: UI y avanzado",
+                                      "Frame Generation: UI e avançado", "Генерация кадров: UI и дополнительно"));
+            ScopedID uiId { "fg_ui_advanced" };
+            RenderFgUiAndAdvanced(ctx);
+            return;
+        }
+
         if (strcmp(id, "@upscaler_diag") == 0)
         {
             ScopedCard card(ShellText("Upscaler: DLL and hot-swap", "Escalador: DLL y cambio en caliente", "Upscaler: DLL e troca a quente",
@@ -20994,8 +21031,19 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
                 ImGui::Text("%s: %s  ·  %s %ux", ShellText("Implementation", "Implementación", "Implementação", "Реализация"), fg->Name(),
                             ShellText("generated frames", "fotogramas generados", "quadros gerados", "сгенерировано кадров"),
                             (unsigned) fg->GetInterpolatedFrameCount());
-            ImGui::Text("%s: %s", ShellText("Generating", "Generando", "Gerando", "Генерирует"),
-                        running ? ShellText("yes", "sí", "sim", "да") : ShellText("no", "no", "não", "нет"));
+            // ILION: also the game's DLSSG (DLSS Enabler...), with how sure the state is (IlionDynamicMfg)
+            const auto fgNow = IlionDynamicMfg::Get();
+            const char* how = fgNow.gen == IlionDynamicMfg::Gen::Confirmed  ? ShellText("confirmed", "confirmado", "confirmado", "подтверждено")
+                              : fgNow.gen == IlionDynamicMfg::Gen::Detected ? ShellText("detected", "detectado", "detectado", "обнаружено")
+                              : fgNow.gen == IlionDynamicMfg::Gen::Unknown  ? ShellText("unknown", "desconocido", "desconhecido", "неизвестно")
+                                                                            : nullptr;
+            if (running || how != nullptr)
+                ImGui::Text("%s: %s %dx (%s%s)", ShellText("Generating", "Generando", "Gerando", "Генерирует"),
+                            fgNow.name, fgNow.multiplier, how != nullptr ? how : ShellText("yes", "sí", "sim", "да"),
+                            fgNow.own ? "" : ShellText(", external", ", externa", ", externa", ", внешняя"));
+            else
+                ImGui::Text("%s: %s", ShellText("Generating", "Generando", "Gerando", "Генерирует"),
+                            ShellText("no", "no", "não", "нет"));
             return;
         }
 

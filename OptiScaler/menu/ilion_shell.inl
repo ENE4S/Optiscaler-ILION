@@ -867,9 +867,36 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
     const bool running = fg != nullptr && fg->IsActive() && !fg->IsPaused();
     const bool homeLayout = fgQuickHome; // ILION dev.67: the Home card's own arrangement (Generation keeps its own)
 
-    // On / off, the FG key's own function
+    // ILION: who generates and how sure it is (IlionDynamicMfg): ILION's own output, or the game's DLSSG through a
+    // replacement such as DLSS Enabler (NvngxFG: no output of ILION, so currentFG stays empty)
+    const auto fgStatus = IlionDynamicMfg::Get();
+    const bool externalFg = fgStatus.provider == IlionDynamicMfg::Provider::DlssgGame && state.activeFgOutput == FGOutput::NoFG;
+
+    // On / off, the FG key's own function. For the game's DLSSG (external) it turns that DLSSG off / back to the
+    // game's own choice through Streamline, as "Override DLSSG Ratio" does
     const auto drawSwitch = [&](const char* label)
     {
+        if (externalFg)
+        {
+            bool on = fgStatus.gen == IlionDynamicMfg::Gen::Detected || fgStatus.gen == IlionDynamicMfg::Gen::Confirmed;
+            ImGui::BeginDisabled(!StreamlineHooks::isDlssgHooked());
+            if (IlionTheme::Checkbox(label, &on))
+            {
+                if (on)
+                    config->FGDLSSGOverrideInterpolationCount.reset(); // the game's own choice again
+                else
+                    config->FGDLSSGOverrideInterpolationCount = 0;     // DLSSG off through Streamline
+                StreamlineHooks::updateDlssgOptions();
+            }
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                WrappedTooltip("%s", Lx("The game's DLSSG generates (external FG): off asks Streamline for no frame generation, on gives the game's choice back.",
+                                        "La FG la genera el DLSSG del juego (FG externa): apagar pide a Streamline que no genere; encender devuelve la elección del juego.",
+                                        "O DLSSG do jogo gera (FG externa): desligar pede ao Streamline que não gere; ligar devolve a escolha do jogo.",
+                                        "Кадры генерирует DLSSG игры (внешняя FG): выкл. — Streamline не генерирует, вкл. — снова выбор игры."));
+            return;
+        }
+
         bool on = config->IsFGEnabled();
         ImGui::BeginDisabled(!CanToggleFrameGeneration(state));
         if (IlionTheme::Checkbox(label, &on))
@@ -924,11 +951,16 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
 
     const std::string chosen = StrFmt("%s / %s", std::string(magic_enum::enum_name(config->FGInput.value_or_default())).c_str(),
                                       std::string(magic_enum::enum_name(config->FGOutput.value_or_default())).c_str());
-    const std::string loaded = StrFmt("%s / %s", std::string(magic_enum::enum_name(state.activeFgInput)).c_str(),
-                                      std::string(magic_enum::enum_name(state.activeFgOutput)).c_str());
+    // With the game's DLSSG generating there is no output of ILION ("NoFG"): the generator is named instead
+    const std::string loaded =
+        externalFg ? StrFmt("%s / %s (%s)", std::string(magic_enum::enum_name(state.activeFgInput)).c_str(), fgStatus.name,
+                            Lx("external", "externa", "externa", "внешняя"))
+                   : StrFmt("%s / %s", std::string(magic_enum::enum_name(state.activeFgInput)).c_str(),
+                            std::string(magic_enum::enum_name(state.activeFgOutput)).c_str());
     const bool same = config->FGOutput.value_or_default() == state.activeFgOutput && config->FGInput.value_or_default() == state.activeFgInput;
 
     std::string active = Tr("Off");
+    Led activeLed = Led::Off;
     if (running)
     {
         const unsigned multiplier = (unsigned) fg->GetInterpolatedFrameCount() + 1;
@@ -937,13 +969,31 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
         if (name.ends_with(suffix))
             name.erase(name.size() - suffix.size());
         active = StrFmt("%s %ux", name.c_str(), multiplier);
+        activeLed = Led::Green;
+    }
+    else if (externalFg)
+    {
+        // The game's DLSSG: confirmed when its backend reports presented frames, detected when it evaluates with
+        // frames to generate, unknown while a replacement is loaded and nothing tells
+        if (fgStatus.gen == IlionDynamicMfg::Gen::Confirmed || fgStatus.gen == IlionDynamicMfg::Gen::Detected)
+        {
+            const bool confirmed = fgStatus.gen == IlionDynamicMfg::Gen::Confirmed;
+            active = StrFmt("%s %dx (%s)", fgStatus.name, fgStatus.multiplier,
+                            confirmed ? Lx("confirmed", "confirmado", "confirmado", "подтверждено")
+                                      : Lx("detected", "detectado", "detectado", "обнаружено"));
+            activeLed = confirmed ? Led::Green : Led::Yellow;
+        }
+        else if (fgStatus.gen == IlionDynamicMfg::Gen::Unknown)
+        {
+            active = StrFmt("%s ?", fgStatus.name);
+        }
     }
 
     const auto drawStates = [&]()
     {
         row(Led::Off, names[0], chosen);
         row(same ? Led::Green : Led::Orange, names[1], loaded);
-        row(running ? Led::Green : Led::Off, names[2], active);
+        row(activeLed, names[2], active);
 
         // Streamline FG (DLSSG of the game as input): its state, read the same way as its card of the classic menu
         if (state.currentFGSwapchain != nullptr && state.activeFgInput == FGInput::DLSSG)
@@ -1163,8 +1213,8 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
     // Sub-sections of the modules: a tab of the menu and the layout the new interface gives it --------------------
     // clang-format off
     // Streamline FG's state is a line of the FG control card (its own card made the column scroll for one line)
-    static const ShellLayout lFrameGen { { "fg_selection", "@fg_quick", "fg_optifg", "fg_reprojection", "fg_nvngx", "fg_fsrfg_inputs" },
-                                         { "@fg_instruments", "fg_xefg", "fg_fsrfg", "fg_dlssg" } };
+    static const ShellLayout lFrameGen { { "fg_selection", "@fg_quick", "fg_dynamic", "fg_optifg", "fg_reprojection", "fg_nvngx", "fg_fsrfg_inputs" },
+                                         { "@fg_instruments", "fg_xefg", "fg_fsrfg", "fg_dlssg", "@fg_ui_advanced" } };
     static const ShellLayout lLatency { { "framerate", "vsync", "low_latency" },
                                         { "ilion_latency", "ilion_regulator", "@latency_combined" } };
     static const ShellLayout lImage { { "gfx_color", "gfx_advanced" }, { "sharpness", "mipmap", "anisotropy" } };
@@ -1180,8 +1230,8 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
     static const ShellLayout lLog { { "logging" }, {}, true };
     // ILION dev.73: the Compact presentation's own lists (one column): Frame Gen without its monitors and MFG cost,
     // Latency with its short state (the meters and the report are in Diagnostics), and Diagnostics' parts
-    static const ShellLayout lFrameGenC { { "fg_selection", "@fg_quick", "fg_optifg", "fg_reprojection", "fg_nvngx", "fg_fsrfg_inputs" },
-                                          { "fg_xefg", "fg_fsrfg", "fg_dlssg", "@fg_instruments" } };
+    static const ShellLayout lFrameGenC { { "fg_selection", "@fg_quick", "fg_dynamic", "fg_optifg", "fg_reprojection", "fg_nvngx", "fg_fsrfg_inputs" },
+                                          { "fg_xefg", "fg_fsrfg", "fg_dlssg", "@fg_ui_advanced", "@fg_instruments" } };
     static const ShellLayout lLatencyC { { "framerate", "vsync", "low_latency" }, { "ilion_latency", "ilion_regulator", "@latency_monitor" } };
     static const ShellLayout dSummary { { "status_summary" }, {} };
     static const ShellLayout dUpscaler { { "@upscaler_diag" }, {} };
@@ -1833,6 +1883,15 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                  fgHomePart = 0;
                  fgQuickHome = false;
                  fgHomeComboWidth = 0.0f;
+
+                 // ILION: Dynamic MFG from Home (switch, final FPS target, maximum while Dynamic is on): the very settings
+                 // of the Dynamic MFG card, no copy of its own (IlionDynamicMfg)
+                 if (IlionDynamicMfg::Current() != IlionDynamicMfg::Provider::None)
+                 {
+                     ImGui::Spacing();
+                     ScopedID dynamicId { "home_dmfg" };
+                     RenderDynamicMfgPanel(ctx, true);
+                 }
              };
 
     const auto homeLatency = [&]()

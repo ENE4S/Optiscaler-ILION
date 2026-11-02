@@ -4,6 +4,7 @@
 #include <Config.h>
 #include <State.h>
 #include <low_latency/input/input_common.h>
+#include <misc/IlionDynamicMfg.h>
 
 XeFG_DynamicMFG::Result XeFG_DynamicMFG::Update(int targetCount, int framesToInterpolate, bool generationOff,
                                                 double presentWaitMs, HWND window)
@@ -184,7 +185,7 @@ float XeFG_DynamicMFG::TargetFps(double nowMs, HWND window)
     // OptiScaler's FPS limit counts the presented frames, a target above it can't be reached
     const auto limit = Config::Instance()->FramerateLimit.value_or_default();
 
-    if (auto target = Config::Instance()->FGXeFGFramerateTargetDMFG.value_or_default(); target > 0.0f)
+    if (auto target = IlionDynamicMfg::TargetFps(); target > 0.0f)
         return limit > 0.0f ? std::min(target, limit) : target;
 
     if (limit > 0.0f)

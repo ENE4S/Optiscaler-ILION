@@ -184,7 +184,6 @@ class MenuCommon
     inline static bool _bgBlurUsed = false;
 
     inline static void ShowTooltip(const char* tip);
-    static void RenderXeFGDynamicMfgControls(int maxCount, float scale);
 
     inline static void ShowResetButton(CustomOptional<bool, NoDefault>* initFlag, std::string buttonName);
     inline static void ReInitUpscaler();
@@ -211,6 +210,13 @@ class MenuCommon
                               const std::vector<MenuOption<T>>& options);
 
     struct RenderMenuContext;
+
+    // ILION: Dynamic MFG of every FG provider (IlionDynamicMfg). compact: Home's short form (switch, target, maximum)
+    static void RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact);
+    static void RenderDynamicMfgCard(RenderMenuContext& ctx);
+    // ILION: detected UI view, UI drawing options and advanced FG settings (right column of the new interface)
+    static bool FgUiAdvancedHasContent(RenderMenuContext& ctx);
+    static void RenderFgUiAndAdvanced(RenderMenuContext& ctx);
 
     // RenderMenu orchestration helpers. These keep the public RenderMenu() flow short
     // while preserving the original ImGui layout and draw order.

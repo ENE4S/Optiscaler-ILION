@@ -1449,6 +1449,8 @@ inline constexpr Translation kSpanish[] = {
     // Tabs and sidebar
     { "Custom", "Personal" },
     { "Upscaling", "Escalado" },
+    { "Profiles", "Perfiles" },
+    { "Smart per-game profiles (experimental).", "Perfiles inteligentes por juego (experimental)." },
     // DLSS indicator of the d4r experiment
     { "Model", "Modelo" },
     { "Model not verified", "Modelo no verificado" },

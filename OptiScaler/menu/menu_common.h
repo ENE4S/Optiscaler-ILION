@@ -262,6 +262,7 @@ class MenuCommon
     static void RenderIlionShell(RenderMenuContext& ctx);
     static void CloseMainMenu(ImGuiIO& io);
     static void RenderCustomTab(RenderMenuContext& ctx);
+    static void RenderProfilesTab(RenderMenuContext& ctx); // ILION Perfiles (prototipo)
     static void RenderAntiGhostingTab(RenderMenuContext& ctx); // ILION: existing ghosting options, grouped
     static void RenderExternalFgTab(RenderMenuContext& ctx); // ILION: MFG SUPER MOTION engine, Advanced mode only
     static bool RenderOptiFgHudFix(RenderMenuContext& ctx);    // ILION: HUDFix of OptiFG, Anti-Ghosting tab only

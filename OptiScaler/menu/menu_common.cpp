@@ -20795,6 +20795,9 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
     }
 }
 
+// ILION: pestaña PERFILES (prototipo experimental)
+#include "ilion_profiles.inl"
+
 // Tabs of the menu, in their order. Boxes of a tab come from GetMenuBoxes, by the label of the tab
 struct MenuCommon::MenuTab
 {
@@ -20811,6 +20814,7 @@ const MenuCommon::MenuTab* MenuCommon::MenuTabs(size_t& count)
     // clang-format off
     static const MenuTab tabs[] = {
         { "MAIN", "Custom", "Boxes picked in Menu > Custom Tab.", RenderCustomTab },
+        { "MAIN", "Profiles", "Smart per-game profiles (experimental).", RenderProfilesTab },
         { "MAIN", "Upscaling", "Backend and output scaling.", RenderUpscalerStateMessage },
         { "MAIN", "Frame Gen", "Frame generation source, output and pacing." },
         { "MAIN", "External FG", "MFG SUPER MOTION and AMD AFMF started and steered from here. Advanced mode only.",

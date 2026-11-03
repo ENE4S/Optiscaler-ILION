@@ -375,6 +375,13 @@ static void Icon(int kind, ImVec2 c, float s, ImU32 col)
         }
         dl->AddCircle(p(0, 0), U(h * 0.22f), col, 0, t);
         break;
+    case 11: // profiles: a card with a check
+        dl->AddRect(p(-h * 0.8f, -h), p(h * 0.8f, h), col, U(3.f), 0, t);
+        dl->AddLine(p(-h * 0.45f, -h * 0.5f), p(h * 0.45f, -h * 0.5f), col, t);
+        dl->AddLine(p(-h * 0.45f, -h * 0.1f), p(h * 0.2f, -h * 0.1f), col, t);
+        dl->AddLine(p(-h * 0.35f, h * 0.45f), p(-h * 0.08f, h * 0.7f), col, t);
+        dl->AddLine(p(-h * 0.08f, h * 0.7f), p(h * 0.45f, h * 0.2f), col, t);
+        break;
     }
 }
 
@@ -553,10 +560,24 @@ static const Section kSections[] = {
       { "Read-only status, compatibility settings of the game and the log", "Estado de solo lectura, ajustes de compatibilidad del juego y registro",
         "Estado somente leitura, ajustes de compatibilidade do jogo e registro", "Состояние (только чтение), настройки совместимости и журнал" },
       { "Help / Status", "Compatibility" } },
+    // ILION Perfiles (prototipo): appended, so every index above keeps its meaning; shown right after Home
+    { { "PROFILES", "PERFILES", "PERFIS", "ПРОФИЛИ" }, { "Profiles", "Perfiles", "Perfis", "Профили" },
+      { "Detect the game and hardware and apply a per-game profile (experimental)",
+        "Detecta el juego y el hardware y aplica un perfil por juego (experimental)",
+        "Detecta o jogo e o hardware e aplica um perfil por jogo (experimental)",
+        "Определение игры и оборудования, профиль для игры (эксперимент)" },
+      { "Profiles" } },
 };
 // clang-format on
 
 constexpr int kSectionCount = (int) std::size(kSections);
+constexpr int kProfilesSection = 8;
+// The order of the modules in the sidebar and in Compact's tabs
+static const int kNavOrder[] = { 0, kProfilesSection, 1, 2, 3, 4, 5, 6, 7 };
+static_assert(std::size(kNavOrder) == kSectionCount);
+
+// The icon of a section (Profiles draws its own, kind 11)
+static int IconOf(int sectionIndex) { return sectionIndex == kProfilesSection ? 11 : sectionIndex; }
 
 static int LangIndex()
 {
@@ -1322,6 +1343,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         { 7, { "Status", "Estado", "Estado", "Состояние" }, "Help / Status", &lStatus, 0 },
         { 7, { "Compatibility", "Compatibilidad", "Compatibilidade", "Совместимость" }, "Compatibility", &lCompat, 0 },
         { 7, { "Log", "Registro", "Registro", "Журнал" }, "Help / Status", &lLog, 0 },
+        { 8, { "Profiles", "Perfiles", "Perfis", "Профили" }, "Profiles", nullptr, 0 },
     };
     // clang-format on
     constexpr int subCount = (int) std::size(subs);
@@ -1442,6 +1464,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         latencyOn || fpsLimit > 0.0f ? Led::Green : Led::Off,
         nrRunning ? Led::Green : nrEnabled ? Led::Yellow : Led::Off,
         config->ShowFps.value_or_default() ? Led::Green : Led::Off,
+        Led::Off,
         Led::Off,
         Led::Off,
     };
@@ -2025,11 +2048,13 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
     if (compact)
     {
         constexpr float CW = kCompactW, CH = kCompactH;
-        constexpr int kDiag = kSectionCount - 1; // the place of Status & compatibility: Diagnostics in Compact
+        constexpr int kDiag = 7; // the place of Status & compatibility: Diagnostics in Compact
         static int compactSection = 0;
         static int compactSub[kSectionCount] = {};
-        if (compactSection < 0 || compactSection > kDiag)
+        if (compactSection < 0 || compactSection >= kSectionCount)
             compactSection = 0;
+        // A module of the sub-section kind: from Frame Gen on, Profiles included, Diagnostics apart
+        const bool compactModule = compactSection >= 2 && compactSection != kDiag;
 
         // The Advisor's facts once a frame, as the Full header gathers them (the header is not drawn here)
         advisorUpdate();
@@ -2054,10 +2079,11 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         // Tabs: the modules, and Diagnostics last
         {
             const float gap = 4.f;
-            const float tabW = std::floor((CW - 24 - gap * kDiag) / (kDiag + 1));
-            for (int i = 0; i <= kDiag; i++)
+            const float tabW = std::floor((CW - 24 - gap * (kSectionCount - 1)) / kSectionCount);
+            for (int n = 0; n < kSectionCount; n++)
             {
-                const ImVec2 p(12 + i * (tabW + gap), 66), q(12 + i * (tabW + gap) + tabW, 134);
+                const int i = kNavOrder[n];
+                const ImVec2 p(12 + n * (tabW + gap), 66), q(12 + n * (tabW + gap) + tabW, 134);
                 const char* caps = i == kDiag ? Lx("DIAGNOSTICS", "DIAGNÓSTICO", "DIAGNÓSTICO", "ДИАГНОСТИКА") : kSections[i].caps[li];
                 At(p.x, p.y);
                 ImGui::PushID(200 + i);
@@ -2078,13 +2104,13 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                 dl->AddRectFilledMultiColor(P(p), P(q), Col(top), Col(top), Col(bottom), Col(bottom));
                 dl->AddRect(P(p), P(q), Col(sel ? pal::Orange : pal::Line), U(5.f), 0, sel ? U(2.f) : 1.f);
                 const ImU32 ic = Col(sel ? pal::Orange : (hov ? pal::Text : pal::Text2));
-                Icon(i, ImVec2((p.x + q.x) * 0.5f, p.y + 24), 26.f, ic);
+                Icon(IconOf(i), ImVec2((p.x + q.x) * 0.5f, p.y + 24), 26.f, ic);
                 float fs = 13.f;
                 while (fs > 9.f && Measure(fUi, fs, caps).x > tabW - 6)
                     fs -= 1.f;
                 const ImVec2 ts = Measure(fUi, fs, caps);
                 Text(fUi, fs, ImVec2((p.x + q.x - ts.x) * 0.5f, p.y + 46), sel ? pal::Orange : pal::Text, caps);
-                if (i < kDiag && sectionLed[i] != Led::Off)
+                if (i != kDiag && sectionLed[i] != Led::Off)
                     LedAt(dl, ImVec2(q.x - 9, p.y + 9), 3.5f, sectionLed[i]);
             }
         }
@@ -2093,7 +2119,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         float top = 144;
         int shown[8];
         int shownCount = 0;
-        if (compactSection >= 2 && compactSection < kDiag)
+        if (compactModule)
         {
             for (int k = 0; k < subCount && shownCount < 8; k++)
             {
@@ -2575,7 +2601,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                     compactUpGap = spare > 0.0f ? std::floor((std::min)(spare / 3.0f, U(24.f))) : 0.0f;
                 }
             }
-            else if (compactSection < kDiag)
+            else if (compactModule)
             {
                 // The other modules: their sub-section, drawn by its own code in one column
                 if (shownCount > 0)
@@ -2699,13 +2725,20 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
     {
         dl->AddRectFilled(P(0, 0), P(side, H), Col(ImVec4(0.025f, 0.03f, 0.028f, 1)), U(6.0f), ImDrawFlags_RoundCornersLeft);
         float y = 70;
-
+        // ILION Perfiles: nine modules; the items shrink to the room above the footer (104 apart while they fit)
+        int navShown = 0;
         for (int i = 0; i < kSectionCount; i++)
+            navShown += sectionShown(i) ? 1 : 0;
+        const float step = (std::min)(104.f, std::floor((H - 84.f - 70.f + 8.f) / (float) (std::max)(navShown, 1)));
+        const float itemH = step - 8.f;
+
+        for (int n = 0; n < kSectionCount; n++)
         {
+            const int i = kNavOrder[n];
             if (!sectionShown(i))
                 continue; // the next one takes its place: no gap
 
-            const ImVec2 p(8, y), q(side - 8, y + 96);
+            const ImVec2 p(8, y), q(side - 8, y + itemH);
             At(p.x, p.y);
             ImGui::PushID(i);
             if (ImGui::InvisibleButton("nav", Sz(q.x - p.x, q.y - p.y)))
@@ -2732,7 +2765,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
             if (wide)
             {
                 // The full name when it fits, else smaller, else the short one of the compact bar
-                Icon(i, ImVec2(p.x + 40, p.y + 48), 34.f, ic);
+                Icon(IconOf(i), ImVec2(p.x + 40, p.y + itemH * 0.5f), 34.f, ic);
                 const float room = q.x - p.x - 74 - 10;
                 const char* name = kSections[i].name[li];
                 float fs = 18.f;
@@ -2746,23 +2779,23 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                         fs -= 1.f;
                 }
                 const ImVec2 ts = Measure(fUi, fs, name);
-                Text(fUi, fs, ImVec2(p.x + 74, p.y + 48 - ts.y * 0.5f), sel ? pal::Orange : pal::Text, name);
+                Text(fUi, fs, ImVec2(p.x + 74, p.y + itemH * 0.5f - ts.y * 0.5f), sel ? pal::Orange : pal::Text, name);
             }
             else
             {
-                Icon(i, ImVec2((p.x + q.x) * 0.5f, p.y + 38), 34.f, ic);
+                Icon(IconOf(i), ImVec2((p.x + q.x) * 0.5f, p.y + itemH * 0.4f), 34.f, ic);
                 const char* caps = kSections[i].caps[li];
                 float fs = 16.f;
                 while (fs > 11.f && Measure(fUi, fs, caps).x > q.x - p.x - 8)
                     fs -= 1.f;
                 const ImVec2 ts = Measure(fUi, fs, caps);
-                Text(fUi, fs, ImVec2((p.x + q.x - ts.x) * 0.5f, p.y + 66), sel ? pal::Orange : pal::Text, caps);
+                Text(fUi, fs, ImVec2((p.x + q.x - ts.x) * 0.5f, p.y + itemH * 0.69f), sel ? pal::Orange : pal::Text, caps);
             }
 
             // Activity pilot, apart from the selection
             if (sectionLed[i] != Led::Off)
                 LedAt(dl, ImVec2(q.x - 14, p.y + 14), 5.f, sectionLed[i]);
-            y += 104;
+            y += step;
         }
 
         // Expand / collapse: the user's choice, kept in the ini; it never opens by itself
@@ -3076,7 +3109,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         // A low band: icon, name and what the section is for on one line
         const ImVec2 a(x0, 252), b(x1, 302);
         PanelRect(a, b);
-        Icon(section, ImVec2(a.x + 30, a.y + 25), 28.f, Col(pal::Green));
+        Icon(IconOf(section), ImVec2(a.x + 30, a.y + 25), 28.f, Col(pal::Green));
         Text(fBrand, 26.f, ImVec2(a.x + 58, a.y + 9), pal::Green, sec.caps[li]);
         const float subX = a.x + 58 + Measure(fBrand, 26.f, sec.caps[li]).x + 22;
         dl->AddLine(P(subX - 11, a.y + 15), P(subX - 11, a.y + 35), Col(pal::Line), 1.f);

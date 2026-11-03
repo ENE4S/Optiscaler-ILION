@@ -351,6 +351,10 @@ class State
     FfxVersionList ffxUpscalerVersionsDx12 {};
     FfxVersionList ffxUpscalerVersionsVk {};
     std::vector<const char*> ffxFGVersionNames {};
+    // ILION (SDK 2.4): the FSR FG swapchain ILION created last: the provider the dll reports for it ("" not reported)
+    // and whether API 4.0.0 was refused and 3.1.6 used
+    std::string ffxSwapchainProvider {};
+    bool ffxSwapchainApiFallback = false;
     std::vector<uint64_t> ffxFGVersionIds {};
     std::optional<uint32_t> currentFsr4Preset {};
 

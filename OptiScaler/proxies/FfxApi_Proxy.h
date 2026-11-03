@@ -524,6 +524,30 @@ class FfxApiProxy
         *versionName = query.versionName;
         return true;
     }
+
+    // ILION (SDK 2.4): the provider a frame generation context (FG or its swapchain) was made with, asked to the dll
+    // that made it, as D3D12_CreateContext routes it: the framegeneration dll when loaded, else the combined one. Never
+    // through D3D12_Query, for the reason above
+    static bool FgContextProviderVersion(ffxContext* context, uint64_t* versionId, const char** versionName)
+    {
+        if (context == nullptr || *context == nullptr)
+            return false;
+
+        const PfnFfxQuery query = fg_dx12.dll != nullptr ? fg_dx12.Query : main_dx12.Query;
+        if (query == nullptr)
+            return false;
+
+        ffxQueryGetProviderVersion providerQuery {};
+        providerQuery.header.type = FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION;
+
+        if (query(context, &providerQuery.header) != FFX_API_RETURN_OK || providerQuery.versionName == nullptr)
+            return false;
+
+        *versionId = providerQuery.versionId;
+        *versionName = providerQuery.versionName;
+        return true;
+    }
+
     static void SrNoteDriverProviderId(uint64_t id)
     {
         if (id != 0)

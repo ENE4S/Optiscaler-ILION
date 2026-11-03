@@ -50,6 +50,7 @@ static ffxReturnCode_t CreateFgSwapchainContext(ffxContext* context, ffxCreateCo
     createHeader->pNext = &versionDesc.header;
 
     auto result = FfxApiProxy::D3D12_CreateContext(context, createHeader, nullptr);
+    bool fallback = false;
 
     if (result != FFX_API_RETURN_OK)
     {
@@ -57,12 +58,25 @@ static ffxReturnCode_t CreateFgSwapchainContext(ffxContext* context, ffxCreateCo
                  FfxApiProxy::ReturnCodeToString(result));
         versionDesc.version = FFX_FRAMEGENERATION_SWAPCHAIN_DX12_VERSION;
         result = FfxApiProxy::D3D12_CreateContext(context, createHeader, nullptr);
-        LOG_INFO("FSR FG swapchain with API 3.1.6: {} ({})", result, FfxApiProxy::ReturnCodeToString(result));
+        fallback = true;
     }
-    else
-    {
-        LOG_INFO("FSR FG swapchain with API 4.0.0 (the SDK picks 4.0.0 or 3.1.7 for the GPU and driver)");
-    }
+
+    // Asked for, made, and what the dll says it made: the swapchain version the SDK picked for this GPU and driver.
+    // It tells nothing of the driver's frame pacing, which the SDK switches on and off by itself (RX 9000, Adrenalin
+    // 26.10.1 or later, fullscreen, VRR, no V-Sync)
+    auto& state = State::Instance();
+    state.ffxSwapchainApiFallback = fallback;
+    state.ffxSwapchainProvider.clear();
+
+    uint64_t providerId = 0;
+    const char* providerName = nullptr;
+    if (result == FFX_API_RETURN_OK && FfxApiProxy::FgContextProviderVersion(context, &providerId, &providerName))
+        state.ffxSwapchainProvider = providerName;
+
+    LOG_INFO("FSR FG swapchain: API {} asked{}, result {} ({}), provider {} (id {:X})",
+             fallback ? "3.1.6" : "4.0.0", fallback ? " after 4.0.0 was refused" : "", result,
+             FfxApiProxy::ReturnCodeToString(result),
+             state.ffxSwapchainProvider.empty() ? "not reported" : state.ffxSwapchainProvider, providerId);
 
     return result;
 }

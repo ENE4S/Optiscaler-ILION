@@ -1409,10 +1409,12 @@ sl::Result StreamlineHooks::hkslDLSSGSetOptions(const sl::ViewportHandle& viewpo
             }
         }
 
-        // Won't take effect with Dynamic
-        if (Config::Instance()->FGDLSSGOverrideInterpolationCount.has_value())
+        // Won't take effect with Dynamic. ILION: read once (a copy), the menu may empty the setting meanwhile and a
+        // value() of the empty optional would throw on the game's thread
+        if (const std::optional<int> overrideSet = Config::Instance()->FGDLSSGOverrideInterpolationCount;
+            overrideSet.has_value())
         {
-            auto overrideCount = Config::Instance()->FGDLSSGOverrideInterpolationCount.value();
+            auto overrideCount = *overrideSet;
             if (overrideCount != 0)
                 newOptions.numFramesToGenerate = overrideCount;
             else if (!enableDynamicMode)
@@ -2001,8 +2003,8 @@ void StreamlineHooks::applyRequestedDlssgOptions(const char* where)
     updateDlssgOptions();
     LOG_INFO("ILION: game DLSSG options sent from {} ({}): mode {}, override count {}", where,
              reason != nullptr ? reason : "-", magic_enum::enum_name(State::Instance().dlssgLastSetMode),
-             Config::Instance()->FGDLSSGOverrideInterpolationCount.has_value()
-                 ? std::to_string(Config::Instance()->FGDLSSGOverrideInterpolationCount.value())
+             Config::Instance()->FGDLSSGOverrideInterpolationCount.value_or(-1) >= 0
+                 ? std::to_string(Config::Instance()->FGDLSSGOverrideInterpolationCount.value_or(-1))
                  : std::string("game's"));
 }
 

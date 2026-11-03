@@ -41,10 +41,9 @@ int IlionMaxCount()
 {
     auto config = Config::Instance();
     const int limit = std::max(State::Instance().dlssgMfgMax.value_or(0), 1);
-    const int user = config->FGDLSSGOverrideInterpolationCount.has_value() &&
-                             config->FGDLSSGOverrideInterpolationCount.value() > 0
-                         ? config->FGDLSSGOverrideInterpolationCount.value()
-                         : limit;
+    // Read once: the menu can empty the setting between a has_value() and a value() of this thread (game's present)
+    const int set = config->FGDLSSGOverrideInterpolationCount.value_or(0);
+    const int user = set > 0 ? set : limit;
     return std::clamp(user, 1, limit);
 }
 

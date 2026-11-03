@@ -954,9 +954,14 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
                     config->FGDLSSGOverrideInterpolationCount.reset();
                     StreamlineHooks::requestDlssgOptionsUpdate("multiplier: game's choice");
                 }
+                // ILION v1.3.1 RC3: whether each count is the one set, read from the setting itself for every item.
+                // "Game" above may have just emptied it in this same frame: the "overridden" taken before the list
+                // was stale, and value() of the empty optional threw std::bad_optional_access on the present thread
+                // of sl.dlss_g, which ended the game (abort, "2X" -> "Game" with DLSS Enabler)
+                const auto& overrideCount = config->FGDLSSGOverrideInterpolationCount;
                 for (int count = 1; count <= limit; ++count)
                     if (ImGui::Selectable(StrFmt("%dX", count + 1).c_str(),
-                                          overridden && config->FGDLSSGOverrideInterpolationCount.value() == count))
+                                          overrideCount.has_value() && overrideCount.value() == count))
                         IlionDynamicMfg::SetMaxCount(count);
                 ImGui::EndCombo();
             }

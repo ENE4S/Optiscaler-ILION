@@ -1409,6 +1409,19 @@ static void CheckQuirks(bool isNvidia)
     //     LOG_INFO("Factory wrapping enabled due to delayed ReShade + FG");
     // }
 
+    // ILION v1.3.1: ReShade loaded by OptiScaler ([Plugins] LoadReShade) with XeFG as the FG output. With the DXGI
+    // factory hooked, ReShade wraps the swapchain the game gets, XeFG's own, and the first present ended in an access
+    // violation in the D3D12 driver (Streamline returned E_ABORT, the game closed at start: Dawnwalker, RX 7900 XTX,
+    // every launch). With the factory wrapped, ReShade wraps the swapchain XeFG creates for itself, under the
+    // interpolation, and the game starts (checked in the same game). Only when the user didn't choose a value
+    if (!Config::Instance()->DxgiFactoryWrapping.has_value() && Config::Instance()->LoadReShade.value_or_default() &&
+        State::Instance().activeFgOutput == FGOutput::XeFG && State::Instance().activeFgInput != FGInput::NoFG)
+    {
+        Config::Instance()->DxgiFactoryWrapping.set_volatile_value(true);
+        State::Instance().detectedQuirks.push_back("Factory wrapping enabled: ReShade (LoadReShade) with XeFG");
+        LOG_INFO("Factory wrapping enabled: ReShade (LoadReShade) with XeFG");
+    }
+
     if (Config::Instance()->LoadSpecialK.value_or_default() && State::Instance().activeFgInput != FGInput::NoFG &&
         State::Instance().activeFgInput != FGInput::NvngxFG)
     {

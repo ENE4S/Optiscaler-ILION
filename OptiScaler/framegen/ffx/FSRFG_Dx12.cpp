@@ -34,6 +34,38 @@ struct ffxCreateContextDescFrameGenerationSwapChainVersionDX12
                                        ///< FFX_FRAMEGENERATION_SWAPCHAIN_DX12_VERSION.
 };
 
+// ILION (AMD FSR SDK 2.4): the swapchain API 4.0.0, same structures as 3.1.x. With a 2.4 framegeneration dll the API
+// picks Frame Generation (Swapchain) 4.0.0 on RX 9000 (driver-assisted frame pacing with Adrenalin 26.10.1 or later,
+// exclusive / borderless fullscreen, VRR, no V-Sync; frame types for PresentMon on DX12) and 3.1.7 elsewhere
+#define ILION_FFX_FRAMEGENERATION_SWAPCHAIN_DX12_VERSION_4_0_0 FFX_FRAMEGENERATION_SWAPCHAIN_DX12_MAKE_VERSION(4, 0, 0)
+
+// Creates the FSR FG swapchain context declaring API 4.0.0; a framegeneration dll older than SDK 2.4 that refuses it
+// gets the swapchain created again declaring 3.1.6, as ILION always did. The version chained is logged
+static ffxReturnCode_t CreateFgSwapchainContext(ffxContext* context, ffxCreateContextDescHeader* createHeader)
+{
+    ffxCreateContextDescFrameGenerationSwapChainVersionDX12 versionDesc {};
+    versionDesc.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATIONSWAPCHAIN_VERSION_DX12;
+    versionDesc.version = ILION_FFX_FRAMEGENERATION_SWAPCHAIN_DX12_VERSION_4_0_0;
+    createHeader->pNext = &versionDesc.header;
+
+    auto result = FfxApiProxy::D3D12_CreateContext(context, createHeader, nullptr);
+
+    if (result != FFX_API_RETURN_OK)
+    {
+        LOG_WARN("FSR FG swapchain with API 4.0.0: {} ({}), trying 3.1.6", result,
+                 FfxApiProxy::ReturnCodeToString(result));
+        versionDesc.version = FFX_FRAMEGENERATION_SWAPCHAIN_DX12_VERSION;
+        result = FfxApiProxy::D3D12_CreateContext(context, createHeader, nullptr);
+        LOG_INFO("FSR FG swapchain with API 3.1.6: {} ({})", result, FfxApiProxy::ReturnCodeToString(result));
+    }
+    else
+    {
+        LOG_INFO("FSR FG swapchain with API 4.0.0 (the SDK picks 4.0.0 or 3.1.7 for the GPU and driver)");
+    }
+
+    return result;
+}
+
 static D3D12_RESOURCE_STATES GetD3D12State(FfxApiResourceState state)
 {
     switch (state)
@@ -510,11 +542,28 @@ bool FSRFG_Dx12::Dispatch()
     ffxReturnCode_t retCode = FfxApiProxy::D3D12_Configure(&_fgContext, &fgConfig.header);
     LOG_DEBUG("D3D12_Configure result: {0:X}, frame: {1}, fIndex: {2}", retCode, willDispatchFrame, fIndex);
 
-    ffxConfigureDescGlobalDebug1 fgLogging = {};
-    fgLogging.header.type = FFX_API_CONFIGURE_DESC_TYPE_GLOBALDEBUG1;
-    fgLogging.fpMessage = &fgLogCallback;
-    fgLogging.debugLevel = FFX_API_CONFIGURE_GLOBALDEBUG_LEVEL_VERBOSE;
-    ffxReturnCode_t loggingRetCode = FfxApiProxy::D3D12_Configure(&_fgContext, &fgLogging.header);
+    // ILION (SDK 2.4): ffxConfigureDescGlobalDebug1 is deprecated, GlobalDebug takes the effect. A dll older than
+    // GlobalDebug that refuses it gets GlobalDebug1, once found out
+    static bool debug1Only = false;
+    ffxReturnCode_t loggingRetCode = FFX_API_RETURN_ERROR;
+    if (!debug1Only)
+    {
+        ffxConfigureDescGlobalDebug fgLogging = {};
+        fgLogging.header.type = FFX_API_CONFIGURE_DESC_TYPE_GLOBALDEBUG;
+        fgLogging.effectId = FFX_API_EFFECT_ID_FRAMEGENERATION;
+        fgLogging.fpMessage = &fgLogCallback;
+        fgLogging.debugLevel = FFX_API_CONFIGURE_GLOBALDEBUG_LEVEL_VERBOSE;
+        loggingRetCode = FfxApiProxy::D3D12_Configure(&_fgContext, &fgLogging.header);
+        debug1Only = loggingRetCode != FFX_API_RETURN_OK;
+    }
+    if (debug1Only)
+    {
+        ffxConfigureDescGlobalDebug1 fgLogging = {};
+        fgLogging.header.type = FFX_API_CONFIGURE_DESC_TYPE_GLOBALDEBUG1;
+        fgLogging.fpMessage = &fgLogCallback;
+        fgLogging.debugLevel = FFX_API_CONFIGURE_GLOBALDEBUG_LEVEL_VERBOSE;
+        loggingRetCode = FfxApiProxy::D3D12_Configure(&_fgContext, &fgLogging.header);
+    }
 
     bool dispatchResult = false;
     if (retCode == FFX_API_RETURN_OK && _isActive)
@@ -1114,13 +1163,7 @@ bool FSRFG_Dx12::CreateSwapchainInternal(IDXGIFactory* factory, ID3D12CommandQue
     createSwapChainDesc.desc = desc;
     createSwapChainDesc.swapchain = (IDXGISwapChain4**) swapChain;
 
-    ffxCreateContextDescFrameGenerationSwapChainVersionDX12 versionDesc {};
-    versionDesc.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATIONSWAPCHAIN_VERSION_DX12;
-    versionDesc.version = FFX_FRAMEGENERATION_SWAPCHAIN_DX12_VERSION;
-
-    createSwapChainDesc.header.pNext = &versionDesc.header;
-
-    auto result = FfxApiProxy::D3D12_CreateContext(&_swapChainContext, &createSwapChainDesc.header, nullptr);
+    auto result = CreateFgSwapchainContext(&_swapChainContext, &createSwapChainDesc.header);
 
     if (result == FFX_API_RETURN_OK)
     {
@@ -1158,13 +1201,7 @@ bool FSRFG_Dx12::CreateSwapchain1Internal(IDXGIFactory* factory, ID3D12CommandQu
     createSwapChainDesc.desc = desc;
     createSwapChainDesc.swapchain = (IDXGISwapChain4**) swapChain;
 
-    ffxCreateContextDescFrameGenerationSwapChainVersionDX12 versionDesc {};
-    versionDesc.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATIONSWAPCHAIN_VERSION_DX12;
-    versionDesc.version = FFX_FRAMEGENERATION_SWAPCHAIN_DX12_VERSION;
-
-    createSwapChainDesc.header.pNext = &versionDesc.header;
-
-    auto result = FfxApiProxy::D3D12_CreateContext(&_swapChainContext, &createSwapChainDesc.header, nullptr);
+    auto result = CreateFgSwapchainContext(&_swapChainContext, &createSwapChainDesc.header);
 
     if (result == FFX_API_RETURN_OK)
     {

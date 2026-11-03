@@ -550,11 +550,28 @@ NVSDK_NGX_Result Nvngx_FFX::D3D12_EvaluateFeature(ID3D12GraphicsCommandList* InC
         return NVSDK_NGX_Result_Fail;
     }
 
-    ffxConfigureDescGlobalDebug1 fgLogging = {};
-    fgLogging.header.type = FFX_API_CONFIGURE_DESC_TYPE_GLOBALDEBUG1;
-    fgLogging.fpMessage = &fgLogCallback;
-    fgLogging.debugLevel = FFX_API_CONFIGURE_GLOBALDEBUG_LEVEL_VERBOSE;
-    ffxReturnCode_t loggingRetCode = FfxApiProxy::D3D12_Configure(&InOurHandle->fgContext->ctx, &fgLogging.header);
+    // ILION (SDK 2.4): ffxConfigureDescGlobalDebug1 is deprecated, GlobalDebug takes the effect. A dll older than
+    // GlobalDebug that refuses it gets GlobalDebug1, once found out
+    static bool debug1Only = false;
+    ffxReturnCode_t loggingRetCode = FFX_API_RETURN_ERROR;
+    if (!debug1Only)
+    {
+        ffxConfigureDescGlobalDebug fgLogging = {};
+        fgLogging.header.type = FFX_API_CONFIGURE_DESC_TYPE_GLOBALDEBUG;
+        fgLogging.effectId = FFX_API_EFFECT_ID_FRAMEGENERATION;
+        fgLogging.fpMessage = &fgLogCallback;
+        fgLogging.debugLevel = FFX_API_CONFIGURE_GLOBALDEBUG_LEVEL_VERBOSE;
+        loggingRetCode = FfxApiProxy::D3D12_Configure(&InOurHandle->fgContext->ctx, &fgLogging.header);
+        debug1Only = loggingRetCode != FFX_API_RETURN_OK;
+    }
+    if (debug1Only)
+    {
+        ffxConfigureDescGlobalDebug1 fgLogging = {};
+        fgLogging.header.type = FFX_API_CONFIGURE_DESC_TYPE_GLOBALDEBUG1;
+        fgLogging.fpMessage = &fgLogCallback;
+        fgLogging.debugLevel = FFX_API_CONFIGURE_GLOBALDEBUG_LEVEL_VERBOSE;
+        loggingRetCode = FfxApiProxy::D3D12_Configure(&InOurHandle->fgContext->ctx, &fgLogging.header);
+    }
 
     ffxDispatchDescFrameGenerationPrepareCameraInfo dfgCameraData {};
     dfgCameraData.header.type = FFX_API_DISPATCH_DESC_TYPE_FRAMEGENERATION_PREPARE_CAMERAINFO;

@@ -138,18 +138,20 @@ void FrameLimit::sleep(bool fgActive)
     }
 }
 
-void FrameLimit::sleepExternalFg()
+double FrameLimit::sleepExternalFg(int framesToGenerate)
 {
     // The game's DLSSG (DLSS Enabler...) with a target cap: the game's real frames are held at target / the
-    // multiplier it applies, here on the game's render thread once per DLSSG evaluation, never in its presenter.
-    // Reflex and XeLL keep the plain FPS limit, so the cap is counted once.
+    // multiplier, at the first DLSSG evaluation of each real frame (NVNGX_DLSS_Dx12), never in its presenter.
+    // ILION Dynamic uses the frames this real frame generates; otherwise the multiplier measured at the presents.
+    // Reflex and XeLL keep the plain FPS limit, so the cap is counted once. Returns the time slept, in ms: ILION
+    // Dynamic's controller counts it as waiting, not as render time.
     if (IlionDynamicMfg::Current() != IlionDynamicMfg::Provider::DlssgGame)
-        return;
+        return 0.0;
 
-    const float realFps = IlionDynamicMfg::ExternalCapRealFps();
+    const float realFps = IlionDynamicMfg::ExternalCapRealFps(framesToGenerate);
     if (realFps <= 0.0f)
-        return;
+        return 0.0;
 
     static uint64_t previous_deadline = 0;
-    waitUntilDue(previous_deadline, std::clamp((uint64_t) (1'000'000 / realFps), 0ULL, 100'000'000ULL));
+    return waitUntilDue(previous_deadline, std::clamp((uint64_t) (1'000'000 / realFps), 0ULL, 100'000'000ULL));
 }

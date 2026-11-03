@@ -12670,6 +12670,38 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
 
     const auto drawSwitch = [&]()
     {
+        // The game's DLSSG: which Dynamic, ILION's own controller (eOn, real ceiling with the cap) or the backend's
+        // eDynamic (its own count and maximum, no ceiling), each named as what it is
+        if (provider == Dmfg::Provider::DlssgGame)
+        {
+            const auto mode = Dmfg::ExternalDynamicMode();
+            const bool ilionPossible = ctx.state.dlssgMfgMax.value_or(0) >= 2;
+            const bool nativePossible = ctx.state.dlssgGameDMFGSupported;
+            const char* names[] = { "Off", "ILION (experimental, real ceiling)", "Backend's own (no ceiling)" };
+            ImGui::BeginDisabled(!supported);
+            ImGui::SetNextItemWidth(260.0f * scale);
+            if (IlionTheme::BeginCombo(TrL("Dynamic MFG##dmfgMode"), Tr(names[(int) mode])))
+            {
+                for (int i = 0; i < 3; ++i)
+                {
+                    const bool possible = i == 0 || (i == 1 && ilionPossible) || (i == 2 && nativePossible);
+                    ImGui::BeginDisabled(!possible);
+                    if (ImGui::Selectable(TrL(names[i]), i == (int) mode) && i != (int) mode)
+                        Dmfg::SetExternalDynamicMode((Dmfg::ExternalMode) i);
+                    ImGui::EndDisabled();
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::EndDisabled();
+            ShowTooltip("ILION: the game's DLSSG stays in a fixed mode and ILION picks its multiplier every frame, up to "
+                        "the maximum; with \"Use target as cap\" the final FPS are held at the target.\n"
+                        "Backend's own: the backend's Dynamic MFG picks the multiplier and its maximum; the target is a "
+                        "goal, not a cap.");
+            if (!supported && reason != nullptr && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                WrappedTooltip("%s", Tr(reason));
+            return;
+        }
+
         ImGui::BeginDisabled(!supported);
         bool on = enabled;
         if (IlionTheme::Checkbox(TrL("Dynamic MFG##dmfg"), &on))
@@ -12814,6 +12846,21 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
 
     if (status.capWaiting)
         TextWrappedDisabled("%s", Tr("Target cap waiting: the multiplier the backend applies isn't confirmed yet, so it isn't limited by guesswork"));
+
+    // ILION Dynamic for the game's DLSSG: what it does, why it stopped, what it needs
+    if (status.ilionDrives)
+    {
+        TextWrappedDisabled("%s", Tr("ILION Dynamic (experimental): the game's DLSSG stays in a fixed mode and ILION "
+                                     "picks its multiplier, never above the maximum. With \"Use target as cap\" the "
+                                     "final FPS are held at the target."));
+        if (Dmfg::TargetFps() <= 0.0f)
+            TextWrappedColored(ImVec4(1.f, 0.8f, 0.f, 1.f), "%s",
+                               Tr("Set a final FPS target above 0: without it ILION keeps the multiplier it has."));
+    }
+    if (status.ilionRefused != nullptr)
+        TextWrappedColored(ImVec4(1.f, 0.8f, 0.f, 1.f), Tr("ILION Dynamic stopped: %s. The fixed maximum is used; "
+                                                           "choose the mode again to retry."),
+                           Tr(status.ilionRefused));
 
     // The game's DLSSG in eDynamic: the target is a goal of the backend, not a cap
     if (status.backendDynamic)

@@ -6,6 +6,7 @@
 #include <Util.h>
 #include <framegen/IFGFeature.h>
 #include <framegen/xefg/XeFG_DynamicMFG.h>
+#include <framegen/xefg/XeFG_DynamicCount.h>
 #include <hooks/Streamline_Hooks.h>
 #include <hooks/Xell_Hooks.h>
 #include <misc/FrameLimit.h>
@@ -26,6 +27,26 @@ std::atomic<int> measuredPerFrameX100 { 0 }; // wrapped presents per real DLSSG 
 std::atomic<float> measuredPresentFps { 0.0f }; // wrapped presents per second of the last window
 std::atomic<float> measuredRealFps { 0.0f };    // real DLSSG frames per second of the last window
 std::atomic<int> capSuspendedAt { 0 };       // asked multiplier the external cap was suspended at, 0 not suspended
+
+// ILION Dynamic for the game's DLSSG: the count it asks for (interpolated frames), a change waiting to be sent through
+// slDLSSGSetOptions, and why it stopped. The controller itself runs on one thread only (ExternalRealFrame)
+std::atomic<int> ilionCount { 1 };
+std::atomic<bool> ilionPending { false };
+std::atomic<const char*> ilionRefused { nullptr };
+std::atomic<bool> presentsSeen { false }; // a multiplier was measured at the presents since ILION Dynamic started
+
+// The most ILION Dynamic may ask the game's DLSSG for: the user's maximum (Override DLSSG Ratio), within what the
+// backend reports
+int IlionMaxCount()
+{
+    auto config = Config::Instance();
+    const int limit = std::max(State::Instance().dlssgMfgMax.value_or(0), 1);
+    const int user = config->FGDLSSGOverrideInterpolationCount.has_value() &&
+                             config->FGDLSSGOverrideInterpolationCount.value() > 0
+                         ? config->FGDLSSGOverrideInterpolationCount.value()
+                         : limit;
+    return std::clamp(user, 1, limit);
+}
 
 bool OwnRunning()
 {
@@ -100,11 +121,11 @@ bool DynamicSupported(const char** reason)
         break;
     }
     case Provider::DlssgGame:
+        // ILION Dynamic needs a backend that generates 2 frames or more; the backend's own Dynamic, its support
         if (!StreamlineHooks::isDlssgHooked())
             why = "The game's DLSSG doesn't go through Streamline: ILION can't change its mode";
-        else if (!state.dlssgGameDMFGSupported)
-            why = "The DLSSG backend in use doesn't report Dynamic MFG support: use a fixed multiplier with the "
-                  "target as cap";
+        else if (state.dlssgMfgMax.value_or(0) < 2 && !state.dlssgGameDMFGSupported)
+            why = "The DLSSG backend in use generates one frame at most and doesn't report Dynamic MFG support";
         break;
     case Provider::DlssgOutput:
         if (state.currentFG == nullptr || !state.currentFG->GetDMFGSupport())
@@ -133,7 +154,7 @@ bool DynamicEnabled()
     case Provider::XeFG:
         return XeFG_DynamicMFG::Allowed();
     case Provider::DlssgGame:
-        return config->FGDLSSGOverrideForceDMFG.value_or_default() && State::Instance().dlssgGameDMFGSupported;
+        return ExternalDynamicMode() != ExternalMode::Off;
     case Provider::DlssgOutput:
         return config->FGDLSSGForceDMFG.value_or_default();
     default:
@@ -154,8 +175,10 @@ void SetDynamicEnabled(bool enabled)
             config->FGEnabled = true; // Dynamic runs on the manual FG path, as R3's own switch did
         break;
     case Provider::DlssgGame:
-        config->FGDLSSGOverrideForceDMFG = enabled;
-        StreamlineHooks::updateDlssgOptions();
+        // On: ILION Dynamic when the backend generates 2 frames or more, else the backend's own Dynamic
+        SetExternalDynamicMode(!enabled                               ? ExternalMode::Off
+                               : state.dlssgMfgMax.value_or(0) >= 2 ? ExternalMode::Ilion
+                                                                      : ExternalMode::Native);
         break;
     case Provider::DlssgOutput:
         config->FGDLSSGForceDMFG = enabled;
@@ -226,6 +249,10 @@ int MaxCount()
         return std::clamp(config->FGDLSSGInterpolationCount.value_or_default(), 1, limit);
     case Provider::DlssgGame:
     {
+        // ILION Dynamic: the maximum its controller uses (IlionMaxCount)
+        if (config->FGDLSSGIlionDynamic.value_or_default())
+            return std::clamp(IlionMaxCount(), 1, limit);
+
         // No override: the game's own choice, as far as ILION saw it
         if (!config->FGDLSSGOverrideInterpolationCount.has_value() || config->FGDLSSGOverrideInterpolationCount.value() <= 0)
             return std::clamp(State::Instance().dlssgDetectedInterpolationCount, 1, limit);
@@ -396,14 +423,23 @@ int ExternalApplied(int* requested, AppliedSource* source)
     return asked;
 }
 
-float ExternalCapRealFps()
+float ExternalCapRealFps(int framesToGenerate)
 {
     if (Current() != Provider::DlssgGame)
         return 0.0f;
 
+    const float cap = CapFps();
+
+    // ILION Dynamic: the frames this real frame generates, which the backend was checked to take
+    // (ExternalRealFrame), once the presents showed the generated frames; until then the cap waits
+    if (IlionDrivesExternal())
+    {
+        const int count = framesToGenerate >= 0 ? framesToGenerate : ilionCount.load();
+        return cap > 0.0f && presentsSeen.load() && count >= 1 ? cap / (float) (count + 1) : 0.0f;
+    }
+
     // Safe fallback: only a multiplier measured at the presents sets the real-frame cap. With only the asked count the
     // cap waits: a wrong guess would hold the game below the target
-    const float cap = CapFps();
     AppliedSource source = AppliedSource::None;
     const int applied = ExternalApplied(nullptr, &source);
     const bool confirmed = source == AppliedSource::Measured;
@@ -463,13 +499,208 @@ float CapFps()
     case Provider::FsrFg:
         return OwnRunning() && target > 0.0f ? target : 0.0f;
     case Provider::DlssgGame:
-        // The backend's Dynamic holds the target by itself; a fixed multiplier is capped until the loop guard trips
+        // ILION Dynamic: the backend has no controller of its own, the cap holds. The backend's Dynamic holds the
+        // target by itself; a fixed multiplier is capped until the loop guard trips
+        if (IlionDrivesExternal())
+            return ExternalGenerating() && target > 0.0f ? target : 0.0f;
         if (BackendDynamic() || ExternalCapSuspended())
             return 0.0f;
         return ExternalGenerating() && target > 0.0f ? target : 0.0f;
     default:
         return 0.0f;
     }
+}
+
+ExternalMode ExternalDynamicMode()
+{
+    auto config = Config::Instance();
+    if (config->FGDLSSGIlionDynamic.value_or_default())
+        return ExternalMode::Ilion;
+    if (config->FGDLSSGOverrideForceDMFG.value_or_default() && State::Instance().dlssgGameDMFGSupported)
+        return ExternalMode::Native;
+    return ExternalMode::Off;
+}
+
+void SetExternalDynamicMode(ExternalMode mode)
+{
+    auto config = Config::Instance();
+    config->FGDLSSGIlionDynamic = mode == ExternalMode::Ilion;
+    config->FGDLSSGOverrideForceDMFG = mode == ExternalMode::Native;
+    ilionRefused.store(nullptr);
+    StreamlineHooks::updateDlssgOptions();
+}
+
+bool IlionDrivesExternal()
+{
+    return Config::Instance()->FGDLSSGIlionDynamic.value_or_default() && ilionRefused.load() == nullptr &&
+           Current() == Provider::DlssgGame && StreamlineHooks::isDlssgHooked();
+}
+
+int IlionExternalCount() { return std::clamp(ilionCount.load(), 1, IlionMaxCount()); }
+
+const char* IlionExternalRefused()
+{
+    return Config::Instance()->FGDLSSGIlionDynamic.value_or_default() ? ilionRefused.load() : nullptr;
+}
+
+namespace
+{
+void Refuse(const char* why)
+{
+    const char* none = nullptr;
+    if (ilionRefused.compare_exchange_strong(none, why))
+    {
+        LOG_WARN("ILION Dynamic (game's DLSSG) stopped: {}", why);
+        ilionPending.store(true); // the game's own options go back to the backend (fixed count, the maximum)
+    }
+}
+} // namespace
+
+void ExternalRealFrame(int framesToGenerate, double sleptMs)
+{
+    // The R3 controller, an instance of its own: XeFG's R3 (XeFG_DynamicMFG) is not touched
+    static XeFG_DynamicCount controller;
+    static bool active = false;
+    static bool lastCap = false;
+    static double lastFrameMs = 0.0;
+    static double askedAtMs = 0.0; // when the count in ilionCount was asked for; 0 once the backend took it
+    static double logMs = 0.0;
+
+    const double now = Util::MillisecondsNow();
+    const double frameMs = lastFrameMs > 0.0 ? now - lastFrameMs : 0.0;
+    lastFrameMs = now;
+
+    if (!IlionDrivesExternal())
+    {
+        if (active)
+        {
+            LOG_INFO("ILION Dynamic (game's DLSSG): off");
+            controller.Reset();
+            active = false;
+            presentsSeen.store(false);
+        }
+        return;
+    }
+
+    const int maxCount = IlionMaxCount();
+
+    if (!active)
+    {
+        // As R3: start at 2X, the settling window is never spent at the old fixed maximum
+        controller.Restart();
+        active = true;
+        lastCap = false;
+        presentsSeen.store(false);
+        ilionCount.store(1);
+        ilionPending.store(true);
+        askedAtMs = now;
+        LOG_INFO("ILION Dynamic (game's DLSSG): on, starting at 2X, maximum {}X", maxCount + 1);
+        return;
+    }
+
+    if (measuredPerFrameX100.load() >= 150)
+        presentsSeen.store(true);
+
+    int asked = ilionCount.load();
+
+    // A lower maximum is followed at once
+    if (asked > maxCount)
+    {
+        ilionCount.store(maxCount);
+        ilionPending.store(true);
+        askedAtMs = now;
+        return;
+    }
+
+    // The game's DLSSG generating nothing (its menu, a pause) or a long gap (a load): nothing to judge, a pending
+    // check starts over
+    if (framesToGenerate <= 0 || frameMs > 1000.0)
+    {
+        if (askedAtMs > 0.0)
+            askedAtMs = now;
+        return;
+    }
+
+    // The backend has to take the count asked for: this frame's MultiFrameCount shows it. Frames still at the old
+    // count are not judged; the count is sent once more after 0.5 s, 2 s without it means the backend doesn't follow
+    // ILION's count
+    static bool resent = false;
+    if (framesToGenerate != asked)
+    {
+        if (askedAtMs <= 0.0)
+            askedAtMs = now; // the game changed the count itself: ILION's goes back
+        if (!resent && now - askedAtMs > 500.0)
+        {
+            resent = true;
+            ilionPending.store(true);
+        }
+        if (now - askedAtMs > 2000.0)
+            Refuse("The backend didn't take the multiplier ILION asked for within 2 s");
+        return;
+    }
+    resent = false;
+
+    if (askedAtMs > 0.0)
+    {
+        LOG_INFO("ILION Dynamic (game's DLSSG): the backend took {}X after {:.0f} ms", asked + 1, now - askedAtMs);
+        askedAtMs = 0.0;
+    }
+
+    // The presents must never show more frames than the maximum: the backend would be ignoring it
+    if (const int perFrameX100 = measuredPerFrameX100.load();
+        perFrameX100 >= 150 && (perFrameX100 + 50) / 100 > maxCount + 1)
+    {
+        Refuse("The backend presented more frames than the maximum multiplier");
+        return;
+    }
+
+    // A hitch or a load is no sample; without a target there is nothing to aim at, the count stays
+    const float target = TargetFps();
+    if (frameMs <= 0.0 || frameMs > 1000.0 || target <= 0.0f)
+        return;
+
+    // The same feed as R3 with "Use target as cap": the real frame interval and the part of it ILION's limiter slept
+    // (never counted as render time), the target, the cap or the FPS limit, the maximum and the count in use. No 1X:
+    // eOn with no frames to generate is not the game's DLSSG off
+    auto config = Config::Instance();
+    const bool cap = TargetAsCap();
+    if (cap != lastCap)
+        controller.Restart();
+    lastCap = cap;
+
+    int next = controller.Update({ now, frameMs, sleptMs, (double) target, 0.0,
+                                   cap ? (double) target : (double) config->FramerateLimit.value_or_default(), maxCount,
+                                   asked, 1, 1 });
+    next = std::clamp(next, 1, maxCount);
+
+    if (next != asked || now - logMs >= 5000.0)
+    {
+        static constexpr const char* reasons[] = { "", "up", "down", "try down", "undo", "no gain, back" };
+        const auto reason = controller.LastReason();
+        spdlog::log(next != asked ? spdlog::level::info : spdlog::level::debug,
+                    __FUNCTION__ " ILION Dynamic (game's DLSSG) {}X{}{}: estimated output {:.1f} fps, target {:.1f} "
+                                 "({}), slept {:.2f} ms of {:.2f} ms, max {}X",
+                    asked + 1, next != asked ? std::format(" -> {}X", next + 1) : std::string(),
+                    reason != XeFG_DynamicCount::Reason::None ? std::format(" ({})", reasons[(int) reason])
+                                                              : std::string(),
+                    controller.PresentedFps(), (double) target, cap ? "cap" : "no cap", sleptMs, frameMs,
+                    maxCount + 1);
+        logMs = now;
+    }
+
+    if (next != asked)
+    {
+        ilionCount.store(next);
+        ilionPending.store(true);
+        askedAtMs = now;
+    }
+}
+
+void ApplyPendingExternalCount()
+{
+    // Outside the NGX evaluation: slDLSSGSetOptions with the game's last options, Streamline_Hooks puts in the count
+    if (ilionPending.load() && ilionPending.exchange(false) && Current() == Provider::DlssgGame)
+        StreamlineHooks::updateDlssgOptions();
 }
 
 Status Get()
@@ -590,10 +821,12 @@ Status Get()
     if (s.provider == Provider::DlssgGame)
     {
         s.backendDynamic = BackendDynamic();
+        s.ilionDrives = IlionDrivesExternal();
+        s.ilionRefused = IlionExternalRefused();
         if (TargetAsCap() && TargetFps() > 0.0f)
         {
             s.capByBackend = s.backendDynamic;
-            s.capSuspended = !s.backendDynamic && ExternalCapSuspended();
+            s.capSuspended = !s.backendDynamic && !s.ilionDrives && ExternalCapSuspended();
         }
     }
 

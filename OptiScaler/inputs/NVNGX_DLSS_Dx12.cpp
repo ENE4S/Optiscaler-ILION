@@ -25,6 +25,7 @@
 #include <ankerl/unordered_dense.h>
 #include <misc/IdentifyGpu.h>
 #include <misc/FrameLimit.h>
+#include <misc/IlionDynamicMfg.h>
 
 static ankerl::unordered_dense::map<unsigned int, ContextData<IFeature_Dx12>> Dx12Contexts;
 static std::unordered_map<unsigned int, NVSDK_NGX_Feature> HandleToFeature;
@@ -1190,9 +1191,11 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D12_EvaluateFeature(ID3D12GraphicsCom
         {
             State::Instance().dlssgFgEvaluations++;
 
-            // ILION: the game's DLSSG (DLSS Enabler...) with a target cap is held here, once per real frame on the
-            // game's render thread (FrameLimit::sleepExternalFg)
-            FrameLimit::sleepExternalFg();
+            // ILION: the game's DLSSG (DLSS Enabler...) with a target cap is held here, once per real frame
+            // (FrameLimit::sleepExternalFg); then ILION Dynamic's controller sees this frame, its count and that
+            // sleep. It only picks the next count: Streamline is called later, outside this evaluation
+            const double slept = FrameLimit::sleepExternalFg(frameCount);
+            IlionDynamicMfg::ExternalRealFrame(frameCount, slept);
         }
 
         float dlssgCameraNear = 0.0f;

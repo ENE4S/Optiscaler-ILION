@@ -15,6 +15,7 @@
 #include <framegen/xefg/XeFG_Dx12.h>
 #include <proxies/KernelBase_Proxy.h>
 #include <imgui/ImGuiNotify.hpp>
+#include <misc/IlionDynamicMfg.h>
 
 #include <json.hpp>
 #include <sl1_reflex.h>
@@ -643,6 +644,10 @@ sl::Result StreamlineHooks::hkslEvaluateFeature(sl::Feature feature, const sl::F
 {
     LOG_DEBUG("frameIndex: {}", static_cast<uint32_t>(frame));
 
+    // ILION Dynamic for the game's DLSSG: a count its controller changed is sent here, on the game's thread before
+    // Streamline runs anything, never from inside the NGX DLSSG evaluation
+    IlionDynamicMfg::ApplyPendingExternalCount();
+
     if (State::Instance().activeFgInput == FGInput::DLSSG && numInputs > 0 && inputs != nullptr)
     {
         for (uint32_t i = 0; i < numInputs; i++)
@@ -1254,6 +1259,9 @@ bool StreamlineHooks::hklocal_dlssg_slOnPluginLoad(sl::param::IParameters* param
 sl::Result StreamlineHooks::hkslSetConstants(const sl::Constants& values, const sl::FrameToken& frame,
                                              const sl::ViewportHandle& viewport)
 {
+    // ILION Dynamic for the game's DLSSG: as in hkslEvaluateFeature, once per game frame and outside NGX
+    IlionDynamicMfg::ApplyPendingExternalCount();
+
     std::scoped_lock lock(setConstantsMutex);
     LOG_TRACE("called with frameIndex: {}, viewport: {}", (unsigned int) frame, (unsigned int) viewport);
 
@@ -1407,6 +1415,14 @@ sl::Result StreamlineHooks::hkslDLSSGSetOptions(const sl::ViewportHandle& viewpo
                 newOptions.numFramesToGenerate = overrideCount;
             else if (!enableDynamicMode)
                 newOptions.mode = sl::DLSSGMode::eOff;
+        }
+
+        // ILION Dynamic for the game's DLSSG: a fixed mode with the count ILION's controller chose, never the
+        // backend's eDynamic (its own controller would answer ILION's cap by raising the multiplier)
+        if (IlionDynamicMfg::IlionDrivesExternal() && newOptions.mode != sl::DLSSGMode::eOff)
+        {
+            newOptions.mode = sl::DLSSGMode::eOn;
+            newOptions.numFramesToGenerate = IlionDynamicMfg::IlionExternalCount();
         }
     }
 

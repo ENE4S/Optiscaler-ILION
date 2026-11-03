@@ -1,5 +1,6 @@
 #include "pch.h"
 #include <misc/FrameLimit.h>
+#include <misc/IlionDynamicMfg.h>
 #include "Reflex_Hooks.h"
 #include <Config.h>
 
@@ -675,9 +676,9 @@ void ReflexHooks::update(bool fgActive, bool isVulkan)
     {
         if (fakenvapi::isUsingAsMainNvapi())
         {
-            // Don't reload when using Dynamic MFG
+            // Don't reload when using Dynamic MFG (also ILION Dynamic, which changes the count while it runs)
             if (State::Instance().dlssgLastSetMode != sl::DLSSGMode::eDynamic &&
-                !Config::Instance()->FGDLSSGForceDMFG.value_or_default())
+                !Config::Instance()->FGDLSSGForceDMFG.value_or_default() && !IlionDynamicMfg::IlionDrivesExternal())
             {
                 State::Instance().fakenvapiReloadLowLatency = true;
             }

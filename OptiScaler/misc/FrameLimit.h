@@ -23,6 +23,7 @@ class FrameLimit
     static double takeSleepMs();
     // ILION's FG present (fgActive) or the wrapped swapchain's present (plain FPS limit)
     static void sleep(bool fgActive);
-    // The game's DLSSG (DLSS Enabler...) with a target cap: once per DLSSG evaluation, on the game's render thread
-    static void sleepExternalFg();
+    // The game's DLSSG (DLSS Enabler...) with a target cap: once per real frame (first DLSSG evaluation), with the
+    // frames that real frame generates. Returns the time slept, in ms
+    static double sleepExternalFg(int framesToGenerate);
 };

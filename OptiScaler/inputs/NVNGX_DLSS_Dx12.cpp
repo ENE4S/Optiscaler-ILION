@@ -1174,13 +1174,26 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D12_EvaluateFeature(ID3D12GraphicsCom
         int frameCount = 0;
         InParameters->Get("DLSSG.MultiFrameCount", &frameCount);
         State::Instance().dlssgDetectedInterpolationCount = frameCount;
-        State::Instance().dlssgFgEvaluations++;
         State::Instance().dlssgFgLastEvaluateTick = GetTickCount64();
         ReflexHooks::setDlssgFrameCount(frameCount);
 
-        // ILION: the game's DLSSG (DLSS Enabler...) with a target cap is held here, once per real frame on the game's
-        // render thread, at target / the multiplier the backend applies (FrameLimit::sleepExternalFg)
-        FrameLimit::sleepExternalFg();
+        // ILION: Streamline evaluates once per generated frame, DLSSG.MultiFrameIndex 1..MultiFrameCount. A real frame
+        // is the first call: index 1, no index (2X, older Streamline), or an index that doesn't follow the last one (a
+        // sequence cut short by a multiplier change or a reset)
+        static uint32_t lastFrameIndex = 0;
+        uint32_t frameIndex = 0;
+        const bool hasIndex = InParameters->Get("DLSSG.MultiFrameIndex", &frameIndex) == NVSDK_NGX_Result_Success;
+        const bool realFrame = !hasIndex || frameIndex <= 1 || frameIndex <= lastFrameIndex;
+        lastFrameIndex = hasIndex ? frameIndex : 0;
+
+        if (realFrame)
+        {
+            State::Instance().dlssgFgEvaluations++;
+
+            // ILION: the game's DLSSG (DLSS Enabler...) with a target cap is held here, once per real frame on the
+            // game's render thread (FrameLimit::sleepExternalFg)
+            FrameLimit::sleepExternalFg();
+        }
 
         float dlssgCameraNear = 0.0f;
         float dlssgCameraFar = 0.0f;

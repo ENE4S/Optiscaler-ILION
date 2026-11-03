@@ -8508,14 +8508,13 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
             const FGNvngxReplacement activeNvngxFg = state.activeFgNvngx;
 
             // ILION: the game's DLSSG through a replacement (DLSS Enabler...): the multiplier it really applies, kept
-            // apart from the one asked for (DLSSG.MultiFrameCount). Only a measured or reported count is "confirmed"
+            // apart from the one asked for (DLSSG.MultiFrameCount). Only a count measured at the presents is confirmed
             IlionDynamicMfg::AppliedSource externalSource = IlionDynamicMfg::AppliedSource::None;
             const int externalApplied = activeNvngxFg != FGNvngxReplacement::None
                                             ? IlionDynamicMfg::ExternalApplied(nullptr, &externalSource)
                                             : 0;
             const bool externalConfirmed = externalApplied >= 2 &&
-                                           (externalSource == IlionDynamicMfg::AppliedSource::Measured ||
-                                            externalSource == IlionDynamicMfg::AppliedSource::Reported);
+                                           externalSource == IlionDynamicMfg::AppliedSource::Measured;
 
             auto formatFg = [&](std::string_view name, int maxFakeFrames)
             {
@@ -8528,14 +8527,10 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                 if (activeNvngxFg != FGNvngxReplacement::None)
                 {
                     if (!externalConfirmed)
-                        return std::format(" ({} x{} asked, not confirmed)", name, fakeFramesCount + 1);
+                        return std::format(" ({} x{} asked, not measured)", name, fakeFramesCount + 1);
                     if (externalApplied != fakeFramesCount + 1)
-                        return std::format(" ({} x{} {}, asked x{})", name, externalApplied,
-                                           externalSource == IlionDynamicMfg::AppliedSource::Measured ? "measured"
-                                                                                                      : "reported",
-                                           fakeFramesCount + 1);
-                    return std::format(" ({} x{} {})", name, externalApplied,
-                                       externalSource == IlionDynamicMfg::AppliedSource::Measured ? "measured" : "reported");
+                        return std::format(" ({} x{} measured, asked x{})", name, externalApplied, fakeFramesCount + 1);
+                    return std::format(" ({} x{} measured)", name, externalApplied);
                 }
 
                 return std::format(" ({} x{})", name, fakeFramesCount + 1);
@@ -8604,33 +8599,33 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                                               ? frameRate * (double) (interpolatedFrameCount + 1)
                                               : frameRate;
 
-            // Multiplier the shown rate is split by: ILION's own FG, or the game's DLSSG when its multiplier was
-            // measured at this same wrapped swapchain (the overlay is drawn on every one of those presents, so the
-            // shown rate is the measured final rate). The base is then final / multiplier, marked "~" as calculated.
-            // A multiplier only reported by the backend doesn't split: these presents may be the real frames only
-            const bool externalSplit = !interpolatedFrameCount && externalConfirmed &&
-                                       externalSource == IlionDynamicMfg::AppliedSource::Measured;
-            const uint32_t splitMultiplier = interpolatedFrameCount ? interpolatedFrameCount + 1
-                                             : externalSplit         ? (uint32_t) externalApplied
-                                                                     : 0;
-            const char* baseMark = externalSplit ? "~" : "";
+            // Final and base rates, shown as "FPS 191 | Base 64". ILION's own FG: the base is the shown rate / its
+            // multiplier, "~" as calculated (measured with the Vulkan bridge, where the shown rate is calculated
+            // instead). The game's DLSSG: split only when its multiplier was measured at this same wrapped swapchain
+            // (the overlay is drawn on every one of those presents, so the shown rate is the final rate); the base is
+            // then its real frames, counted at the DLSSG evaluation, a measurement
+            const float externalReal = IlionDynamicMfg::ExternalRealFps();
+            const bool externalSplit = !interpolatedFrameCount && externalConfirmed && externalReal > 0.0f;
+            const bool split = interpolatedFrameCount || externalSplit;
+            const double baseFps = interpolatedFrameCount ? shownFrameRate / (double) (interpolatedFrameCount + 1)
+                                   : externalSplit        ? (double) externalReal
+                                                          : 0.0;
+            const char* baseMark = interpolatedFrameCount && !VulkanXeFGDiagnostics::FixActive() ? "~" : "";
 
-            if (splitMultiplier)
+            if (split)
             {
-                const double baseFps = shownFrameRate / (double) splitMultiplier;
-
                 switch (overlayType)
                 {
                 case FpsOverlay_JustFPS:
-                    fpsPart = StrFmt("%6.1f/%s%5.1f ", shownFrameRate, baseMark, baseFps);
+                    fpsPart = StrFmt("FPS %.0f | Base %s%.0f ", shownFrameRate, baseMark, baseFps);
                     break;
 
                 case FpsOverlay_Simple:
-                    fpsPart = StrFmt("FPS: %6.1f/%s%5.1f, %7.2f ms", shownFrameRate, baseMark, baseFps, frameTime);
+                    fpsPart = StrFmt("FPS %.0f | Base %s%.0f, %7.2f ms", shownFrameRate, baseMark, baseFps, frameTime);
                     break;
 
                 default:
-                    fpsPart = StrFmt("FPS: %6.1f/%s%5.1f, Avg: %6.1f", shownFrameRate, baseMark, baseFps,
+                    fpsPart = StrFmt("FPS %.0f | Base %s%.0f, Avg: %6.1f", shownFrameRate, baseMark, baseFps,
                                      1000.0f / averageFrameTime);
                     break;
                 }
@@ -8749,10 +8744,8 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                 const ImVec4 inputOrange = toneMapColor(ImVec4(1.0f, 140.0f / 255.0f, 0.0f, 1.0f));
 
                 OverlayRowParts("FPS",
-                                { { StrFmt("%.1f", shownFrameRate), &fpsOrange },
-                                  { splitMultiplier
-                                        ? StrFmt(" / %s%.1f", baseMark, shownFrameRate / (double) splitMultiplier)
-                                        : std::string(),
+                                { { split ? StrFmt("%.0f", shownFrameRate) : StrFmt("%.1f", shownFrameRate), &fpsOrange },
+                                  { split ? StrFmt("  |  Base %s%.0f", baseMark, baseFps) : std::string(),
                                     nullptr } },
                                 rowWidth);
 
@@ -8835,10 +8828,8 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
 
                 OverlayCellRowTitle(Tr("PERFORMANCE"));
 
-                OverlayCell("FPS", { { StrFmt("%.1f", shownFrameRate), &fpsOrange },
-                                     { splitMultiplier
-                                           ? StrFmt(" / %s%.1f", baseMark, shownFrameRate / (double) splitMultiplier)
-                                           : std::string(),
+                OverlayCell("FPS", { { split ? StrFmt("%.0f", shownFrameRate) : StrFmt("%.1f", shownFrameRate), &fpsOrange },
+                                     { split ? StrFmt("  |  Base %s%.0f", baseMark, baseFps) : std::string(),
                                        nullptr } });
 
                 if (!showFrameTimes)
@@ -10994,6 +10985,7 @@ struct MfgCostState
     int source = -1;           // the counter of the current generation, chosen at its first quarter
     double endedAt = -1.0e9;   // a stop shorter than 3 s (a multiplier change) keeps that counter
     unsigned multiplier = 0;
+    bool multiplierAsked = false; // the game's DLSSG: only the multiplier asked for, not measured at the presents
 
     double reference[SourceCount] {}; // FPS per counter from the last capture; 0: none
 
@@ -11080,9 +11072,19 @@ static void UpdateMfgCost(State& state, double nowMs)
     const bool generating = (optiFg && !fg->IsPaused()) || (!optiFg && dlssgFg);
 
     if (optiFg && fg->GetInterpolatedFrameCount() > 0)
+    {
         m.multiplier = fg->GetInterpolatedFrameCount() + 1;
+        m.multiplierAsked = false;
+    }
     else if (dlssgFg && state.dlssgDetectedInterpolationCount > 0)
-        m.multiplier = state.dlssgDetectedInterpolationCount + 1;
+    {
+        // The game's DLSSG: the multiplier measured at the presents (IlionDynamicMfg), else the one asked for.
+        // Its counter (State::dlssgFgEvaluations) counts real frames, the first evaluation of each one
+        IlionDynamicMfg::AppliedSource source = IlionDynamicMfg::AppliedSource::None;
+        const int applied = IlionDynamicMfg::ExternalApplied(nullptr, &source);
+        m.multiplierAsked = source != IlionDynamicMfg::AppliedSource::Measured;
+        m.multiplier = m.multiplierAsked ? state.dlssgDetectedInterpolationCount + 1 : (unsigned) applied;
+    }
 
     const uint64_t counts[S::SourceCount] = { upscaler != nullptr ? (uint64_t) upscaler->FrameCount() : 0,
                                               fg != nullptr ? fg->FrameCount() : 0, state.dlssgFgEvaluations.load(), 0 };
@@ -11319,7 +11321,9 @@ static MfgCostAreas DrawMfgCost(const ImVec2& min, const ImVec2& size)
 
     // Title and the multiplier in use
     const float titleSize = std::floor(fs * L::title);
-    const std::string multiplier = m.generating && m.multiplier > 1 ? StrFmt("\xC3\x97%u", m.multiplier) : std::string();
+    const std::string multiplier = m.generating && m.multiplier > 1
+                                       ? StrFmt("\xC3\x97%u%s", m.multiplier, m.multiplierAsked ? "?" : "")
+                                       : std::string();
     const float multiplierWidth = multiplier.empty() ? 0.0f : bigFont->CalcTextSizeA(titleSize, FLT_MAX, 0.0f, multiplier.c_str()).x;
     const char* title = FgCrtWord("ILION \xC2\xB7 MFG COST", "ILION \xC2\xB7 COSTE MFG");
     draw->AddText(bigFont, fitted(bigFont, titleSize, title, width - multiplierWidth - pad), ImVec2(x, y), ink, title);
@@ -12763,7 +12767,26 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
                              : status.appliedSource == Dmfg::AppliedSource::Measured ? Tr("measured")
                              : status.appliedSource == Dmfg::AppliedSource::Reported ? Tr("reported by the backend")
                                                                                      : Tr("not confirmed");
-        ImGui::Text(Tr("Multiplier: asked %dX  |  applied %dX (%s)"), status.requested, status.multiplier, source);
+        if (status.own)
+        {
+            ImGui::Text(Tr("Multiplier: asked %dX  |  applied %dX (%s)"), status.requested, status.multiplier, source);
+        }
+        else
+        {
+            // The game's DLSSG: asked (DLSSG.MultiFrameCount), measured at the presents, and the backend's own count
+            // since the game's last query, each one as what it is
+            const std::string measured = status.appliedSource == Dmfg::AppliedSource::Measured
+                                             ? std::format("{}X", status.multiplier)
+                                             : std::string(Tr("not measured"));
+            ImGui::Text(Tr("Multiplier: asked %dX  |  measured %s"), status.requested, measured.c_str());
+            if (status.reported > 0)
+            {
+                ImGui::SameLine();
+                ImGui::TextDisabled(Tr("|  backend reports %d"), status.reported);
+                ShowTooltip("Frames the backend says it presented since the game last asked (Streamline). It is the "
+                            "multiplier only if the game asks once per frame, so ILION doesn't use it to limit.");
+            }
+        }
 
         if (!status.own && status.requested > 0 && status.multiplier != status.requested &&
             status.appliedSource != Dmfg::AppliedSource::Requested)

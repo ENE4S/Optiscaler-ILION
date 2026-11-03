@@ -296,11 +296,12 @@ class State
     bool dlssgGameDMFGSupported = false;
     sl::DLSSGMode dlssgLastSetMode = sl::DLSSGMode::eOff;
     int dlssgDetectedInterpolationCount = 0;
-    // ILION: calls of the game's DLSSG evaluate (one per game frame) and the tick of the last one, for the MFG cost screen
+    // ILION: real frames the game's DLSSG evaluated and the tick of the last call. Streamline evaluates once per
+    // generated frame (DLSSG.MultiFrameIndex 1..MultiFrameCount): only the first call of each real frame is counted
     std::atomic<uint64_t> dlssgFgEvaluations { 0 };
     std::atomic<uint64_t> dlssgFgLastEvaluateTick { 0 };
-    // ILION: Streamline's DLSSGState::numFramesActuallyPresented from the game's last slDLSSGGetState and its tick, the
-    // backend's own report that frames were presented (IlionDynamicMfg: "confirmed")
+    // ILION: Streamline's DLSSGState::numFramesActuallyPresented from the game's last slDLSSGGetState and its tick:
+    // frames presented since the game's previous slDLSSGGetState, the backend's own count, not a multiplier
     std::atomic<uint32_t> dlssgFramesActuallyPresented { 0 };
     std::atomic<uint64_t> dlssgFramesPresentedTick { 0 };
 

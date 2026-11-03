@@ -22,7 +22,9 @@ namespace
 constexpr uint64_t kExternalWindowMs = 1000;
 
 std::atomic<uint64_t> wrappedPresents { 0 };
-std::atomic<int> measuredPerFrameX100 { 0 }; // wrapped presents per DLSSG evaluation x 100, 0 unknown
+std::atomic<int> measuredPerFrameX100 { 0 }; // wrapped presents per real DLSSG frame x 100, 0 unknown
+std::atomic<float> measuredPresentFps { 0.0f }; // wrapped presents per second of the last window
+std::atomic<float> measuredRealFps { 0.0f };    // real DLSSG frames per second of the last window
 std::atomic<int> capSuspendedAt { 0 };       // asked multiplier the external cap was suspended at, 0 not suspended
 
 bool OwnRunning()
@@ -280,12 +282,15 @@ void NoteWrappedPresent()
 {
     const uint64_t presents = wrappedPresents.fetch_add(1, std::memory_order_relaxed) + 1;
 
-    // Present thread: every 500 ms, the presents the wrapped swapchain made per frame the game's DLSSG evaluated.
-    // With the generated frames going through it, that is the multiplier the backend really applies (DLSS Enabler
-    // can generate another count than the one asked for); about 1 means it sees only the game's frames
+    // Present thread: every 500 ms, the presents the wrapped swapchain made per real frame the game's DLSSG evaluated
+    // (State::dlssgFgEvaluations counts MultiFrameIndex 1 only). With the generated frames going through it, that is
+    // the multiplier the backend really applies (DLSS Enabler can generate another count than the one asked for);
+    // about 1 means it sees only the game's frames, more than the backend's maximum means it sees other presents too
     static uint64_t lastPresents = 0;
     static uint64_t lastEvaluations = 0;
     static double lastMs = 0.0;
+    static int candidate = 0;
+    static int unsettled = 0; // windows in a row that matched no whole multiplier
 
     const double now = Util::MillisecondsNow();
     const uint64_t evaluations = State::Instance().dlssgFgEvaluations.load();
@@ -295,8 +300,14 @@ void NoteWrappedPresent()
         lastPresents = presents;
         lastEvaluations = evaluations;
         lastMs = now;
+        candidate = 0;
+        unsettled = 0;
         if (!ExternalGenerating())
+        {
             measuredPerFrameX100.store(0);
+            measuredPresentFps.store(0.0f);
+            measuredRealFps.store(0.0f);
+        }
         return;
     }
 
@@ -304,32 +315,42 @@ void NoteWrappedPresent()
         return;
 
     const uint64_t frames = evaluations - lastEvaluations;
+    measuredPresentFps.store((float) ((presents - lastPresents) * 1000.0 / (now - lastMs)));
+    measuredRealFps.store((float) (frames * 1000.0 / (now - lastMs)));
+
     if (frames >= 10)
     {
         // A count is taken only when the window lands within 0.3 of a whole number, and only after two windows in a
-        // row agree: a hitch or a menu can't make the cap jump between multipliers. Anything else keeps the last
-        // stable count; a window that is clearly not a batch of frames (under 1.5) clears it
-        static int candidate = 0;
+        // row agree: a hitch or a menu can't make the cap jump between multipliers. A window between two counts (a
+        // change in the middle of it) keeps the last one, three in a row drop it: the backend keeps changing. A window
+        // that is clearly not a batch of frames (under 1.5, or above the most the backend can make) clears it
         const int perFrameX100 = (int) ((presents - lastPresents) * 100 / frames);
         const int rounded = (perFrameX100 + 50) / 100;
         const bool whole = std::abs(perFrameX100 - rounded * 100) <= 30;
+        const int most = State::Instance().dlssgMfgMax.value_or(5) + 1;
 
-        if (perFrameX100 < 150)
+        if (perFrameX100 < 150 || rounded > most)
         {
             candidate = 0;
+            unsettled = 0;
             if (measuredPerFrameX100.exchange(0) != 0)
-                LOG_INFO("ILION external FG: {:.2f} presents per DLSSG frame, the applied multiplier can't be measured",
+                LOG_INFO("ILION external FG: {:.2f} presents per real DLSSG frame, the applied multiplier can't be "
+                         "measured",
                          perFrameX100 / 100.0);
         }
         else if (whole && rounded == candidate)
         {
+            unsettled = 0;
             if (measuredPerFrameX100.exchange(rounded * 100) != rounded * 100)
-                LOG_INFO("ILION external FG: applies {}X (asked {}X), {:.2f} presents per DLSSG frame", rounded,
+                LOG_INFO("ILION external FG: applies {}X (asked {}X), {:.2f} presents per real DLSSG frame", rounded,
                          State::Instance().dlssgDetectedInterpolationCount + 1, perFrameX100 / 100.0);
         }
         else
         {
             candidate = whole ? rounded : 0;
+            if (!whole && ++unsettled >= 3 && measuredPerFrameX100.exchange(0) != 0)
+                LOG_INFO("ILION external FG: {:.2f} presents per real DLSSG frame for 1.5 s, no stable multiplier",
+                         perFrameX100 / 100.0);
         }
     }
 
@@ -338,9 +359,18 @@ void NoteWrappedPresent()
     lastMs = now;
 }
 
-int ExternalApplied(int* requested, AppliedSource* source)
+float ExternalRealFps() { return ExternalGenerating() ? measuredRealFps.load() : 0.0f; }
+
+int ExternalReported()
 {
     const auto& state = State::Instance();
+    const uint64_t tick = state.dlssgFramesPresentedTick.load();
+    const uint32_t reported = state.dlssgFramesActuallyPresented.load();
+    return ExternalGenerating() && tick != 0 && GetTickCount64() - tick < kExternalWindowMs ? (int) reported : 0;
+}
+
+int ExternalApplied(int* requested, AppliedSource* source)
+{
     int asked = 0;
     ExternalGenerating(&asked);
 
@@ -359,17 +389,8 @@ int ExternalApplied(int* requested, AppliedSource* source)
         return (perFrameX100 + 50) / 100;
     }
 
-    // The backend's own report to the game (Streamline numFramesActuallyPresented)
-    const uint64_t tick = state.dlssgFramesPresentedTick.load();
-    if (const uint32_t reported = state.dlssgFramesActuallyPresented.load();
-        reported > 1 && tick != 0 && GetTickCount64() - tick < kExternalWindowMs)
-    {
-        if (source != nullptr)
-            *source = AppliedSource::Reported;
-        return (int) reported;
-    }
-
-    // Only what was asked for: not confirmed
+    // Only what was asked for: not confirmed. Streamline's numFramesActuallyPresented counts the frames since the
+    // game's last slDLSSGGetState, a multiplier only if the game asks once per frame: shown apart (ExternalReported)
     if (source != nullptr)
         *source = AppliedSource::Requested;
     return asked;
@@ -380,12 +401,12 @@ float ExternalCapRealFps()
     if (Current() != Provider::DlssgGame)
         return 0.0f;
 
-    // Safe fallback: only a confirmed multiplier (measured, or reported by the backend) sets the real-frame cap. With
-    // only the asked count the cap waits: a wrong guess would hold the game below the target
+    // Safe fallback: only a multiplier measured at the presents sets the real-frame cap. With only the asked count the
+    // cap waits: a wrong guess would hold the game below the target
     const float cap = CapFps();
     AppliedSource source = AppliedSource::None;
     const int applied = ExternalApplied(nullptr, &source);
-    const bool confirmed = source == AppliedSource::Measured || source == AppliedSource::Reported;
+    const bool confirmed = source == AppliedSource::Measured;
     return cap > 0.0f && confirmed && applied >= 1 ? cap / (float) applied : 0.0f;
 }
 
@@ -399,7 +420,7 @@ bool ExternalCapSuspended()
     int requested = 0;
     AppliedSource source = AppliedSource::None;
     const int applied = ExternalApplied(&requested, &source);
-    const bool confirmed = source == AppliedSource::Measured || source == AppliedSource::Reported;
+    const bool confirmed = source == AppliedSource::Measured;
 
     // Another asked count (or the generation stopped): the cap may be tried again
     if (int held = capSuspendedAt.load(); held != 0 && held != requested &&
@@ -508,8 +529,8 @@ Status Get()
     }
     else if (s.provider == Provider::DlssgGame)
     {
-        // Asked for (DLSSG.MultiFrameCount) and applied (measured from the presents, or the backend's own report);
-        // only a measured or reported count confirms the generation
+        // Asked for (DLSSG.MultiFrameCount), measured from the presents, and the backend's own count (reported, not a
+        // multiplier for sure); only a measured count confirms the generation
         int requested = 0;
         AppliedSource source = AppliedSource::None;
         const int applied = ExternalApplied(&requested, &source);
@@ -518,14 +539,15 @@ Status Get()
             s.requested = requested;
             s.multiplier = applied;
             s.appliedSource = source;
-            s.gen = source == AppliedSource::Measured || source == AppliedSource::Reported ? Gen::Confirmed : Gen::Detected;
+            s.gen = source == AppliedSource::Measured ? Gen::Confirmed : Gen::Detected;
+            s.reported = ExternalReported();
         }
         else
         {
             s.gen = Gen::Unknown;
         }
 
-        // Real frames: the game's DLSSG evaluates once per rendered frame
+        // Real frames: the first DLSSG evaluation of each rendered frame (MultiFrameIndex 1)
         static uint64_t lastCount = 0;
         static double lastMs = 0.0;
         static float rate = 0.0f;
@@ -550,12 +572,18 @@ Status Get()
         }
     }
 
-    // Measured multiplier of the game's DLSSG: the final rate comes from the presents themselves
-    if (s.appliedSource == AppliedSource::Measured && s.baseFps > 0.0f)
+    // Measured multiplier of the game's DLSSG: the presents are the final frames, their rate is the final rate.
+    // Otherwise the final rate is base x the multiplier asked for, an estimate
+    if (const float presentFps = measuredPresentFps.load();
+        s.provider == Provider::DlssgGame && s.appliedSource == AppliedSource::Measured && presentFps > 0.0f)
+    {
+        s.finalFps = presentFps;
         s.finalMeasured = true;
-
-    if (s.baseFps > 0.0f && s.multiplier > 0 && (s.provider == Provider::DlssgGame || !s.finalMeasured))
+    }
+    else if (s.baseFps > 0.0f && s.multiplier > 0 && (s.provider == Provider::DlssgGame || !s.finalMeasured))
+    {
         s.finalFps = s.baseFps * (float) s.multiplier;
+    }
 
     // The game's DLSSG: whose the target is. In eDynamic the backend's own controller; with a fixed multiplier ILION's
     // cap, unless the loop guard suspended it

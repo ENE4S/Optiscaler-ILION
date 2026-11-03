@@ -23,6 +23,7 @@ constexpr uint64_t kExternalWindowMs = 1000;
 
 std::atomic<uint64_t> wrappedPresents { 0 };
 std::atomic<int> measuredPerFrameX100 { 0 }; // wrapped presents per DLSSG evaluation x 100, 0 unknown
+std::atomic<int> capSuspendedAt { 0 };       // asked multiplier the external cap was suspended at, 0 not suspended
 
 bool OwnRunning()
 {
@@ -388,10 +389,40 @@ float ExternalCapRealFps()
     return cap > 0.0f && confirmed && applied >= 1 ? cap / (float) applied : 0.0f;
 }
 
+bool BackendDynamic()
+{
+    return Current() == Provider::DlssgGame && State::Instance().dlssgLastSetMode == sl::DLSSGMode::eDynamic;
+}
+
+bool ExternalCapSuspended()
+{
+    int requested = 0;
+    AppliedSource source = AppliedSource::None;
+    const int applied = ExternalApplied(&requested, &source);
+    const bool confirmed = source == AppliedSource::Measured || source == AppliedSource::Reported;
+
+    // Another asked count (or the generation stopped): the cap may be tried again
+    if (int held = capSuspendedAt.load(); held != 0 && held != requested &&
+                                          capSuspendedAt.compare_exchange_strong(held, 0))
+        LOG_INFO("ILION external FG: target cap resumed, {}X asked now", requested);
+
+    // More frames than asked while ILION lowers the real frames: the backend's own controller answers the cap by
+    // raising the multiplier, the cap would chase it down to its maximum. Kept off until the asked count changes
+    int expected = 0;
+    if (confirmed && requested > 0 && applied > requested && capSuspendedAt.compare_exchange_strong(expected, requested))
+        LOG_WARN("ILION external FG: target cap suspended, the backend applies {}X although {}X was asked", applied,
+                 requested);
+
+    return capSuspendedAt.load() != 0;
+}
+
 float CapFps()
 {
     if (!TargetAsCap())
+    {
+        capSuspendedAt.store(0);
         return 0.0f;
+    }
 
     const auto& state = State::Instance();
 
@@ -411,6 +442,9 @@ float CapFps()
     case Provider::FsrFg:
         return OwnRunning() && target > 0.0f ? target : 0.0f;
     case Provider::DlssgGame:
+        // The backend's Dynamic holds the target by itself; a fixed multiplier is capped until the loop guard trips
+        if (BackendDynamic() || ExternalCapSuspended())
+            return 0.0f;
         return ExternalGenerating() && target > 0.0f ? target : 0.0f;
     default:
         return 0.0f;
@@ -522,6 +556,18 @@ Status Get()
 
     if (s.baseFps > 0.0f && s.multiplier > 0 && (s.provider == Provider::DlssgGame || !s.finalMeasured))
         s.finalFps = s.baseFps * (float) s.multiplier;
+
+    // The game's DLSSG: whose the target is. In eDynamic the backend's own controller; with a fixed multiplier ILION's
+    // cap, unless the loop guard suspended it
+    if (s.provider == Provider::DlssgGame)
+    {
+        s.backendDynamic = BackendDynamic();
+        if (TargetAsCap() && TargetFps() > 0.0f)
+        {
+            s.capByBackend = s.backendDynamic;
+            s.capSuspended = !s.backendDynamic && ExternalCapSuspended();
+        }
+    }
 
     // The limiter FG_Hooks / the wrapped swapchain choose: a target cap is always OptiScaler's own (it knows the
     // multiplier); else Reflex, else XeLL, else OptiScaler's

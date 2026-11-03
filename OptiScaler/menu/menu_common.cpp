@@ -8505,6 +8505,18 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                                                                                : std::string();
 
             const int fakeFramesCount = state.dlssgDetectedInterpolationCount;
+            const FGNvngxReplacement activeNvngxFg = state.activeFgNvngx;
+
+            // ILION: the game's DLSSG through a replacement (DLSS Enabler...): the multiplier it really applies, kept
+            // apart from the one asked for (DLSSG.MultiFrameCount). Only a measured or reported count is "confirmed"
+            IlionDynamicMfg::AppliedSource externalSource = IlionDynamicMfg::AppliedSource::None;
+            const int externalApplied = activeNvngxFg != FGNvngxReplacement::None
+                                            ? IlionDynamicMfg::ExternalApplied(nullptr, &externalSource)
+                                            : 0;
+            const bool externalConfirmed = externalApplied >= 2 &&
+                                           (externalSource == IlionDynamicMfg::AppliedSource::Measured ||
+                                            externalSource == IlionDynamicMfg::AppliedSource::Reported);
+
             auto formatFg = [&](std::string_view name, int maxFakeFrames)
             {
                 if (fakeFramesCount > maxFakeFrames)
@@ -8513,10 +8525,22 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                 else if (fakeFramesCount == 0)
                     return std::format(" ({} off)", name);
 
+                if (activeNvngxFg != FGNvngxReplacement::None)
+                {
+                    if (!externalConfirmed)
+                        return std::format(" ({} x{} asked, not confirmed)", name, fakeFramesCount + 1);
+                    if (externalApplied != fakeFramesCount + 1)
+                        return std::format(" ({} x{} {}, asked x{})", name, externalApplied,
+                                           externalSource == IlionDynamicMfg::AppliedSource::Measured ? "measured"
+                                                                                                      : "reported",
+                                           fakeFramesCount + 1);
+                    return std::format(" ({} x{} {})", name, externalApplied,
+                                       externalSource == IlionDynamicMfg::AppliedSource::Measured ? "measured" : "reported");
+                }
+
                 return std::format(" ({} x{})", name, fakeFramesCount + 1);
             };
 
-            const FGNvngxReplacement activeNvngxFg = state.activeFgNvngx;
             if (activeNvngxFg == FGNvngxReplacement::Arturs)
             {
                 fgText = formatFg("Enabler", Nvngx_FG::getMaxFakeFramesCount());
@@ -8580,22 +8604,34 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                                               ? frameRate * (double) (interpolatedFrameCount + 1)
                                               : frameRate;
 
-            if (interpolatedFrameCount)
+            // Multiplier the shown rate is split by: ILION's own FG, or the game's DLSSG when its multiplier was
+            // measured at this same wrapped swapchain (the overlay is drawn on every one of those presents, so the
+            // shown rate is the measured final rate). The base is then final / multiplier, marked "~" as calculated.
+            // A multiplier only reported by the backend doesn't split: these presents may be the real frames only
+            const bool externalSplit = !interpolatedFrameCount && externalConfirmed &&
+                                       externalSource == IlionDynamicMfg::AppliedSource::Measured;
+            const uint32_t splitMultiplier = interpolatedFrameCount ? interpolatedFrameCount + 1
+                                             : externalSplit         ? (uint32_t) externalApplied
+                                                                     : 0;
+            const char* baseMark = externalSplit ? "~" : "";
+
+            if (splitMultiplier)
             {
-                const double baseFps = shownFrameRate / (double) (interpolatedFrameCount + 1);
+                const double baseFps = shownFrameRate / (double) splitMultiplier;
 
                 switch (overlayType)
                 {
                 case FpsOverlay_JustFPS:
-                    fpsPart = StrFmt("%6.1f/%5.1f ", shownFrameRate, baseFps);
+                    fpsPart = StrFmt("%6.1f/%s%5.1f ", shownFrameRate, baseMark, baseFps);
                     break;
 
                 case FpsOverlay_Simple:
-                    fpsPart = StrFmt("FPS: %6.1f/%5.1f, %7.2f ms", shownFrameRate, baseFps, frameTime);
+                    fpsPart = StrFmt("FPS: %6.1f/%s%5.1f, %7.2f ms", shownFrameRate, baseMark, baseFps, frameTime);
                     break;
 
                 default:
-                    fpsPart = StrFmt("FPS: %6.1f/%5.1f, Avg: %6.1f", shownFrameRate, baseFps, 1000.0f / averageFrameTime);
+                    fpsPart = StrFmt("FPS: %6.1f/%s%5.1f, Avg: %6.1f", shownFrameRate, baseMark, baseFps,
+                                     1000.0f / averageFrameTime);
                     break;
                 }
             }
@@ -8714,8 +8750,8 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
 
                 OverlayRowParts("FPS",
                                 { { StrFmt("%.1f", shownFrameRate), &fpsOrange },
-                                  { interpolatedFrameCount
-                                        ? StrFmt(" / %.1f", shownFrameRate / (double) (interpolatedFrameCount + 1))
+                                  { splitMultiplier
+                                        ? StrFmt(" / %s%.1f", baseMark, shownFrameRate / (double) splitMultiplier)
                                         : std::string(),
                                     nullptr } },
                                 rowWidth);
@@ -8800,8 +8836,8 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                 OverlayCellRowTitle(Tr("PERFORMANCE"));
 
                 OverlayCell("FPS", { { StrFmt("%.1f", shownFrameRate), &fpsOrange },
-                                     { interpolatedFrameCount
-                                           ? StrFmt(" / %.1f", shownFrameRate / (double) (interpolatedFrameCount + 1))
+                                     { splitMultiplier
+                                           ? StrFmt(" / %s%.1f", baseMark, shownFrameRate / (double) splitMultiplier)
                                            : std::string(),
                                        nullptr } });
 
@@ -12597,6 +12633,18 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
     const auto drawMax = [&](float width)
     {
         const int limit = Dmfg::MaxCountLimit();
+
+        // The game's DLSSG in eDynamic: its backend keeps its own maximum, the asked count isn't read
+        if (Dmfg::BackendDynamic())
+        {
+            ImGui::AlignTextToFramePadding();
+            if (limit >= 1)
+                TextWrappedDisabled(Tr("Maximum multiplier: decided by %s's Dynamic (it reports up to %dX)"),
+                                    Dmfg::Get().name, limit + 1);
+            else
+                TextWrappedDisabled(Tr("Maximum multiplier: decided by %s's Dynamic"), Dmfg::Get().name);
+            return;
+        }
         if (limit < 1)
         {
             ImGui::AlignTextToFramePadding();
@@ -12682,12 +12730,24 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
     }
     ImGui::EndDisabled();
 
-    // The cap: also without Dynamic (a fixed multiplier held at the target), through the limiter already in use
+    // The cap: also without Dynamic (a fixed multiplier held at the target), through the limiter already in use. The
+    // game's DLSSG in eDynamic holds the target itself: ILION's cap would fight its controller, so it can't be used
     bool cap = Dmfg::TargetAsCap();
+    ImGui::BeginDisabled(status.backendDynamic);
     if (IlionTheme::Checkbox(TrL("Use target as cap##dmfg"), &cap))
         Dmfg::SetTargetAsCap(cap);
-    ShowTooltip("The limiter already in use (Reflex, XeLL or OptiScaler's) holds the final FPS at the target.\n"
-                "No other limiter is added. Needs a target above 0, except with XeFG Dynamic.");
+    ImGui::EndDisabled();
+    if (status.backendDynamic)
+    {
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            WrappedTooltip("%s", Tr("Not available while the backend's Dynamic MFG is on: the backend aims at the target "
+                                    "itself, and an ILION cap on the real frames makes it raise the multiplier."));
+    }
+    else
+    {
+        ShowTooltip("The limiter already in use (Reflex, XeLL or OptiScaler's) holds the final FPS at the target.\n"
+                    "No other limiter is added. Needs a target above 0, except with XeFG Dynamic.");
+    }
 
     // State: confirmed (the provider reports presented frames), detected (asked for / evaluating), unknown, off
     const char* gen = status.gen == Dmfg::Gen::Confirmed  ? Tr("generating (confirmed)")
@@ -12731,6 +12791,20 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
 
     if (status.capWaiting)
         TextWrappedDisabled("%s", Tr("Target cap waiting: the multiplier the backend applies isn't confirmed yet, so it isn't limited by guesswork"));
+
+    // The game's DLSSG in eDynamic: the target is a goal of the backend, not a cap
+    if (status.backendDynamic)
+        TextWrappedDisabled(Tr("%s's Dynamic MFG chooses the multiplier and its maximum to aim at the target. ILION only "
+                               "sends the target: it is not a cap, and the final FPS may stay below or go above it."),
+                            status.name);
+    if (status.capByBackend)
+        TextWrappedColored(ImVec4(1.f, 0.8f, 0.f, 1.f), "%s",
+                           Tr("Target cap not applied: it stays off while the backend's Dynamic MFG is on."));
+    if (status.capSuspended)
+        TextWrappedColored(ImVec4(1.f, 0.8f, 0.f, 1.f), "%s",
+                           Tr("Target cap suspended: the backend generated more frames than asked while ILION limited "
+                              "the real frames. It stays off until the multiplier asked for changes or the cap is "
+                              "turned off and on."));
 }
 
 void MenuCommon::RenderDynamicMfgCard(RenderMenuContext& ctx)

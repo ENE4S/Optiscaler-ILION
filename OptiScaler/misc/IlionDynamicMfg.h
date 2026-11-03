@@ -5,7 +5,8 @@
 // adds no controller and no limiter of its own:
 //   XeFG (ILION's output)      Dynamic = R3 controller (XeFG_DynamicMFG), count changed live by ILION
 //   DLSSG of the game          Dynamic = Streamline eDynamic, run by the backend (NVIDIA or a replacement such as
-//   (NvngxFG, DLSS Enabler...)  DLSS Enabler) only when it reports support; ILION sets mode, target and maximum
+//   (NvngxFG, DLSS Enabler...)  DLSS Enabler) only when it reports support; ILION sets mode and target, the
+//                               backend keeps its own maximum and holds the target itself (no ILION cap then)
 //   DLSSG (ILION's output)     Dynamic = Streamline eDynamic of ILION's own instance, when it reports support
 //   FSR FG                     no Dynamic (one generated frame)
 // The target cap goes to the one limiter already in use (Reflex, XeLL or OptiScaler's), as FrameLimit::targetFps().
@@ -57,6 +58,9 @@ struct Status
     int requested = 0;       // asked for (the game's DLSSG: DLSSG.MultiFrameCount + 1)
     AppliedSource appliedSource = AppliedSource::None;
     bool capWaiting = false; // "Use target as cap" on, but the game's DLSSG multiplier isn't confirmed yet: not applied
+    bool backendDynamic = false; // the game's DLSSG runs in Streamline eDynamic: its backend chooses multiplier and max
+    bool capByBackend = false;   // "Use target as cap" on, not applied by ILION: the backend's Dynamic owns the target
+    bool capSuspended = false;   // "Use target as cap" on, suspended: the backend applied more than asked under the cap
     float baseFps = 0.0f;
     bool baseMeasured = false;
     float finalFps = 0.0f;
@@ -105,6 +109,15 @@ int ExternalApplied(int* requested = nullptr, AppliedSource* source = nullptr);
 
 // The game's DLSSG with a target cap: the real frames per second that hold it (target / applied multiplier), 0 none
 float ExternalCapRealFps();
+
+// The game's DLSSG runs in Streamline eDynamic (ILION's switch or the game's own choice): its backend chooses the
+// multiplier toward the target, up to its own maximum. ILION's target cap stays off then: lowering the real frames would
+// only make that controller raise the multiplier (a feedback loop up to the backend's maximum)
+bool BackendDynamic();
+
+// The game's DLSSG with a fixed multiplier and the target cap: suspended once the backend applies more frames than
+// asked, until the asked count changes or the cap is turned off
+bool ExternalCapSuspended();
 
 Status Get();
 } // namespace IlionDynamicMfg

@@ -36,6 +36,15 @@ static DescriptorHeapAllocator g_pd3dSrvDescHeapAlloc;
 static ID3D12CommandQueue* g_pd3dCommandQueue = nullptr;
 static ID3D12GraphicsCommandList* g_pd3dCommandList = nullptr;
 static ID3D12CommandAllocator* g_commandAllocators[NUM_BACK_BUFFERS] = {};
+// ILION (after dashdogy 6089672): the allocators are a ring advanced once per menu draw, each with the fence value of
+// its last submission. Indexing them by back buffer reused one the GPU could still be executing whenever more presents
+// than back buffers were in flight (an external FG presenting its generated frames through the wrapped swapchain)
+static ID3D12Fence* g_menuFence = nullptr;
+static HANDLE g_menuFenceEvent = nullptr;
+static UINT64 g_menuFenceValue = 0;
+static UINT64 g_menuSlotFenceValue[NUM_BACK_BUFFERS] = {};
+static UINT g_menuSlot = 0;
+static constexpr DWORD kMenuFenceWaitMs = 100; // a draw waits at most this long for its allocator, else it is skipped
 static ID3D12Resource* g_mainRenderTargetResource[NUM_BACK_BUFFERS] = {};
 static D3D12_CPU_DESCRIPTOR_HANDLE g_mainRenderTargetDescriptor[NUM_BACK_BUFFERS] = {};
 static std::unique_ptr<MenuBlur_Dx12> g_menuBlur;
@@ -128,6 +137,23 @@ static void CreateRenderTargetDx12(ID3D12Device* device, IDXGISwapChain* pSwapCh
     LOG_INFO("done!");
 }
 
+// Whether the GPU is done with everything submitted up to value, waiting at most waitMs. A timeout is never taken as
+// done: the event may fire later, so the fence itself is read again
+static bool WaitMenuFence(UINT64 value, DWORD waitMs)
+{
+    if (value == 0 || g_menuFence == nullptr)
+        return true;
+
+    if (g_menuFence->GetCompletedValue() >= value)
+        return true;
+
+    if (g_menuFenceEvent == nullptr || waitMs == 0 || g_menuFence->SetEventOnCompletion(value, g_menuFenceEvent) != S_OK)
+        return false;
+
+    WaitForSingleObject(g_menuFenceEvent, waitMs);
+    return g_menuFence->GetCompletedValue() >= value;
+}
+
 static void CleanupRenderTargetDx12(bool clearQueue)
 {
     if (!_isInited || !_dx12Device || State::Instance().isShuttingDown)
@@ -156,12 +182,25 @@ static void CleanupRenderTargetDx12(bool clearQueue)
         SAFE_RELEASE(g_pd3dRtvDescHeap);
         SAFE_RELEASE(g_pd3dSrvDescHeap);
 
+        // The allocators may still back submitted menu draws: wait for the last one, bounded
+        if (!WaitMenuFence(g_menuFenceValue, 500))
+            LOG_WARN("Menu draws still on the GPU after 500 ms, releasing the menu's allocators anyway");
+
         for (UINT i = 0; i < NUM_BACK_BUFFERS; ++i)
         {
             SAFE_RELEASE(g_commandAllocators[i]);
+            g_menuSlotFenceValue[i] = 0;
         }
 
         SAFE_RELEASE(g_pd3dCommandList);
+        SAFE_RELEASE(g_menuFence);
+        if (g_menuFenceEvent != nullptr)
+        {
+            CloseHandle(g_menuFenceEvent);
+            g_menuFenceEvent = nullptr;
+        }
+        g_menuFenceValue = 0;
+        g_menuSlot = 0;
 
         if (g_pd3dCommandQueue != nullptr)
             g_pd3dCommandQueue = nullptr;
@@ -438,6 +477,26 @@ static void RenderImGui_DX12(IDXGISwapChain* pSwapChainPlain)
             return;
         }
 
+        // The fence that tells when an allocator of the ring can be reset; without it no allocator would be safe
+        g_menuFenceValue = 0;
+        g_menuSlot = 0;
+        for (UINT i = 0; i < NUM_BACK_BUFFERS; ++i)
+            g_menuSlotFenceValue[i] = 0;
+
+        SAFE_RELEASE(g_menuFence);
+        result = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&g_menuFence));
+        if (result == S_OK && g_menuFenceEvent == nullptr)
+            g_menuFenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+
+        if (result != S_OK || g_menuFenceEvent == nullptr)
+        {
+            LOG_ERROR("Menu fence: {0:X}, event: {1}", (unsigned long) result, g_menuFenceEvent != nullptr);
+            MenuOverlayBase::HideMenu();
+            CleanupRenderTargetDx12(true);
+            pSwapChain->Release();
+            return;
+        }
+
         DXGI_SWAP_CHAIN_DESC scDesc;
         pSwapChain->GetDesc(&scDesc);
 
@@ -510,7 +569,21 @@ static void RenderImGui_DX12(IDXGISwapChain* pSwapChainPlain)
                 ImGui::Render();
 
                 const bool blurMenu = blurReady && MenuCommon::BackgroundBlurUsed();
-                ID3D12CommandAllocator* commandAllocator = g_commandAllocators[backBufferIdx];
+
+                // The next allocator of the ring, reset only once the GPU finished its last submission. If that takes
+                // longer than kMenuFenceWaitMs this present goes without the menu, never with an allocator in use
+                const UINT slot = g_menuSlot;
+                if (g_menuFence == nullptr || !WaitMenuFence(g_menuSlotFenceValue[slot], kMenuFenceWaitMs))
+                {
+                    static uint32_t skipped = 0;
+                    if ((skipped++ % 100) == 0)
+                        LOG_WARN("Menu allocator {} still in use by the GPU after {} ms, menu draw skipped ({} so far)",
+                                 slot, kMenuFenceWaitMs, skipped);
+                    pSwapChain->Release();
+                    return;
+                }
+
+                ID3D12CommandAllocator* commandAllocator = g_commandAllocators[slot];
 
                 auto result = commandAllocator->Reset();
                 if (result != S_OK)
@@ -574,6 +647,13 @@ static void RenderImGui_DX12(IDXGISwapChain* pSwapChainPlain)
 
                 ID3D12CommandList* ppCommandLists[] = { g_pd3dCommandList };
                 ((ID3D12CommandQueue*) currentSCCommandQueue)->ExecuteCommandLists(1, ppCommandLists);
+
+                // This slot is free again once the GPU reaches this value
+                if (const auto signal = ((ID3D12CommandQueue*) currentSCCommandQueue)->Signal(g_menuFence, ++g_menuFenceValue);
+                    signal != S_OK)
+                    LOG_ERROR("Menu fence Signal: {0:X}", (unsigned long) signal);
+                g_menuSlotFenceValue[slot] = g_menuFenceValue;
+                g_menuSlot = (slot + 1) % NUM_BACK_BUFFERS;
 
                 IlionCapture::Submitted((ID3D12CommandQueue*) currentSCCommandQueue);
             }

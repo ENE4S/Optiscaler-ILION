@@ -593,11 +593,13 @@ void IdentifyGpu::updateD3d12Capabilities(D3d12Proxy::PFN_D3D12CreateDevice o_D3
                             else if (card.generation == HwGeneration::kGfx10_3 && !card.is_apu)
                                 res.fsr4Support = FSR4Support::INT8_2;
                             // Van Gogh, Strix Point, and the ones OptiScaler adds without official support (Phoenix,
-                            // Hawk Point, Krackan, Navi 10/12; Navi 14 lacks hardware INT8)
+                            // Hawk Point, Krackan, Navi 12/14). Navi 10 (gfx1010) lacks hardware INT8 (upstream
+                            // ab379b25 "Correct RDNA1 INT8 checks": Navi 14 is gfx1012, Navi 10 was listed by mistake)
                             else if (card.asic_type == AsicType::kGfx10_3_3 || card.asic_type == AsicType::kGfx11_5_0 ||
                                      (card.generation == HwGeneration::kGfx11 && card.is_apu) ||
-                                     card.asic_type == AsicType::kGfx11_5_2 || card.asic_type == AsicType::kGfx10_1_0 ||
-                                     card.asic_type == AsicType::kGfx10_1_0Xl || card.asic_type == AsicType::kGfx10_1_1)
+                                     card.asic_type == AsicType::kGfx11_5_2 || card.asic_type == AsicType::kGfx10_1_1 ||
+                                     card.asic_type == AsicType::kGfx10_1_2 || card.asic_type == AsicType::kGfx10_1_2X ||
+                                     card.asic_type == AsicType::kGfx10_1_2Xt)
                                 res.fsr4Support = FSR4Support::INT8Lite;
                         }
                     }

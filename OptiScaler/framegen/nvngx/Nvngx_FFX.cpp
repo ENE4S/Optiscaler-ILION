@@ -6,6 +6,7 @@
 #include "proxies/NVNGX_Proxy.h"
 #include "proxies/Ntdll_Proxy.h"
 #include <proxies/FfxApi_Proxy.h>
+#include <framegen/ffx/FfxGlobalDebug.h>
 #include <numbers>
 #include <misc/IdentifyGpu.h>
 

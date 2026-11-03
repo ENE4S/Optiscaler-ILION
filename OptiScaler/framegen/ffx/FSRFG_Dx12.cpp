@@ -11,6 +11,7 @@
 
 #include <magic_enum.hpp>
 #include <DirectXMath.h>
+#include "FfxGlobalDebug.h"
 
 using namespace DirectX;
 

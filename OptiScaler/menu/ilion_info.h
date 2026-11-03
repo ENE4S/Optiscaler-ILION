@@ -200,12 +200,23 @@ inline void Draw(ImDrawList* draw, const ImVec2& min, const ImVec2& max, bool on
     }
     else if (overflow > 0.0f)
     {
-        // Shown whole: back to the start, then a slow slide to the end and a stop there
+        // Shown whole: back to the start, a pause, a slow slide to the end, a pause there, and back to the start for the
+        // rest of its time. ILION Perfiles P5: before, the line stayed at its end until the next message, its beginning
+        // cut at the left edge for the last 4 s or more
         const double t = elapsed - typing;
-        if (t < 2.0)
-            offset = overflow * (float) std::max(0.0, 1.0 - t / 1.0);
+        const double s = std::max(slide, 0.001);
+        if (t < 1.0)
+            offset = overflow * (float) (1.0 - t);
+        else if (t < 3.0)
+            offset = 0.0f;
+        else if (t < 3.0 + s)
+            offset = overflow * (float) ((t - 3.0) / s);
+        else if (t < 5.0 + s)
+            offset = overflow;
+        else if (t < 6.0 + s)
+            offset = overflow * (float) (1.0 - (t - 5.0 - s));
         else
-            offset = overflow * (float) std::min(1.0, (t - 2.0 - 2.0) / std::max(slide, 0.001));
+            offset = 0.0f;
 
         offset = std::clamp(offset, 0.0f, overflow);
     }

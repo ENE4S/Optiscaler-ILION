@@ -119,6 +119,33 @@ static Policy PolicyOf(Mode m)
     }
 }
 
+// Los FPS reales que cada modo busca al elegir preset (no el suelo: Rendimiento busca la mitad de los Hz, para que 2X
+// los alcance, y nunca menos de 82)
+static double WantFps(Mode m, double hz)
+{
+    switch (m)
+    {
+    case Mode::Calidad:
+        return 60.0;
+    case Mode::Equilibrado:
+        return 75.0;
+    case Mode::Rendimiento:
+        return std::max(82.0, hz > 0.0 ? hz * 0.5 : 90.0);
+    default:
+        return 70.0;
+    }
+}
+
+// FPS reales en otro preset a partir de los medidos: proporcionales a los píxeles internos elevados a 0,7. Supone que
+// limita la GPU; si limita la CPU la ganancia real es menor. Siempre se presenta como estimación, y lo medido en este
+// juego (historial) la sustituye
+constexpr double kPixelExponent = 0.7;
+static double EstimateAt(double fps, int from, int to)
+{
+    const double r = kPresets[to].ratio / kPresets[from].ratio;
+    return fps * std::pow(r * r, kPixelExponent);
+}
+
 // Pilotos: verde aplicado / verificado, ámbar pendiente o estimado, rojo incompatible o fallo, rojo de acción (reinicio
 // obligatorio: no es un error), neutro dato
 enum class Mark
@@ -220,6 +247,10 @@ struct Plan
     bool restartFg = false;
     bool restartRatio = false;
     bool viaMenu = false; // el preset se cambia desde el menú del juego (tabla de calidades leída al arrancar)
+    bool belowWant = false; // ningún preset del modo llega a lo que el modo busca
+    // El estado del FG cuando se decidió: una recomendación deja de valer si cambia
+    bool fgEvalGenerating = false;
+    IlionDynamicMfg::Provider fgEvalProvider = IlionDynamicMfg::Provider::None;
 };
 
 static Mode mode = Mode::Optimo;
@@ -237,6 +268,7 @@ static Plan plan;
 static Measure measure;
 static Before before;
 static std::string lastMessage;
+static std::vector<std::string> resEvents; // cambios de resolución interna vistos en esta sesión del juego
 
 // ---- Archivos ------------------------------------------------------------------------------------------------------
 static std::filesystem::path Folder() { return Util::ExePath().parent_path() / L"ILION" / L"Perfiles"; }
@@ -1072,6 +1104,27 @@ static bool Generating(const IlionDynamicMfg::Status& status)
     return status.gen == IlionDynamicMfg::Gen::Detected || status.gen == IlionDynamicMfg::Gen::Confirmed;
 }
 
+// FPS reales con FG: una muestra por fotograma del menú, los últimos 4 s. Se vacía cuando el FG deja de generar
+struct BaseSample
+{
+    double t, fps;
+};
+static std::deque<BaseSample> fgBase;
+
+static void SampleFgBase()
+{
+    const auto status = IlionDynamicMfg::Get();
+    const double now = ImGui::GetTime();
+    if (!Generating(status) || status.baseFps <= 0.0f)
+    {
+        fgBase.clear();
+        return;
+    }
+    fgBase.push_back({ now, status.baseFps });
+    while (!fgBase.empty() && now - fgBase.front().t > 4.0)
+        fgBase.pop_front();
+}
+
 // FPS reales: los fotogramas del juego, nunca los generados. Sin FG, por tiempo: la media, el percentil 10 (el 90 % del
 // tiempo observado va a esos FPS o más) y la parte del tiempo con 60 o más
 static Measure MeasureNow()
@@ -1084,11 +1137,22 @@ static Measure MeasureNow()
     if (Generating(status))
     {
         m.withFg = true;
-        m.mean = status.baseFps;
         m.limited = status.limitFps > 0.0f || IlionDynamicMfg::DynamicEnabled() || status.backendDynamic;
-        m.source = m.limited ? StrFmt("con FG y un límite activo (%.0f FPS finales): los FPS reales los fija el límite", status.limitFps)
-                   : status.baseMeasured ? "fotogramas reales contados con FG activo; la estabilidad no se mide con FG"
-                                         : "estimado a partir de los FPS finales";
+        // La media de los últimos segundos (2 s como mínimo), nunca una muestra suelta: con XeFG una muestra puede ser
+        // un solo fotograma
+        m.frames = (int) fgBase.size();
+        m.seconds = fgBase.size() > 1 ? fgBase.back().t - fgBase.front().t : 0.0;
+        if (m.seconds >= 2.0)
+        {
+            double sum = 0.0;
+            for (const auto& b : fgBase)
+                sum += b.fps;
+            m.mean = sum / fgBase.size();
+        }
+        m.source = m.limited             ? StrFmt("con FG y un límite activo (%.0f FPS finales): los FPS reales los fija el límite", status.limitFps)
+                   : m.seconds < 2.0     ? StrFmt("pendiente de medición: %.1f de 2 s de FPS reales con FG", m.seconds)
+                   : status.baseMeasured ? StrFmt("media de %.1f s de fotogramas reales con FG; la estabilidad no se mide con FG", m.seconds)
+                                         : StrFmt("media de %.1f s, estimada a partir de los FPS finales", m.seconds);
         return m;
     }
 
@@ -1320,6 +1384,18 @@ template <typename Ctx> static void Tick(Ctx& ctx)
     case 1: // medición
     {
         measure = MeasureNow();
+        // Con FG hacen falta 2 s de FPS reales: se espera hasta 3 s, sin cambiar nada
+        if (measure.withFg && !measure.limited && measure.mean <= 0.0 && elapsed < 3.0)
+        {
+            if (!entered)
+            {
+                entered = true;
+                Add(Mark::Wait, "Midiendo FPS reales con FG...", "Hacen falta 2 s de fotogramas reales");
+            }
+            break;
+        }
+        if (entered)
+            steps.pop_back(); // la fila «Midiendo...»
         judge = Judge(measure, policy);
         if (measure.verified && !before.scalerKey.empty() && before.preset >= 0)
         {
@@ -1355,39 +1431,41 @@ template <typename Ctx> static void Tick(Ctx& ctx)
         }
         const int cur = before.preset;
         int target = cur;
-        if (cur > policy.fastest)
-        {
-            // Más rápido de lo que el modo permite: al modo de escalado más rápido del modo
-            target = policy.fastest;
-            plan.presetWhy = StrFmt("%s está por debajo de la calidad del modo %s", kPresets[cur].name, ModeName(mode));
-        }
-        else if (cur < policy.best)
-        {
-            // Más calidad de la que el modo busca: se pasa a su mejor modo de escalado, salvo que la base vaya sobrada
-            target = judge == 1 ? cur : policy.best;
-            plan.presetWhy = judge == 1 ? "Por encima de la calidad del modo, pero la base va sobrada: se mantiene"
-                                        : StrFmt("El modo %s busca más FPS reales: de %s a %s", ModeName(mode), kPresets[cur].name,
-                                                 kPresets[policy.best].name);
-            if (judge == -2)
-            {
-                target = cur;
-                plan.presetWhy = "Sin medición válida: se mantiene";
-            }
-        }
-        else if (judge == -1 && cur < policy.fastest)
-        {
-            target = cur + 1;
-            plan.presetWhy = "La base no llega al objetivo del modo de forma sostenida: un paso hacia más rendimiento";
-        }
-        else if (judge == 1 && cur > policy.best)
-        {
-            target = cur - 1;
-            plan.presetWhy = "La base tiene margen: un paso hacia más calidad";
-        }
+        if (judge == -2)
+            plan.presetWhy = "Pendiente de medición: sin FPS reales fiables no se cambia el preset";
         else
-            plan.presetWhy = judge == -2   ? "Sin medición válida: se mantiene"
-                             : judge == -1 ? "La base no llega al objetivo, pero ya es el modo de escalado más rápido del modo"
-                                           : "La base cumple el objetivo del modo en este modo de escalado";
+        {
+            // El preset de más calidad del modo que llega a lo que el modo busca: lo medido en este juego si lo hay (historial,
+            // mismo escalador, modelo y salida), si no una estimación por píxeles internos. Si ninguno llega, el más rápido
+            const double want = WantFps(mode, RefreshHz());
+            const double ref = measure.verified ? measure.p10 : measure.mean;
+            std::string table;
+            target = -1;
+            for (int p = policy.best; p <= policy.fastest; p++)
+            {
+                bool measured = p == cur;
+                double fps = p == cur ? ref : EstimateAt(ref, cur, p);
+                if (p != cur && measure.verified)
+                    if (const Evidence e = LoadEvidence(EvidenceKey(before.scalerKey, before.model, p, before.th)); e.count >= 1)
+                        measured = true, fps = e.p10;
+                table += StrFmt("%s%s %.0f%s", table.empty() ? "" : " · ", kPresets[p].name, fps, measured ? " (medido)" : " (est.)");
+                if (target < 0 && fps >= want)
+                {
+                    target = p;
+                    plan.presetWhy = StrFmt("%s es el preset de más calidad del modo %s que llega a %.0f FPS reales (%s: %.0f)",
+                                            kPresets[p].name, ModeName(mode), want, measured ? "medido" : "estimado", fps);
+                }
+            }
+            if (target < 0)
+            {
+                target = policy.fastest;
+                plan.belowWant = true;
+                plan.presetWhy = StrFmt("Ningún preset del modo %s llega a %.0f FPS reales: se usa el más rápido (%s)", ModeName(mode), want,
+                                        kPresets[target].name);
+            }
+            Add(Mark::Info, StrFmt("FPS reales por preset (%s)", measure.verified ? "el 90 % del tiempo" : "media, con FG"),
+                table + " · est.: píxeles internos elevados a 0,7, supone que limita la GPU");
+        }
         plan.preset = target;
         if (target != cur)
         {
@@ -1408,7 +1486,7 @@ template <typename Ctx> static void Tick(Ctx& ctx)
             break;
         }
         // La base no llega en el modo de escalado más rápido del modo: lo que justifica un modelo más ligero
-        const bool insufficient = judge == -1 && plan.preset >= policy.fastest;
+        const bool insufficient = plan.belowWant;
         const auto catalog = GatherUpscalers(feature);
         const Arch arch = ArchOf(gpu);
         const auto candidates = Candidates(catalog, arch, mode, insufficient, plan.preset >= 0 ? plan.preset : before.preset, before.th);
@@ -1451,8 +1529,13 @@ template <typename Ctx> static void Tick(Ctx& ctx)
         const bool dynamic = ExternalDynamic(&dynamicWhat);
         const double reference = MfgCostReference();
         const double cost = Generating(status) && reference > 0.0 && mfgCost.current > 0.0 ? 1.0 - mfgCost.current / reference : -1.0;
-        // Sin FG la base aún no paga el coste del FG: se descuenta un 10 % (coste sin medir, se dice)
-        const double base = Generating(status) ? measure.mean : measure.mean * 0.9;
+        plan.fgEvalGenerating = Generating(status);
+        plan.fgEvalProvider = status.provider;
+        // Sin FG la base aún no paga el coste del FG: se descuenta un 10 % (coste sin medir, se dice). Si el preset cambia,
+        // la base estimada en el preset elegido
+        const double measuredBase = Generating(status) ? measure.mean : measure.mean * 0.9;
+        const bool presetMoves = plan.preset >= 0 && before.preset >= 0 && plan.preset != before.preset;
+        const double base = presetMoves ? EstimateAt(measuredBase, before.preset, plan.preset) : measuredBase;
 
         // El multiplicador: el menor que acerca los FPS finales a lo que busca el modo sin pasar del monitor
         int maxCount = policy.fgMax - 1;
@@ -1472,11 +1555,12 @@ template <typename Ctx> static void Tick(Ctx& ctx)
         else if (state.api != API::DX12)
             plan.fgWhy = "solo DirectX 12 está verificado";
         else if (judge == -2)
-            plan.fgWhy = "sin FPS reales válidos no se decide el FG";
+            plan.fgWhy = "pendiente de medición: sin FPS reales fiables no se decide el FG";
         else if (base < policy.fgBase)
         {
             plan.fgStage = Generating(status) ? Stage::Recommended : Stage::None;
-            plan.fgWhy = StrFmt("la base (%.0f reales%s) no llega a %.0f", base, Generating(status) ? "" : " tras el coste estimado", policy.fgBase);
+            plan.fgWhy = StrFmt("la base (%.0f reales%s%s) no llega a %.0f", base, Generating(status) ? ", media medida con FG" : " tras el coste estimado",
+                                presetMoves ? StrFmt(", estimada en %s", kPresets[plan.preset].name).c_str() : "", policy.fgBase);
         }
         else if (cost > 0.20)
         {
@@ -1783,7 +1867,9 @@ template <typename Ctx> static void Tick(Ctx& ctx)
             const unsigned nw = (unsigned) std::lround(before.tw / kPresets[plan.preset].ratio);
             const unsigned nh = (unsigned) std::lround(before.th / kPresets[plan.preset].ratio);
             changes.push_back({ plan.presetStage == Stage::Restart ? Mark::Restart : Mark::Wait,
-                                StrFmt("Calidad: %s → %s", kPresets[before.preset].name, kPresets[plan.preset].name),
+                                plan.viaMenu ? StrFmt("Calidad: sigue %s · recomendado %s (NO aplicado)", kPresets[before.preset].name,
+                                                      kPresets[plan.preset].name)
+                                             : StrFmt("Calidad: %s → %s (pendiente)", kPresets[before.preset].name, kPresets[plan.preset].name),
                                 plan.presetStage == Stage::GameMenu ? StrFmt("Elige «%s» en el menú gráfico del juego (cambio inmediato)", GameRowName(plan.preset))
                                 : plan.presetStage == Stage::Restart && plan.viaMenu
                                     ? StrFmt("Reinicia una vez; después elige «%s» en el menú del juego", GameRowName(plan.preset))
@@ -1821,7 +1907,13 @@ template <typename Ctx> static void Tick(Ctx& ctx)
                              plan.scalerStage == Stage::Applied || judge == -2;
         const std::string where = "ILION\\Perfiles\\" + ExeKey() + ".perfil.ini";
         if (restart)
-            Add(Mark::Restart, "Perfil guardado: pendiente de reinicio del juego", where);
+            Add(Mark::Restart,
+                plan.viaMenu && plan.presetStage == Stage::Restart
+                    ? StrFmt("Optimización incompleta: reinicia el juego y después elige «%s» en su menú", GameRowName(plan.preset))
+                    : std::string("Perfil guardado: pendiente de reinicio del juego"),
+                where);
+        else if (plan.presetStage == Stage::GameMenu)
+            Add(Mark::Wait, StrFmt("Optimización incompleta: falta elegir «%s» en el menú gráfico del juego", GameRowName(plan.preset)), where);
         else if (plan.scalerStage == Stage::Failed)
             Add(Mark::Bad, "Perfil guardado con errores", where);
         else if (pending)
@@ -2170,29 +2262,42 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight)
             else
                 Coloured(IlionTheme::ShellPal::Dim, "El juego no envía escalado ahora", true);
 
-            // Proporción: anterior, recomendada, guardada, activa
+            // Preset: recomendado, solicitado, activo, acción pendiente y reinicio, cada uno por separado
             ImGui::Spacing();
-            if (target >= 0 && targetViaMenu)
-                Row(targetReached ? Mark::Ok : ratioRestart ? Mark::Restart : Mark::Wait,
-                    targetReached  ? StrFmt("Preset del perfil verificado: %s", kPresets[target].name)
-                    : ratioRestart ? StrFmt("Preset del perfil: %s (tras reiniciar, elígelo en el menú del juego)", kPresets[target].name)
-                                   : StrFmt("Acción en el juego: elige «%s» en su menú gráfico", GameRowName(target)),
-                    targetReached ? std::string("Comprobado con la resolución real del juego")
-                                  : std::string("ILION no elige el preset del juego; el cambio en su menú es inmediato y se verifica aquí"));
+            Row(Mark::Info, std::string("Recomendado: ") + (target >= 0 ? kPresets[target].name : "—"),
+                target < 0 ? std::string() : finished ? StrFmt("Última optimización, modo %s", ModeName(mode)) : std::string("Perfil guardado"));
+            if (targetViaMenu && target >= 0)
+                Row(Mark::Info, "Solicitado: el preset que elija el menú del juego",
+                    config->QualityRatioOverrideEnabled.value_or_default() ? "Tabla de calidades con filas redefinidas en ILION; la fila la elige el juego"
+                                                                            : "Tabla de calidades estándar; ILION no puede elegir la fila");
             else if (overrideOn)
             {
-                const RatioOwner owner = OwnerOfOverride();
                 const int wanted = PresetOf(overrideValue);
-                Row(ratioApplied ? Mark::Ok : ratioRestart ? Mark::Restart : Mark::Wait,
-                    StrFmt("Guardada %.2f (%s): %s", overrideValue, wanted >= 0 ? kPresets[wanted].name : "?",
-                           ratioApplied ? "verificada" : ratioRestart ? "pendiente de reinicio" : "pendiente de aplicación"),
-                    owner == RatioOwner::Perfiles ? "Anulación de Perfiles" : "Anulación externa (no la gestiona el perfil)");
+                Row(Mark::Info, StrFmt("Solicitado: anulación %.2f (%s)", overrideValue, wanted >= 0 ? kPresets[wanted].name : "?"),
+                    OwnerOfOverride() == RatioOwner::Perfiles ? "Anulación de Perfiles" : "Anulación externa (no la gestiona el perfil)");
             }
             else
-                Row(Mark::Info,
-                    config->QualityRatioOverrideEnabled.value_or_default() ? "Tabla de calidades del juego (filas redefinidas en ILION)"
-                                                                            : "Tabla de calidades del juego (sin anulación)",
-                    "El menú gráfico del juego elige el preset");
+                Row(Mark::Info, "Solicitado: nada", "El juego usa el preset de su menú");
+            Row(!upscaling ? Mark::Info : targetReached || target < 0 ? Mark::Ok : Mark::Wait,
+                upscaling ? StrFmt("Activo: %s · %s", activePreset >= 0 ? kPresets[activePreset].name : "?",
+                                   ResText(feature->RenderWidth(), feature->RenderHeight()).c_str())
+                          : std::string("Activo: sin escalado ahora"),
+                !upscaling     ? std::string()
+                : targetReached ? std::string("Verificado con la resolución real: es el recomendado")
+                : target >= 0   ? std::string("Resolución real del juego: todavía NO es el recomendado")
+                                : std::string("Resolución real del juego"));
+            const bool actionPending = upscaling && target >= 0 && !targetReached;
+            Row(!actionPending ? Mark::Ok : ratioRestart ? Mark::Restart : Mark::Wait,
+                !actionPending ? std::string("Acción pendiente: ninguna")
+                : ratioRestart ? StrFmt("Acción pendiente: reinicia el juego y después elige «%s» en su menú", GameRowName(target))
+                : targetViaMenu ? StrFmt("Acción pendiente: elige «%s» en el menú gráfico del juego", GameRowName(target))
+                                : std::string("Acción pendiente: que el juego consulte de nuevo su resolución (cambia la calidad en su menú o reinícialo)"),
+                actionPending ? "La optimización del preset no está aplicada hasta entonces" : std::string());
+            Row(ratioRestart ? Mark::Restart : Mark::Ok,
+                ratioRestart ? "Reinicio: necesario (la tabla de calidades cambió en esta sesión)" : "Reinicio: no necesario para el preset",
+                std::string());
+            for (const auto& e : resEvents)
+                Row(Mark::Ok, e, "Detectado en esta sesión del juego, sin reiniciar");
             {
                 const std::string whyScaler = finished ? plan.scaler.why : saved.whyScaler;
                 const std::string whyPreset = finished ? plan.presetWhy : saved.whyPreset;
@@ -2201,11 +2306,7 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight)
                 if (!whyPreset.empty())
                     Coloured(IlionTheme::ShellPal::Dim, ("Por qué este preset: " + whyPreset).c_str(), true);
             }
-            if (finished && before.rw > 0 && plan.preset >= 0 && plan.preset != before.preset)
-                Row(Mark::Info, StrFmt("Anterior %s (%s) · recomendada %s", kPresets[before.preset].name, ResText(before.rw, before.rh).c_str(),
-                                       kPresets[plan.preset].name),
-                    std::string());
-            else if (!saved.prevRes.empty() && !savedThisSession && upscaling)
+            if (!saved.prevRes.empty() && !savedThisSession && upscaling)
                 Row(Mark::Info, "Resolución interna antes del perfil: " + saved.prevRes,
                     "Ahora " + ResText(feature->RenderWidth(), feature->RenderHeight()));
             if (plan.scalerStage == Stage::Failed || plan.scalerStage == Stage::Recommended)
@@ -2247,7 +2348,10 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight)
             else if (fgWanted && fgLoaded && saved.restart.find("fg") != std::string::npos)
                 Row(generating ? Mark::Ok : Mark::Wait, "Del perfil: " + saved.fgOutput + " " + saved.fgCount,
                     generating ? "Cargado y generando: verificado" : "Cargado, todavía sin generar");
-            if (plan.fgStage == Stage::Blocked)
+            const bool fgStale = finished && (generating != plan.fgEvalGenerating || status.provider != plan.fgEvalProvider);
+            if (fgStale && (plan.fgStage == Stage::Blocked || plan.fgStage == Stage::Recommended))
+                Row(Mark::Info, "La recomendación de FG anterior ya no aplica", "El FG cambió después de optimizar: vuelve a optimizar para evaluarlo");
+            else if (plan.fgStage == Stage::Blocked)
                 Row(Mark::Wait, "Recomendado: FG fijo, pendiente de tu decisión", "Desactiva el Dynamic en FRAME GEN y vuelve a optimizar");
             else if (plan.fgStage == Stage::Recommended)
                 Row(plan.fg == FgRoute::XeFgNew ? Mark::Wait : Mark::Bad,
@@ -2344,8 +2448,33 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight)
     ImGui::PopStyleColor();
 }
 
+// La resolución interna real que el juego envía: un cambio en la misma sesión del juego (sin reiniciar) se anota, con su
+// hora, y se escribe en el registro de OptiScaler. Es la prueba de un cambio de preset en caliente. Se mira mientras el
+// menú está abierto: un cambio hecho con el menú cerrado se ve al abrirlo. Diferencias de menos del 3 % no cuentan
+static void WatchResolution(IFeature* feature)
+{
+    static unsigned lastW = 0, lastH = 0;
+    if (feature == nullptr || !feature->IsInited() || feature->RenderWidth() == 0)
+        return;
+    const unsigned w = feature->RenderWidth(), h = feature->RenderHeight();
+    if (lastW > 0 && std::abs((int) w - (int) lastW) > (int) lastW * 3 / 100)
+    {
+        resEvents.push_back(StrFmt("La resolución interna cambió sin reiniciar: %s → %s (%s)", ResText(lastW, lastH).c_str(), ResText(w, h).c_str(),
+                                   NowText().substr(11).c_str()));
+        if (resEvents.size() > 3)
+            resEvents.erase(resEvents.begin());
+        LOG_INFO("ILION Perfiles: internal resolution changed in the same game session {}x{} -> {}x{} (output {}x{})", lastW, lastH, w, h,
+                 feature->TargetWidth(), feature->TargetHeight());
+    }
+    lastW = w;
+    lastH = h;
+}
+
 template <typename Ctx> static void Panel(Ctx& ctx)
 {
+    SampleFgBase();
+    WatchResolution(ctx.currentFeature);
+
     // El modo del perfil guardado; sin perfil, Óptimo
     if (!modeLoaded)
     {

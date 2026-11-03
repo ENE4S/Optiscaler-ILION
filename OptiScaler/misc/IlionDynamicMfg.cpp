@@ -215,7 +215,7 @@ void SetTargetFps(float fps)
 
     // The game's DLSSG reads the target only in Dynamic: re-sending its options otherwise could change its count
     if (Current() == Provider::DlssgGame && DynamicEnabled())
-        StreamlineHooks::updateDlssgOptions();
+        StreamlineHooks::requestDlssgOptionsUpdate("Dynamic MFG target");
 }
 
 int MaxCountLimit()
@@ -279,7 +279,7 @@ void SetMaxCount(int count)
     case Provider::DlssgGame:
         // The same setting as "Override DLSSG Ratio": the frames the game's DLSSG generates (the most, in Dynamic)
         config->FGDLSSGOverrideInterpolationCount = count;
-        StreamlineHooks::updateDlssgOptions();
+        StreamlineHooks::requestDlssgOptionsUpdate("multiplier / Dynamic MFG maximum");
         break;
     default:
         break;
@@ -527,7 +527,9 @@ void SetExternalDynamicMode(ExternalMode mode)
     config->FGDLSSGIlionDynamic = mode == ExternalMode::Ilion;
     config->FGDLSSGOverrideForceDMFG = mode == ExternalMode::Native;
     ilionRefused.store(nullptr);
-    StreamlineHooks::updateDlssgOptions();
+    StreamlineHooks::requestDlssgOptionsUpdate(mode == ExternalMode::Ilion    ? "Dynamic MFG: ILION"
+                                               : mode == ExternalMode::Native ? "Dynamic MFG: automatic"
+                                                                              : "Dynamic MFG: off");
 }
 
 bool IlionDrivesExternal()

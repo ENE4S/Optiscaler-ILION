@@ -141,6 +141,16 @@ class StreamlineHooks
     static void updateForceReflex();
     static void updateDlssgOptions();
 
+    // ILION v1.3.1 RC2: the menu never sends the game's DLSSG options itself. It is drawn inside the Present of the
+    // swapchain ILION wraps, and with an external FG (DLSS Enabler...) that Present runs inside the backend's own present
+    // of its frames: slDLSSGSetOptions from there re-enters Streamline / the backend while it presents. The menu asks
+    // (requestDlssgOptionsUpdate) and the options are sent from the game's thread, outside any present, at its next
+    // slSetConstants, slEvaluateFeature or simulation-start PCL marker (applyRequestedDlssgOptions)
+    static void requestDlssgOptionsUpdate(const char* reason);
+    static void applyRequestedDlssgOptions(const char* where);
+    inline static std::atomic<bool> dlssgOptionsRequested { false };
+    inline static std::atomic<const char*> dlssgOptionsReason { nullptr };
+
     static void unhookInterposer();
     static void hookInterposer(HMODULE slInterposer);
     static inline HMODULE hookedInterposerModule = nullptr;

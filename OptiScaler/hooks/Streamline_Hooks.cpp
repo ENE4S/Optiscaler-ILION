@@ -645,8 +645,9 @@ sl::Result StreamlineHooks::hkslEvaluateFeature(sl::Feature feature, const sl::F
     LOG_DEBUG("frameIndex: {}", static_cast<uint32_t>(frame));
 
     // ILION Dynamic for the game's DLSSG: a count its controller changed is sent here, on the game's thread before
-    // Streamline runs anything, never from inside the NGX DLSSG evaluation
+    // Streamline runs anything, never from inside the NGX DLSSG evaluation. The same for a change made in the menu
     IlionDynamicMfg::ApplyPendingExternalCount();
+    applyRequestedDlssgOptions("slEvaluateFeature");
 
     if (State::Instance().activeFgInput == FGInput::DLSSG && numInputs > 0 && inputs != nullptr)
     {
@@ -1261,6 +1262,7 @@ sl::Result StreamlineHooks::hkslSetConstants(const sl::Constants& values, const 
 {
     // ILION Dynamic for the game's DLSSG: as in hkslEvaluateFeature, once per game frame and outside NGX
     IlionDynamicMfg::ApplyPendingExternalCount();
+    applyRequestedDlssgOptions("slSetConstants");
 
     std::scoped_lock lock(setConstantsMutex);
     LOG_TRACE("called with frameIndex: {}, viewport: {}", (unsigned int) frame, (unsigned int) viewport);
@@ -1776,6 +1778,10 @@ sl::Result StreamlineHooks::hkslPCLSetMarker(sl::PCLMarker marker, const sl::Fra
     if (o_slPCLSetMarker == nullptr)
         return sl::Result::eErrorFeatureMissing;
 
+    // ILION: a menu change of the game's DLSSG options, from the game's simulation thread (never a present marker)
+    if (marker == sl::PCLMarker::eSimulationStart)
+        applyRequestedDlssgOptions("PCL simulation start");
+
     // if (State::Instance().activeFgOutput == FGOutput::DLSSG && StreamlineProxy::IsD3D12Inited() &&
     //     Config::Instance()->FGDLSSGUseGamesReflexMarkers.value_or_default())
     //{
@@ -1977,6 +1983,27 @@ void StreamlineHooks::updateForceReflex()
                      (UINT) result);
         }
     }
+}
+
+void StreamlineHooks::requestDlssgOptionsUpdate(const char* reason)
+{
+    dlssgOptionsReason.store(reason);
+    if (!dlssgOptionsRequested.exchange(true))
+        LOG_INFO("ILION: game DLSSG options asked by the menu ({}), sent from the game's thread", reason);
+}
+
+void StreamlineHooks::applyRequestedDlssgOptions(const char* where)
+{
+    if (!dlssgOptionsRequested.load() || !dlssgOptionsRequested.exchange(false))
+        return;
+
+    const char* reason = dlssgOptionsReason.load();
+    updateDlssgOptions();
+    LOG_INFO("ILION: game DLSSG options sent from {} ({}): mode {}, override count {}", where,
+             reason != nullptr ? reason : "-", magic_enum::enum_name(State::Instance().dlssgLastSetMode),
+             Config::Instance()->FGDLSSGOverrideInterpolationCount.has_value()
+                 ? std::to_string(Config::Instance()->FGDLSSGOverrideInterpolationCount.value())
+                 : std::string("game's"));
 }
 
 void StreamlineHooks::updateDlssgOptions()

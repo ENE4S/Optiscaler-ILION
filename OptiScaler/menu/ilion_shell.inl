@@ -903,7 +903,7 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
                     config->FGDLSSGOverrideInterpolationCount.reset(); // the game's own choice again
                 else
                     config->FGDLSSGOverrideInterpolationCount = 0;     // DLSSG off through Streamline
-                StreamlineHooks::updateDlssgOptions();
+                StreamlineHooks::requestDlssgOptionsUpdate(on ? "FG on (game's choice)" : "FG off");
             }
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
@@ -952,7 +952,7 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
                 if (ImGui::Selectable(Lx("Game", "Juego", "Jogo", "Игра"), !overridden))
                 {
                     config->FGDLSSGOverrideInterpolationCount.reset();
-                    StreamlineHooks::updateDlssgOptions();
+                    StreamlineHooks::requestDlssgOptionsUpdate("multiplier: game's choice");
                 }
                 for (int count = 1; count <= limit; ++count)
                     if (ImGui::Selectable(StrFmt("%dX", count + 1).c_str(),

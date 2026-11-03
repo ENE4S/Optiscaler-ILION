@@ -12302,7 +12302,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                                 config->FGDLSSGOverrideInterpolationCount = framesToGenerate;
                             }
 
-                            StreamlineHooks::updateDlssgOptions();
+                            StreamlineHooks::requestDlssgOptionsUpdate("Override DLSSG Ratio");
                         }
                     }
 

@@ -217,6 +217,23 @@ static void Label(const char* t, const ImVec4& c = pal::Text2, float size = 17.f
     ImGui::PopFont();
 }
 
+// ILION: one line of parts, each in its own colour (a reading's values apart from its words), as Label: no wrapping
+static void LabelParts(std::initializer_list<std::pair<std::string, ImVec4>> parts, float size = 17.f)
+{
+    ImGui::PushFont(fUi, U(size));
+    bool first = true;
+    for (const auto& [text, colour] : parts)
+    {
+        if (text.empty())
+            continue;
+        if (!first)
+            ImGui::SameLine(0.0f, 0.0f);
+        first = false;
+        ImGui::TextColored(Tone(colour), "%s", text.c_str());
+    }
+    ImGui::PopFont();
+}
+
 // The provider's own badge (a monogram or a sign, no brand logos)
 static void Badge(ImVec2 p, float s, const char* mono, const ImVec4& tint)
 {
@@ -966,14 +983,17 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
     const auto row = [&](Led led, const char* name, const std::string& value)
     {
         const ImVec2 p = ImGui::GetCursorScreenPos();
-        const float x0 = ImGui::GetCursorPosX();
         const float h = ImGui::GetTextLineHeight();
         ShellLedAt(ImGui::GetWindowDrawList(), ImVec2(p.x + h * 0.5f, p.y + h * 0.5f), h * 0.22f, led);
         ImGui::Dummy(ImVec2(h, h));
         ImGui::SameLine(0, U(6));
         ImGui::TextColored(Tone(pal::Text2), "%s", name);
-        ImGui::SameLine(x0 + h + U(6) + labelWidth + U(10));
-        ImGui::TextUnformatted(value.c_str());
+        // ILION: the values' column in screen coordinates. SameLine(GetCursorPosX() + n) counted the offset of a table
+        // column twice (SameLine adds ColumnsOffset to a position that already holds it): in a column away from the
+        // window's left edge the values ran off to the right edge and were cut. They wrap inside their column now
+        ImGui::SameLine();
+        ImGui::SetCursorScreenPos(ImVec2(p.x + h + U(6) + labelWidth + U(10), ImGui::GetCursorScreenPos().y));
+        ImGui::TextWrapped("%s", value.c_str());
     };
 
     const std::string chosen = StrFmt("%s / %s", std::string(magic_enum::enum_name(config->FGInput.value_or_default())).c_str(),
@@ -1733,10 +1753,16 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
 
                  const float gap = ImGui::GetStyle().ItemSpacing.x;
                  const float w = (ImGui::GetContentRegionAvail().x - gap) * 0.5f;
-                 const float x0 = ImGui::GetCursorPosX();
+                 // ILION: the second column in screen coordinates (SameLine(x) counts a table column's offset twice)
+                 const float sx0 = ImGui::GetCursorScreenPos().x;
+                 const auto secondColumn = [&]()
+                 {
+                     ImGui::SameLine();
+                     ImGui::SetCursorScreenPos(ImVec2(sx0 + w + gap, ImGui::GetCursorScreenPos().y));
+                 };
 
                  smallLabel(Lx("Technology", "Tecnología", "Tecnologia", "Технология"));
-                 ImGui::SameLine(x0 + w + gap);
+                 secondColumn();
                  smallLabel(Lx("Implementation", "Implementación", "Implementação", "Реализация"));
 
                  const bool locked = FfxApiProxy::SrSwitchLocked();
@@ -1752,7 +1778,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                      ImGui::EndCombo();
                  }
 
-                 ImGui::SameLine(x0 + w + gap);
+                 secondColumn();
                  std::string preview = Lx("Choose one", "Elige uno", "Escolha um", "Выберите");
                  int previewRank = 0, available = 0;
                  for (const auto& v : catalog.variants)
@@ -1769,7 +1795,9 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                  }
 
                  ImGui::SetNextItemWidth(w);
-                 if (IlionTheme::BeginCombo("##HomeVariant", preview.c_str()))
+                 // ILION: the implementation that runs (loaded and active) named in yellow
+                 const ImVec4 activeYellow = Tone(pal::Yellow);
+                 if (IlionTheme::BeginCombo("##HomeVariant", preview.c_str(), 0, previewRank == 3 ? &activeYellow : nullptr))
                  {
                      for (const auto& v : catalog.variants)
                      {
@@ -1825,10 +1853,13 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                  if (upscalerOn && feature->RenderWidth() > 0)
                  {
                      const float factor = (float) feature->TargetWidth() / feature->RenderWidth();
-                     Label(StrFmt("%s  ·  %ux%u -> %ux%u", UpscalerLabel(feature).c_str(), feature->RenderWidth(), feature->RenderHeight(),
-                                  feature->TargetWidth(), feature->TargetHeight())
-                               .c_str(),
-                           pal::Text, 17.f);
+                     // ILION: the implementation that runs in yellow, the internal resolution plain, the final one cyan
+                     LabelParts({ { UpscalerLabel(feature), pal::Yellow },
+                                  { "  ·  ", pal::Text2 },
+                                  { StrFmt("%ux%u", feature->RenderWidth(), feature->RenderHeight()), pal::Text },
+                                  { " -> ", pal::Text2 },
+                                  { StrFmt("%ux%u", feature->TargetWidth(), feature->TargetHeight()), IlionTheme::InfoCyan } },
+                                17.f);
                      if (compact)
                          ImGui::Dummy(ImVec2(0.0f, U(3.f)));
 
@@ -1843,12 +1874,18 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                              valid++;
                          }
                      }
-                     std::string line = StrFmt("%s %.2fx  ·  %.0f%% %s", Lx("Factor", "Factor", "Fator", "Коэффициент"), factor,
-                                               100.0f / (factor * factor),
-                                               Lx("of the pixels rendered", "de los píxeles renderizados", "dos pixels renderizados", "пикселей отрисовано"));
-                     if (valid > 0)
-                         line += StrFmt("  ·  %s %.2f ms", Lx("upscaler", "escalador", "upscaler", "апскейлер"), sum / valid);
-                     Label(line.c_str(), pal::Text2, 15.f);
+                     // ILION: the figures (factor, share of pixels, the upscaler's time) brighter than their words
+                     LabelParts({ { std::string(Lx("Factor", "Factor", "Fator", "Коэффициент")) + " ", pal::Text2 },
+                                  { StrFmt("%.2fx", factor), pal::Text },
+                                  { "  ·  ", pal::Text2 },
+                                  { StrFmt("%.0f%%", 100.0f / (factor * factor)), pal::Text },
+                                  { std::string(" ") + Lx("of the pixels rendered", "de los píxeles renderizados", "dos pixels renderizados",
+                                                          "пикселей отрисовано"),
+                                    pal::Text2 },
+                                  { valid > 0 ? std::string("  ·  ") + Lx("upscaler", "escalador", "upscaler", "апскейлер") + " " : std::string(),
+                                    pal::Text2 },
+                                  { valid > 0 ? StrFmt("%.2f ms", sum / valid) : std::string(), pal::Text } },
+                                15.f);
                  }
                  else
                      Label(Lx("No upscaler is running in this game right now.", "Ningún escalador se está ejecutando ahora en este juego.",
@@ -2173,7 +2210,12 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                     ImGui::SameLine(0, U(4));
                     ImGui::TextColored(Tone(pal::Green), "%s", Lx("ILION ACTIVE", "ILION ACTIVO", "ILION ATIVO", "ILION АКТИВЕН"));
                     if (measured)
-                        ImGui::TextColored(Tone(pal::Text2), "%.0f FPS  ·  %.1f ms", 1000.0 / ft, ft);
+                    {
+                        // ILION: the FPS figure in its band colour (IlionTheme::FpsBand, as Full's Home), only the figure
+                        ImGui::TextColored(Tone(IlionTheme::FpsBand(1000.0 / ft)), "%.0f", 1000.0 / ft);
+                        ImGui::SameLine(0.0f, 0.0f);
+                        ImGui::TextColored(Tone(pal::Text2), " FPS  ·  %.1f ms", ft);
+                    }
 
                     // ILION Advisor: its confidence pilot, the suggested setting and the key to its diagnosis
                     ImGui::TableSetColumnIndex(1);
@@ -2940,13 +2982,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         Text(fUi, 18.f, ImVec2(fx, a.y + 16), pal::Text2, "FPS");
         // The FPS figure in the colour of its band (the same counter, no smoothing added)
         const double fpsNow = measured ? 1000.0 / ft : 0.0;
-        const ImVec4 fpsColour = !measured     ? pal::Text
-                                 : fpsNow < 60  ? pal::Red
-                                 : fpsNow < 90  ? pal::Text
-                                 : fpsNow < 111 ? ImVec4(0.25f, 0.70f, 1.00f, 1.f) // electric blue
-                                 : fpsNow < 145 ? pal::Green
-                                 : fpsNow < 200 ? pal::Yellow
-                                                : pal::Orange;
+        const ImVec4 fpsColour = !measured ? pal::Text : IlionTheme::FpsBand(fpsNow); // the shared criterion
         Text(fUi, 64.f, ImVec2(fx - 4, a.y + 34), fpsColour, measured ? StrFmt("%.0f", fpsNow).c_str() : "-");
         Text(fUi, 16.f, ImVec2(fx, a.y + 110), pal::Text2, "Frame Time");
         const std::string ftText = measured ? StrFmt("%.1f ms", ft) : std::string("-");

@@ -229,6 +229,24 @@ inline ImVec4 Yellow { 1.00f, 0.84f, 0.10f, 1.f };
 inline ImVec4 Red { 1.00f, 0.26f, 0.20f, 1.f };
 } // namespace ShellPal
 
+// ILION: colours of information values, the same in every theme (all dark): they mark a reading, never a state (the
+// state keeps green / yellow / orange / red). Electric blue: multipliers (2X, 3X...), as in the FPS band below. Cyan:
+// the final (output) resolution, apart from the internal one
+inline const ImVec4 InfoBlue { 0.25f, 0.70f, 1.00f, 1.f };
+inline const ImVec4 InfoCyan { 0.30f, 0.88f, 0.95f, 1.f };
+
+// ILION: the band colour of a frame rate, as Home's FPS figure has always used it: under 60 red, 90 plain text, 111
+// electric blue, 145 green, 200 yellow, else orange. One criterion for every place that colours an FPS figure
+inline ImVec4 FpsBand(double fps)
+{
+    return fps < 60    ? ShellPal::Red
+           : fps < 90  ? ShellPal::Text
+           : fps < 111 ? InfoBlue
+           : fps < 145 ? ShellPal::Green
+           : fps < 200 ? ShellPal::Yellow
+                       : ShellPal::Orange;
+}
+
 // ILION dev.70: the theme of the new interface. 0 Industrial (the palette above, as approved), 1 Clean Olive (an olive
 // palette, quieter: less glow around pilots and keys, no decorative stripes). Every component reads ShellPal,
 // shellGlow and shellDecor, so the theme changes nothing else

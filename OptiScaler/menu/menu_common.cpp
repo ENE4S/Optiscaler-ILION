@@ -1906,6 +1906,83 @@ static void TextWrappedColored(const ImVec4& colour, const char* fmt, ...)
     va_end(args);
 }
 
+// ILION: one line of a (translated) format with its values in their own colours and its words as they were, so a
+// reading stands out and the sentence keeps its translation. colours: one per value in order, the last one repeats;
+// nullptr keeps the text colour. A translation whose conversions don't match the values is drawn as plain text.
+// No wrapping, as ImGui::Text
+template <typename... Args>
+static void TextValues(std::initializer_list<const ImVec4*> colours, const char* fmt, Args... args)
+{
+    // The conversions in fmt, in order ("%%" is a word)
+    std::vector<std::pair<size_t, size_t>> specs; // start, length
+    for (size_t i = 0; fmt[i] != 0; i++)
+    {
+        if (fmt[i] != '%')
+            continue;
+        if (fmt[i + 1] == '%')
+        {
+            i++;
+            continue;
+        }
+        size_t j = i + 1;
+        while (fmt[j] != 0 && std::strchr("diuxXfFeEgGcsp", fmt[j]) == nullptr)
+            j++;
+        if (fmt[j] == 0)
+            break;
+        specs.emplace_back(i, j - i + 1);
+        i = j;
+    }
+
+    if (specs.size() != sizeof...(Args) || colours.size() == 0)
+    {
+        ImGui::Text(fmt, args...);
+        return;
+    }
+
+    std::vector<std::string> values;
+    const auto format = [&](auto value)
+    {
+        char buffer[256];
+        const std::string spec(fmt + specs[values.size()].first, specs[values.size()].second);
+        std::snprintf(buffer, sizeof(buffer), spec.c_str(), value);
+        values.emplace_back(buffer);
+    };
+    (format(args), ...);
+
+    const auto word = [](std::string text)
+    {
+        for (size_t at = text.find("%%"); at != std::string::npos; at = text.find("%%", at + 1))
+            text.erase(at, 1);
+        return text;
+    };
+
+    size_t from = 0;
+    bool first = true;
+    const auto put = [&](const std::string& text, const ImVec4* colour)
+    {
+        if (text.empty())
+            return;
+        if (!first)
+            ImGui::SameLine(0.0f, 0.0f);
+        first = false;
+        if (colour != nullptr)
+            ImGui::TextColored(*colour, "%s", text.c_str());
+        else
+            ImGui::TextUnformatted(text.c_str());
+    };
+
+    for (size_t n = 0; n < specs.size(); n++)
+    {
+        put(word(std::string(fmt + from, specs[n].first - from)), nullptr);
+        put(values[n], *(colours.begin() + std::min(n, colours.size() - 1)));
+        from = specs[n].first + specs[n].second;
+    }
+    put(word(std::string(fmt + from)), nullptr);
+
+    if (first)
+        ImGui::NewLine();
+}
+
 // ILION: a text that fits the width of the current item, or its shorter form when it doesn't
 static void FitText(const std::string& full, const std::string& compact)
 {
@@ -11691,8 +11768,11 @@ static void FgModeValue(const CustomOptional<int>* countConfig)
 
     const auto fg = State::Instance().currentFG;
     if (fg != nullptr && fg->IsActive() && !fg->IsPaused())
-        ImGui::TextColored(toneMapColor(IlionTheme::ShellPal::Green), "%s: %ux", ShellText("Effective", "Efectivo", "Efetivo", "Фактически"),
-                           (unsigned) fg->GetInterpolatedFrameCount() + 1);
+    {
+        ImGui::TextDisabled("%s:", ShellText("Effective", "Efectivo", "Efetivo", "Фактически"));
+        ImGui::SameLine(0.0f, ImGui::CalcTextSize(" ").x);
+        ImGui::TextColored(toneMapColor(IlionTheme::InfoBlue), "%ux", (unsigned) fg->GetInterpolatedFrameCount() + 1);
+    }
     else
         ImGui::TextDisabled("%s: -", ShellText("Effective", "Efectivo", "Efetivo", "Фактически"));
 }
@@ -12027,7 +12107,9 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
         // Basic keeps it beside the selectors when there is room; Essential and Advanced put it below them, its left
         // edge on the selectors' left edge (Frame Gen, Personal and any tab that shows this box)
-        const bool crtBeside = (config->MenuBasicMode.value_or_default() || IlionTheme::shell) &&
+        // ILION: only when the screen is drawn here: with the screens in a column of their own (Full's Frame Gen, Home)
+        // the selectors kept a screen's width free beside them, and their labels were cut
+        const bool crtBeside = !shellFgInstrumentsApart && (config->MenuBasicMode.value_or_default() || IlionTheme::shell) &&
                                selectionAvail >= crtSize.x + crtGap + selectorLabel + ImGui::GetFontSize() * 14.0f;
         const ImVec2 selectionStart = ImGui::GetCursorScreenPos();
         const float selectionWidth = crtBeside ? selectionAvail - crtSize.x - crtGap : 0.0f;
@@ -12662,8 +12744,9 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
         }
 
         const int current = Dmfg::MaxCount();
+        const ImVec4 blue = toneMapColor(IlionTheme::InfoBlue); // ILION: a multiplier's value in electric blue
         ImGui::SetNextItemWidth(width);
-        if (IlionTheme::BeginCombo(TrL("Maximum multiplier##dmfg"), std::format("{}X", current + 1).c_str()))
+        if (IlionTheme::BeginCombo(TrL("Maximum multiplier##dmfg"), std::format("{}X", current + 1).c_str(), 0, &blue))
         {
             for (int count = 1; count <= limit; ++count)
                 if (ImGui::Selectable(std::format("{}X", count + 1).c_str(), count == current) && count != current)
@@ -12842,9 +12925,12 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
                              : status.appliedSource == Dmfg::AppliedSource::Measured ? Tr("measured")
                              : status.appliedSource == Dmfg::AppliedSource::Reported ? Tr("reported by the backend")
                                                                                      : Tr("not confirmed");
+        // ILION: the multipliers in electric blue, the rest of the line as it was
+        const ImVec4 blue = toneMapColor(IlionTheme::InfoBlue);
         if (status.own)
         {
-            ImGui::Text(Tr("Multiplier: asked %dX  |  applied %dX (%s)"), status.requested, status.multiplier, source);
+            TextValues({ &blue, &blue, nullptr }, Tr("Multiplier: asked %dX  |  applied %dX (%s)"), status.requested,
+                       status.multiplier, source);
         }
         else
         {
@@ -12853,7 +12939,9 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
             const std::string measured = status.appliedSource == Dmfg::AppliedSource::Measured
                                              ? std::format("{}X", status.multiplier)
                                              : std::string(Tr("not measured"));
-            ImGui::Text(Tr("Multiplier: asked %dX  |  measured %s"), status.requested, measured.c_str());
+            const bool isMeasured = status.appliedSource == Dmfg::AppliedSource::Measured;
+            TextValues({ &blue, isMeasured ? &blue : nullptr }, Tr("Multiplier: asked %dX  |  measured %s"), status.requested,
+                       measured.c_str());
             if (status.reported > 0)
             {
                 ImGui::SameLine();
@@ -12871,10 +12959,11 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
                                status.multiplier, status.requested);
     }
 
+    const ImVec4 cyan = toneMapColor(IlionTheme::InfoCyan); // ILION: the final (output) figure, as the final resolution
     if (status.baseFps > 0.0f)
-        ImGui::Text(Tr("Base FPS: %.1f (%s)  |  final FPS: %.1f (%s)"), status.baseFps,
-                    status.baseMeasured ? Tr("measured") : Tr("estimated"), status.finalFps,
-                    status.finalMeasured ? Tr("measured") : Tr("estimated"));
+        TextValues({ nullptr, nullptr, &cyan, nullptr }, Tr("Base FPS: %.1f (%s)  |  final FPS: %.1f (%s)"), status.baseFps,
+                   status.baseMeasured ? Tr("measured") : Tr("estimated"), status.finalFps,
+                   status.finalMeasured ? Tr("measured") : Tr("estimated"));
     else
         TextWrappedDisabled("%s", Tr("Base and final FPS: unavailable"));
 
@@ -12883,7 +12972,7 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
                           : status.limiter == Dmfg::Limiter::OptiScaler ? "OptiScaler"
                                                                         : Tr("none");
     if (status.limitFps > 0.0f)
-        ImGui::Text(Tr("Limiter: %s at %.0f final FPS"), limiter, status.limitFps);
+        TextValues({ nullptr, &cyan }, Tr("Limiter: %s at %.0f final FPS"), limiter, status.limitFps);
     else
         ImGui::Text(Tr("Limiter: %s"), limiter);
 

@@ -102,20 +102,20 @@ static Policy PolicyOf(Mode m)
     {
     case Mode::Calidad:
         return { 0, 2, 60.0, 55.0, 78.0, 60.0, 2, 0.0, 0.0,
-                 "Nativa, Ultra Calidad o Calidad. 60 FPS reales sostenidos (caídas breves toleradas). FG 2X fijo como máximo; "
-                 "no persigue los Hz del monitor." };
+                 "Nativa, Ultra Calidad o Calidad, siempre con el modelo FSR 4 completo. 60 FPS reales sostenidos (caídas breves "
+                 "toleradas). FG 2X fijo como máximo; no persigue los Hz del monitor." };
     case Mode::Equilibrado:
         return { 2, 3, 70.0, 60.0, 90.0, 60.0, 3, 140.0, 165.0,
-                 "Calidad o Balanceado. Unos 70 FPS reales y 140-165 finales cuando tenga sentido. 2X fijo; 3X solo si la base "
-                 "y el monitor lo justifican." };
+                 "Calidad o Balanceado. Modelo FSR 4 completo; INT8Lite solo con una mejora medida o si la base no llega. Unos "
+                 "70 FPS reales y 140-165 finales cuando tenga sentido. 2X fijo; 3X solo si la base y el monitor lo justifican." };
     case Mode::Rendimiento:
         return { 3, 4, 55.0, 50.0, 80.0, 50.0, 4, 0.0, 0.0,
-                 "Balanceado o Rendimiento. 55 FPS reales sostenidos como mínimo. Multiplicador fijo hasta 4X si el proveedor "
-                 "lo admite, buscando los Hz del monitor sin sacrificar la base." };
+                 "Balanceado o Rendimiento. INT8Lite primero si la GPU lo admite (salvo que lo medido muestre que no gana). 55 "
+                 "FPS reales sostenidos como mínimo. Multiplicador fijo hasta 4X si el proveedor lo admite." };
     default:
         return { 0, 2, 70.0, 60.0, 91.0, 60.0, 2, 120.0, 144.0,
-                 "Modo predeterminado. Nativa si sobra rendimiento, si no Ultra Calidad o Calidad. Unos 70 FPS reales; FG 2X fijo "
-                 "para 120-144 finales cuando el monitor lo permita." };
+                 "Modo predeterminado. Nativa si sobra rendimiento, si no Ultra Calidad o Calidad, siempre con el modelo FSR 4 "
+                 "completo. Unos 70 FPS reales; FG 2X fijo para 120-144 finales cuando el monitor lo permita." };
     }
 }
 
@@ -148,13 +148,23 @@ enum class Stage
     Verified,    // el sistema confirma que es lo que corre
     Blocked,     // incompatible con la configuración actual: lo resuelve el usuario
     Failed,      // no llegó a ejecutarse
+    GameMenu,    // el preset se elige en el menú gráfico del juego (cambio inmediato); ILION lo verifica
+};
+
+// El modelo FSR 4 que se pide: el completo que FFX elige para la GPU (FP8 en RDNA 4, INT8 en RDNA 3, INT8 RDNA2) o
+// INT8Lite, el del selector de modelos. No es el preset de resolución, y no es una DLL Lite comunitaria
+enum class Model
+{
+    Any,  // no es FSR 4: no hay modelo que elegir
+    Full, // el modelo completo de la GPU (Fsr4Model automático)
+    Lite, // INT8Lite del selector
 };
 
 struct Choice
 {
     std::string key;
     std::string name;
-    bool driverLite = false; // FSR 4 del driver con el modelo INT8Lite de su selector (no es una DLL Lite comunitaria)
+    Model model = Model::Any;
     std::string why;
 };
 
@@ -186,6 +196,8 @@ struct Measure
 struct Before
 {
     std::string scaler;
+    std::string scalerKey;
+    Model model = Model::Any;
     int preset = -1;
     unsigned rw = 0, rh = 0, tw = 0, th = 0;
     std::string fg;
@@ -207,6 +219,7 @@ struct Plan
     std::string fgWhy;
     bool restartFg = false;
     bool restartRatio = false;
+    bool viaMenu = false; // el preset se cambia desde el menú del juego (tabla de calidades leída al arrancar)
 };
 
 static Mode mode = Mode::Optimo;
@@ -219,6 +232,7 @@ static int phase = 0;
 static double phaseStart = 0.0;
 static bool entered = false;
 static bool litePending = false;
+static bool modelChanged = false; // el escalador elegido ya corría; se cambió solo su modelo FSR 4
 static Plan plan;
 static Measure measure;
 static Before before;
@@ -453,20 +467,194 @@ static bool DriverLiteSelected()
     return config->Fsr4Model.has_value() && config->Fsr4Model.value() == FSR4Model::INT8Lite;
 }
 
-// Prioridad aprobada. AMD: FSR 4 del driver (modelo normal), FSR 4 del driver con su modelo INT8Lite, FSR 4 Lite
-// comunitaria (DLL propia), Helix FSR 4; respaldo XeSS y FSR 3.1. NVIDIA: DLSS, XeSS, FSR 3.1. Intel y otras: XeSS,
-// FSR 3.1. lite: la base no llega al objetivo del modo en su modo de escalado más rápido
-static std::vector<Choice> Candidates(const UpscalerCatalog& catalog, const GpuInformation& gpu, bool lite)
+static bool IsFsr4Full(const UpscalerVariant& v)
+{
+    return v.entry != nullptr && v.entry->family == IlionUpscalers::Family::Fsr4 && !IsCommunityLite(v);
+}
+
+// El modelo pedido para un FSR 4 del selector: Lite si está seleccionado INT8Lite, si no el completo
+static Model SelectedModel() { return DriverLiteSelected() ? Model::Lite : Model::Full; }
+
+// ---- Arquitectura: capacidades comprobables, no solo la marca ----------------------------------------------------------
+enum class ArchFamily
+{
+    Unknown,
+    Rdna4,
+    Rdna3,
+    Rdna2,
+    AmdApu,   // GPU cuyo FSR 4 propio es INT8Lite (APU, Navi 12/14)
+    AmdOther, // RDNA 1 y anteriores: sin FSR 4
+    NvGtx,    // sin DLSS (GTX, GTX 16)
+    Rtx20,
+    Rtx30,
+    Rtx40,
+    Rtx50,
+    ArcA,     // Alchemist (XMX)
+    ArcB,     // Battlemage (XMX)
+    IntelXe2, // Xe2 integrada (XMX)
+    IntelOther,
+};
+
+struct Arch
+{
+    ArchFamily family = ArchFamily::Unknown;
+    const char* name = "Desconocida";
+    bool fsr4 = false;         // la GPU ejecuta algún modelo FSR 4 (fsr4Support de IdentifyGpu)
+    const char* fsr4Full = ""; // el modelo completo que FFX elige para ella
+    bool liteIsFull = false;   // su modelo propio ya es INT8Lite
+    bool dlssSR = false;       // NGX dice que admite DLSS SR
+    bool dlssFG = false;       // DLSSG nativo (RTX 40 o posterior)
+    bool dlssMFG = false;      // DLSSG con más de un fotograma generado (RTX 50)
+    bool xessXmx = false;      // XeSS con XMX (Arc y Xe2); el resto usa DP4a
+    bool xefgTested = false;   // XeFG por ILION comprobado en esta familia (RDNA 3) u oficial (Intel con XMX)
+};
+
+static Arch ArchOf(const GpuInformation& gpu)
+{
+    Arch a;
+    using HW = device_info::HwGeneration;
+    if (gpu.vendorId == VendorId::AMD)
+    {
+        a.fsr4 = gpu.fsr4Support != FSR4Support::None;
+        a.fsr4Full = gpu.fsr4Support == FSR4Support::FP8      ? "FP8"
+                     : gpu.fsr4Support == FSR4Support::INT8   ? "INT8"
+                     : gpu.fsr4Support == FSR4Support::INT8_2 ? "INT8 RDNA2"
+                     : gpu.fsr4Support == FSR4Support::INT8Lite ? "INT8 Lite"
+                                                                : "";
+        a.liteIsFull = gpu.fsr4Support == FSR4Support::INT8Lite;
+        if (a.liteIsFull)
+            a = { ArchFamily::AmdApu, "AMD (APU / bajo consumo)", a.fsr4, a.fsr4Full, true };
+        else if (gpu.amdHwGeneration == HW::kGfx12)
+            a.family = ArchFamily::Rdna4, a.name = "RDNA 4";
+        else if (gpu.amdHwGeneration == HW::kGfx11)
+            a.family = ArchFamily::Rdna3, a.name = "RDNA 3", a.xefgTested = true;
+        else if (gpu.amdHwGeneration == HW::kGfx10_3)
+            a.family = ArchFamily::Rdna2, a.name = "RDNA 2";
+        else
+            a.family = ArchFamily::AmdOther, a.name = gpu.amdHwGeneration == HW::kGfx10 ? "RDNA 1" : "AMD (anterior a RDNA 2)";
+    }
+    else if (gpu.vendorId == VendorId::Nvidia)
+    {
+        const auto id = gpu.nvidiaArchInfo.architecture_id;
+        a.dlssSR = gpu.dlssCapable;
+        if (!gpu.dlssCapable)
+            a.family = ArchFamily::NvGtx, a.name = "NVIDIA GTX (sin DLSS)";
+        else if (id >= NV_GPU_ARCHITECTURE_GB200)
+            a.family = ArchFamily::Rtx50, a.name = "NVIDIA RTX 50", a.dlssFG = true, a.dlssMFG = true;
+        else if (id >= NV_GPU_ARCHITECTURE_AD100)
+            a.family = ArchFamily::Rtx40, a.name = "NVIDIA RTX 40", a.dlssFG = true;
+        else if (id >= NV_GPU_ARCHITECTURE_GA100)
+            a.family = ArchFamily::Rtx30, a.name = "NVIDIA RTX 30";
+        else
+            a.family = ArchFamily::Rtx20, a.name = id >= NV_GPU_ARCHITECTURE_TU100 ? "NVIDIA RTX 20" : "NVIDIA RTX (generación sin identificar)";
+    }
+    else if (gpu.vendorId == VendorId::Intel)
+    {
+        // Por el identificador de dispositivo: 0x56xx Alchemist, 0xE2xx Battlemage, 0x64xx Lunar Lake (Xe2)
+        const uint32_t series = gpu.deviceId & 0xFF00;
+        if (series == 0x5600)
+            a.family = ArchFamily::ArcA, a.name = "Intel Arc A (Alchemist)", a.xessXmx = true, a.xefgTested = true;
+        else if (series == 0xE200)
+            a.family = ArchFamily::ArcB, a.name = "Intel Arc B (Battlemage)", a.xessXmx = true, a.xefgTested = true;
+        else if (series == 0x6400)
+            a.family = ArchFamily::IntelXe2, a.name = "Intel Xe2 integrada", a.xessXmx = true, a.xefgTested = true;
+        else
+            a.family = ArchFamily::IntelOther, a.name = "Intel (sin XMX)";
+    }
+    return a;
+}
+
+static std::string ArchSummary(const Arch& a)
+{
+    std::string s = a.name;
+    if (a.fsr4)
+        s += StrFmt(" · FSR 4 completo: %s", a.fsr4Full);
+    if (a.dlssSR)
+        s += a.dlssMFG ? " · DLSS SR, DLSSG hasta 4X" : a.dlssFG ? " · DLSS SR, DLSSG 2X" : " · DLSS SR, sin DLSSG";
+    if (a.family == ArchFamily::ArcA || a.family == ArchFamily::ArcB || a.family == ArchFamily::IntelXe2)
+        s += " · XeSS XMX";
+    return s;
+}
+
+// ---- Historial de evidencias: FPS reales medidos sin FG por combinación, en este juego ----------------------------------
+// Solo mediciones verificadas (sin FG, sin límite, 120 fotogramas o más). Las escenas no se controlan: una combinación
+// se compara con otra solo con dos mediciones o más de cada una, en el mismo preset y la misma salida
+struct Evidence
+{
+    int count = 0;
+    double mean = 0.0, p10 = 0.0;
+};
+
+static std::filesystem::path HistoryPath() { return FileOf(L".historial.ini"); }
+
+static std::string EvidenceKey(const std::string& scaler, Model model, int preset, unsigned outHeight)
+{
+    return StrFmt("%s|%s|%s|%u", scaler.c_str(), model == Model::Lite ? "INT8Lite" : model == Model::Full ? "completo" : "-",
+                  preset >= 0 ? kPresets[preset].name : "?", outHeight);
+}
+
+static Evidence LoadEvidence(const std::string& key)
+{
+    Evidence e;
+    CSimpleIniA ini(true);
+    if (!Exists(HistoryPath()) || ini.LoadFile(HistoryPath().c_str()) < 0)
+        return e;
+    if (const char* v = ini.GetValue("historial", key.c_str(), nullptr); v != nullptr)
+        sscanf_s(v, "%d;%lf;%lf", &e.count, &e.mean, &e.p10);
+    return e;
+}
+
+// Media acumulada; a partir de cinco mediciones pesa como cinco, para que una escena nueva cuente
+static Evidence RecordEvidence(const std::string& key, double mean, double p10)
+{
+    CSimpleIniA ini(true);
+    ini.LoadFile(HistoryPath().c_str());
+    Evidence e = LoadEvidence(key);
+    const int n = std::min(e.count, 4);
+    e.mean = (e.mean * n + mean) / (n + 1);
+    e.p10 = (e.p10 * n + p10) / (n + 1);
+    e.count++;
+    ini.SetValue("historial", key.c_str(), StrFmt("%d;%.1f;%.1f;%s", e.count, e.mean, e.p10, NowText().c_str()).c_str());
+    std::error_code ec;
+    std::filesystem::create_directories(Folder(), ec);
+    ini.SaveFile(HistoryPath().c_str());
+    return e;
+}
+
+// Lo que el modelo INT8Lite ganó frente al completo en el mismo preset, medido (percentil 10). Vacío sin evidencia suficiente
+static std::optional<double> LiteGain(const std::string& driverKey, int preset, unsigned outHeight, std::string* detail = nullptr)
+{
+    const Evidence lite = LoadEvidence(EvidenceKey(driverKey, Model::Lite, preset, outHeight));
+    const Evidence full = LoadEvidence(EvidenceKey(driverKey, Model::Full, preset, outHeight));
+    if (lite.count < 2 || full.count < 2 || full.p10 <= 0.0)
+        return std::nullopt;
+    if (detail != nullptr)
+        *detail = StrFmt("medido: INT8Lite %.0f / completo %.0f FPS reales (90 %% del tiempo), %d y %d mediciones", lite.p10, full.p10,
+                         lite.count, full.count);
+    return lite.p10 / full.p10 - 1.0;
+}
+
+// Los escaladores en orden, según la arquitectura, el modo y la evidencia medida en este juego.
+// AMD con FSR 4: Óptimo y Calidad solo el modelo completo; Equilibrado el completo, INT8Lite con una mejora medida o con
+// la base insuficiente en Balanceado; Rendimiento INT8Lite primero salvo que el historial muestre que no gana. Después
+// otras DLL FSR 4 completas, la Lite comunitaria solo en Equilibrado (base insuficiente) y Rendimiento, HLX FSR 4 y
+// XeSS / FSR 3.1. Sin FSR 4: XeSS y FSR 3.1. NVIDIA RTX: DLSS SR; GTX: XeSS y FSR 3.1. Intel: XeSS.
+// DLSS por d4r no se elige nunca solo (experimental y con reinicio)
+static std::vector<Choice> Candidates(const UpscalerCatalog& catalog, const Arch& arch, Mode m, bool insufficient, int preset,
+                                      unsigned outHeight)
 {
     std::vector<Choice> out;
-    const auto add = [&](const UpscalerVariant* v, bool driverLite, const char* why)
+    const auto add = [&](const UpscalerVariant* v, Model model, const std::string& why)
     {
         if (v == nullptr || !v->usable)
             return;
         for (const auto& c : out)
-            if (c.key == KeyOf(*v) && c.driverLite == driverLite)
+            if (c.key == KeyOf(*v) && c.model == model)
                 return;
-        out.push_back({ KeyOf(*v), v->name + (driverLite ? " · modelo INT8Lite" : ""), driverLite, why });
+        const std::string modelName = model == Model::Lite ? " · modelo INT8Lite"
+                                      : model == Model::Full && arch.fsr4 ? StrFmt(" · modelo completo (%s)", arch.fsr4Full)
+                                                                          : std::string();
+        out.push_back({ KeyOf(*v), v->name + modelName, model, why });
     };
     const auto first = [&](auto pred) -> const UpscalerVariant*
     {
@@ -480,42 +668,60 @@ static std::vector<Choice> Candidates(const UpscalerCatalog& catalog, const GpuI
     const UpscalerVariant* driver = first(IsDriver);
     const UpscalerVariant* communityLite = first(IsCommunityLite);
     const UpscalerVariant* hlx = first(IsHlx);
-    const UpscalerVariant* otherFsr4 = first([](const UpscalerVariant& v)
-                                             { return v.entry != nullptr && v.entry->family == IlionUpscalers::Family::Fsr4 &&
-                                                      !IsDriver(v) && !IsCommunityLite(v) && !IsHlx(v); });
+    const UpscalerVariant* otherFsr4 = first([](const UpscalerVariant& v) { return IsFsr4Full(v) && !IsDriver(v) && !IsHlx(v); });
     const UpscalerVariant* xess = backend(Upscaler::XeSS);
     const UpscalerVariant* fsr31 = first([](const UpscalerVariant& v) { return v.family == FamFsr31; });
-    const bool driverLite = driver != nullptr && DriverLiteOffered();
 
-    if (gpu.vendorId == VendorId::AMD)
+    if (arch.fsr4)
     {
-        if (lite)
+        // INT8Lite del driver: según el modo y lo medido. En una GPU cuyo modelo propio ya es INT8Lite no hay elección
+        const bool liteOffered = driver != nullptr && DriverLiteOffered() && !arch.liteIsFull;
+        std::string evidence;
+        const auto gain = liteOffered ? LiteGain(KeyOf(*driver), preset, outHeight, &evidence) : std::nullopt;
+        bool wantLite = false;
+        std::string liteWhy;
+        if (liteOffered && m == Mode::Equilibrado)
         {
-            if (driverLite)
-                add(driver, true, "La base no llega al objetivo en el modo de escalado más rápido: FSR 4 del driver con su modelo INT8Lite (mejora sin medir)");
-            add(communityLite, false, "La base no llega al objetivo en el modo de escalado más rápido: FSR 4 Lite comunitaria (mejora sin medir)");
+            if (gain.has_value() && *gain >= 0.08)
+                wantLite = true, liteWhy = StrFmt("Equilibrado: INT8Lite rinde un %.0f%% más en este juego (%s)", *gain * 100.0, evidence.c_str());
+            else if (!gain.has_value() && insufficient)
+                wantLite = true, liteWhy = "Equilibrado: la base no llega en Balanceado con el modelo completo; INT8Lite (mejora sin medir)";
         }
-        add(driver, false, "Prioridad 1: FSR 4 del driver AMD, modelo normal");
-        if (driverLite)
-            add(driver, true, "Prioridad 2: FSR 4 del driver con el modelo INT8Lite de su selector");
-        add(communityLite, false, "Prioridad 3: FSR 4 Lite comunitaria (DLL independiente)");
-        add(otherFsr4, false, "FSR 4 por DLL (el driver no está disponible)");
-        add(hlx, false, "Prioridad 4: Helix FSR 4");
-        add(xess, false, "Respaldo: XeSS");
-        add(fsr31, false, "Respaldo: FSR 3.1");
+        else if (liteOffered && m == Mode::Rendimiento)
+        {
+            if (!gain.has_value())
+                wantLite = true, liteWhy = "Rendimiento: INT8Lite es la primera opción (mejora sin medir en este juego)";
+            else if (*gain >= 0.03)
+                wantLite = true, liteWhy = StrFmt("Rendimiento: INT8Lite rinde un %.0f%% más (%s)", *gain * 100.0, evidence.c_str());
+        }
+        if (wantLite)
+            add(driver, Model::Lite, liteWhy);
+
+        std::string fullWhy = StrFmt("FSR 4 del driver AMD, modelo completo %s para %s", arch.fsr4Full, arch.name);
+        if (liteOffered && !wantLite)
+            fullWhy += m == Mode::Optimo || m == Mode::Calidad ? StrFmt(" (el modo %s no usa INT8Lite)", ModeName(m))
+                       : gain.has_value()                       ? StrFmt(" (INT8Lite no mejora lo suficiente: %s)", evidence.c_str())
+                                                                : std::string(" (sin motivo medido para INT8Lite)");
+        add(driver, Model::Full, fullWhy);
+        add(otherFsr4, Model::Full, "FSR 4 por DLL, modelo completo (el driver no está disponible)");
+        if (m == Mode::Rendimiento || (m == Mode::Equilibrado && insufficient))
+            add(communityLite, Model::Any, "FSR 4 Lite comunitaria (DLL independiente; mejora sin medir)");
+        add(hlx, Model::Any, "HLX FSR 4 (alternativa a FSR 4)");
+        add(xess, Model::Any, "Respaldo: XeSS");
+        add(fsr31, Model::Any, "Respaldo: FSR 3.1");
     }
-    else if (gpu.vendorId == VendorId::Nvidia)
+    else if (arch.dlssSR)
     {
-        add(backend(Upscaler::DLSS), false, "DLSS nativo de NVIDIA");
-        add(xess, false, "XeSS (DP4a)");
-        add(fsr31, false, "FSR 3.1");
+        add(backend(Upscaler::DLSS), Model::Any, StrFmt("DLSS Super Resolution nativo (%s)", arch.name));
+        add(xess, Model::Any, "XeSS (DP4a)");
+        add(fsr31, Model::Any, "FSR 3.1");
     }
     else
     {
-        add(xess, false, gpu.vendorId == VendorId::Intel ? "XeSS en Intel" : "XeSS (DP4a)");
-        add(fsr31, false, "FSR 3.1");
+        add(xess, Model::Any, arch.xessXmx ? StrFmt("XeSS con XMX (%s)", arch.name) : StrFmt("XeSS DP4a (%s)", arch.name));
+        add(fsr31, Model::Any, "FSR 3.1");
     }
-    add(backend(Upscaler::FSR22), false, "Respaldo final: FSR 2.2");
+    add(backend(Upscaler::FSR22), Model::Any, "Respaldo final: FSR 2.2");
     return out;
 }
 
@@ -585,6 +791,13 @@ static void SaveManaged(CSimpleIniA& ini, const char* section, IFeature* feature
     ini.SetValue(section, "fsr4_modelo", config->Fsr4Model.has_value() ? std::to_string((int) config->Fsr4Model.value()).c_str() : "auto");
     ini.SetValue(section, "ratio_activo", OptStr(config->UpscaleRatioOverrideEnabled).c_str());
     ini.SetValue(section, "ratio", OptStr(config->UpscaleRatioOverrideValue).c_str());
+    ini.SetValue(section, "tabla_activa", OptStr(config->QualityRatioOverrideEnabled).c_str());
+    ini.SetValue(section, "tabla_dlaa", OptStr(config->QualityRatio_DLAA).c_str());
+    ini.SetValue(section, "tabla_ultra_calidad", OptStr(config->QualityRatio_UltraQuality).c_str());
+    ini.SetValue(section, "tabla_calidad", OptStr(config->QualityRatio_Quality).c_str());
+    ini.SetValue(section, "tabla_balanceado", OptStr(config->QualityRatio_Balanced).c_str());
+    ini.SetValue(section, "tabla_rendimiento", OptStr(config->QualityRatio_Performance).c_str());
+    ini.SetValue(section, "tabla_ultra_rendimiento", OptStr(config->QualityRatio_UltraPerformance).c_str());
     ini.SetValue(section, "fg_activado", OptStr(config->FGEnabled).c_str());
     ini.SetValue(section, "fg_entrada", OptStr(config->FGInput).c_str());
     ini.SetValue(section, "fg_salida", OptStr(config->FGOutput).c_str());
@@ -657,6 +870,13 @@ static void LoadManaged(const CSimpleIniA& ini, const char* section, bool withFg
     fsr4Model = ini.GetValue(section, "fsr4_modelo", "auto");
     SetFrom(config->UpscaleRatioOverrideEnabled, ini.GetValue(section, "ratio_activo", nullptr), ParseBool);
     SetFrom(config->UpscaleRatioOverrideValue, ini.GetValue(section, "ratio", nullptr), ParseFloat);
+    SetFrom(config->QualityRatioOverrideEnabled, ini.GetValue(section, "tabla_activa", nullptr), ParseBool);
+    SetFrom(config->QualityRatio_DLAA, ini.GetValue(section, "tabla_dlaa", nullptr), ParseFloat);
+    SetFrom(config->QualityRatio_UltraQuality, ini.GetValue(section, "tabla_ultra_calidad", nullptr), ParseFloat);
+    SetFrom(config->QualityRatio_Quality, ini.GetValue(section, "tabla_calidad", nullptr), ParseFloat);
+    SetFrom(config->QualityRatio_Balanced, ini.GetValue(section, "tabla_balanceado", nullptr), ParseFloat);
+    SetFrom(config->QualityRatio_Performance, ini.GetValue(section, "tabla_rendimiento", nullptr), ParseFloat);
+    SetFrom(config->QualityRatio_UltraPerformance, ini.GetValue(section, "tabla_ultra_rendimiento", nullptr), ParseFloat);
     if (withFg)
     {
         SetFrom(config->FGEnabled, ini.GetValue(section, "fg_activado", nullptr), ParseBool);
@@ -756,32 +976,76 @@ static RatioOwner OwnerOfOverride(float* value = nullptr)
     return RatioOwner::External;
 }
 
-// ---- Detección y medición ------------------------------------------------------------------------------------------
-static std::string ArchName(const GpuInformation& gpu)
+// Lo que el juego leyó al arrancar: la configuración de proporción del punto de esta sesión, guardado antes del primer
+// cambio de Perfiles en ella. Si la actual es distinta, un juego que lee su tabla al arrancar aún no la conoce
+static bool RatioConfigChangedThisSession()
 {
-    using HW = device_info::HwGeneration;
-    if (gpu.vendorId == VendorId::AMD)
+    CSimpleIniA s(true);
+    if (!Exists(SessionPath()) || s.LoadFile(SessionPath().c_str()) < 0 || SessionId() != s.GetValue("origen", "sesion", ""))
+        return false;
+    auto c = Config::Instance();
+    const auto differs = [&](const char* key, const std::string& now)
     {
-        switch (gpu.amdHwGeneration)
-        {
-        case HW::kGfx12:
-            return "RDNA 4";
-        case HW::kGfx11:
-            return "RDNA 3";
-        case HW::kGfx10_3:
-            return "RDNA 2";
-        case HW::kGfx10:
-            return "RDNA 1";
-        default:
-            return "AMD (otra arquitectura)";
-        }
-    }
-    if (gpu.vendorId == VendorId::Nvidia)
-        return gpu.dlssCapable ? "NVIDIA RTX" : "NVIDIA (sin DLSS)";
-    if (gpu.vendorId == VendorId::Intel)
-        return "Intel";
-    return "Desconocida";
+        const char* v = s.GetValue("configuracion", key, nullptr);
+        return v != nullptr && now != v;
+    };
+    return differs("ratio_activo", OptStr(c->UpscaleRatioOverrideEnabled)) ||
+           (c->UpscaleRatioOverrideEnabled.value_or_default() && differs("ratio", OptStr(c->UpscaleRatioOverrideValue))) ||
+           differs("tabla_activa", OptStr(c->QualityRatioOverrideEnabled)) || differs("tabla_dlaa", OptStr(c->QualityRatio_DLAA)) ||
+           differs("tabla_ultra_calidad", OptStr(c->QualityRatio_UltraQuality)) || differs("tabla_calidad", OptStr(c->QualityRatio_Quality)) ||
+           differs("tabla_balanceado", OptStr(c->QualityRatio_Balanced)) || differs("tabla_rendimiento", OptStr(c->QualityRatio_Performance)) ||
+           differs("tabla_ultra_rendimiento", OptStr(c->QualityRatio_UltraPerformance));
 }
+
+// La fila del menú gráfico del juego que corresponde a cada modo de escalado de ILION
+static const char* GameRowName(int preset)
+{
+    static const char* names[] = { "DLAA / Nativa", "Ultra Calidad (Ultra Quality)", "Calidad (Quality)", "Equilibrado (Balanced)",
+                                   "Rendimiento (Performance)", "Ultra Rendimiento (Ultra Performance)" };
+    return preset >= 0 && preset < kPresetCount ? names[preset] : "?";
+}
+
+static int PresetByName(const std::string& name)
+{
+    for (int i = 0; i < kPresetCount; i++)
+        if (name == kPresets[i].name)
+            return i;
+    return -1;
+}
+
+// El modelo FSR 4: pedido (configuración), determinado por FFX (sus comprobaciones de soporte al crear el contexto, como
+// el «modelo determinado» del menú de escalado) y si coinciden. No es una lectura de lo que ejecuta la GPU
+struct ModelState
+{
+    Mark mark = Mark::Info;
+    std::string title, detail;
+    bool verified = false;
+};
+
+static ModelState ModelNow(IFeature* feature)
+{
+    auto config = Config::Instance();
+    const Arch arch = ArchOf(IdentifyGpu::getPrimaryGpu());
+    const bool runs = feature != nullptr && feature->IsInited() && feature->Version().major >= 4 &&
+                      (feature->GetUpscalerType() == Upscaler::FFX || feature->GetUpscalerType() == Upscaler::FFX_on12);
+    const auto determined = runs ? FSR4Models::ActiveModel(FfxApiProxy::Dx12Module_SR()) : std::nullopt;
+    const std::string asked = config->Fsr4Model.has_value() ? std::string(FSR4Models::Name(config->Fsr4Model.value()))
+                                                            : StrFmt("completo (%s, automático)", arch.fsr4Full);
+    ModelState s;
+    if (!determined.has_value())
+    {
+        s = { Mark::Info, "Modelo pedido: " + asked, runs ? "FFX aún no ha determinado el modelo" : "FSR 4 no se está ejecutando ahora" };
+        return s;
+    }
+    s.verified = config->Fsr4Model.has_value() ? *determined == config->Fsr4Model.value() : (*determined != FSR4Model::INT8Lite || arch.liteIsFull);
+    s.mark = s.verified ? Mark::Ok : Mark::Wait;
+    s.title = StrFmt("Modelo %s: %s", s.verified ? "verificado" : "determinado", FSR4Models::Name(*determined));
+    s.detail = "Pedido: " + asked + " · determinado por FFX al crear el contexto" + (s.verified ? "" : " · NO coincide con lo pedido");
+    return s;
+}
+
+// ---- Detección y medición ------------------------------------------------------------------------------------------
+static std::string ArchName(const GpuInformation& gpu) { return ArchOf(gpu).name; }
 
 static double RefreshHz()
 {
@@ -891,6 +1155,29 @@ static int Judge(const Measure& m, const Policy& p)
 
 // ---- Registro ------------------------------------------------------------------------------------------------------
 static void Add(Mark mark, std::string title, std::string detail = {}) { steps.push_back({ mark, std::move(title), std::move(detail) }); }
+
+// El veredicto que muestra el monitor: un estado nuevo se muestra tras 2 s seguidos, para que la fila no parpadee
+static int StableJudge(int raw)
+{
+    static int shown = -3, candidate = -3;
+    static double since = 0.0;
+    const double now = ImGui::GetTime();
+    if (shown == -3)
+        shown = candidate = raw;
+    if (raw == shown)
+    {
+        candidate = shown;
+        return shown;
+    }
+    if (raw != candidate)
+    {
+        candidate = raw;
+        since = now;
+    }
+    if (now - since >= 2.0)
+        shown = candidate;
+    return shown;
+}
 static Step& Last() { return steps.back(); }
 
 static void Begin()
@@ -936,6 +1223,11 @@ static void SaveProfile(IFeature* feature)
     if (plan.restartRatio)
         restart += restart.empty() ? "proporcion" : ",proporcion";
     ini.SetValue("perfil", "reinicio_pendiente", restart.empty() ? "no" : restart.c_str());
+    ini.SetValue("perfil", "ruta_proporcion", plan.viaMenu ? "menu" : "consulta");
+    if (!plan.scaler.why.empty())
+        ini.SetValue("perfil", "motivo_escalador", plan.scaler.why.c_str());
+    if (!plan.presetWhy.empty())
+        ini.SetValue("perfil", "motivo_preset", plan.presetWhy.c_str());
     if (before.rw > 0)
         ini.SetValue("perfil", "resolucion_anterior", StrFmt("%ux%u", before.rw, before.rh).c_str());
     if (measure.mean > 0.0)
@@ -975,14 +1267,22 @@ template <typename Ctx> static void Tick(Ctx& ctx)
                    std::string(magic_enum::enum_name(state.gameEngine)).c_str(), ModeName(mode)));
         const double hz = RefreshHz();
         Add(gpu.vendorId == VendorId::Invalid ? Mark::Bad : Mark::Ok, "GPU: " + gpu.name,
-            StrFmt("%s · %.0f GB · FSR 4: %s · monitor %s", ArchName(gpu).c_str(), gpu.dedicatedVramInBytes / (1024.0 * 1024.0 * 1024.0),
-                   std::string(magic_enum::enum_name(gpu.fsr4Support)).c_str(), hz > 0.0 ? StrFmt("%.0f Hz", hz).c_str() : "desconocido"));
+            StrFmt("%s · %.0f GB · monitor %s%s", ArchSummary(ArchOf(gpu)).c_str(), gpu.dedicatedVramInBytes / (1024.0 * 1024.0 * 1024.0),
+                   hz > 0.0 ? StrFmt("%.0f Hz", hz).c_str() : "desconocido",
+                   state.api == API::DX12 ? "" : " · Perfiles solo está validado en DirectX 12"));
 
         upscaling = feature != nullptr && feature->IsInited();
         const auto catalog = GatherUpscalers(feature);
         const UpscalerVariant* current = Current(catalog);
         const auto status = IlionDynamicMfg::Get();
-        before.scaler = current != nullptr ? current->name + (IsDriver(*current) && DriverLiteSelected() ? " · modelo INT8Lite" : "") : "ninguno";
+        before.scaler = current != nullptr ? current->name + (IsFsr4Full(*current) && DriverLiteSelected() ? " · modelo INT8Lite" : "") : "ninguno";
+        before.scalerKey = current != nullptr ? KeyOf(*current) : "";
+        before.model = current != nullptr && IsFsr4Full(*current) ? SelectedModel() : Model::Any;
+        // DLSS en NVIDIA: la versión efectiva de la DLL que ejecuta, sin deducir más de ella
+        if (upscaling && feature->GetUpscalerType() == Upscaler::DLSS)
+            Add(Mark::Info, StrFmt("DLSS Super Resolution en ejecución: versión %d.%d.%d", feature->Version().major, feature->Version().minor,
+                                   feature->Version().patch),
+                "La generación del modelo (DLSS 4 / 4.5) depende de esa DLL y de su preset; Perfiles no la cambia ni la deduce del nombre");
         before.fg = status.provider == IlionDynamicMfg::Provider::None ? "sin FG" : status.name;
         before.multiplier = Generating(status) ? status.multiplier : 0;
         if (upscaling)
@@ -1021,6 +1321,13 @@ template <typename Ctx> static void Tick(Ctx& ctx)
     {
         measure = MeasureNow();
         judge = Judge(measure, policy);
+        if (measure.verified && !before.scalerKey.empty() && before.preset >= 0)
+        {
+            const std::string key = EvidenceKey(before.scalerKey, before.model, before.preset, before.th);
+            const Evidence e = RecordEvidence(key, measure.mean, measure.p10);
+            Add(Mark::Info, StrFmt("Historial: medición registrada (%d de esta combinación)", e.count),
+                key + StrFmt(" · media acumulada %.0f, el 90%% del tiempo a %.0f", e.mean, e.p10));
+        }
         const std::string detail = measure.verified ? StrFmt("Media %.0f · el 90%% del tiempo a %.0f o más · %.0f%% del tiempo con 60 o más · %s", measure.mean,
                                                              measure.p10, measure.share60 * 100.0, measure.source.c_str())
                                                     : measure.source;
@@ -1100,9 +1407,11 @@ template <typename Ctx> static void Tick(Ctx& ctx)
             Next();
             break;
         }
-        const bool liteNeeded = judge == -1 && plan.preset >= policy.fastest;
+        // La base no llega en el modo de escalado más rápido del modo: lo que justifica un modelo más ligero
+        const bool insufficient = judge == -1 && plan.preset >= policy.fastest;
         const auto catalog = GatherUpscalers(feature);
-        const auto candidates = Candidates(catalog, gpu, liteNeeded);
+        const Arch arch = ArchOf(gpu);
+        const auto candidates = Candidates(catalog, arch, mode, insufficient, plan.preset >= 0 ? plan.preset : before.preset, before.th);
         if (candidates.empty())
         {
             Add(Mark::Bad, "Ningún escalador compatible disponible", "Se mantiene el actual");
@@ -1111,17 +1420,13 @@ template <typename Ctx> static void Tick(Ctx& ctx)
         }
         plan.scaler = candidates.front();
         const UpscalerVariant* current = Current(catalog);
-        const UpscalerVariant* chosen = Find(catalog, plan.scaler.key);
-        const bool same = current != nullptr && KeyOf(*current) == plan.scaler.key && DriverLiteSelected() == plan.scaler.driverLite;
-        const bool lite = plan.scaler.driverLite || (chosen != nullptr && IsCommunityLite(*chosen));
+        const bool sameScaler = current != nullptr && KeyOf(*current) == plan.scaler.key;
+        const bool same = sameScaler && (plan.scaler.model == Model::Any || SelectedModel() == plan.scaler.model);
+        if (insufficient && (mode == Mode::Optimo || mode == Mode::Calidad) && arch.fsr4)
+            Add(Mark::Wait, StrFmt("Limitación: con el modelo completo no se alcanza el objetivo de %s", ModeName(mode)),
+                "Este modo no cambia a INT8Lite ni a una DLL Lite. Equilibrado o Rendimiento pueden usarlas (mejora sin medir).");
 
-        if (lite && liteNeeded && (mode == Mode::Optimo || mode == Mode::Calidad))
-        {
-            // Una alternativa de rendimiento sin medir: en Óptimo y Calidad solo se recomienda
-            plan.scalerStage = Stage::Recommended;
-            Add(Mark::Wait, "Recomendado (no aplicado): " + plan.scaler.name, plan.scaler.why + ". En este modo no se cambia sin tu decisión.");
-        }
-        else if (same)
+        if (same)
         {
             plan.scalerStage = Stage::Verified;
             Add(Mark::Ok, "Escalador: " + plan.scaler.name + " (ya activo)", plan.scaler.why);
@@ -1130,7 +1435,10 @@ template <typename Ctx> static void Tick(Ctx& ctx)
         {
             plan.changeScaler = true;
             plan.scalerStage = Stage::Selected;
-            Add(Mark::Wait, "Escalador elegido: " + plan.scaler.name, plan.scaler.why + (current != nullptr ? " · antes: " + current->name : std::string()));
+            Add(Mark::Wait,
+                sameScaler ? std::string("Modelo FSR 4: ") + (SelectedModel() == Model::Lite ? "INT8Lite → completo" : "completo → INT8Lite")
+                           : "Escalador elegido: " + plan.scaler.name,
+                plan.scaler.why + " · antes: " + before.scaler);
         }
         Next();
         break;
@@ -1218,9 +1526,18 @@ template <typename Ctx> static void Tick(Ctx& ctx)
                 count = std::clamp(count, 1, std::max(IlionDynamicMfg::MaxCountLimit(), 1));
             else if (plan.fg == FgRoute::DlssgGame)
                 count = std::clamp(count, 1, std::max(state.dlssgMfgMax.value_or(1), 1));
+            const Arch arch = ArchOf(gpu);
+            if (plan.fg == FgRoute::DlssgGame && gpu.vendorId == VendorId::Nvidia && !arch.dlssMFG)
+                count = 1; // DLSSG de NVIDIA: más de un fotograma generado solo en RTX 50
             plan.count = count;
             if (plan.fg == FgRoute::None)
                 plan.fgWhy = "no hay una ruta fija verificada para esta combinación";
+            else if (plan.fg == FgRoute::XeFgNew && !arch.xefgTested)
+            {
+                // Posible, pero sin comprobar por ILION en esta arquitectura: se recomienda, no se activa
+                plan.fgStage = Stage::Recommended;
+                plan.fgWhy = StrFmt("XeFG %dX fijo es posible, pero ILION no lo ha comprobado en %s", count + 1, arch.name);
+            }
             else
                 plan.fgStage = Stage::Selected;
         }
@@ -1239,9 +1556,10 @@ template <typename Ctx> static void Tick(Ctx& ctx)
         }
         else
             Add(plan.fgStage == Stage::Blocked || plan.fgStage == Stage::Recommended ? Mark::Wait : Mark::Info,
-                plan.fgStage == Stage::Blocked       ? "Frame Generation: pendiente de tu decisión"
-                : plan.fgStage == Stage::Recommended ? "Frame Generation: recomendado desactivarlo (no se cambia)"
-                                                     : "Frame Generation: no se cambia",
+                plan.fgStage == Stage::Blocked                                  ? "Frame Generation: pendiente de tu decisión"
+                : plan.fgStage == Stage::Recommended && plan.fg == FgRoute::XeFgNew ? "Frame Generation: XeFG recomendado, no activado"
+                : plan.fgStage == Stage::Recommended                            ? "Frame Generation: recomendado desactivarlo (no se cambia)"
+                                                                                : "Frame Generation: no se cambia",
                 plan.fgWhy);
         Next();
         break;
@@ -1274,42 +1592,52 @@ template <typename Ctx> static void Tick(Ctx& ctx)
             }
             if (!v->status.active)
                 ChooseUpscalerVariant(*v);
-            if (!plan.scaler.driverLite && IsDriver(*v) && config->Fsr4Model.has_value())
+            // El modelo completo: el selector vuelve a automático (FFX elige el de la GPU), como lo hace el menú. Quita
+            // también un INT8Lite heredado de otro modo
+            modelChanged = false;
+            if (plan.scaler.model == Model::Full && config->Fsr4Model.has_value())
             {
+                const std::optional<FSR4Model> previous = config->Fsr4Model.value();
                 config->Fsr4Model.reset();
+                FfxApiProxy::ArmSrModelRevert(previous);
                 State::Instance().newBackend = currentBackend != Upscaler::Reset ? currentBackend : Upscaler::FFX;
                 MARK_ALL_BACKENDS_CHANGED();
+                modelChanged = true;
             }
             plan.scalerStage = Stage::Applied;
             Add(Mark::Wait, "Aplicando " + plan.scaler.name, "Esperando a que el escalador se ejecute");
             break;
         }
-        if (v != nullptr && v->status.active && !litePending)
+        if (v != nullptr && v->status.active && !litePending && (!modelChanged || elapsed > 1.5))
         {
-            if (plan.scaler.driverLite && !DriverLiteSelected())
+            if (plan.scaler.model == Model::Lite && !DriverLiteSelected())
             {
                 const std::optional<FSR4Model> previous =
                     config->Fsr4Model.has_value() ? std::optional<FSR4Model>(config->Fsr4Model.value()) : std::nullopt;
                 config->Fsr4Model = FSR4Model::INT8Lite;
                 FfxApiProxy::ArmSrModelRevert(previous);
-                State::Instance().newBackend = Upscaler::FFX;
+                State::Instance().newBackend = currentBackend != Upscaler::Reset ? currentBackend : Upscaler::FFX;
                 MARK_ALL_BACKENDS_CHANGED();
                 litePending = true;
                 phaseStart = ImGui::GetTime();
-                Last().detail = "Ejecutándose; cambiando al modelo INT8Lite del driver";
+                Last().detail = "Ejecutándose; cambiando al modelo INT8Lite del selector";
                 break;
             }
-            plan.scalerStage = Stage::Verified;
-            Last() = { Mark::Ok, "Escalador verificado: " + plan.scaler.name, "Es el que ejecuta el último escalado" };
+            // Con FSR 4, verificado solo si el modelo que FFX determinó es el pedido
+            const ModelState ms = plan.scaler.model == Model::Any ? ModelState {} : ModelNow(feature);
+            plan.scalerStage = plan.scaler.model == Model::Any || ms.verified ? Stage::Verified : Stage::Applied;
+            Last() = { plan.scalerStage == Stage::Verified ? Mark::Ok : Mark::Wait,
+                       (plan.scalerStage == Stage::Verified ? "Escalador verificado: " : "Escalador aplicado: ") + plan.scaler.name,
+                       plan.scaler.model == Model::Any ? std::string("Es el que ejecuta el último escalado") : ms.title + " · " + ms.detail };
             Next();
             break;
         }
         if (litePending && elapsed > 1.5 && v != nullptr && v->status.active && DriverLiteSelected())
         {
-            const auto active = FSR4Models::ActiveModel(FfxApiProxy::Dx12Module_SR());
-            plan.scalerStage = active.has_value() && *active == FSR4Model::INT8Lite ? Stage::Verified : Stage::Applied;
-            Last() = { plan.scalerStage == Stage::Verified ? Mark::Ok : Mark::Wait, "Escalador aplicado: " + plan.scaler.name,
-                       active.has_value() ? StrFmt("Modelo que ejecuta FFX: %s", FSR4Models::Name(*active)) : "Modelo INT8Lite pedido" };
+            const ModelState ms = ModelNow(feature);
+            plan.scalerStage = ms.verified ? Stage::Verified : Stage::Applied;
+            Last() = { ms.verified ? Mark::Ok : Mark::Wait, (ms.verified ? "Escalador verificado: " : "Escalador aplicado: ") + plan.scaler.name,
+                       ms.title + " · " + ms.detail };
             litePending = false;
             Next();
             break;
@@ -1330,21 +1658,43 @@ template <typename Ctx> static void Tick(Ctx& ctx)
         {
             float previous = 0.0f;
             const RatioOwner owner = OwnerOfOverride(&previous);
-            config->UpscaleRatioOverrideEnabled = true;
-            config->UpscaleRatioOverrideValue = kPresets[plan.preset].ratio;
             std::string why;
-            plan.restartRatio = RatioNeedsRestart(rule, &why);
-            plan.presetStage = plan.restartRatio ? Stage::Restart : Stage::Pending;
-            if (owner == RatioOwner::External)
-                Add(Mark::Info, StrFmt("Anulación externa %.2f sustituida", previous), "La original queda en los puntos de restauración");
-            if (plan.restartRatio)
-                Add(Mark::Restart, StrFmt("Modo de escalado %s: requiere reiniciar el juego", kPresets[plan.preset].name),
-                    StrFmt("Proporción %.2f guardada (%s). Se verifica al siguiente inicio.", kPresets[plan.preset].ratio, why.c_str()));
+            plan.viaMenu = RatioNeedsRestart(rule, &why);
+            if (plan.viaMenu)
+            {
+                // El juego construye su tabla de calidades al arrancar con las respuestas de ILION y su menú elige la fila
+                // (comprobado en Dawnwalker: la tabla la responde ILION, la fila la elige el juego). La anulación única
+                // iguala todas las filas: se quita para que el menú del juego vuelva a cambiar la resolución
+                if (owner != RatioOwner::None)
+                {
+                    config->UpscaleRatioOverrideEnabled = false;
+                    Add(Mark::Info, StrFmt("Anulación única %.2f desactivada", previous),
+                        owner == RatioOwner::External ? "Era externa: queda en los puntos de restauración"
+                                                      : "Era de Perfiles: igualaba todos los presets del menú del juego");
+                }
+                plan.restartRatio = RatioConfigChangedThisSession();
+                plan.presetStage = plan.restartRatio ? Stage::Restart : Stage::GameMenu;
+                if (plan.restartRatio)
+                    Add(Mark::Restart, "Tabla de calidades: requiere reiniciar el juego una vez",
+                        StrFmt("El juego lee su tabla al arrancar (%s). Después, elige «%s» en su menú gráfico: el cambio de preset es "
+                               "inmediato y se verifica con la resolución real.", why.c_str(), GameRowName(plan.preset)));
+                else
+                    Add(Mark::Wait, StrFmt("Acción en el juego: elige «%s» en su menú gráfico", GameRowName(plan.preset)),
+                        "El juego ya usa su tabla de calidades: el cambio en su menú es inmediato. ILION no puede elegir el preset "
+                        "del juego; lo verifica con la resolución real.");
+            }
             else
+            {
+                config->UpscaleRatioOverrideEnabled = true;
+                config->UpscaleRatioOverrideValue = kPresets[plan.preset].ratio;
+                plan.presetStage = Stage::Pending;
+                if (owner == RatioOwner::External)
+                    Add(Mark::Info, StrFmt("Anulación externa %.2f sustituida", previous), "La original queda en los puntos de restauración");
                 Add(Mark::Wait, StrFmt("Modo de escalado %s: pendiente de aplicación", kPresets[plan.preset].name),
                     StrFmt("Proporción %.2f guardada. Se aplica cuando el juego vuelva a consultar su resolución interna; si no "
                            "cambia, cambia la calidad en el menú del juego o reinícialo.",
                            kPresets[plan.preset].ratio));
+            }
         }
         Next();
         break;
@@ -1428,13 +1778,17 @@ template <typename Ctx> static void Tick(Ctx& ctx)
         else
             changes.push_back({ Mark::Ok, "Escalador: conservado (" + before.scaler + ")", plan.scaler.why });
         // Calidad y resolución interna
-        if (plan.presetStage == Stage::Pending || plan.presetStage == Stage::Restart)
+        if (plan.presetStage == Stage::Pending || plan.presetStage == Stage::Restart || plan.presetStage == Stage::GameMenu)
         {
             const unsigned nw = (unsigned) std::lround(before.tw / kPresets[plan.preset].ratio);
             const unsigned nh = (unsigned) std::lround(before.th / kPresets[plan.preset].ratio);
             changes.push_back({ plan.presetStage == Stage::Restart ? Mark::Restart : Mark::Wait,
                                 StrFmt("Calidad: %s → %s", kPresets[before.preset].name, kPresets[plan.preset].name),
-                                plan.presetStage == Stage::Restart ? "Se aplica al reiniciar el juego" : "Pendiente de que el juego consulte su resolución" });
+                                plan.presetStage == Stage::GameMenu ? StrFmt("Elige «%s» en el menú gráfico del juego (cambio inmediato)", GameRowName(plan.preset))
+                                : plan.presetStage == Stage::Restart && plan.viaMenu
+                                    ? StrFmt("Reinicia una vez; después elige «%s» en el menú del juego", GameRowName(plan.preset))
+                                : plan.presetStage == Stage::Restart ? std::string("Se aplica al reiniciar el juego")
+                                                                     : std::string("Pendiente de que el juego consulte su resolución") });
             changes.push_back({ Mark::Info, "Resolución interna: " + ResText(before.rw, before.rh) + " → " + ResText(nw, nh) + " (prevista)",
                                 StrFmt("Salida %s · proporción %.2f", ResText(before.tw, before.th).c_str(), kPresets[plan.preset].ratio) });
         }
@@ -1462,7 +1816,8 @@ template <typename Ctx> static void Tick(Ctx& ctx)
                             : plan.restartFg                      ? "Frame Generation"
                                                                   : "Resolución interna" });
 
-        const bool pending = plan.presetStage == Stage::Pending || plan.fgStage == Stage::Applied || plan.fgStage == Stage::Blocked ||
+        const bool pending = plan.presetStage == Stage::Pending || plan.presetStage == Stage::GameMenu || plan.fgStage == Stage::Applied ||
+                             plan.fgStage == Stage::Blocked ||
                              plan.scalerStage == Stage::Applied || judge == -2;
         const std::string where = "ILION\\Perfiles\\" + ExeKey() + ".perfil.ini";
         if (restart)
@@ -1537,12 +1892,15 @@ template <typename Ctx> static void ApplyFile(Ctx& ctx, const std::filesystem::p
         Add(Mark::Bad, std::string(what) + ": el escalador guardado no está disponible", scalerKey);
 
     std::string why;
-    const bool ratioRestart = RatioNeedsRestart(LoadRule(), &why);
-    Add(ratioRestart ? Mark::Restart : Mark::Wait,
+    const bool atStart = RatioNeedsRestart(LoadRule(), &why);
+    const bool ratioRestart = atStart && RatioConfigChangedThisSession();
+    Add(ratioRestart ? Mark::Restart : atStart ? Mark::Ok : Mark::Wait,
         std::string(what) + ": proporción " +
             (config->UpscaleRatioOverrideEnabled.value_or_default() ? StrFmt("%.2f", config->UpscaleRatioOverrideValue.value_or_default())
                                                                     : std::string("del juego")),
-        ratioRestart ? "Se aplica al reiniciar el juego (" + why + ")" : std::string("Se aplica cuando el juego vuelva a consultar su resolución interna"));
+        ratioRestart ? "Se aplica al reiniciar el juego (" + why + ")"
+        : atStart    ? std::string("Igual que al arrancar el juego: no necesita reinicio")
+                     : std::string("Se aplica cuando el juego vuelva a consultar su resolución interna"));
     if (!withFg)
         Add(Mark::Wait, std::string(what) + ": Frame Generation no cargado", "Hay un MFG dinámico activo (configuración externa); el perfil no lo cambia");
     if (external)
@@ -1617,22 +1975,31 @@ static void BlockHead(Mark mark, const char* title, const char* state)
     ImGui::Spacing();
 }
 
-static void Row(Mark mark, const std::string& title, const std::string& detail)
+// lines: altura reservada en líneas, para que un cambio de texto no mueva lo que hay debajo
+static void Row(Mark mark, const std::string& title, const std::string& detail, int lines = 0)
 {
     const float h = ImGui::GetTextLineHeight();
+    const float top = ImGui::GetCursorPosY();
     Pilot(mark, h);
     ImGui::BeginGroup();
     Coloured(mark == Mark::Info ? IlionTheme::ShellPal::Text : MarkColour(mark), title.c_str(), true);
     if (!detail.empty())
         Coloured(IlionTheme::ShellPal::Dim, detail.c_str(), true);
     ImGui::EndGroup();
+    if (lines > 0)
+    {
+        const float used = ImGui::GetCursorPosY() - top;
+        const float want = lines * ImGui::GetTextLineHeightWithSpacing();
+        if (used < want)
+            ImGui::Dummy(ImVec2(0.0f, want - used));
+    }
 }
 
 // Lo que el perfil guardado dejó pendiente para este inicio
 struct Saved
 {
     bool exists = false;
-    std::string modeName, date, session, preset, fgOutput, fgCount, prevRes, restart;
+    std::string modeName, date, session, preset, fgOutput, fgCount, prevRes, restart, route, whyScaler, whyPreset;
 };
 
 static Saved ReadSaved()
@@ -1655,6 +2022,9 @@ static Saved ReadSaved()
     cached.fgCount = ini.GetValue("perfil", "fg_multiplicador", "");
     cached.prevRes = ini.GetValue("perfil", "resolucion_anterior", "");
     cached.restart = ini.GetValue("perfil", "reinicio_pendiente", "no");
+    cached.route = ini.GetValue("perfil", "ruta_proporcion", "");
+    cached.whyScaler = ini.GetValue("perfil", "motivo_escalador", "");
+    cached.whyPreset = ini.GetValue("perfil", "motivo_preset", "");
     return cached;
 }
 
@@ -1727,9 +2097,14 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight)
     const bool savedThisSession = saved.session == SessionId();
     const bool fgRestart = (plan.restartFg && state.activeFgOutput != FGOutput::XeFG) ||
                            (saved.restart.find("fg") != std::string::npos && fgWanted && !fgLoaded);
-    // La proporción: pendiente de reinicio mientras sea de esta sesión (en otra ya se habría leído al arrancar)
-    const bool ratioRestart = overrideOn && !ratioApplied && upscaling &&
-                              (plan.restartRatio || (savedThisSession && saved.restart.find("proporcion") != std::string::npos));
+    // El preset que busca el perfil y cómo llega: por el menú del juego (tabla leída al arrancar) o por consulta
+    const int target = finished && plan.preset >= 0 ? plan.preset : PresetByName(saved.preset);
+    const bool targetViaMenu = finished ? plan.viaMenu : saved.route == "menu";
+    const bool targetReached = target >= 0 && activePreset == target;
+    // Reinicio de la proporción: mientras la configuración de esta sesión no sea la que el juego leyó al arrancar
+    const bool ratioRestart = upscaling && !targetReached &&
+                              (plan.restartRatio || (savedThisSession && saved.restart.find("proporcion") != std::string::npos)) &&
+                              RatioConfigChangedThisSession();
     const bool restartNeeded = fgRestart || ratioRestart;
 
     const ImVec4 panel = IlionTheme::shell ? IlionTheme::ShellPal::Panel : ImGui::GetStyleColorVec4(ImGuiCol_FrameBg);
@@ -1771,8 +2146,11 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight)
             const Mark mark = upscaling ? Mark::Ok : current != nullptr ? Mark::Wait : Mark::Bad;
             BlockHead(mark, "ESCALADO", upscaling ? "ACTIVO" : current != nullptr ? "SIN ESCALAR" : "NINGUNO");
             Big(UiFont(), 1.7f, IlionTheme::ShellPal::Text, current != nullptr ? current->name.c_str() : "Sin escalador", true);
-            if (current != nullptr && IsDriver(*current))
-                Coloured(IlionTheme::ShellPal::Text2, DriverLiteSelected() ? "Driver AMD · modelo INT8Lite" : "Driver AMD · modelo normal");
+            if (current != nullptr && IsFsr4Full(*current))
+            {
+                const ModelState ms = ModelNow(feature);
+                Row(ms.mark, ms.title, ms.detail);
+            }
             ImGui::Spacing();
             Big(UiFont(), 1.35f, IlionTheme::ShellPal::Orange, activePreset >= 0 ? kPresets[activePreset].name : "—");
             if (upscaling)
@@ -1794,7 +2172,14 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight)
 
             // Proporción: anterior, recomendada, guardada, activa
             ImGui::Spacing();
-            if (overrideOn)
+            if (target >= 0 && targetViaMenu)
+                Row(targetReached ? Mark::Ok : ratioRestart ? Mark::Restart : Mark::Wait,
+                    targetReached  ? StrFmt("Preset del perfil verificado: %s", kPresets[target].name)
+                    : ratioRestart ? StrFmt("Preset del perfil: %s (tras reiniciar, elígelo en el menú del juego)", kPresets[target].name)
+                                   : StrFmt("Acción en el juego: elige «%s» en su menú gráfico", GameRowName(target)),
+                    targetReached ? std::string("Comprobado con la resolución real del juego")
+                                  : std::string("ILION no elige el preset del juego; el cambio en su menú es inmediato y se verifica aquí"));
+            else if (overrideOn)
             {
                 const RatioOwner owner = OwnerOfOverride();
                 const int wanted = PresetOf(overrideValue);
@@ -1804,7 +2189,18 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight)
                     owner == RatioOwner::Perfiles ? "Anulación de Perfiles" : "Anulación externa (no la gestiona el perfil)");
             }
             else
-                Row(Mark::Info, "Proporción del juego (sin anulación)", std::string());
+                Row(Mark::Info,
+                    config->QualityRatioOverrideEnabled.value_or_default() ? "Tabla de calidades del juego (filas redefinidas en ILION)"
+                                                                            : "Tabla de calidades del juego (sin anulación)",
+                    "El menú gráfico del juego elige el preset");
+            {
+                const std::string whyScaler = finished ? plan.scaler.why : saved.whyScaler;
+                const std::string whyPreset = finished ? plan.presetWhy : saved.whyPreset;
+                if (!whyScaler.empty())
+                    Coloured(IlionTheme::ShellPal::Dim, ("Por qué este escalador: " + whyScaler).c_str(), true);
+                if (!whyPreset.empty())
+                    Coloured(IlionTheme::ShellPal::Dim, ("Por qué este preset: " + whyPreset).c_str(), true);
+            }
             if (finished && before.rw > 0 && plan.preset >= 0 && plan.preset != before.preset)
                 Row(Mark::Info, StrFmt("Anterior %s (%s) · recomendada %s", kPresets[before.preset].name, ResText(before.rw, before.rh).c_str(),
                                        kPresets[plan.preset].name),
@@ -1854,7 +2250,8 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight)
             if (plan.fgStage == Stage::Blocked)
                 Row(Mark::Wait, "Recomendado: FG fijo, pendiente de tu decisión", "Desactiva el Dynamic en FRAME GEN y vuelve a optimizar");
             else if (plan.fgStage == Stage::Recommended)
-                Row(Mark::Bad, "Recomendado: desactivar el FG", plan.fgWhy);
+                Row(plan.fg == FgRoute::XeFgNew ? Mark::Wait : Mark::Bad,
+                    plan.fg == FgRoute::XeFgNew ? "Recomendado (no activado): XeFG" : "Recomendado: desactivar el FG", plan.fgWhy);
         }
         ImGui::EndTable();
     }
@@ -1893,17 +2290,21 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight)
     // Objetivo del modo y coste del FG, solo con datos fiables
     {
         const Policy policy = PolicyOf(mode);
-        const int judge = Judge(live, policy);
+        // Sobre la ventana de 500 ms (con FG, la media de los FPS reales de la ventana) y con histéresis de 2 s
+        Measure window = live;
+        if (live.withFg && shown.base > 0.0)
+            window.mean = shown.base;
+        const int judge = StableJudge(Judge(window, policy));
         if (judge == -2)
-            Row(Mark::Wait, StrFmt("Objetivo %s (%.0f FPS reales): sin datos fiables", ModeName(mode), policy.base), live.source);
+            Row(Mark::Wait, StrFmt("Objetivo %s (%.0f FPS reales): sin datos fiables", ModeName(mode), policy.base), live.source, 3);
         else if (live.verified)
             Row(judge < 0 ? Mark::Bad : Mark::Ok,
-                StrFmt("Objetivo %s (%.0f FPS reales): %s", ModeName(mode), policy.base, judge < 0 ? "NO cumplido" : "cumplido"),
-                StrFmt("El 90%% del tiempo a %.0f o más · %.0f%% del tiempo con 60 o más · verificado sin FG", live.p10, live.share60 * 100.0));
+                StrFmt("Objetivo %s (%.0f FPS reales): %s · medido", ModeName(mode), policy.base, judge < 0 ? "NO cumplido" : "cumplido"),
+                StrFmt("El 90%% del tiempo a %.0f o más · %.0f%% del tiempo con 60 o más · sin FG", live.p10, live.share60 * 100.0), 3);
         else
             Row(judge < 0 ? Mark::Bad : Mark::Wait,
-                StrFmt("Objetivo %s (%.0f FPS reales): %s (estimado)", ModeName(mode), policy.base, judge < 0 ? "NO cumplido" : "probable"),
-                "Con FG activo la estabilidad no se puede comprobar");
+                StrFmt("Objetivo %s (%.0f FPS reales): %s · estimado", ModeName(mode), policy.base, judge < 0 ? "NO cumplido" : "probable"),
+                "Con FG activo la estabilidad no se puede comprobar", 3);
 
         const double reference = MfgCostReference();
         if (generating && reference > 0.0 && mfgCost.current > 0.0)

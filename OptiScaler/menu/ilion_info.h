@@ -116,7 +116,9 @@ inline constexpr double kPan = 70.0; // pixels per second a long message slides 
 
 // Draws the line in the rectangle given. `on` false: the glass stays, empty, and nothing is updated.
 // ILION dev.62: the new interface draws its letters once (the half-pixel glow under white letters read as doubled text)
-inline bool flatText = false;
+// ILION: always: the classic menu (ILION Traditional) drew the glow too until the new interface had set this once, and
+// its letters read as doubled
+inline bool flatText = true;
 
 inline void Draw(ImDrawList* draw, const ImVec2& min, const ImVec2& max, bool on, ImFont* font, float fontSize,
                  const char* (*translate)(const char*), const ImVec4& phosphor, const ImVec4& amber,

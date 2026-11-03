@@ -22,6 +22,7 @@
 #include <misc/IlionBenchmark.h>
 #include <misc/IlionAdvisor.h>
 #include <misc/IlionDynamicMfg.h>
+#include <misc/FrameLimit.h>
 #include <misc/IlionCompare.h>
 #include <misc/IlionCapture.h>
 #include <misc/IlionReShade.h>
@@ -252,6 +253,8 @@ static bool shellCompact = false;               // ILION dev.73: the new interfa
 static float fgHomeComboWidth = 0.0f;           // ILION dev.71: width of the FG selectors, the XeMFG variant and the multiplier
                                                 // in the Home card when it is split in two zones (0: their usual width)
 static float fgCompactComboWidth = 0.0f;        // ILION dev.77: Compact's Generation: width of the FG selectors (0: usual)
+static int dmfgPart = 0; // ILION: RenderDynamicMfgPanel in Full's Frame Gen: 1 its controls, 2 its state, 0 all
+static bool shellFgSplit = false; // ILION: the layout drawn has "@fg_state": the Dynamic MFG card keeps its controls only
 static int fgCompactPart = 0;                   // ILION dev.78: RenderFgQuickControls in Compact's two columns: 1 left, 2 states
 static float fgCompactStatesWidth = 0.0f;       // ILION dev.77: width of the FG states' block, measured when drawn
 static bool shellActive = false;                // ILION dev.58: the new interface is drawing, in its single (Advanced) mode
@@ -11726,7 +11729,8 @@ static void DrawFgInstrumentsColumn(State& state)
     // As large as the column allows them side by side (the screens are sized by the font)
     const float base = ImGui::GetFontSize();
     const float room = ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 1.5f;
-    float fit = std::floor(std::clamp(room / (FgCrtSize().x * 2.0f) * base, base, base * 1.35f));
+    // ILION: up to 1.22 font sizes (1.35 before), so the two screens leave room for the state under them
+    float fit = std::floor(std::clamp(room / (FgCrtSize().x * 2.0f) * base, base, base * 1.22f));
 
     // ILION dev.63: the size changes only by more than a pixel. Every new size of a dynamic font makes ImGui bake its
     // glyphs again; when the column width moved (sidebar expanded, scroll bar shown or not) the size moved by fractions
@@ -12614,7 +12618,8 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
                     "It is not a cap unless \"Use target as cap\" is on.");
 
         const ImGuiStyle& style = ImGui::GetStyle();
-        const float spacing = style.ItemInnerSpacing.x;
+        // ILION: the slider and its number a full item gap apart (they touched with the inner gap)
+        const float spacing = style.ItemSpacing.x;
         const float inputWidth = std::ceil(ImGui::CalcTextSize("0000").x + style.FramePadding.x * 2.0f);
         float room = ImGui::GetContentRegionAvail().x;
         if (maxWidth > 0.0f)
@@ -12677,7 +12682,7 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
             const auto mode = Dmfg::ExternalDynamicMode();
             const bool ilionPossible = ctx.state.dlssgMfgMax.value_or(0) >= 2;
             const bool nativePossible = ctx.state.dlssgGameDMFGSupported;
-            const char* names[] = { "Off", "ILION (experimental, real ceiling)", "Backend's own (no ceiling)" };
+            const char* names[] = { "Off (fixed FPS)", "ILION Dynamic (FPS cap)", "Automatic Dynamic (no FPS cap)" };
             ImGui::BeginDisabled(!supported);
             ImGui::SetNextItemWidth(260.0f * scale);
             if (IlionTheme::BeginCombo(TrL("Dynamic MFG##dmfgMode"), Tr(names[(int) mode])))
@@ -12693,10 +12698,12 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
                 ImGui::EndCombo();
             }
             ImGui::EndDisabled();
-            ShowTooltip("ILION: the game's DLSSG stays in a fixed mode and ILION picks its multiplier every frame, up to "
-                        "the maximum; with \"Use target as cap\" the final FPS are held at the target.\n"
-                        "Backend's own: the backend's Dynamic MFG picks the multiplier and its maximum; the target is a "
-                        "goal, not a cap.");
+            ShowTooltip("Off: the fixed multiplier (Override DLSSG Ratio).\n"
+                        "ILION Dynamic (experimental): the game's DLSSG stays in eOn and ILION picks numFramesToGenerate "
+                        "every real frame with its own R3 controller, up to the maximum; with \"Use target as cap\" the "
+                        "final FPS are held at the target.\n"
+                        "Automatic Dynamic: the backend's own eDynamic picks the multiplier and its maximum; the target "
+                        "is a goal, not a cap.");
             if (!supported && reason != nullptr && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 WrappedTooltip("%s", Tr(reason));
             return;
@@ -12726,64 +12733,100 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
         }
         if (!supported && reason != nullptr)
             TextWrappedDisabled("%s", Tr(reason));
+        ImGui::Spacing(); // the target apart from the mode and the maximum
         drawTarget(0.0f);
         return;
     }
 
     const auto status = Dmfg::Get();
-    ImGui::TextDisabled("%s %s", Tr("Provider:"), status.name);
 
-    drawSwitch();
-    if (!supported && reason != nullptr)
-        TextWrappedDisabled("%s", Tr(reason));
-
-    drawTarget(320.0f * scale);
-
-    ImGui::BeginDisabled(!enabled);
-    drawMax(95.0f * scale);
-
-    if (Dmfg::RoundingSupported())
+    // ILION: Full's Frame Gen splits the card: its controls in the left column (part 1), the state in the right one
+    // (part 2, "@fg_state"). 0: the whole card, as elsewhere
+    if (dmfgPart != 2)
     {
-        auto config = Config::Instance();
-        const bool xefgCap = Dmfg::TargetAsCap();
-        ImGui::BeginDisabled(xefgCap);
-        int rounding = std::clamp(config->FGXeFGRoundingDMFG.value_or_default(), 0, 2);
-        const char* names[] = { "Down", "Nearest", "Up" }; // ini values 0, 1, 2
-        ImGui::SetNextItemWidth(120.0f * scale);
-        if (IlionTheme::BeginCombo(TrL("Multiplier rounding##xefg"), Tr(names[rounding])))
+        ImGui::TextDisabled("%s %s", Tr("Provider:"), status.name);
+
+        drawSwitch();
+        if (!supported && reason != nullptr)
+            TextWrappedDisabled("%s", Tr(reason));
+
+        drawTarget(320.0f * scale);
+
+        ImGui::BeginDisabled(!enabled);
+        drawMax(95.0f * scale);
+
+        if (Dmfg::RoundingSupported())
         {
-            for (int i = 0; i < 3; ++i)
-                if (ImGui::Selectable(TrL(names[i]), i == rounding))
-                    config->FGXeFGRoundingDMFG = i;
-            ImGui::EndCombo();
+            auto config = Config::Instance();
+            const bool xefgCap = Dmfg::TargetAsCap();
+            ImGui::BeginDisabled(xefgCap);
+            int rounding = std::clamp(config->FGXeFGRoundingDMFG.value_or_default(), 0, 2);
+            const char* names[] = { "Down", "Nearest", "Up" }; // ini values 0, 1, 2
+            ImGui::SetNextItemWidth(120.0f * scale);
+            if (IlionTheme::BeginCombo(TrL("Multiplier rounding##xefg"), Tr(names[rounding])))
+            {
+                for (int i = 0; i < 3; ++i)
+                    if (ImGui::Selectable(TrL(names[i]), i == rounding))
+                        config->FGXeFGRoundingDMFG = i;
+                ImGui::EndCombo();
+            }
+
+            bool allow1x = config->FGXeFGDynamicAllow1X.value_or_default();
+            if (IlionTheme::Checkbox(TrL("Allow 1X##xefg"), &allow1x))
+                config->FGXeFGDynamicAllow1X = allow1x;
+            ShowTooltip("With a maximum of 2X, official Dynamic MFG always allows 1X. Target-as-cap uses at least 2X and ignores rounding.");
+            ImGui::EndDisabled();
+        }
+        ImGui::EndDisabled();
+
+        // The cap: also without Dynamic (a fixed multiplier held at the target), through the limiter already in use. The
+        // game's DLSSG in eDynamic holds the target itself: ILION's cap would fight its controller, so it can't be used
+        bool cap = Dmfg::TargetAsCap();
+        ImGui::BeginDisabled(status.backendDynamic);
+        if (IlionTheme::Checkbox(TrL("Use target as cap##dmfg"), &cap))
+            Dmfg::SetTargetAsCap(cap);
+        ImGui::EndDisabled();
+        if (status.backendDynamic)
+        {
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                WrappedTooltip("%s", Tr("Not available while the backend's Dynamic MFG is on: the backend aims at the target "
+                                        "itself, and an ILION cap on the real frames makes it raise the multiplier."));
+        }
+        else
+        {
+            ShowTooltip("The limiter already in use (Reflex, XeLL or OptiScaler's) holds the final FPS at the target.\n"
+                        "No other limiter is added. Needs a target above 0, except with XeFG Dynamic.");
         }
 
-        bool allow1x = config->FGXeFGDynamicAllow1X.value_or_default();
-        if (IlionTheme::Checkbox(TrL("Allow 1X##xefg"), &allow1x))
-            config->FGXeFGDynamicAllow1X = allow1x;
-        ShowTooltip("With a maximum of 2X, official Dynamic MFG always allows 1X. Target-as-cap uses at least 2X and ignores rounding.");
-        ImGui::EndDisabled();
-    }
-    ImGui::EndDisabled();
+        // What the cap really does now, beside its key: applied, waiting for a measured multiplier, suspended by the loop
+        // guard, not available with the backend's own Dynamic, or nothing to hold (no target, nothing generating)
+        if (cap)
+        {
+            const ImVec4 green = toneMapColor(IlionTheme::ShellPal::Green);
+            const ImVec4 yellow = toneMapColor(ImVec4(1.f, 0.8f, 0.f, 1.f));
+            const char* word = nullptr;
+            const ImVec4* colour = nullptr;
+            if (status.backendDynamic)
+                word = "not available";
+            else if (status.capSuspended)
+                word = "suspended", colour = &yellow;
+            else if (status.capWaiting)
+                word = "waiting", colour = &yellow;
+            else if (FrameLimit::targetCapActive())
+                word = "applied", colour = &green;
+            else
+                word = "not holding anything now";
 
-    // The cap: also without Dynamic (a fixed multiplier held at the target), through the limiter already in use. The
-    // game's DLSSG in eDynamic holds the target itself: ILION's cap would fight its controller, so it can't be used
-    bool cap = Dmfg::TargetAsCap();
-    ImGui::BeginDisabled(status.backendDynamic);
-    if (IlionTheme::Checkbox(TrL("Use target as cap##dmfg"), &cap))
-        Dmfg::SetTargetAsCap(cap);
-    ImGui::EndDisabled();
-    if (status.backendDynamic)
-    {
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            WrappedTooltip("%s", Tr("Not available while the backend's Dynamic MFG is on: the backend aims at the target "
-                                    "itself, and an ILION cap on the real frames makes it raise the multiplier."));
+            ImGui::SameLine();
+            if (colour != nullptr)
+                ImGui::TextColored(*colour, "[%s]", Tr(word));
+            else
+                ImGui::TextDisabled("[%s]", Tr(word));
+        }
     }
-    else
-    {
-        ShowTooltip("The limiter already in use (Reflex, XeLL or OptiScaler's) holds the final FPS at the target.\n"
-                    "No other limiter is added. Needs a target above 0, except with XeFG Dynamic.");
-    }
+
+    if (dmfgPart == 1)
+        return;
 
     // State: confirmed (the provider reports presented frames), detected (asked for / evaluating), unknown, off
     const char* gen = status.gen == Dmfg::Gen::Confirmed  ? Tr("generating (confirmed)")
@@ -12880,7 +12923,11 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
 void MenuCommon::RenderDynamicMfgCard(RenderMenuContext& ctx)
 {
     ScopedCard card { "Dynamic MFG" };
+    // Full's Frame Gen: the controls here, the state in the right column ("@fg_state")
+    const bool split = shellActive && !shellCompact && shellFgSplit;
+    dmfgPart = split ? 1 : 0;
     RenderDynamicMfgPanel(ctx, false);
+    dmfgPart = 0;
 }
 
 void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
@@ -20978,6 +21025,34 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
             return;
         }
 
+        // ILION: Full's Frame Gen, right column under the screens: the Dynamic MFG state (multiplier asked and applied,
+        // base and final FPS, limiter, notes) and, folded, the UI and advanced FG settings that had a card of their own
+        if (strcmp(id, "@fg_state") == 0)
+        {
+            const bool provider = IlionDynamicMfg::Current() != IlionDynamicMfg::Provider::None;
+            const bool advanced = FgUiAdvancedHasContent(ctx);
+            if (!provider && !advanced)
+                return;
+
+            ScopedCard card(ShellText("Frame generation: state and options", "Frame Generation: estado y opciones",
+                                      "Frame Generation: estado e opções", "Генерация кадров: состояние и параметры"));
+            ScopedID stateId { "fg_state" };
+            if (provider)
+            {
+                dmfgPart = 2;
+                RenderDynamicMfgPanel(ctx, false);
+                dmfgPart = 0;
+            }
+
+            if (advanced)
+            {
+                ImGui::Spacing();
+                if (IlionTheme::CollapsingHeader(TrL("UI and advanced FG settings##fgUiAdvanced")))
+                    RenderFgUiAndAdvanced(ctx);
+            }
+            return;
+        }
+
         if (strcmp(id, "@upscaler_diag") == 0)
         {
             ScopedCard card(ShellText("Upscaler: DLL and hot-swap", "Escalador: DLL y cambio en caliente", "Upscaler: DLL e troca a quente",
@@ -21284,6 +21359,11 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
     {
         fgQuickDrawn = false;
 
+        // ILION: a layout with "@fg_state" shows the Dynamic MFG state there, the Dynamic MFG card keeps its controls
+        shellFgSplit = false;
+        for (const char* id : layout->right)
+            shellFgSplit = shellFgSplit || (id != nullptr && strcmp(id, "@fg_state") == 0);
+
         // One box alone keeps the whole width (its own controls keep a proportionate length)
         const bool table = columns && layout->right[0] != nullptr && ImGui::BeginTable("##ShellColumns", 2, tableFlags);
 
@@ -21308,6 +21388,7 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
         if (table)
             ImGui::EndTable();
 
+        shellFgSplit = false;
         shellSettingsTag = false;
         return true;
     }

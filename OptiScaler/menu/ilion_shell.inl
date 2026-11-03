@@ -1240,8 +1240,12 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
     // Sub-sections of the modules: a tab of the menu and the layout the new interface gives it --------------------
     // clang-format off
     // Streamline FG's state is a line of the FG control card (its own card made the column scroll for one line)
-    static const ShellLayout lFrameGen { { "fg_selection", "@fg_quick", "fg_dynamic", "fg_optifg", "fg_reprojection", "fg_nvngx", "fg_fsrfg_inputs" },
-                                         { "@fg_instruments", "fg_xefg", "fg_fsrfg", "fg_dlssg", "@fg_ui_advanced" } };
+    // ILION: two balanced columns. Left, what is set: the selection with its control, then the Dynamic MFG controls.
+    // Right, what it does and the options: the two screens, the Dynamic MFG state with the UI and advanced settings folded
+    // in it ("@fg_state", no card of their own any more), then each provider's own settings
+    static const ShellLayout lFrameGen { { "fg_selection", "@fg_quick", "fg_dynamic" },
+                                         { "@fg_instruments", "@fg_state", "fg_xefg", "fg_fsrfg", "fg_dlssg", "fg_nvngx", "fg_optifg",
+                                           "fg_reprojection", "fg_fsrfg_inputs" } };
     static const ShellLayout lLatency { { "framerate", "vsync", "low_latency" },
                                         { "ilion_latency", "ilion_regulator", "@latency_combined" } };
     static const ShellLayout lImage { { "gfx_color", "gfx_advanced" }, { "sharpness", "mipmap", "anisotropy" } };
@@ -1813,6 +1817,9 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                                                      "доступных реализаций"))
                            .c_str(),
                        pal::Text2, 15.f);
+                 // ILION: Compact's Home: the pilot apart from the lines of what runs
+                 if (compact)
+                     ImGui::Dummy(ImVec2(0.0f, U(5.f)));
 
                  // What runs: resolution, factor and the upscaler's own time
                  if (upscalerOn && feature->RenderWidth() > 0)
@@ -1822,6 +1829,8 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                                   feature->TargetWidth(), feature->TargetHeight())
                                .c_str(),
                            pal::Text, 17.f);
+                     if (compact)
+                         ImGui::Dummy(ImVec2(0.0f, U(3.f)));
 
                      double sum = 0.0;
                      int valid = 0;
@@ -1916,6 +1925,8 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                  if (IlionDynamicMfg::Current() != IlionDynamicMfg::Provider::None)
                  {
                      ImGui::Spacing();
+                     if (compact)
+                         ImGui::Dummy(ImVec2(0.0f, U(4.f)));
                      ScopedID dynamicId { "home_dmfg" };
                      RenderDynamicMfgPanel(ctx, true);
                  }
@@ -2229,15 +2240,18 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                 ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, compactHomeTight ? Sz(8.f, 2.f) : Sz(8.f, 4.f));
                 ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, compactHomeTight ? Sz(8.f, 3.f) : Sz(8.f, 4.f));
 
+                // ILION: Upscaling sits higher: the gap above it takes 0.4 of the share of the two below
                 ImGui::Spacing();
-                ImGui::Dummy(ImVec2(0.0f, compactHomeGap));
+                ImGui::Dummy(ImVec2(0.0f, std::floor(compactHomeGap * 0.4f)));
                 IlionTheme::SectionPlate(kSections[1].name[li]);
                 homeUpscaling();
 
                 ImGui::Spacing();
                 ImGui::Dummy(ImVec2(0.0f, compactHomeGap));
                 IlionTheme::SectionPlate(kSections[2].name[li]);
+                ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, Sz(8.f, 4.f)); // labels apart from their controls
                 homeFrameGen();
+                ImGui::PopStyleVar();
 
                 // Latency and Neural Rendering. ILION dev.79: in two columns, the latency methods (the very controls of
                 // Latency & FPS) at the left, their state, NR's state and the note of the intelligent activation at the right
@@ -2263,7 +2277,10 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                     ImGui::PopItemWidth();
 
                     ImGui::TableSetColumnIndex(1);
-                    if (beginRows("##CompactHome"))
+                    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, Sz(4.f, 3.f)); // ILION: rows of text that don't touch
+                    const bool rows = beginRows("##CompactHome");
+                    ImGui::PopStyleVar();
+                    if (rows)
                     {
                         stateRow(latencyOn ? Led::Green : Led::Off, Lx("Latency", "Latencia", "Latência", "Задержка"),
                                  (latencyTech != nullptr ? std::string(latencyTech) : std::string("-")) +
@@ -2275,11 +2292,16 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                         ImGui::EndTable();
                     }
                     if (IlionLatency::Current() != IlionLatency::Manual)
+                    {
+                        ImGui::Dummy(ImVec2(0.0f, U(4.f)));
+                        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, Sz(8.f, 4.f));
                         TextWrappedColored(Tone(pal::Text2), "%s",
                                            Lx("Intelligent activation chooses these: set it to Manual in Latency & FPS to change them.",
                                               "La activación inteligente los elige: ponla en Manual en Latencia y FPS para cambiarlos.",
                                               "A ativação inteligente os escolhe: coloque em Manual em Latência e FPS para alterá-los.",
                                               "Их выбирает умная активация: переключите её в Ручной режим в «Задержка и FPS»."));
+                        ImGui::PopStyleVar();
+                    }
                     ImGui::EndTable();
                 }
 
@@ -2289,7 +2311,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                 // sections (up to 28 each, 16 kept free at the bottom). If the content reaches below the area, the gaps go
                 // first and then the spacing tightens: never a scroll bar for Home
                 {
-                    const float content = ImGui::GetCursorPosY() - 3.0f * compactHomeGap;
+                    const float content = ImGui::GetCursorPosY() - std::floor(compactHomeGap * 0.4f) - 2.0f * compactHomeGap;
                     const float spare = ImGui::GetWindowHeight() - content - U(16.f);
                     if (spare < 0.0f)
                     {
@@ -2298,7 +2320,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                         compactHomeGap = 0.0f;
                     }
                     else
-                        compactHomeGap = std::floor((std::min)(spare / 3.0f, U(28.f)));
+                        compactHomeGap = std::floor((std::min)(spare / 2.4f, U(28.f)));
                 }
             }
             else if (compactSection == 1)

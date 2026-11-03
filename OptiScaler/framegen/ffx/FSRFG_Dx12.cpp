@@ -63,20 +63,17 @@ static ffxReturnCode_t CreateFgSwapchainContext(ffxContext* context, ffxCreateCo
 
     // Asked for, made, and what the dll says it made: the swapchain version the SDK picked for this GPU and driver.
     // It tells nothing of the driver's frame pacing, which the SDK switches on and off by itself (RX 9000, Adrenalin
-    // 26.10.1 or later, fullscreen, VRR, no V-Sync)
-    auto& state = State::Instance();
-    state.ffxSwapchainApiFallback = fallback;
-    state.ffxSwapchainProvider.clear();
-
+    // 26.10.1 or later, fullscreen, VRR, no V-Sync): the log never claims it
     uint64_t providerId = 0;
     const char* providerName = nullptr;
+    std::string provider = "not reported";
     if (result == FFX_API_RETURN_OK && FfxApiProxy::FgContextProviderVersion(context, &providerId, &providerName))
-        state.ffxSwapchainProvider = providerName;
+        provider = providerName;
 
-    LOG_INFO("FSR FG swapchain: API {} asked{}, result {} ({}), provider {} (id {:X})",
+    LOG_INFO("FSR FG swapchain: API {} asked{}, result {} ({}), provider {} (id {:X}); driver frame pacing not reported "
+             "by the SDK",
              fallback ? "3.1.6" : "4.0.0", fallback ? " after 4.0.0 was refused" : "", result,
-             FfxApiProxy::ReturnCodeToString(result),
-             state.ffxSwapchainProvider.empty() ? "not reported" : state.ffxSwapchainProvider, providerId);
+             FfxApiProxy::ReturnCodeToString(result), provider, providerId);
 
     return result;
 }

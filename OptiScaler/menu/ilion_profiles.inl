@@ -32,6 +32,7 @@
 // Incluido por menu_common.cpp antes de MenuTabs: usa el catálogo, los selectores y la medición de coste del menú.
 
 #include <SimpleIni.h>
+#include "../misc/IlionCommunity.h" // catálogo técnico de Frame Generation (datos puros)
 
 #pragma execution_character_set(push, "utf-8")
 
@@ -213,6 +214,7 @@ enum class FgRoute
     DlssgOutput,
     FsrFg,
     XeFgNew, // requiere reiniciar
+    Alt,     // otra implementación del catálogo técnico: recomendada, no se activa sola (requiere reiniciar)
 };
 
 // Medición de la sesión: solo fotogramas reales
@@ -250,6 +252,7 @@ struct Plan
     Stage presetStage = Stage::None;
     std::string presetWhy;
     FgRoute fg = FgRoute::None;
+    std::string fgAltId; // FgRoute::Alt: la implementación del catálogo técnico recomendada
     FGInput fgInput = FGInput::NoFG;
     int count = 0;
     Stage fgStage = Stage::None;
@@ -610,6 +613,98 @@ static Arch ArchOf(const GpuInformation& gpu)
     return a;
 }
 
+// El identificador de arquitectura del catálogo técnico (el mismo que usan los perfiles de la comunidad)
+static const char* CatalogArchId(const Arch& a)
+{
+    switch (a.family)
+    {
+    case ArchFamily::Rdna4:
+        return "rdna4";
+    case ArchFamily::Rdna3:
+        return "rdna3";
+    case ArchFamily::Rdna2:
+        return "rdna2";
+    case ArchFamily::AmdApu:
+        return "amd_apu";
+    case ArchFamily::AmdOther:
+        return "amd_old";
+    case ArchFamily::NvGtx:
+        return "nv_gtx";
+    case ArchFamily::Rtx20:
+        return "rtx20";
+    case ArchFamily::Rtx30:
+        return "rtx30";
+    case ArchFamily::Rtx40:
+        return "rtx40";
+    case ArchFamily::Rtx50:
+        return "rtx50";
+    case ArchFamily::ArcA:
+        return "arc_a";
+    case ArchFamily::ArcB:
+        return "arc_b";
+    case ArchFamily::IntelXe2:
+        return "intel_xe2";
+    case ArchFamily::IntelOther:
+        return "intel_other";
+    default:
+        return "";
+    }
+}
+
+// Si una implementación de FG del catálogo técnico se puede usar ahora en este juego: las mismas condiciones que los
+// selectores de FRAME GEN (API, DLL presentes, GPU). Una sola fuente para el optimizador, los formularios y la activación
+static bool FgAvailable(const std::string& id)
+{
+    const auto& state = State::Instance();
+    const auto status = IlionDynamicMfg::Get();
+    const bool vulkan = state.swapchainApi == API::Vulkan;
+    const bool dx12 = state.swapchainApi == API::DX12 || state.api == API::DX12;
+    std::error_code ec;
+    if (id == "ninguno")
+        return true;
+    if (id == "xefg")
+        return status.provider == IlionDynamicMfg::Provider::XeFG ||
+               (!vulkan && std::filesystem::exists(Util::DllPath().parent_path() / L"libxess_fg.dll", ec));
+    if (id == "fsr_fg")
+        return status.provider == IlionDynamicMfg::Provider::FsrFg || (!vulkan && dx12);
+    if (id == "dlssg_nativo")
+    {
+        const Arch arch = ArchOf(IdentifyGpu::getPrimaryGpu());
+        return !vulkan && arch.dlssFG;
+    }
+    if (id == "dlssg_juego")
+        return status.provider == IlionDynamicMfg::Provider::DlssgGame || StreamlineHooks::isDlssgHooked();
+    if (id == "nvngx_nukem")
+        return state.nukemsFgFileAvailable;
+    if (id == "nvngx_enabler")
+        return state.artursFgFileAvailable;
+    if (id == "nvngx_ffx")
+        return !vulkan && FfxApiProxy::IsFGReady(false);
+    if (id == "nvngx_combo")
+        return !vulkan && FfxApiProxy::IsFGReady(false) && state.artursFgFileAvailable;
+    if (id == "nvngx_fglite")
+        return !vulkan && !FgLiteInstall().dll.empty();
+    return false;
+}
+
+// Las entradas de FG posibles en este juego (las condiciones del selector de entrada de FRAME GEN)
+static std::set<std::string> FgRoutesAvailable(IFeature* feature)
+{
+    const auto& state = State::Instance();
+    std::set<std::string> r { "ninguno", "juego" };
+    const bool vulkan = state.swapchainApi == API::Vulkan;
+    if (!vulkan && feature != nullptr && feature->IsInited())
+        r.insert("optifg");
+    if (state.swapchainApi != API::DX11 && state.streamlineVersion.major >= 2)
+        r.insert("streamline");
+    const auto sl = state.streamlineVersion;
+    if (!(state.swapchainApi == API::DX11 && (sl == feature_version { 0, 0, 0 } || sl > feature_version { 2, 0, 1 })))
+        r.insert("nvngx");
+    if (state.swapchainApi == API::DX12)
+        r.insert("fsr31"), r.insert("fsr30");
+    return r;
+}
+
 static std::string ArchSummary(const Arch& a)
 {
     std::string s = a.name;
@@ -921,6 +1016,15 @@ static bool ParseInt(const char* t, int& v)
     v = (int) strtol(t, &end, 10);
     return end != t;
 }
+static bool ParseUint(const char* t, uint32_t& v)
+{
+    int i = 0;
+    if (!ParseInt(t, i) || i < 0)
+        return false;
+    v = (uint32_t) i;
+    return true;
+}
+
 static bool ParseFloat(const char* t, float& v)
 {
     char* end = nullptr;
@@ -956,6 +1060,8 @@ static void SaveManaged(CSimpleIniA& ini, const char* section, IFeature* feature
     ini.SetValue(section, "tabla_balanceado", OptStr(config->QualityRatio_Balanced).c_str());
     ini.SetValue(section, "tabla_rendimiento", OptStr(config->QualityRatio_Performance).c_str());
     ini.SetValue(section, "tabla_ultra_rendimiento", OptStr(config->QualityRatio_UltraPerformance).c_str());
+    ini.SetValue(section, "dlss_preset_activo", OptStr(config->RenderPresetOverride).c_str());
+    ini.SetValue(section, "dlss_preset", OptStr(config->RenderPresetForAll).c_str());
     ini.SetValue(section, "fg_activado", OptStr(config->FGEnabled).c_str());
     ini.SetValue(section, "fg_entrada", OptStr(config->FGInput).c_str());
     ini.SetValue(section, "fg_salida", OptStr(config->FGOutput).c_str());
@@ -1035,6 +1141,9 @@ static void LoadManaged(const CSimpleIniA& ini, const char* section, bool withFg
     SetFrom(config->QualityRatio_Balanced, ini.GetValue(section, "tabla_balanceado", nullptr), ParseFloat);
     SetFrom(config->QualityRatio_Performance, ini.GetValue(section, "tabla_rendimiento", nullptr), ParseFloat);
     SetFrom(config->QualityRatio_UltraPerformance, ini.GetValue(section, "tabla_ultra_rendimiento", nullptr), ParseFloat);
+    // Perfiles anteriores sin estas claves: el preset DLSS queda como está
+    SetFrom(config->RenderPresetOverride, ini.GetValue(section, "dlss_preset_activo", nullptr), ParseBool);
+    SetFrom(config->RenderPresetForAll, ini.GetValue(section, "dlss_preset", nullptr), ParseUint);
     if (withFg)
     {
         SetFrom(config->FGEnabled, ini.GetValue(section, "fg_activado", nullptr), ParseBool);
@@ -1796,6 +1905,38 @@ template <typename Ctx> static void Tick(Ctx& ctx)
                 plan.fgWhy = before.multiplier == count + 1 && Generating(status)
                                  ? StrFmt("se mantiene: %.0f reales × %d ≈ %.0f finales cumple el modo %s", base, count + 1, base * (count + 1), ModeName(mode))
                                  : StrFmt("%.0f reales × %d ≈ %.0f finales para el modo %s", base, count + 1, base * (count + 1), ModeName(mode));
+            // Catálogo técnico: el resto de implementaciones disponibles en este equipo, con su evidencia por arquitectura.
+            // Solo las de evidencia oficial o comunitaria se recomiendan; ninguna se activa sola (cambiar el FG requiere
+            // reiniciar y la elección de multiplicador sigue la medición)
+            {
+                const std::string archId = CatalogArchId(arch);
+                std::string others, bestAlt;
+                for (const auto& f : IlionCommunity::kFgImpls)
+                {
+                    const std::string id = f.id;
+                    if (id == "ninguno" || id == "dlssg_salida" || (id == "xefg" && plan.fg == FgRoute::XeFgNew) || !FgAvailable(id))
+                        continue;
+                    const auto ev = IlionCommunity::FgEvidence(id, archId);
+                    if (ev == IlionCommunity::Evidence::None)
+                        continue;
+                    others += StrFmt("%s%s (%s, hasta %dX)", others.empty() ? "" : " · ", IlionCommunity::NameOf(IlionCommunity::kFgs, id),
+                                     IlionCommunity::EvidenceText(ev), IlionCommunity::FgMaxMultiplier(id, archId));
+                    if (bestAlt.empty() && plan.fg == FgRoute::None && IlionCommunity::FgRecommendable(id, archId) && id != "dlssg_juego")
+                        bestAlt = id;
+                }
+                if (!others.empty())
+                    Add(Mark::Info, "Implementaciones de FG disponibles en este equipo", others);
+                if (!bestAlt.empty())
+                {
+                    plan.fg = FgRoute::Alt;
+                    plan.fgAltId = bestAlt;
+                    plan.fgStage = Stage::Recommended;
+                    plan.fgWhy = StrFmt("%s %dX fijo es la opción recomendable disponible (%s). Cambiar el FG requiere reiniciar: "
+                                        "actívalo desde un perfil o en FRAME GEN; no se activa solo",
+                                        IlionCommunity::NameOf(IlionCommunity::kFgs, bestAlt), count + 1,
+                                        IlionCommunity::EvidenceText(IlionCommunity::FgEvidence(bestAlt, archId)));
+                }
+            }
             if (plan.fg == FgRoute::None)
                 plan.fgWhy = "no hay una ruta fija verificada para esta combinación";
             else if (plan.fg == FgRoute::XeFgNew && !arch.xefgTested)
@@ -1825,6 +1966,8 @@ template <typename Ctx> static void Tick(Ctx& ctx)
             Add(plan.fgStage == Stage::Blocked || plan.fgStage == Stage::Recommended ? Mark::Wait : Mark::Info,
                 plan.fgStage == Stage::Blocked                                  ? "Frame Generation: pendiente de tu decisión"
                 : plan.fgStage == Stage::Recommended && plan.fg == FgRoute::XeFgNew ? "Frame Generation: XeFG recomendado, no activado"
+                : plan.fgStage == Stage::Recommended && plan.fg == FgRoute::Alt
+                    ? "Frame Generation: " + std::string(IlionCommunity::NameOf(IlionCommunity::kFgs, plan.fgAltId)) + " recomendado, no activado"
                 : plan.fgStage == Stage::Recommended                            ? "Frame Generation: recomendado desactivarlo (no se cambia)"
                                                                                 : "Frame Generation: no se cambia",
                 plan.fgWhy);
@@ -2772,8 +2915,11 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight, boo
         else if (plan.fgStage == Stage::Blocked)
             Row(Mark::Wait, "Recomendado: FG fijo, pendiente de tu decisión", "Desactiva el Dynamic en FRAME GEN y vuelve a optimizar");
         else if (plan.fgStage == Stage::Recommended)
-            Row(plan.fg == FgRoute::XeFgNew ? Mark::Wait : Mark::Bad,
-                plan.fg == FgRoute::XeFgNew ? "Recomendado (no activado): XeFG" : "Recomendado: desactivar el FG", plan.fgWhy);
+            Row(plan.fg == FgRoute::XeFgNew || plan.fg == FgRoute::Alt ? Mark::Wait : Mark::Bad,
+                plan.fg == FgRoute::XeFgNew ? std::string("Recomendado (no activado): XeFG")
+                : plan.fg == FgRoute::Alt   ? "Recomendado (no activado): " + std::string(IlionCommunity::NameOf(IlionCommunity::kFgs, plan.fgAltId))
+                                            : std::string("Recomendado: desactivar el FG"),
+                plan.fgWhy);
     };
 
     ImGui::PushStyleColor(ImGuiCol_TableBorderStrong, toneMapColor(IlionTheme::ShellPal::Line));

@@ -138,43 +138,9 @@ static void LoadAll()
     session = C::LoadSession();
 }
 
-// ---- El equipo actual ----------------------------------------------------------------------------------------------
-static const char* ArchId(const P::Arch& a)
-{
-    switch (a.family)
-    {
-    case P::ArchFamily::Rdna4:
-        return "rdna4";
-    case P::ArchFamily::Rdna3:
-        return "rdna3";
-    case P::ArchFamily::Rdna2:
-        return "rdna2";
-    case P::ArchFamily::AmdApu:
-        return "amd_apu";
-    case P::ArchFamily::AmdOther:
-        return "amd_old";
-    case P::ArchFamily::NvGtx:
-        return "nv_gtx";
-    case P::ArchFamily::Rtx20:
-        return "rtx20";
-    case P::ArchFamily::Rtx30:
-        return "rtx30";
-    case P::ArchFamily::Rtx40:
-        return "rtx40";
-    case P::ArchFamily::Rtx50:
-        return "rtx50";
-    case P::ArchFamily::ArcA:
-        return "arc_a";
-    case P::ArchFamily::ArcB:
-        return "arc_b";
-    case P::ArchFamily::IntelXe2:
-        return "intel_xe2";
-    case P::ArchFamily::IntelOther:
-        return "intel_other";
-    default:
-        return "";
-    }
-}
+/// ---- El equipo actual ----------------------------------------------------------------------------------------------
+// El identificador de arquitectura del catálogo técnico (una sola tabla, en Perfiles)
+static const char* ArchId(const P::Arch& a) { return P::CatalogArchId(a); }
 
 static std::string ApiId()
 {
@@ -204,6 +170,8 @@ static std::string TechOf(const UpscalerVariant& v)
         return "hlx_fsr4";
     if (v.entry != nullptr && v.entry->family == IlionUpscalers::Family::HelixSR)
         return "helixsr";
+    if (v.entry != nullptr && v.entry->kind == IlionUpscalers::Kind::D4r)
+        return "dlss_d4r";
     if (v.backend == Upscaler::DLSS)
         return "dlss";
     if (v.backend == Upscaler::XeSS)
@@ -212,21 +180,43 @@ static std::string TechOf(const UpscalerVariant& v)
         return "fsr31";
     if (v.backend == Upscaler::FSR22)
         return "fsr22";
+    if (v.backend == Upscaler::FSR21)
+        return "fsr21";
     return "";
 }
 
-static const UpscalerVariant* VariantFor(const UpscalerCatalog& catalogue, const std::string& tech)
+// El modelo DLSS que nombra una entrada d4r («DLSS4/Modelo_K» → dlss_k); vacío si no lo nombra
+static std::string D4rModelOf(const UpscalerVariant& v)
 {
+    if (v.entry == nullptr || v.entry->kind != IlionUpscalers::Kind::D4r)
+        return std::string();
+    std::wstring key = v.entry->key;
+    std::transform(key.begin(), key.end(), key.begin(), ::towlower);
+    const auto at = key.find(L"modelo_");
+    if (at == std::wstring::npos || at + 7 >= key.size())
+        return std::string();
+    const wchar_t letter = key[at + 7];
+    return letter >= L'j' && letter <= L'm' ? std::string("dlss_") + (char) letter : std::string();
+}
+
+// La variante que reproduce una tecnología (y, en d4r, su modelo si está instalado)
+static const UpscalerVariant* VariantFor(const UpscalerCatalog& catalogue, const std::string& tech, const std::string& model = std::string())
+{
+    const UpscalerVariant* first = nullptr;
     for (const auto& v : catalogue.variants)
         if (v.usable && TechOf(v) == tech)
-            return &v;
-    return nullptr;
+        {
+            if (first == nullptr)
+                first = &v;
+            if (tech == "dlss_d4r" && !model.empty() && D4rModelOf(v) == model)
+                return &v;
+        }
+    return first;
 }
 
 template <typename Ctx> static C::Machine MachineOf(Ctx& ctx)
 {
     C::Machine m;
-    const auto& state = State::Instance();
     const GpuInformation gpu = IdentifyGpu::getPrimaryGpu();
     const P::Arch arch = P::ArchOf(gpu);
     m.api = ApiId();
@@ -241,24 +231,92 @@ template <typename Ctx> static C::Machine MachineOf(Ctx& ctx)
         if (v.usable && !TechOf(v).empty())
             m.techs.insert(TechOf(v));
     m.liteOffered = P::DriverLiteOffered() && !arch.liteIsFull;
-    const auto status = IlionDynamicMfg::Get();
-    m.fgs.insert("ninguno");
-    std::error_code ec;
-    if (status.provider == IlionDynamicMfg::Provider::XeFG || std::filesystem::exists(Util::DllPath().parent_path() / L"libxess_fg.dll", ec))
-        m.fgs.insert("xefg");
-    if (state.api == API::DX12 || status.provider == IlionDynamicMfg::Provider::FsrFg)
-        m.fgs.insert("fsr_fg");
-    if (status.provider == IlionDynamicMfg::Provider::DlssgGame || StreamlineHooks::isDlssgHooked())
-        m.fgs.insert("dlssg_juego");
-    if (status.provider == IlionDynamicMfg::Provider::DlssgOutput)
-        m.fgs.insert("dlssg_salida");
+    // Frame Generation: las mismas comprobaciones que FRAME GEN y el optimizador (P::FgAvailable)
+    for (const auto& impl : C::kFgImpls)
+        if (P::FgAvailable(impl.id))
+            m.fgs.insert(impl.id);
+    m.routes = P::FgRoutesAvailable(f);
     return m;
+}
+
+// El modelo DLSS pedido en la configuración (preset de render para todos los modos)
+static std::string DlssModelNow()
+{
+    auto config = Config::Instance();
+    if (!config->RenderPresetOverride.value_or_default() || !config->RenderPresetForAll.has_value())
+        return "dlss_auto";
+    switch (config->RenderPresetForAll.value())
+    {
+    case NVSDK_NGX_DLSS_Hint_Render_Preset_J:
+        return "dlss_j";
+    case NVSDK_NGX_DLSS_Hint_Render_Preset_K:
+        return "dlss_k";
+    case NVSDK_NGX_DLSS_Hint_Render_Preset_L:
+        return "dlss_l";
+    case NVSDK_NGX_DLSS_Hint_Render_Preset_M:
+        return "dlss_m";
+    case NV_PRESET_LATEST:
+        return "dlss_latest";
+    default:
+        return "dlss_auto"; // otros presets (antiguos o sin uso) no se comparten
+    }
+}
+
+// La implementación de FG configurada ahora (catálogo técnico) y su ruta de entrada
+static void FgNow(std::string& fg, std::string& route)
+{
+    auto config = Config::Instance();
+    const auto status = IlionDynamicMfg::Get();
+    const FGInput in = config->FGInput.value_or_default();
+    const FGOutput outp = config->FGOutput.value_or_default();
+    const FGNvngxReplacement nv = config->FGNvngxReplacement.value_or_default();
+    route = in == FGInput::Upscaler ? "optifg"
+            : in == FGInput::DLSSG  ? "streamline"
+            : in == FGInput::NvngxFG ? "nvngx"
+            : in == FGInput::FSRFG   ? "fsr31"
+            : in == FGInput::FSRFG30 ? "fsr30"
+                                     : "juego";
+    const auto replacement = [&]() -> std::string
+    {
+        switch (nv)
+        {
+        case FGNvngxReplacement::Nukems:
+            return "nvngx_nukem";
+        case FGNvngxReplacement::Arturs:
+            return "nvngx_enabler";
+        case FGNvngxReplacement::FFX:
+            return "nvngx_ffx";
+        case FGNvngxReplacement::Combo:
+            return "nvngx_combo";
+        case FGNvngxReplacement::HelixSR:
+            return "nvngx_fglite";
+        default:
+            return "dlssg_nativo";
+        }
+    };
+    if (!config->FGEnabled.value_or_default() && status.provider != IlionDynamicMfg::Provider::DlssgGame)
+        fg = "ninguno";
+    else if (outp == FGOutput::XeFG)
+        fg = "xefg";
+    else if (outp == FGOutput::FSRFG)
+        fg = "fsr_fg";
+    else if (outp == FGOutput::DLSSG || in == FGInput::NvngxFG)
+        fg = replacement();
+    else if (status.provider == IlionDynamicMfg::Provider::DlssgGame)
+        fg = "dlssg_juego", route = "juego";
+    else
+        fg = "ninguno";
+    if (fg == "ninguno")
+        route = "ninguno";
+    else if (!C::FgRouteAllowed(fg, route))
+        route = C::DefaultRoute(fg);
 }
 
 // La configuración activa, para rellenar el formulario (el usuario la revisa antes de guardar o publicar)
 template <typename Ctx> static C::Profile FromCurrent(Ctx& ctx)
 {
     C::Profile p;
+    auto config = Config::Instance();
     const C::Machine m = MachineOf(ctx);
     const auto& state = State::Instance();
     p.id = C::NewLocalId();
@@ -275,22 +333,97 @@ template <typename Ctx> static C::Profile FromCurrent(Ctx& ctx)
     const auto catalogue = GatherUpscalers(f);
     const UpscalerVariant* cur = P::Current(catalogue);
     p.tech = cur != nullptr && !TechOf(*cur).empty() ? TechOf(*cur) : "fsr4_driver";
-    p.model = p.tech == "fsr4_driver" || p.tech == "fsr4_dll" ? (P::SelectedModel() == P::Model::Lite ? "int8lite" : "completo") : "no_aplica";
+    if (p.tech == "fsr4_driver" || p.tech == "fsr4_dll")
+        p.model = P::SelectedModel() == P::Model::Lite ? "int8lite" : "completo";
+    else if (p.tech == "dlss")
+        p.model = DlssModelNow();
+    else if (p.tech == "dlss_d4r")
+        p.model = cur != nullptr && !D4rModelOf(*cur).empty() ? D4rModelOf(*cur) : "dlss_auto";
+    else
+        p.model = "no_aplica";
     const int preset = f != nullptr && f->IsInited() && f->RenderWidth() > 0 ? P::PresetOf((float) f->TargetWidth() / (float) f->RenderWidth()) : 2;
     p.preset = C::kPresets[std::clamp(preset, 0, 5)].id;
+    FgNow(p.fg, p.fgRoute);
+    // El multiplicador: el que genera ahora; si no genera, el fijo configurado para esa implementación
     const auto status = IlionDynamicMfg::Get();
-    const bool gen = status.gen == IlionDynamicMfg::Gen::Detected || status.gen == IlionDynamicMfg::Gen::Confirmed;
-    p.fg = status.provider == IlionDynamicMfg::Provider::XeFG          ? "xefg"
-           : status.provider == IlionDynamicMfg::Provider::FsrFg       ? "fsr_fg"
-           : status.provider == IlionDynamicMfg::Provider::DlssgGame   ? "dlssg_juego"
-           : status.provider == IlionDynamicMfg::Provider::DlssgOutput ? "dlssg_salida"
-                                                                       : "ninguno";
-    p.multiplier = p.fg == "ninguno" ? 0 : std::clamp(gen && status.multiplier > 0 ? status.multiplier : 2, 2, std::max(2, C::FgMaxMultiplier(p.fg, p.arch)));
+    const bool gen = status.gen == IlionDynamicMfg::Gen::Detected || status.gen == IlionDynamicMfg::Gen::Confirmed ||
+                     (state.currentFG != nullptr && state.currentFG->IsActive());
+    int count = 1;
+    if (gen && status.multiplier > 1)
+        count = status.multiplier - 1;
+    else if (p.fg == "xefg")
+        count = config->FGXeFGInterpolationCount.value_or_default();
+    else if (p.fgRoute == "nvngx" || p.fg == "dlssg_juego")
+        count = config->FGDLSSGOverrideInterpolationCount.value_or(1);
+    else if (p.fg != "ninguno" && p.fg != "fsr_fg")
+        count = config->FGDLSSGInterpolationCount.value_or_default();
+    const int maxMult = std::max(2, C::FgMaxMultiplier(p.fg, p.arch));
+    p.multiplier = p.fg == "ninguno" ? 0 : std::clamp(count + 1, 2, maxMult);
     p.created = p.updated = C::NowUtc();
     return p;
 }
 
-// ---- Aplicar un perfil: reutiliza Perfiles ----------------------------------------------------------------------------
+// Lo que escribe un perfil en la configuración de FG de ILION (claves de perfil.ini de Perfiles). restart: cambia la
+// entrada, la salida o el reemplazo NVNGX cargados
+static bool WriteFg(CSimpleIniA& ini, const char* s, const C::Profile& p, std::string& what)
+{
+    auto config = Config::Instance();
+    const auto& state = State::Instance();
+    if (p.fg == "ninguno")
+    {
+        ini.SetValue(s, "fg_activado", "false");
+        what = "sin FG";
+        return false;
+    }
+    const C::FgImpl* impl = C::FgImplOf(p.fg);
+    ini.SetValue(s, "fg_activado", "true");
+    const std::string count = std::to_string(p.multiplier - 1);
+
+    // La entrada: la ruta del perfil; en un perfil v1 («auto»), la de siempre si no había ninguna
+    FGInput in = config->FGInput.value_or_default();
+    if (p.fgRoute == "optifg")
+        in = FGInput::Upscaler;
+    else if (p.fgRoute == "streamline")
+        in = FGInput::DLSSG;
+    else if (p.fgRoute == "nvngx")
+        in = FGInput::NvngxFG;
+    else if (p.fgRoute == "fsr31")
+        in = FGInput::FSRFG;
+    else if (p.fgRoute == "fsr30")
+        in = FGInput::FSRFG30;
+    else if (p.fgRoute == "juego")
+        in = FGInput::NoFG;
+    else if (in == FGInput::NoFG)
+        in = state.streamlineVersion.major >= 2 ? FGInput::DLSSG : FGInput::Upscaler;
+
+    // La salida y el reemplazo NVNGX de la implementación
+    FGOutput outp = FGOutput::NoFG;
+    if (p.fgRoute != "nvngx" && impl != nullptr && impl->output[0] != 0)
+        if (const auto e = magic_enum::enum_cast<FGOutput>(impl->output); e.has_value())
+            outp = *e;
+    FGNvngxReplacement nv = config->FGNvngxReplacement.value_or_default();
+    if (impl != nullptr && impl->nvngx[0] != 0)
+        if (const auto e = magic_enum::enum_cast<FGNvngxReplacement>(impl->nvngx); e.has_value())
+            nv = *e;
+
+    ini.SetValue(s, "fg_entrada", std::string(magic_enum::enum_name(in)).c_str());
+    ini.SetValue(s, "fg_salida", std::string(magic_enum::enum_name(outp)).c_str());
+    if (impl != nullptr && impl->nvngx[0] != 0)
+        ini.SetValue(s, "fg_nvngx", std::string(magic_enum::enum_name(nv)).c_str());
+
+    // El multiplicador fijo, en la clave que usa esa implementación
+    if (outp == FGOutput::XeFG)
+        ini.SetValue(s, "xefg_multiplicador_fijo", count.c_str());
+    else if (outp == FGOutput::DLSSG)
+        ini.SetValue(s, "dlssg_salida_multiplicador_fijo", count.c_str());
+    else if (p.fgRoute == "nvngx" || p.fg == "dlssg_juego")
+        ini.SetValue(s, "dlssg_multiplicador_fijo", count.c_str());
+    ini.SetValue(s, "fg_multiplicador", StrFmt("%dX", p.multiplier).c_str());
+    what = StrFmt("%s %dX fijo · entrada %s", C::NameOf(C::kFgs, p.fg), p.multiplier, C::NameOf(C::kRoutes, p.fgRoute));
+    return in != state.activeFgInput || outp != state.activeFgOutput || (impl != nullptr && impl->nvngx[0] != 0 && nv != state.activeFgNvngx);
+}
+
+// ---- Activar un perfil: reutiliza Perfiles ----------------------------------------------------------------------------
 template <typename Ctx> static bool Apply(Ctx& ctx, const C::Profile& p, std::string& out)
 {
     std::string err;
@@ -302,19 +435,18 @@ template <typename Ctx> static bool Apply(Ctx& ctx, const C::Profile& p, std::st
     const C::Machine m = MachineOf(ctx);
     if (C::Blocking(C::Compatibility(p, m)))
     {
-        out = "No se aplica: hay incompatibilidades con tu equipo (ver la lista)";
+        out = "No se activa: hay incompatibilidades con tu equipo (ver la lista)";
         return false;
     }
     IFeature* f = ctx.currentFeature;
     const auto catalogue = GatherUpscalers(f);
-    const UpscalerVariant* v = VariantFor(catalogue, p.tech);
+    const UpscalerVariant* v = VariantFor(catalogue, p.tech, p.model);
     if (v == nullptr)
     {
         out = std::string("No instalada: ") + C::NameOf(C::kTechs, p.tech);
         return false;
     }
     auto config = Config::Instance();
-    const auto& state = State::Instance();
     int presetIndex = 0;
     for (int i = 0; i < 6; i++)
         if (p.preset == C::kPresets[i].id)
@@ -339,6 +471,24 @@ template <typename Ctx> static bool Apply(Ctx& ctx, const C::Profile& p, std::st
         ini.SetValue(s, "fsr4_modelo", "auto");
     else if (p.model == "int8lite")
         ini.SetValue(s, "fsr4_modelo", std::to_string((int) FSR4Model::INT8Lite).c_str());
+    // DLSS nativo: su modelo (preset de render para todos los modos); «el del juego» quita la anulación
+    if (p.tech == "dlss" && C::IsDlssModel(p.model))
+    {
+        static const struct
+        {
+            const char* id;
+            uint32_t value;
+        } presets[] = { { "dlss_j", NVSDK_NGX_DLSS_Hint_Render_Preset_J }, { "dlss_k", NVSDK_NGX_DLSS_Hint_Render_Preset_K },
+                        { "dlss_l", NVSDK_NGX_DLSS_Hint_Render_Preset_L }, { "dlss_m", NVSDK_NGX_DLSS_Hint_Render_Preset_M },
+                        { "dlss_latest", NV_PRESET_LATEST } };
+        ini.SetValue(s, "dlss_preset_activo", "false");
+        for (const auto& pr : presets)
+            if (p.model == pr.id)
+            {
+                ini.SetValue(s, "dlss_preset_activo", "true");
+                ini.SetValue(s, "dlss_preset", std::to_string(pr.value).c_str());
+            }
+    }
 
     // Preset: por el menú del juego si lee su tabla al arrancar (como OPTIMIZAR), si no por la anulación de proporción
     std::string why;
@@ -355,38 +505,9 @@ template <typename Ctx> static bool Apply(Ctx& ctx, const C::Profile& p, std::st
         ini.SetValue(s, "ratio", StrFmt("%.2f", P::kPresets[presetIndex].ratio).c_str());
     }
 
-    // Frame Generation fijo (nunca el MFG dinámico)
-    bool fgRestart = false;
-    const auto outName = [](FGOutput o) { return std::string(magic_enum::enum_name(o)); };
-    const auto setOutput = [&](FGOutput o)
-    {
-        ini.SetValue(s, "fg_salida", outName(o).c_str());
-        if (config->FGInput.value_or_default() == FGInput::NoFG)
-            ini.SetValue(s, "fg_entrada", std::string(magic_enum::enum_name(state.streamlineVersion.major >= 2 ? FGInput::DLSSG : FGInput::Upscaler)).c_str());
-        fgRestart = state.activeFgOutput != o;
-    };
-    if (p.fg == "ninguno")
-        ini.SetValue(s, "fg_activado", "false");
-    else
-    {
-        ini.SetValue(s, "fg_activado", "true");
-        const std::string count = std::to_string(p.multiplier - 1);
-        if (p.fg == "xefg")
-        {
-            setOutput(FGOutput::XeFG);
-            ini.SetValue(s, "xefg_multiplicador_fijo", count.c_str());
-        }
-        else if (p.fg == "fsr_fg")
-            setOutput(FGOutput::FSRFG);
-        else if (p.fg == "dlssg_salida")
-        {
-            setOutput(FGOutput::DLSSG);
-            ini.SetValue(s, "dlssg_salida_multiplicador_fijo", count.c_str());
-        }
-        else if (p.fg == "dlssg_juego")
-            ini.SetValue(s, "dlssg_multiplicador_fijo", count.c_str());
-        ini.SetValue(s, "fg_multiplicador", StrFmt("%dX", p.multiplier).c_str());
-    }
+    // Frame Generation fijo, la implementación exacta del perfil (nunca el MFG dinámico)
+    std::string fgWhat;
+    const bool fgRestart = WriteFg(ini, s, p, fgWhat);
     std::string restart = fgRestart ? "fg" : "";
     if (ratioRestart)
         restart += restart.empty() ? "proporcion" : ",proporcion";
@@ -400,6 +521,8 @@ template <typename Ctx> static bool Apply(Ctx& ctx, const C::Profile& p, std::st
     ini.SetValue(s, "comunidad_id", p.id.c_str());
     ini.SetValue(s, "comunidad_autor", p.author.c_str());
     ini.SetValue(s, "comunidad_version", std::to_string(p.version).c_str());
+    ini.SetValue(s, "comunidad_fg", p.fg.c_str());
+    ini.SetValue(s, "comunidad_fg_ruta", p.fgRoute.c_str());
     ini.SetValue(s, "motivo_escalador", ("Perfil de la comunidad de " + p.author + " (no verificado técnicamente)").c_str());
     if (ini.SaveFile(P::ProfilePath().c_str()) < 0)
     {
@@ -420,8 +543,8 @@ template <typename Ctx> static bool Apply(Ctx& ctx, const C::Profile& p, std::st
             P::mode = (P::Mode) i;
     P::modeLoaded = true;
     applied = p.id;
-    out = "Perfil activado con los mecanismos de Perfiles: escalador, modelo, preset y FG fijo escritos en la configuración. "
-          "El resultado real se comprueba abajo: verde solo cuando todo corre de verdad";
+    out = "Perfil activado con los mecanismos de Perfiles: " + std::string(v->name) + ", preset " + P::kPresets[presetIndex].name + ", " + fgWhat +
+          (fgRestart ? " (el cambio de FG se aplica al reiniciar el juego)" : "") + ". Verde solo cuando todo corre de verdad";
     return true;
 }
 
@@ -437,13 +560,39 @@ static std::string TechLine(const C::Profile& p)
     return s;
 }
 
+// El estado de un perfil: local, pendiente de publicación, pendiente de moderación, publicado, rechazado o retirado
 static std::string KindOf(const C::Profile& p)
 {
     if (p.origin == "comunidad")
-        return p.review == "aprobado" ? "Perfil comunitario · revisado por moderación" : "Perfil comunitario";
+        return p.review == "aprobado" ? "Perfil de la comunidad · publicado" : "Perfil de la comunidad";
     if (p.origin == "importado")
         return "Perfil importado";
-    return p.review == "local" ? std::string("Perfil local") : StrFmt("Perfil local · publicado (%s)", C::NameOf(C::kReviews, p.review));
+    if (p.review == "por_publicar")
+        return "Pendiente de publicación: verifica tu correo en MI CUENTA para continuar";
+    return C::NameOf(C::kReviews, p.review);
+}
+
+// Las tarjetas comparan cada perfil con este equipo (lo fija el panel antes de dibujar la página)
+static const C::Machine* cardMachine = nullptr;
+
+// El color del fabricante de la GPU de una arquitectura
+static ImVec4 ArchVendorColour(const std::string& arch)
+{
+    return P::VendorColour(C::IsAmdArch(arch) ? VendorId::AMD : C::IsNvidiaArch(arch) ? VendorId::Nvidia : C::IsIntelArch(arch) ? VendorId::Intel : VendorId::Invalid);
+}
+
+// Un tramo de texto de color en la misma línea; si no cabe, pasa a la siguiente
+static void Seg(const ImVec4& colour, const std::string& text, bool first = false)
+{
+    if (!first)
+    {
+        ImGui::SameLine(0.0f, 0.0f);
+        if (ImGui::GetContentRegionAvail().x < ImGui::CalcTextSize(text.c_str()).x)
+            ImGui::NewLine();
+    }
+    ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(colour));
+    ImGui::TextUnformatted(text.c_str());
+    ImGui::PopStyleColor();
 }
 
 template <size_t N> static bool Combo(const char* label, const C::Item (&list)[N], std::string& value, const std::function<bool(const char*)>& allowed = nullptr)
@@ -506,24 +655,55 @@ static void Card(const C::Profile& p, const char* list, bool showDownloads, cons
     ImGui::PushStyleColor(ImGuiCol_Border, toneMapColor(IlionTheme::ShellPal::Line));
     if (ImGui::BeginChild("##card", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY))
     {
+        // 1. El nombre del perfil, el elemento principal
         if (position > 0)
         {
-            P::Big(P::FigureFont(), 1.15f, IlionTheme::ShellPal::Text2, StrFmt("Nº %d", position).c_str());
+            P::Big(P::FigureFont(), 1.2f, IlionTheme::ShellPal::Text2, StrFmt("Nº %d", position).c_str());
             ImGui::SameLine();
         }
-        P::Big(P::UiFont(), 1.3f, IlionTheme::ShellPal::Text, p.author.c_str());
-        ImGui::SameLine();
-        P::Coloured(IlionTheme::ShellPal::Dim, ("· " + p.name).c_str(), true);
-        P::Coloured(IlionTheme::ShellPal::Orange, (p.gameName + " — " + p.gpu + " — " + C::NameOf(C::kModes, p.mode)).c_str(), true);
-        P::Coloured(IlionTheme::ShellPal::Text2, TechLine(p).c_str(), true);
-        std::string badges = KindOf(p);
-        badges += StrFmt(" · v%d", p.version);
+        P::Big(P::FigureFont(), 1.3f, IlionTheme::ShellPal::Text, p.name.c_str(), true);
+        // 2. El autor, con su propio tratamiento
+        ImGui::PushFont(P::UiFont(), std::floor(font * 1.08f));
+        Seg(IlionTheme::ShellPal::Text2, "Creado por: ", true);
+        Seg(IlionTheme::ShellPal::Orange, p.author);
+        ImGui::PopFont();
+        // 3. Juego · GPU · arquitectura · modo
+        Seg(IlionTheme::InfoCyan, p.gameName, true);
+        Seg(IlionTheme::ShellPal::Dim, " · ");
+        Seg(ArchVendorColour(p.arch), p.gpu);
+        Seg(IlionTheme::ShellPal::Dim, " · ");
+        Seg(IlionTheme::ShellPal::Text2, C::NameOf(C::kArchs, p.arch));
+        Seg(IlionTheme::ShellPal::Dim, " · modo ");
+        Seg(IlionTheme::ShellPilot(IlionTheme::ShellPal::Yellow), C::NameOf(C::kModes, p.mode));
+        // 4. Escalador · modelo · preset
+        Seg(IlionTheme::InfoBlue, C::NameOf(C::kTechs, p.tech), true);
+        if (p.model != "no_aplica")
+            Seg(IlionTheme::ShellPal::Text2, std::string(" · ") + C::NameOf(C::kModels, p.model));
+        Seg(IlionTheme::ShellPal::Text2, std::string(" · ") + C::NameOf(C::kPresets, p.preset) + StrFmt(" · %d×%d", p.outW, p.outH));
+        // 5. Frame Generation · multiplicador · ruta
+        if (p.fg == "ninguno")
+            Seg(IlionTheme::ShellPal::Text2, "Sin Frame Generation", true);
+        else
+        {
+            Seg(IlionTheme::ShellPilot(IlionTheme::ShellPal::Green), C::NameOf(C::kFgs, p.fg), true);
+            Seg(IlionTheme::InfoBlue, StrFmt(" %dX fijo", p.multiplier));
+            Seg(IlionTheme::ShellPal::Dim, std::string(" · ") + C::NameOf(C::kRoutes, p.fgRoute));
+        }
+        // 6. Compatibilidad con este equipo · descargas registradas · estado
+        if (cardMachine != nullptr)
+        {
+            const C::Fit fit = C::Overall(C::Compatibility(p, *cardMachine));
+            Seg(fit == C::Fit::Confirmed ? IlionTheme::ShellPilot(IlionTheme::ShellPal::Green)
+                : fit == C::Fit::Partial ? IlionTheme::ShellPilot(IlionTheme::ShellPal::Yellow)
+                                         : IlionTheme::ShellPal::Red,
+                C::FitText(fit), true);
+        }
+        std::string badges = (cardMachine != nullptr ? " · " : "") + KindOf(p) + StrFmt(" · v%d", p.version);
         if (showDownloads)
             badges += p.downloads >= 0 ? StrFmt(" · %lld descargas registradas", p.downloads) : std::string(" · descargas: sin dato");
         if (favourites.count(p.id))
             badges += " · FAVORITO";
-        P::Coloured(IlionTheme::ShellPal::Dim, badges.c_str(), true);
-        (void) font;
+        Seg(IlionTheme::ShellPal::Dim, badges, cardMachine == nullptr);
         actions();
     }
     ImGui::EndChild();
@@ -566,6 +746,8 @@ template <typename Ctx> static void Preview(Ctx& ctx)
     diff("Preset", C::NameOf(C::kPresets, preview.preset), C::NameOf(C::kPresets, now.preset));
     diff("Frame Generation", preview.fg == "ninguno" ? std::string("sin FG") : StrFmt("%s %dX fijo", C::NameOf(C::kFgs, preview.fg), preview.multiplier),
          now.fg == "ninguno" ? std::string("sin FG") : StrFmt("%s %dX", C::NameOf(C::kFgs, now.fg), now.multiplier));
+    if (preview.fg != "ninguno")
+        diff("Entrada del FG", C::NameOf(C::kRoutes, preview.fgRoute), C::NameOf(C::kRoutes, now.fgRoute));
 
     // Compatibilidad real
     ImGui::Spacing();
@@ -992,10 +1174,12 @@ template <typename Ctx> static void MinePage(Ctx& ctx, const C::Machine& m)
 {
     (void) m;
     const auto ws = worker.Get();
-    std::string remove;
+    std::string remove, markPending;
+    const bool signedIn = session.Active() || !session.refreshToken.empty();
     for (const auto& p : mine)
     {
-        Card(p, "mine", p.review != "local",
+        const bool published = C::IsServerReview(p.review);
+        Card(p, "mine", published,
              [&]()
              {
                  if (IlionTheme::Button("VISTA PREVIA"))
@@ -1016,15 +1200,21 @@ template <typename Ctx> static void MinePage(Ctx& ctx, const C::Machine& m)
                      const auto file = C::Root() / L"exportados" / (string_to_wstring(p.id) + L".ilionprofile.json");
                      Say(C::WriteAtomic(file, C::ToJson(p).dump(1)), "Copiado al portapapeles y exportado a " + wstring_to_string(file.wstring()));
                  }
-                 Flow(p.review == "local" ? "PUBLICAR" : "ACTUALIZAR PUBLICACIÓN");
+                 const char* publishLabel = published ? "ACTUALIZAR PUBLICACIÓN" : "PUBLICAR EN COMUNIDAD";
+                 Flow(publishLabel);
                  ImGui::BeginDisabled(!service.valid || ws.busy);
-                 if (IlionTheme::Button(p.review == "local" ? "PUBLICAR" : "ACTUALIZAR PUBLICACIÓN"))
+                 ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPal::Orange));
+                 if (IlionTheme::Button(publishLabel))
                  {
                      publishId = p.id;
                      confirmPublish = false;
+                     // Sin sesión: la intención de publicar se recuerda en el perfil (pendiente de publicación)
+                     if (!signedIn)
+                         markPending = p.id;
                  }
+                 ImGui::PopStyleColor();
                  ImGui::EndDisabled();
-                 if (p.review != "local")
+                 if (published)
                  {
                      Flow("RETIRAR DEL CATÁLOGO");
                      ImGui::BeginDisabled(!service.valid || ws.busy);
@@ -1055,8 +1245,14 @@ template <typename Ctx> static void MinePage(Ctx& ctx, const C::Machine& m)
                      P::Row(P::Mark::Wait, "Se enviará al catálogo comunitario",
                             "Alias, nombre del perfil, juego, API, GPU, arquitectura, resolución y la configuración de la tarjeta. Nada más: "
                             "ni FPS, ni datos del equipo, ni el correo.");
-                     if (!session.Active() && session.refreshToken.empty())
-                         P::Row(P::Mark::Bad, "Inicia sesión en CUENTA para publicar", "La publicación necesita una identidad verificada");
+                     if (!signedIn)
+                     {
+                         P::Row(P::Mark::Wait, "Para publicar, verifica tu correo",
+                                "Pide un código en MI CUENTA, introdúcelo y reserva tu alias. Este perfil queda preparado: al volver podrás "
+                                "continuar la publicación (siempre con tu confirmación).");
+                         if (IlionTheme::Button("IR A MI CUENTA##CommunityGoAccount"))
+                             page = Account;
+                     }
                      else
                      {
                          ImGui::Checkbox("Confirmo que quiero publicar estos datos##CommunityPublishConfirm", &confirmPublish);
@@ -1086,6 +1282,13 @@ template <typename Ctx> static void MinePage(Ctx& ctx, const C::Machine& m)
                      }
                  }
              });
+    }
+    if (!markPending.empty())
+    {
+        for (auto& e : mine)
+            if (e.id == markPending && !C::IsServerReview(e.review))
+                e.review = "por_publicar";
+        C::SaveList(MinePath(), mine);
     }
     if (!remove.empty())
     {
@@ -1204,14 +1407,51 @@ template <typename Ctx> static void PublishPage(Ctx& ctx, const C::Machine& m)
     Combo("##CommunityMode", C::kModes, draft.mode);
     label("Tecnología de escalado");
     if (Combo("##CommunityTech", C::kTechs, draft.tech, [&](const char* id) { return C::TechSupport(id, draft.arch).possible; }))
-        draft.model = draft.tech == "fsr4_driver" || draft.tech == "fsr4_dll" ? "completo" : "no_aplica";
+        draft.model = draft.tech == "fsr4_driver" || draft.tech == "fsr4_dll" ? "completo"
+                      : draft.tech == "dlss" || draft.tech == "dlss_d4r"      ? "dlss_auto"
+                                                                              : "no_aplica";
     label("Modelo");
     Combo("##CommunityModel", C::kModels, draft.model, [&](const char* id) { return C::ModelSupport(id, draft.tech, draft.arch).possible; });
     label("Preset");
     Combo("##CommunityPreset", C::kPresets, draft.preset);
     label("Frame Generation (fijo; el MFG dinámico no forma parte de los perfiles)");
-    if (Combo("##CommunityFg", C::kFgs, draft.fg, [&](const char* id) { return std::string(id) == "ninguno" || C::FgMaxMultiplier(id, draft.arch) > 0; }))
-        draft.multiplier = draft.fg == "ninguno" ? 0 : 2;
+    // Todas las implementaciones del catálogo técnico compatibles con la arquitectura elegida (las experimentales se
+    // marcan); nunca el valor heredado de v1
+    {
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        const auto fgLabel = [&](const std::string& id)
+        {
+            const auto ev = C::FgEvidence(id, draft.arch);
+            return std::string(C::NameOf(C::kFgs, id)) + (id == "ninguno" ? "" : std::string("  (") + C::EvidenceText(ev) + ")");
+        };
+        if (IlionTheme::BeginCombo("##CommunityFg", fgLabel(draft.fg).c_str()))
+        {
+            for (const auto& f : C::kFgImpls)
+            {
+                const std::string id = f.id;
+                if (id == "dlssg_salida" || (id != "ninguno" && C::FgMaxMultiplier(id, draft.arch) == 0))
+                    continue;
+                if (ImGui::Selectable(fgLabel(id).c_str(), draft.fg == id))
+                {
+                    draft.fg = id;
+                    draft.multiplier = id == "ninguno" ? 0 : 2;
+                    draft.fgRoute = id == "ninguno" ? "ninguno" : C::FgRouteAllowed(id, draft.fgRoute) ? draft.fgRoute : C::DefaultRoute(id);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (const C::FgImpl* impl = C::FgImplOf(draft.fg); impl != nullptr && draft.fg != "ninguno")
+            P::Coloured(IlionTheme::ShellPal::Dim,
+                        StrFmt("%s · %s%s%s", impl->technology, impl->provider, impl->dll[0] ? StrFmt(" · necesita %s", impl->dll).c_str() : "",
+                               impl->dx12Only ? " · DirectX 12" : "")
+                            .c_str(),
+                        true);
+    }
+    if (draft.fg != "ninguno")
+    {
+        label("Entrada del Frame Generation");
+        Combo("##CommunityFgRoute", C::kRoutes, draft.fgRoute, [&](const char* id) { return std::string(id) != "auto" && C::FgRouteAllowed(draft.fg, id); });
+    }
     if (draft.fg != "ninguno")
     {
         label("Multiplicador fijo");
@@ -1346,10 +1586,22 @@ template <typename Ctx> static void AccountPage(Ctx& ctx)
 {
     (void) ctx;
     const auto ws = worker.Get();
+    IlionTheme::SectionPlate("PARA QUÉ SIRVE UNA CUENTA");
+    P::Coloured(IlionTheme::ShellPal::Text2,
+                "Solo para publicar y gestionar tus perfiles. Optimizar, explorar, descargar y activar perfiles funcionan sin cuenta.", true);
     P::Coloured(IlionTheme::ShellPal::Dim,
-                "Consultar y descargar no necesita cuenta. Publicar sí: el alias queda ligado a tu cuenta en el servidor, así nadie puede "
-                "publicar en tu nombre. Se inicia con un código de un solo uso enviado a tu correo; ILION no guarda el correo.",
+                "Tu alias público queda ligado a la cuenta: nadie puede publicar en tu nombre. Sin contraseñas: entras con un código de "
+                "un solo uso que llega a tu correo. ILION no guarda el correo ni lo publica.",
                 true);
+    // Un perfil preparado para publicar (se pidió sin sesión): se continúa cuando haya sesión, siempre con confirmación
+    const C::Profile* pending = nullptr;
+    for (const auto& e : mine)
+        if (e.review == "por_publicar")
+            pending = &e;
+    if (pending != nullptr)
+        P::Row(P::Mark::Wait, "Perfil preparado para publicar: " + pending->name,
+               session.Active() || !session.refreshToken.empty() ? "Ya puedes continuar: revisa y confirma el envío"
+                                                                 : "Inicia sesión aquí abajo y después continúa la publicación");
     if (!service.valid)
     {
         P::Row(P::Mark::Info, "Servicio comunitario no configurado", service.problem);
@@ -1361,8 +1613,20 @@ template <typename Ctx> static void AccountPage(Ctx& ctx)
     if (!session.refreshToken.empty() || session.Active())
     {
         P::Row(P::Mark::Ok, session.alias.empty() ? "Sesión iniciada · sin alias reservado" : "Sesión iniciada como " + session.alias, std::string());
+        if (pending != nullptr && !session.alias.empty())
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPal::Orange));
+            if (IlionTheme::Button("CONTINUAR LA PUBLICACIÓN##CommunityContinue", ImVec2(ImGui::GetContentRegionAvail().x, 0.0f)))
+            {
+                publishId = pending->id;
+                confirmPublish = false;
+                page = Mine;
+            }
+            ImGui::PopStyleColor();
+        }
         if (session.alias.empty())
         {
+            P::Coloured(IlionTheme::ShellPal::Text2, "Último paso: elige tu alias público (3 a 24 caracteres)", true);
             ImGui::SetNextItemWidth(-FLT_MIN);
             ImGui::InputText("##CommunityClaim", claim, 25);
             ImGui::BeginDisabled(ws.busy);
@@ -1395,9 +1659,10 @@ template <typename Ctx> static void AccountPage(Ctx& ctx)
         }
         return;
     }
-    P::Coloured(IlionTheme::ShellPal::Text2, "Correo");
+    IlionTheme::SectionPlate("INICIAR SESIÓN O REGISTRARTE");
+    P::Coloured(IlionTheme::ShellPal::Text2, "1. Escribe tu correo y pulsa ENVIAR CÓDIGO", true);
     ImGui::SetNextItemWidth(-FLT_MIN);
-    ImGui::InputText("##CommunityEmail", email, sizeof(email));
+    ImGui::InputTextWithHint("##CommunityEmail", "tu@correo.com", email, sizeof(email));
     ImGui::BeginDisabled(ws.busy);
     if (IlionTheme::Button("ENVIAR CÓDIGO##CommunityOtp"))
     {
@@ -1407,9 +1672,9 @@ template <typename Ctx> static void AccountPage(Ctx& ctx)
         worker.Start("Pidiendo el código...", [cfg, mail]() { return C::RequestCode(cfg, mail); });
     }
     ImGui::EndDisabled();
-    P::Coloured(IlionTheme::ShellPal::Text2, "Código recibido");
+    P::Coloured(IlionTheme::ShellPal::Text2, "2. Escribe el código de 6 cifras que llega al correo y pulsa VERIFICAR", true);
     ImGui::SetNextItemWidth(-FLT_MIN);
-    ImGui::InputText("##CommunityCode", code, sizeof(code), ImGuiInputTextFlags_CharsDecimal);
+    ImGui::InputTextWithHint("##CommunityCode", "123456", code, sizeof(code), ImGuiInputTextFlags_CharsDecimal);
     ImGui::BeginDisabled(ws.busy);
     if (IlionTheme::Button("VERIFICAR##CommunityVerify"))
     {
@@ -1421,6 +1686,10 @@ template <typename Ctx> static void AccountPage(Ctx& ctx)
         worker.Start("Verificando...", [cfg, mail, otp, js]() { return C::VerifyCode(cfg, mail, otp, *js); });
     }
     ImGui::EndDisabled();
+    P::Coloured(IlionTheme::ShellPal::Dim,
+                "3. Con la sesión iniciada, reserva tu alias. Si es tu primera vez, el mismo código crea la cuenta. Puedes cerrar la "
+                "sesión cuando quieras desde esta misma sección.",
+                true);
 }
 
 // Al terminar un trabajo: se recoge su resultado en el hilo de la interfaz
@@ -1469,7 +1738,7 @@ static void Collect()
             {
                 e.id = C::NewLocalId();
                 e.authorId.clear();
-                e.review = "local";
+                e.review = "retirado";
                 e.downloads = -1;
             }
         C::SaveList(MinePath(), mine);
@@ -1546,11 +1815,35 @@ template <typename Ctx> static void Panel(Ctx& ctx)
         const float halo = r * 3.4f; // el halo más grande de ShellLed llega a 3,2 radios
         const float gap = std::floor(font * 0.85f);
         const float margin = std::floor(font * 0.7f);
-        const float block = halo * 2.0f + gap + tw;
+        // Estrellas rojas con contorno blanco fino a cada lado del título, separadas de las letras
+        const float star = std::floor(ts * 0.36f); // radio exterior
+        const float starGap = std::floor(font * 0.7f);
+        const float starsWidth = (star * 2.0f + starGap) * 2.0f;
+        const bool stars = width >= halo * 2.0f + gap + tw + starsWidth + margin * 2.0f; // sin sitio, sin estrellas (nunca cortadas)
+        const float block = halo * 2.0f + gap + tw + (stars ? starsWidth : 0.0f);
         const float x0 = p.x + (std::max)(margin, std::floor((width - block) * 0.5f));
         const float top = p.y + std::floor(font * 0.75f);
         IlionTheme::ShellLed(dl, ImVec2(x0 + halo, top + ts * 0.52f), r, toneMapColor(IlionTheme::ShellPilot(IlionTheme::ShellPal::Green)), true);
+        const auto drawStar = [&](ImVec2 c)
+        {
+            ImVec2 pts[10];
+            for (int i = 0; i < 10; i++)
+            {
+                const float a = -1.5707964f + i * 0.62831855f;
+                const float rr = i % 2 == 0 ? star : star * 0.45f;
+                pts[i] = ImVec2(c.x + std::cos(a) * rr, c.y + std::sin(a) * rr);
+            }
+            dl->AddConcavePolyFilled(pts, 10, ImGui::GetColorU32(toneMapColor(ImVec4(0.93f, 0.12f, 0.10f, 1.0f))));
+            dl->AddPolyline(pts, 10, ImGui::GetColorU32(toneMapColor(ImVec4(1.0f, 1.0f, 1.0f, 0.95f))), ImDrawFlags_Closed, 1.0f);
+        };
         float x = x0 + halo * 2.0f + gap;
+        const float starY = top + ts * 0.5f;
+        if (stars)
+        {
+            drawStar(ImVec2(x + star, starY));
+            x += star * 2.0f + starGap;
+            drawStar(ImVec2(x + tw + starGap + star, starY));
+        }
         const ImU32 titleColour = ImGui::GetColorU32(toneMapColor(IlionTheme::ShellPal::Text));
         for (const char* c = title; *c; c++)
         {
@@ -1651,6 +1944,7 @@ template <typename Ctx> static void Panel(Ctx& ctx)
     }
 
     const C::Machine m = MachineOf(ctx);
+    cardMachine = &m; // las tarjetas muestran su compatibilidad con este equipo
     const bool listPage = page == Top || page == Catalog || page == Downloaded || page == Mine;
     const bool previewing = listPage && !previewKey.empty();
 
@@ -1736,6 +2030,7 @@ template <typename Ctx> static void Panel(Ctx& ctx)
     }
     ImGui::EndChild();
     ImGui::PopStyleColor();
+    cardMachine = nullptr;
 }
 } // namespace IlionCommunityUi
 

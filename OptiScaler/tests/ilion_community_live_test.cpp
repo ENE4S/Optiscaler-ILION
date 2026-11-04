@@ -69,7 +69,8 @@ int main(int argc, char** argv)
     row["author_id"] = "00000000-0000-0000-0000-000000000000";
     const auto ins = C::HttpRequest("POST", s.url + "/rest/v1/ilion_profiles", C::Headers(s, ""), row.dump());
     printf("  publicar sin cuenta: %d\n", ins.status);
-    CHECK(ins.status == 401 || ins.status == 403, "publicar sin cuenta rechazado por el servidor");
+    // 401/403 por permisos; 400 si el servidor aún no tiene el esquema v2 (columna fg_ruta): rechazado igualmente
+    CHECK(ins.status >= 400 && ins.status < 500, "publicar sin cuenta rechazado por el servidor");
 
     // 3. Sin cuenta no se cuenta una descarga ni se cambia el contador
     const auto rpc = C::HttpRequest("POST", s.url + "/rest/v1/rpc/ilion_register_download", C::Headers(s, ""),

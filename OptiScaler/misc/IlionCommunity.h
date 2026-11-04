@@ -43,7 +43,7 @@
 
 namespace IlionCommunity
 {
-constexpr int kSchema = 1;
+constexpr int kSchema = 2; // v2 (Community5): implementación de FG exacta y su ruta; los perfiles v1 se siguen leyendo
 constexpr size_t kMaxFileBytes = 1024 * 1024;       // listas locales
 constexpr size_t kMaxCatalogBytes = 4 * 1024 * 1024; // caché del catálogo
 constexpr size_t kMaxProfileBytes = 16 * 1024;      // un perfil importado
@@ -68,17 +68,45 @@ inline const Item kArchs[] = {
 inline const Item kTechs[] = {
     { "fsr4_driver", "FSR 4 (driver AMD)" }, { "fsr4_dll", "FSR 4 (DLL)" },     { "fsr4_lite", "FSR 4 Lite comunitaria" },
     { "hlx_fsr4", "HLX FSR 4" },             { "helixsr", "HelixSR" },          { "dlss", "DLSS (nativo)" },
+    { "dlss_d4r", "DLSS por d4r (GPU no NVIDIA)" },
     { "xess", "XeSS" },                      { "fsr31", "FSR 3.1" },            { "fsr22", "FSR 2.2" },
+    { "fsr21", "FSR 2.1" },
 };
-inline const Item kModels[] = { { "completo", "Modelo completo" }, { "int8lite", "INT8Lite" }, { "no_aplica", "No aplica" } };
+// Modelos: FSR 4 (completo / INT8Lite) y DLSS (preset de render de NVIDIA: lo que ILION puede pedir con RenderPresetForAll)
+inline const Item kModels[] = { { "completo", "Modelo completo" }, { "int8lite", "INT8Lite" }, { "no_aplica", "No aplica" },
+                                { "dlss_auto", "DLSS: el del juego" }, { "dlss_j", "DLSS preset J" }, { "dlss_k", "DLSS preset K" },
+                                { "dlss_l", "DLSS preset L" },        { "dlss_m", "DLSS preset M" }, { "dlss_latest", "DLSS: el más reciente de la DLL" } };
+inline bool IsDlssModel(const std::string& m) { return m.rfind("dlss_", 0) == 0; }
 inline const Item kPresets[] = { { "nativa", "Nativa" },         { "ultra_calidad", "Ultra Calidad" }, { "calidad", "Calidad" },
                                  { "balanceado", "Balanceado" }, { "rendimiento", "Rendimiento" },     { "ultra_rendimiento", "Ultra Rendimiento" } };
-inline const Item kFgs[] = { { "ninguno", "Sin FG" },           { "xefg", "XeFG" },  { "fsr_fg", "FSR FG" },
-                             { "dlssg_juego", "DLSSG del juego" }, { "dlssg_salida", "Salida DLSSG de ILION" } };
-inline const Item kReviews[] = { { "local", "Local, sin publicar" },
-                                 { "pendiente", "Pendiente de revisión" },
-                                 { "aprobado", "Aprobado por moderación" },
-                                 { "rechazado", "Rechazado" } };
+inline const Item kFgs[] = { { "ninguno", "Sin FG" },
+                             { "xefg", "XeFG (Intel)" },
+                             { "fsr_fg", "FSR FG (AMD)" },
+                             { "dlssg_nativo", "DLSSG nativo de NVIDIA" },
+                             { "dlssg_juego", "DLSSG del juego" },
+                             { "nvngx_nukem", "Nukem (DLSSG → FSR 3)" },
+                             { "nvngx_enabler", "DLSS Enabler (Artur)" },
+                             { "nvngx_ffx", "FSR 3/4 FG por FFX" },
+                             { "nvngx_combo", "FFX + Enabler" },
+                             { "nvngx_fglite", "NVIDIA FG Lite (HelixSR)" },
+                             { "dlssg_salida", "Salida DLSSG (perfil v1, reemplazo sin indicar)" } };
+// La entrada de datos del FG (FGInput de ILION)
+inline const Item kRoutes[] = { { "ninguno", "Sin FG" },
+                                { "optifg", "OptiFG (datos del escalador)" },
+                                { "streamline", "DLSSG del juego por Streamline" },
+                                { "nvngx", "DLSSG del juego por NVNGX" },
+                                { "fsr31", "FSR 3.1 FG del juego" },
+                                { "fsr30", "FSR 3.0 FG del juego" },
+                                { "juego", "El FG propio del juego" },
+                                { "auto", "Automática (perfil v1)" } };
+inline const Item kReviews[] = { { "local", "Perfil local" },
+                                 { "por_publicar", "Pendiente de publicación" },
+                                 { "pendiente", "Pendiente de moderación" },
+                                 { "aprobado", "Publicado" },
+                                 { "rechazado", "Rechazado" },
+                                 { "retirado", "Retirado del catálogo" } };
+// Estados que existen en el servidor (los demás solo en este equipo)
+inline bool IsServerReview(const std::string& r) { return r == "pendiente" || r == "aprobado" || r == "rechazado"; }
 inline const struct
 {
     int w, h;
@@ -145,7 +173,10 @@ inline Support TechSupport(const std::string& tech, const std::string& arch)
         return { true, arch == "rdna3", "DLL comunitaria: decide ella misma si funciona; ILION solo la ha comprobado en RDNA 3" };
     if (tech == "dlss")
         return IsRtxArch(arch) ? Support { true, false, "DLSS nativo en NVIDIA RTX" } : Support { false, false, "DLSS nativo necesita una NVIDIA RTX" };
-    if (tech == "xess" || tech == "fsr31" || tech == "fsr22")
+    if (tech == "dlss_d4r")
+        return IsAmdArch(arch) ? Support { true, arch == "rdna3", "d4r ejecuta DLSS en Radeon (DirectX 12); instalación aparte" }
+                               : Support { false, false, "d4r es para GPU AMD" };
+    if (tech == "xess" || tech == "fsr31" || tech == "fsr22" || tech == "fsr21")
         return { true, true, "Funciona en cualquier GPU" };
     return {};
 }
@@ -153,6 +184,11 @@ inline Support TechSupport(const std::string& tech, const std::string& arch)
 inline Support ModelSupport(const std::string& model, const std::string& tech, const std::string& arch)
 {
     const bool fsr4 = tech == "fsr4_driver" || tech == "fsr4_dll";
+    const bool dlss = tech == "dlss" || tech == "dlss_d4r";
+    if (dlss)
+        return IsDlssModel(model) ? Support { true, false, "" } : Support { false, false, "DLSS necesita su modelo (preset) o «el del juego»" };
+    if (IsDlssModel(model))
+        return { false, false, "Los presets DLSS solo valen para DLSS" };
     if (model == "no_aplica")
         return fsr4 ? Support { false, false, "FSR 4 necesita un modelo (completo o INT8Lite)" } : Support { true, true, "" };
     if (!fsr4)
@@ -163,16 +199,149 @@ inline Support ModelSupport(const std::string& model, const std::string& tech, c
     return { true, arch == "rdna3", "" };
 }
 
-// Multiplicadores fijos admitidos (2 = 2X). El MFG dinámico no forma parte de los perfiles
+// ---- Catálogo técnico de Frame Generation -------------------------------------------------------------------------
+// Una entrada por implementación real de ILION: lo que escribe en su configuración (nombres de FGInput / FGOutput /
+// FGNvngxReplacement), las rutas de entrada que admite, la DLL que necesita, el multiplicador fijo máximo conocido y la
+// evidencia por arquitectura. La usan la validación, la compatibilidad, los formularios, la activación y el optimizador
+enum class Evidence
+{
+    None,         // no compatible
+    Unknown,      // sin información suficiente
+    Experimental, // funciona según ILION o informes aislados; sin recomendación automática
+    Community,    // compatibilidad comunitaria contrastada
+    Official,     // compatibilidad oficial del fabricante
+};
+
+inline const char* EvidenceText(Evidence e)
+{
+    switch (e)
+    {
+    case Evidence::Official:
+        return "compatibilidad oficial";
+    case Evidence::Community:
+        return "compatibilidad comunitaria contrastada";
+    case Evidence::Experimental:
+        return "experimental";
+    case Evidence::Unknown:
+        return "sin información suficiente";
+    default:
+        return "no compatible";
+    }
+}
+
+struct FgImpl
+{
+    const char* id;
+    const char* technology; // la técnica que genera
+    const char* provider;   // quién la aporta
+    const char* output;     // FGOutput que escribe ("" = ninguna salida de ILION)
+    const char* nvngx;      // FGNvngxReplacement que escribe ("" = no lo toca)
+    const char* routes;     // rutas admitidas, separadas por comas
+    const char* dll;        // DLL que debe estar junto a ILION ("" = ninguna propia)
+    bool dx12Only;
+    bool needsGameDlssg;    // necesita que el juego tenga DLSSG
+};
+
+inline const FgImpl kFgImpls[] = {
+    { "ninguno", "", "", "NoFG", "", "ninguno", "", false, false },
+    { "xefg", "XeFG", "Intel (XeSS FG)", "XeFG", "", "optifg,streamline,fsr31,fsr30", "libxess_fg.dll", false, false },
+    { "fsr_fg", "FSR FG", "AMD (FidelityFX)", "FSRFG", "", "optifg,streamline,fsr31,fsr30", "", true, false },
+    { "dlssg_nativo", "DLSSG", "NVIDIA", "DLSSG", "None", "optifg,streamline,fsr31,fsr30", "", true, false },
+    { "dlssg_juego", "DLSSG", "El juego", "", "None", "juego", "", true, true },
+    { "nvngx_nukem", "FSR 3 FG", "Nukem (dlssg-to-fsr3)", "DLSSG", "Nukems", "nvngx,streamline,optifg,fsr31,fsr30",
+      "dlssg_to_fsr3_amd_is_better.dll", false, false },
+    { "nvngx_enabler", "FSR 3 FG / MFG", "DLSS Enabler (Artur)", "DLSSG", "Arturs", "nvngx,streamline,optifg,fsr31,fsr30",
+      "dlss-enabler-headless.dll", false, false },
+    { "nvngx_ffx", "FSR 3/4 FG", "FidelityFX por NVNGX", "DLSSG", "FFX", "nvngx,streamline,optifg,fsr31,fsr30", "", true, false },
+    { "nvngx_combo", "FSR 3/4 FG + Enabler", "FidelityFX + DLSS Enabler", "DLSSG", "Combo", "nvngx,streamline,optifg,fsr31,fsr30",
+      "dlss-enabler-headless.dll", true, false },
+    { "nvngx_fglite", "NVIDIA FG Lite", "HelixSR 2.0.0", "DLSSG", "HelixSR", "nvngx,streamline,optifg,fsr31,fsr30", "", true, false },
+    { "dlssg_salida", "DLSSG", "Salida DLSSG (v1)", "DLSSG", "", "auto,optifg,streamline,fsr31,fsr30", "", true, false },
+};
+
+inline const FgImpl* FgImplOf(const std::string& id)
+{
+    for (const auto& f : kFgImpls)
+        if (id == f.id)
+            return &f;
+    return nullptr;
+}
+
+inline bool FgRouteAllowed(const std::string& fg, const std::string& route)
+{
+    const FgImpl* f = FgImplOf(fg);
+    if (f == nullptr || route.empty())
+        return false;
+    const std::string list = std::string(",") + f->routes + ",";
+    return list.find("," + route + ",") != std::string::npos;
+}
+
+// La ruta por defecto de una implementación (la primera de su lista)
+inline std::string DefaultRoute(const std::string& fg)
+{
+    const FgImpl* f = FgImplOf(fg);
+    if (f == nullptr)
+        return "ninguno";
+    const std::string list = f->routes;
+    return list.substr(0, list.find(','));
+}
+
+inline bool IsNvidiaArch(const std::string& a) { return IsRtxArch(a) || a == "nv_gtx"; }
+inline bool IsIntelArch(const std::string& a) { return a == "arc_a" || a == "arc_b" || a == "intel_xe2" || a == "intel_other"; }
+
+// Evidencia por implementación y arquitectura (fuentes en el informe de investigación de Community5)
+inline Evidence FgEvidence(const std::string& fg, const std::string& arch)
+{
+    const bool rtx = IsRtxArch(arch);
+    const bool amd = IsAmdArch(arch);
+    if (fg == "ninguno")
+        return Evidence::Official;
+    if (fg == "dlssg_nativo")
+        return arch == "rtx40" || arch == "rtx50" ? Evidence::Official : Evidence::None;
+    if (fg == "dlssg_juego") // en otras GPU, el DLSSG del juego lo atiende un reemplazo instalado aparte (Enabler, etc.)
+        return arch == "rtx40" || arch == "rtx50" ? Evidence::Official : Evidence::Experimental;
+    if (fg == "fsr_fg")
+        return rtx || amd ? (arch == "amd_apu" ? Evidence::Community : Evidence::Official) : Evidence::Unknown;
+    if (fg == "xefg")
+        return IsIntelArch(arch) && arch != "intel_other" ? Evidence::Official
+               : arch == "rdna3"                         ? Evidence::Community // comprobado en ILION (Dawnwalker)
+               : rtx || amd || arch == "nv_gtx"          ? Evidence::Official  // XeSS SDK 2.1: Shader Model 6.4
+                                                         : Evidence::Unknown;
+    if (fg == "nvngx_nukem")
+        return arch == "nv_gtx" ? Evidence::None : rtx ? Evidence::Community : Evidence::Experimental;
+    if (fg == "nvngx_enabler")
+        return arch == "nv_gtx" ? Evidence::Experimental : Evidence::Community;
+    if (fg == "nvngx_ffx" || fg == "nvngx_combo")
+        return amd ? Evidence::Experimental : Evidence::Unknown;
+    if (fg == "nvngx_fglite")
+        return IsNvidiaArch(arch) ? Evidence::None : amd ? Evidence::Experimental : Evidence::Unknown;
+    if (fg == "dlssg_salida")
+        return Evidence::Unknown;
+    return Evidence::None;
+}
+
+// Multiplicadores fijos admitidos (2 = 2X). El proveedor confirma su máximo real al cargarse. El MFG dinámico no forma
+// parte de los perfiles
 inline int FgMaxMultiplier(const std::string& fg, const std::string& arch)
 {
-    if (fg == "ninguno")
+    if (fg == "ninguno" || FgEvidence(fg, arch) == Evidence::None)
         return 0;
-    if (fg == "fsr_fg")
+    if (fg == "fsr_fg" || fg == "nvngx_nukem" || fg == "nvngx_ffx" || fg == "nvngx_fglite")
         return 2;
+    if (fg == "dlssg_nativo")
+        return arch == "rtx50" ? 4 : 2;
     if (fg == "dlssg_juego")
-        return arch == "rtx50" ? 4 : arch == "rtx40" ? 2 : IsRtxArch(arch) || arch == "nv_gtx" ? 0 : 4;
-    return 4; // xefg, dlssg_salida: lo que admita el proveedor al cargarse, hasta 4X
+        return arch == "rtx40" ? 2 : 4;
+    if (fg == "nvngx_enabler" || fg == "nvngx_combo")
+        return 6;
+    return 4; // xefg, dlssg_salida
+}
+
+// Recomendable automáticamente: solo con evidencia oficial o comunitaria (las experimentales, a mano)
+inline bool FgRecommendable(const std::string& fg, const std::string& arch)
+{
+    const Evidence e = FgEvidence(fg, arch);
+    return e == Evidence::Official || e == Evidence::Community;
 }
 
 // ---- Perfil ---------------------------------------------------------------------------------------------------------
@@ -187,7 +356,8 @@ struct Profile
     std::string gameExe, gameName, api, gpu, arch;
     int outW = 0, outH = 0;
     std::string mode, tech, model, preset, fg;
-    int multiplier = 0; // 0 sin FG, 2..4
+    std::string fgRoute = "ninguno"; // v2: la entrada del FG (kRoutes); v1: "auto"
+    int multiplier = 0; // 0 sin FG, 2..6
     std::string created, updated;
     std::string review = "local";
     long long downloads = -1; // -1: sin dato real
@@ -264,7 +434,7 @@ inline bool Validate(const Profile& p, std::string* err)
             *err = e;
         return false;
     };
-    if (p.schema != kSchema)
+    if (p.schema != 1 && p.schema != kSchema)
         return fail("Versión de formato no admitida (" + std::to_string(p.schema) + ")");
     if (p.id.empty() || p.id.size() > 64 ||
         !std::all_of(p.id.begin(), p.id.end(), [](char c) { return isalnum((unsigned char) c) || c == '-'; }))
@@ -297,11 +467,18 @@ inline bool Validate(const Profile& p, std::string* err)
         return fail("Preset no válido");
     if (!InList(kFgs, p.fg))
         return fail("Frame Generation no válido");
+    // v1 solo conoce sus cinco valores; v2 no usa el valor heredado
+    if (p.schema == 1 && p.fg != "ninguno" && p.fg != "xefg" && p.fg != "fsr_fg" && p.fg != "dlssg_juego" && p.fg != "dlssg_salida")
+        return fail("Frame Generation no válido en un perfil v1");
+    if (p.schema >= 2 && p.fg == "dlssg_salida")
+        return fail("«Salida DLSSG» sin reemplazo solo existe en perfiles v1");
+    if (!InList(kRoutes, p.fgRoute) || !((p.schema == 1 && p.fgRoute == "auto" && p.fg != "ninguno") || FgRouteAllowed(p.fg, p.fgRoute)))
+        return fail("Ruta de Frame Generation no válida para esa implementación");
     if (!InList(kReviews, p.review))
         return fail("Estado de revisión no válido");
     if (const auto s = TechSupport(p.tech, p.arch); !s.possible)
         return fail(std::string("Combinación incompatible: ") + s.why);
-    if (const auto s = ModelSupport(p.model, p.tech, p.arch); !s.possible)
+    if (const auto s = ModelSupport(p.model, p.tech, p.arch); !s.possible && !(p.schema == 1 && p.tech == "dlss" && p.model == "no_aplica"))
         return fail(std::string("Modelo incompatible: ") + s.why);
     const int maxMult = FgMaxMultiplier(p.fg, p.arch);
     if (p.fg == "ninguno" ? p.multiplier != 0 : (p.multiplier < 2 || p.multiplier > maxMult))
@@ -316,7 +493,8 @@ inline bool Validate(const Profile& p, std::string* err)
 inline std::string ContentHash(const Profile& p)
 {
     const std::string s = p.gameExe + "|" + p.api + "|" + p.arch + "|" + p.gpu + "|" + std::to_string(p.outW) + "x" + std::to_string(p.outH) + "|" +
-                          p.mode + "|" + p.tech + "|" + p.model + "|" + p.preset + "|" + p.fg + "|" + std::to_string(p.multiplier);
+                          p.mode + "|" + p.tech + "|" + p.model + "|" + p.preset + "|" + p.fg + "|" + std::to_string(p.multiplier) +
+                          (p.schema >= 2 ? "|" + p.fgRoute : std::string()); // v1 conserva su huella
     uint64_t h = 1469598103934665603ull;
     for (const unsigned char c : s)
         h = (h ^ c) * 1099511628211ull;
@@ -333,7 +511,7 @@ inline Json ToJson(const Profile& p)
                   { "author_id", p.authorId }, { "name", p.name },   { "game_exe", p.gameExe },    { "game_name", p.gameName },
                   { "api", p.api },         { "gpu", p.gpu },       { "arch", p.arch },           { "out_w", p.outW },
                   { "out_h", p.outH },      { "mode", p.mode },     { "tech", p.tech },           { "model", p.model },
-                  { "preset", p.preset },   { "fg", p.fg },         { "multiplier", p.multiplier }, { "created", p.created },
+                  { "preset", p.preset },   { "fg", p.fg },         { "fg_route", p.fgRoute },    { "multiplier", p.multiplier }, { "created", p.created },
                   { "updated", p.updated }, { "review", p.review }, { "downloads", p.downloads },  { "origin", p.origin },
                   { "content_hash", ContentHash(p) } };
 }
@@ -399,6 +577,7 @@ inline bool FromJson(const Json& j, Profile& p, std::string* err)
     str("model", r.model);
     str("preset", r.preset);
     str("fg", r.fg);
+    str("fg_route", r.fgRoute, false);
     num("multiplier", r.multiplier);
     str("created", r.created, false);
     str("updated", r.updated, false);
@@ -413,6 +592,9 @@ inline bool FromJson(const Json& j, Profile& p, std::string* err)
     }
     if (r.review.empty())
         r.review = "local";
+    // v1 no tenía ruta: la de siempre (automática); sin FG, ninguna
+    if (r.fgRoute.empty() || r.fgRoute == "ninguno")
+        r.fgRoute = r.fg == "ninguno" ? "ninguno" : r.schema == 1 ? (r.fg == "dlssg_juego" ? "juego" : "auto") : r.fgRoute;
     if (r.origin != "local" && r.origin != "comunidad" && r.origin != "importado")
         r.origin = "importado";
     if (r.created.size() > 32 || r.updated.size() > 32)
@@ -641,7 +823,8 @@ struct Machine
     int outW = 0, outH = 0;
     std::set<std::string> techs; // tecnologías instaladas y utilizables ahora (del catálogo de escaladores)
     bool liteOffered = false;    // el selector de FSR 4 ofrece INT8Lite
-    std::set<std::string> fgs;   // salidas de FG posibles ahora
+    std::set<std::string> fgs;    // implementaciones de FG disponibles ahora (catálogo técnico)
+    std::set<std::string> routes; // entradas de FG posibles ahora (kRoutes)
 };
 
 enum class Level
@@ -695,12 +878,20 @@ inline std::vector<Check> Compatibility(const Profile& p, const Machine& m)
     const int maxMult = FgMaxMultiplier(p.fg, m.arch);
     if (p.fg != "ninguno")
     {
-        if (maxMult == 0 || m.fgs.count(p.fg) == 0)
-            out.push_back({ Level::Bad, std::string(NameOf(kFgs, p.fg)) + ": no disponible en tu equipo o en este juego" });
+        const std::string fgName = NameOf(kFgs, p.fg);
+        const Evidence ev = FgEvidence(p.fg, m.arch);
+        if (ev == Evidence::None)
+            out.push_back({ Level::Bad, fgName + ": no compatible con tu arquitectura (" + NameOf(kArchs, m.arch) + ")" });
+        else if (m.fgs.count(p.fg) == 0)
+            out.push_back({ Level::Bad, fgName + ": no está instalado o no se puede usar en este juego ahora" });
         else if (p.multiplier > maxMult)
-            out.push_back({ Level::Bad, std::string(NameOf(kFgs, p.fg)) + " " + std::to_string(p.multiplier) + "X: tu GPU admite hasta " + std::to_string(maxMult) + "X" });
+            out.push_back({ Level::Bad, fgName + " " + std::to_string(p.multiplier) + "X: admite hasta " + std::to_string(maxMult) + "X" });
+        else if (p.fgRoute != "auto" && p.fgRoute != "juego" && m.routes.count(p.fgRoute) == 0)
+            out.push_back({ Level::Bad, std::string("Entrada de FG «") + NameOf(kRoutes, p.fgRoute) + "»: no disponible en este juego" });
         else
-            out.push_back({ Level::Ok, std::string(NameOf(kFgs, p.fg)) + " " + std::to_string(p.multiplier) + "X fijo (el proveedor confirma el máximo al cargarse)" });
+            out.push_back({ ev == Evidence::Official || ev == Evidence::Community ? Level::Ok : Level::Warn,
+                            fgName + " " + std::to_string(p.multiplier) + "X fijo · " + EvidenceText(ev) +
+                                " (el proveedor confirma su máximo al cargarse)" });
     }
     out.push_back({ Level::Warn,
                     p.review == "aprobado" ? "Revisado por moderación, no verificado técnicamente en tu equipo"
@@ -1129,6 +1320,8 @@ inline bool FromServerRow(const Json& row, Profile& p, std::string* err)
     j["schema"] = row.value("schema_version", 0);
     j["author"] = row.contains("ilion_authors") && row["ilion_authors"].is_object() ? row["ilion_authors"].value("alias", std::string()) : std::string();
     j["review"] = row.value("status", std::string("pendiente"));
+    if (row.value("schema_version", 0) >= 2)
+        j["fg_route"] = row.value("fg_ruta", std::string());
     j["origin"] = "comunidad";
     j["created"] = row.value("created_at", std::string()).substr(0, 20);
     j["updated"] = row.value("updated_at", std::string()).substr(0, 20);
@@ -1140,7 +1333,8 @@ inline Json ToServerRow(const Profile& p)
     return Json { { "schema_version", p.schema }, { "name", p.name },     { "game_exe", p.gameExe }, { "game_name", p.gameName },
                   { "api", p.api },               { "gpu", p.gpu },       { "arch", p.arch },        { "out_w", p.outW },
                   { "out_h", p.outH },            { "mode", p.mode },     { "tech", p.tech },        { "model", p.model },
-                  { "preset", p.preset },         { "fg", p.fg },         { "multiplier", p.multiplier }, { "content_hash", ContentHash(p) } };
+                  { "preset", p.preset },         { "fg", p.fg },         { "multiplier", p.multiplier }, { "content_hash", ContentHash(p) },
+                  { "fg_ruta", p.schema >= 2 ? p.fgRoute : std::string("auto") } };
 }
 
 inline std::string CatalogUrl(const ServiceConfig& c)
@@ -1283,6 +1477,9 @@ inline std::pair<bool, std::string> Publish(const ServiceConfig& c, Session& s, 
                                 : HttpRequest("POST", c.url + "/rest/v1/ilion_profiles", h, row.dump());
     if (r.status == 409)
         return { false, "Ya has publicado un perfil con esta misma configuración" };
+    if (r.status == 400 && (r.body.find("PGRST204") != std::string::npos || r.body.find("fg_ruta") != std::string::npos ||
+                            r.body.find("schema_version") != std::string::npos))
+        return { false, "El servicio aún no admite perfiles v2 (falta aplicar la migración ilion_community_v2_fg)" };
     if (r.status != 200 && r.status != 201)
         return { false, ServerError(r) };
     const Json j = Json::parse(r.body, nullptr, false);

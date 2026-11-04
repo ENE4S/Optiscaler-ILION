@@ -36,6 +36,7 @@ static C::Profile Sample()
     p.model = "no_aplica";
     p.preset = "calidad";
     p.fg = "xefg";
+    p.fgRoute = "streamline"; // v2: la entrada del FG
     p.multiplier = 2;
     p.created = p.updated = C::NowUtc();
     return p;
@@ -132,7 +133,9 @@ int main()
         p.arch = "rtx40";
         p.gpu = "NVIDIA GeForce RTX 4070";
         p.tech = "dlss";
+        p.model = "dlss_k";
         p.fg = "dlssg_juego";
+        p.fgRoute = "juego";
         p.multiplier = 3;
         CHECK(!C::Validate(p, &err), "DLSSG 3X en RTX 40 rechazado");
         p.multiplier = 2;
@@ -153,6 +156,7 @@ int main()
         m.outH = 1440;
         m.techs = { "fsr4_driver", "xess" };
         m.fgs = { "ninguno", "xefg" };
+        m.routes = { "ninguno", "juego", "optifg", "streamline", "nvngx", "fsr31", "fsr30" };
         C::Profile p = Sample();
         CHECK(!C::Blocking(C::Compatibility(p, m)), "perfil compatible no bloquea");
         p.gameExe = "otro.exe";
@@ -358,6 +362,7 @@ int main()
         m.outH = 1440;
         m.techs = { "xess" };
         m.fgs = { "ninguno", "xefg" };
+        m.routes = { "ninguno", "juego", "optifg", "streamline", "nvngx", "fsr31", "fsr30" };
         C::Profile p = Sample();
         CHECK(C::Overall(C::Compatibility(p, m)) == C::Fit::Confirmed, "mismo equipo: compatibilidad confirmada");
         m.gpu = "AMD Radeon RX 6700 XT";
@@ -377,6 +382,200 @@ int main()
         C::Profile q;
         const bool parsed = C::ParseProfileText(j.dump(), q, nullptr);
         CHECK(!parsed || (!C::ToJson(q).contains("comando") && !C::ToJson(q).contains("dll")), "campos extra (órdenes, DLL) descartados");
+    }
+
+    // 13. Community5: catálogo técnico de FG, arquitecturas, serialización v2, perfiles v1 y coherencia con el SQL
+    {
+        // Catálogo completo, sin identificadores repetidos ni rutas inventadas
+        std::set<std::string> ids;
+        bool routesOk = true;
+        for (const auto& f : C::kFgImpls)
+        {
+            ids.insert(f.id);
+            std::string list = f.routes;
+            size_t start = 0;
+            while (start <= list.size())
+            {
+                const size_t comma = list.find(',', start);
+                const std::string r = list.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+                routesOk = routesOk && C::InList(C::kRoutes, r);
+                if (comma == std::string::npos)
+                    break;
+                start = comma + 1;
+            }
+        }
+        CHECK(ids.size() == std::size(C::kFgImpls) && ids.size() == std::size(C::kFgs), "catálogo de FG completo y sin duplicados");
+        bool everyFg = true;
+        for (const auto& i : C::kFgs)
+            everyFg = everyFg && C::FgImplOf(i.id) != nullptr;
+        CHECK(everyFg && routesOk, "cada FG tiene su implementación y rutas válidas");
+
+        // Identificación de cada implementación con la configuración real de ILION
+        const auto* en = C::FgImplOf("nvngx_enabler");
+        CHECK(en && std::string(en->nvngx) == "Arturs" && std::string(en->dll) == "dlss-enabler-headless.dll", "Enabler de Artur identificado");
+        const auto* nk = C::FgImplOf("nvngx_nukem");
+        CHECK(nk && std::string(nk->nvngx) == "Nukems" && std::string(nk->dll) == "dlssg_to_fsr3_amd_is_better.dll", "Nukem identificado");
+        const auto* nat = C::FgImplOf("dlssg_nativo");
+        CHECK(nat && std::string(nat->output) == "DLSSG" && std::string(nat->nvngx) == "None", "DLSSG nativo identificado");
+        const auto* lite = C::FgImplOf("nvngx_fglite");
+        CHECK(lite && std::string(lite->nvngx) == "HelixSR" && lite->dx12Only, "FG Lite identificado (modo de HelixSR, DX12)");
+        CHECK(std::string(C::FgImplOf("nvngx_combo")->nvngx) == "Combo" && std::string(C::FgImplOf("nvngx_ffx")->nvngx) == "FFX",
+              "FFX y Combo identificados");
+        CHECK(std::string(C::FgImplOf("nvngx_enabler")->nvngx) != std::string(C::FgImplOf("fsr_fg")->nvngx) &&
+                  std::string(C::FgImplOf("fsr_fg")->output) == "FSRFG",
+              "Enabler no se confunde con FSR FG");
+
+        // Compatibilidad por arquitectura (evidencia y multiplicador)
+        using E = C::Evidence;
+        CHECK(C::FgEvidence("dlssg_nativo", "rtx20") == E::None && C::FgEvidence("nvngx_enabler", "rtx20") == E::Community &&
+                  C::FgEvidence("nvngx_nukem", "rtx20") == E::Community,
+              "RTX 20: sin DLSSG nativo, con Enabler y Nukem");
+        CHECK(C::FgEvidence("dlssg_nativo", "rtx30") == E::None && C::FgRecommendable("nvngx_enabler", "rtx30") &&
+                  C::FgMaxMultiplier("nvngx_enabler", "rtx30") == 6,
+              "RTX 30: Enabler recomendable hasta 6X");
+        CHECK(C::FgEvidence("dlssg_nativo", "rtx40") == E::Official && C::FgMaxMultiplier("dlssg_nativo", "rtx40") == 2, "RTX 40: DLSSG 2X");
+        CHECK(C::FgEvidence("dlssg_nativo", "rtx50") == E::Official && C::FgMaxMultiplier("dlssg_nativo", "rtx50") == 4, "RTX 50: DLSSG hasta 4X");
+        bool radeon = true;
+        for (const char* a : { "amd_old", "rdna2", "rdna3", "rdna4" })
+            radeon = radeon && C::FgEvidence("fsr_fg", a) == E::Official && C::FgEvidence("dlssg_nativo", a) == E::None &&
+                     C::FgEvidence("nvngx_enabler", a) == E::Community && C::FgEvidence("nvngx_fglite", a) == E::Experimental &&
+                     !C::FgRecommendable("nvngx_fglite", a);
+        CHECK(radeon, "Radeon RX 5000/6000/7000/9000: FSR FG oficial, Enabler comunitario, FG Lite experimental (no recomendado)");
+        CHECK(C::FgEvidence("xefg", "arc_a") == E::Official && C::FgEvidence("xefg", "arc_b") == E::Official &&
+                  C::FgEvidence("dlssg_nativo", "arc_b") == E::None,
+              "Intel Arc: XeFG oficial, sin DLSSG");
+        CHECK(C::FgEvidence("nvngx_nukem", "nv_gtx") == E::None && C::FgMaxMultiplier("nvngx_nukem", "nv_gtx") == 0, "GTX: Nukem no compatible");
+
+        // Escaladores por GPU
+        CHECK(C::TechSupport("dlss", "rtx30").possible && C::ModelSupport("dlss_k", "dlss", "rtx30").possible &&
+                  !C::TechSupport("dlss", "rdna3").possible,
+              "DLSS solo en RTX, con su modelo");
+        CHECK(C::TechSupport("dlss_d4r", "rdna3").possible && !C::TechSupport("dlss_d4r", "rtx40").possible, "d4r solo en Radeon");
+        CHECK(C::TechSupport("fsr4_driver", "rdna3").possible && C::TechSupport("hlx_fsr4", "rdna3").possible &&
+                  !C::TechSupport("fsr4_driver", "rtx40").possible,
+              "FSR 4 y HLX en Radeon compatible");
+        CHECK(!C::ModelSupport("dlss_k", "xess", "rtx30").possible && !C::ModelSupport("no_aplica", "dlss", "rtx30").possible,
+              "presets DLSS solo con DLSS");
+
+        // Serialización v2 de cada implementación y ruta: se conservan exactas y la ruta distingue la huella
+        bool all = true;
+        std::set<std::string> hashes;
+        for (const auto& f : C::kFgImpls)
+        {
+            const std::string id = f.id;
+            if (id == "ninguno" || id == "dlssg_salida")
+                continue;
+            C::Profile q = Sample();
+            q.arch = "rtx30";
+            q.gpu = "NVIDIA GeForce RTX 3060";
+            if (C::FgMaxMultiplier(id, q.arch) == 0)
+            {
+                q.arch = "rtx40";
+                q.gpu = "NVIDIA GeForce RTX 4070";
+            }
+            if (C::FgMaxMultiplier(id, q.arch) == 0)
+            {
+                q.arch = "rdna3";
+                q.gpu = "AMD Radeon RX 7900 XTX";
+            }
+            q.fg = id;
+            q.fgRoute = C::DefaultRoute(id);
+            q.multiplier = 2;
+            C::Profile back;
+            std::string e;
+            const bool ok = C::Validate(q, &e) && C::ParseProfileText(C::ToJson(q).dump(), back, &e) && back.fg == q.fg &&
+                            back.fgRoute == q.fgRoute && back.schema == 2;
+            if (!ok)
+                printf("  serialización %s: %s\n", id.c_str(), e.c_str());
+            all = all && ok;
+            hashes.insert(C::ContentHash(q));
+        }
+        CHECK(all, "cada implementación de FG se guarda y se lee exacta (v2)");
+        CHECK(hashes.size() == std::size(C::kFgImpls) - 2, "implementaciones distintas, huellas distintas");
+        C::Profile r1 = Sample(), r2 = Sample();
+        r1.fg = r2.fg = "nvngx_enabler";
+        r1.fgRoute = "nvngx";
+        r2.fgRoute = "streamline";
+        CHECK(C::ContentHash(r1) != C::ContentHash(r2), "la ruta forma parte de la configuración");
+
+        // Perfiles antiguos (v1) y valores no admitidos
+        auto j1 = C::ToJson(Sample());
+        j1["schema"] = 1;
+        j1.erase("fg_route");
+        j1["fg"] = "dlssg_salida";
+        C::Profile old;
+        std::string e1;
+        CHECK(C::ParseProfileText(j1.dump(), old, &e1) && old.schema == 1 && old.fgRoute == "auto", "perfil v1 legible (ruta automática)");
+        j1["fg"] = "nvngx_enabler";
+        CHECK(!C::ParseProfileText(j1.dump(), old, &e1), "v1 no admite implementaciones nuevas");
+        auto j2 = C::ToJson(Sample());
+        j2.erase("fg_route");
+        CHECK(!C::ParseProfileText(j2.dump(), old, &e1), "v2 sin ruta rechazado");
+        C::Profile bad = Sample();
+        bad.fg = "dlssg_salida";
+        CHECK(!C::Validate(bad, &e1), "v2 no usa el valor heredado");
+        bad = Sample();
+        bad.fgRoute = "../x";
+        CHECK(!C::Validate(bad, &e1), "ruta arbitraria rechazada");
+        bad = Sample();
+        bad.fg = "nvngx_evil";
+        CHECK(!C::Validate(bad, &e1), "implementación inventada rechazada");
+        bad = Sample();
+        bad.arch = "rtx30";
+        bad.gpu = "NVIDIA GeForce RTX 3060";
+        bad.fg = "nvngx_nukem";
+        bad.fgRoute = "nvngx";
+        bad.multiplier = 3;
+        CHECK(!C::Validate(bad, &e1), "Nukem 3X rechazado");
+        bad.fg = "nvngx_enabler";
+        bad.multiplier = 6;
+        CHECK(C::Validate(bad, &e1), "Enabler 6X admitido en RTX 30");
+        bad.fgRoute = "juego";
+        CHECK(!C::Validate(bad, &e1), "ruta no admitida por la implementación rechazada");
+
+        // Tecnología no disponible en este equipo: no compatible
+        C::Machine m;
+        m.api = "DX12";
+        m.arch = "rtx30";
+        m.gpu = "NVIDIA GeForce RTX 3060";
+        m.gameExe = "acvalhalla.exe";
+        m.outW = 2560;
+        m.outH = 1440;
+        m.techs = { "xess" };
+        m.fgs = { "ninguno", "nvngx_nukem" };
+        m.routes = { "ninguno", "juego", "nvngx", "streamline" };
+        C::Profile want = Sample();
+        want.arch = "rtx30";
+        want.gpu = m.gpu;
+        want.fg = "nvngx_enabler";
+        want.fgRoute = "nvngx";
+        CHECK(C::Overall(C::Compatibility(want, m)) == C::Fit::Incompatible, "Enabler sin su DLL: no compatible");
+        m.fgs.insert("nvngx_enabler");
+        CHECK(C::Overall(C::Compatibility(want, m)) == C::Fit::Confirmed, "Enabler con su DLL: compatible");
+        want.fgRoute = "optifg";
+        CHECK(C::Overall(C::Compatibility(want, m)) == C::Fit::Incompatible, "ruta no disponible en el juego: no compatible");
+
+        // Estados de publicación
+        CHECK(C::InList(C::kReviews, "por_publicar") && C::InList(C::kReviews, "retirado") && !C::IsServerReview("por_publicar") &&
+                  !C::IsServerReview("retirado") && C::IsServerReview("aprobado"),
+              "estados local, pendiente de publicación, publicado y retirado");
+        CHECK(std::string(C::NameOf(C::kReviews, "aprobado")) == "Publicado" && std::string(C::NameOf(C::kReviews, "local")) == "Perfil local",
+              "un perfil local no se llama publicado");
+
+        // Coherencia con la migración: cada identificador del cliente está en la lista cerrada del servidor
+        const auto sql = std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() / L"ilion-community" / L"ilion_community_v2_fg.sql";
+        std::ifstream in(sql, std::ios::binary);
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        bool inSql = !text.empty();
+        for (const auto& i : C::kFgs)
+            inSql = inSql && text.find(std::string("'") + i.id + "'") != std::string::npos;
+        for (const auto& i : C::kRoutes)
+            inSql = inSql && text.find(std::string("'") + i.id + "'") != std::string::npos;
+        for (const auto& i : C::kTechs)
+            inSql = inSql && text.find(std::string("'") + i.id + "'") != std::string::npos;
+        for (const auto& i : C::kModels)
+            inSql = inSql && text.find(std::string("'") + i.id + "'") != std::string::npos;
+        CHECK(inSql, "la migración v2 admite exactamente los identificadores del cliente");
     }
 
     printf("ILION COMMUNITY: %d comprobaciones correctas, %d fallos\n", passed, failures);

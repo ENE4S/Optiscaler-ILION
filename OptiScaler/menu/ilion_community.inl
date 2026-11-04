@@ -622,6 +622,32 @@ static ImVec4 ArchVendorColour(const std::string& arch)
     return P::VendorColour(C::IsAmdArch(arch) ? VendorId::AMD : C::IsNvidiaArch(arch) ? VendorId::Nvidia : C::IsIntelArch(arch) ? VendorId::Intel : VendorId::Invalid);
 }
 
+// El color de marca de una tecnología de escalado o de FG: AMD rojo, Intel azul, NVIDIA verde. Lo comunitario o propio
+// (FSR 4 Lite, HLX, HelixSR, d4r, DLSS Enabler, Nukem, FG Lite…) va en neutro: no es de ningún fabricante
+static ImVec4 TechColour(const std::string& tech)
+{
+    if (tech == "fsr4_driver" || tech == "fsr4_dll" || tech == "fsr31" || tech == "fsr22" || tech == "fsr21")
+        return P::VendorColour(VendorId::AMD);
+    if (tech == "dlss")
+        return P::VendorColour(VendorId::Nvidia);
+    if (tech == "xess")
+        return P::VendorColour(VendorId::Intel);
+    return IlionTheme::ShellPal::Text;
+}
+
+static ImVec4 FgColour(const std::string& fg)
+{
+    if (fg == "fsr_fg" || fg == "nvngx_ffx")
+        return P::VendorColour(VendorId::AMD);
+    if (fg == "dlssg_nativo") // solo el DLSSG oficial de NVIDIA; DLSS Enabler y Nukem no lo son
+        return P::VendorColour(VendorId::Nvidia);
+    if (fg == "xefg")
+        return P::VendorColour(VendorId::Intel);
+    return fg == "ninguno" ? IlionTheme::ShellPal::Text2 : IlionTheme::ShellPal::Text;
+}
+
+static void StatusChip(const ImVec4& colour, const char* text);
+
 // Un tramo de texto de color en la misma línea; si no cabe, pasa a la siguiente
 static void Seg(const ImVec4& colour, const std::string& text, bool first = false)
 {
@@ -717,7 +743,7 @@ static void Card(const C::Profile& p, const char* list, bool showDownloads, cons
         Seg(IlionTheme::ShellPal::Dim, " · modo ");
         Seg(IlionTheme::ShellPilot(IlionTheme::ShellPal::Yellow), C::NameOf(C::kModes, p.mode));
         // 4. Escalador · modelo · preset
-        Seg(IlionTheme::InfoBlue, C::NameOf(C::kTechs, p.tech), true);
+        Seg(TechColour(p.tech), C::NameOf(C::kTechs, p.tech), true);
         if (p.model != "no_aplica")
             Seg(IlionTheme::ShellPal::Text2, std::string(" · ") + C::NameOf(C::kModels, p.model));
         Seg(IlionTheme::ShellPal::Text2, std::string(" · ") + C::NameOf(C::kPresets, p.preset) + StrFmt(" · %d×%d", p.outW, p.outH));
@@ -726,25 +752,25 @@ static void Card(const C::Profile& p, const char* list, bool showDownloads, cons
             Seg(IlionTheme::ShellPal::Text2, "Sin Frame Generation", true);
         else
         {
-            Seg(IlionTheme::ShellPilot(IlionTheme::ShellPal::Green), C::NameOf(C::kFgs, p.fg), true);
-            Seg(IlionTheme::InfoBlue, StrFmt(" %dX fijo", p.multiplier));
+            Seg(FgColour(p.fg), C::NameOf(C::kFgs, p.fg), true);
+            Seg(IlionTheme::ShellPal::Text2, StrFmt(" %dX fijo", p.multiplier));
             Seg(IlionTheme::ShellPal::Dim, std::string(" · ") + C::NameOf(C::kRoutes, p.fgRoute));
         }
         // 6. Compatibilidad con este equipo · descargas registradas · estado
         if (cardMachine != nullptr)
         {
             const C::Fit fit = C::Overall(C::Compatibility(p, *cardMachine));
-            Seg(fit == C::Fit::Confirmed ? IlionTheme::ShellPilot(IlionTheme::ShellPal::Green)
-                : fit == C::Fit::Partial ? IlionTheme::ShellPilot(IlionTheme::ShellPal::Yellow)
-                                         : IlionTheme::ShellPal::Red,
-                C::FitText(fit), true);
+            StatusChip(fit == C::Fit::Confirmed ? IlionTheme::ShellPilot(IlionTheme::ShellPal::Green)
+                       : fit == C::Fit::Partial ? IlionTheme::ShellPilot(IlionTheme::ShellPal::Yellow)
+                                                : IlionTheme::ShellPal::Red,
+                       C::FitText(fit));
         }
-        std::string badges = (cardMachine != nullptr ? " · " : "") + KindOf(p) + StrFmt(" · v%d", p.version);
+        std::string badges = KindOf(p) + StrFmt(" · v%d", p.version);
         if (showDownloads)
             badges += p.downloads >= 0 ? StrFmt(" · %lld descargas registradas", p.downloads) : std::string(" · descargas: sin dato");
         if (favourites.count(p.id))
             badges += " · FAVORITO";
-        Seg(IlionTheme::ShellPal::Dim, badges, cardMachine == nullptr);
+        Seg(IlionTheme::ShellPal::Dim, badges, true);
         actions();
     }
     ImGui::EndChild();
@@ -1292,9 +1318,9 @@ template <typename Ctx> static void LibraryCard(Ctx& ctx, C::Profile& p, const C
         // Juego · escalado · FG y multiplicador
         Seg(IlionTheme::InfoCyan, p.gameName, true);
         Seg(IlionTheme::ShellPal::Dim, "  ·  ");
-        Seg(IlionTheme::InfoBlue, C::NameOf(C::kTechs, p.tech));
+        Seg(TechColour(p.tech), C::NameOf(C::kTechs, p.tech));
         Seg(IlionTheme::ShellPal::Dim, "  ·  ");
-        Seg(IlionTheme::ShellPilot(IlionTheme::ShellPal::Green), p.fg == "ninguno" ? std::string("sin FG") : StrFmt("%s %dX", C::NameOf(C::kFgs, p.fg), p.multiplier));
+        Seg(FgColour(p.fg), p.fg == "ninguno" ? std::string("sin FG") : StrFmt("%s %dX", C::NameOf(C::kFgs, p.fg), p.multiplier));
         // Procedencia: creado aquí, descargado, copia editada o importado (la autoría original se conserva)
         if (own)
             Seg(IlionTheme::ShellPal::Text2, "Creado en este equipo", true);
@@ -1561,7 +1587,7 @@ template <typename Ctx> static void ProfilesPanel(Ctx& ctx)
         // ======== Izquierda: configuración y acciones ========
         ImGui::TableSetColumnIndex(0);
         Block("OPTIMIZADOR INTELIGENTE");
-        P::OptimizerBlock();
+        P::OptimizerBlock(ctx);
         // GUARDAR COMO PERFIL: la configuración actual, con un nombre
         if (!namingNew)
         {
@@ -1732,15 +1758,23 @@ template <typename Ctx> static void ProfilesPanel(Ctx& ctx)
                                                  StrFmt("  ·  FSR 4: %s", std::string(magic_enum::enum_name(gpu.fsr4Support)).c_str()));
             Block("CONFIGURACIÓN ACTIVA");
             P::ActiveMonitor(ctx, 0.0f, true);
-            Block("SELECCIÓN DE FRAME GENERATION");
-            P::FgDiagnosis();
             if (const C::Profile* s = FindLocal(selectedId); s != nullptr)
                 SelectedInfo(ctx, *s, m);
+            // Las explicaciones extensas, plegadas: preset (recomendado, solicitado, activo y por qué), objetivo del modo,
+            // selección de FG y registro
             ImGui::Spacing();
-            if (ImGui::TreeNode("Registro de operaciones##OpLog"))
+            if (ImGui::CollapsingHeader("DETALLES TÉCNICOS##ProfilesDetails"))
             {
-                P::OperationLog();
-                ImGui::TreePop();
+                P::ActiveMonitor(ctx, 0.0f, true, true);
+                ImGui::Spacing();
+                P::Coloured(IlionTheme::ShellPal::Text2, "SELECCIÓN DE FRAME GENERATION");
+                P::FgDiagnosis();
+                ImGui::Spacing();
+                if (ImGui::TreeNode("Registro de operaciones##OpLog"))
+                {
+                    P::OperationLog();
+                    ImGui::TreePop();
+                }
             }
         }
         ImGui::EndTable();
@@ -1768,7 +1802,7 @@ static void DetailView(const C::Profile& p, const C::Machine& m)
     Seg(IlionTheme::ShellPal::Text2, C::NameOf(C::kArchs, p.arch));
     Seg(IlionTheme::ShellPal::Dim, "  ·  modo ");
     Seg(IlionTheme::ShellPilot(IlionTheme::ShellPal::Yellow), C::NameOf(C::kModes, p.mode));
-    Seg(IlionTheme::InfoBlue, C::NameOf(C::kTechs, p.tech), true);
+    Seg(TechColour(p.tech), C::NameOf(C::kTechs, p.tech), true);
     if (p.model != "no_aplica")
         Seg(IlionTheme::ShellPal::Text2, std::string(" · ") + C::NameOf(C::kModels, p.model));
     Seg(IlionTheme::ShellPal::Text2, std::string(" · ") + C::NameOf(C::kPresets, p.preset) + StrFmt(" · %d×%d", p.outW, p.outH));
@@ -1776,8 +1810,8 @@ static void DetailView(const C::Profile& p, const C::Machine& m)
         Seg(IlionTheme::ShellPal::Text2, "Sin Frame Generation", true);
     else
     {
-        Seg(IlionTheme::ShellPilot(IlionTheme::ShellPal::Green), C::NameOf(C::kFgs, p.fg), true);
-        Seg(IlionTheme::InfoBlue, StrFmt(" %dX fijo", p.multiplier));
+        Seg(FgColour(p.fg), C::NameOf(C::kFgs, p.fg), true);
+        Seg(IlionTheme::ShellPal::Text2, StrFmt(" %dX fijo", p.multiplier));
         Seg(IlionTheme::ShellPal::Dim, std::string(" · ") + C::NameOf(C::kRoutes, p.fgRoute));
     }
     P::Coloured(IlionTheme::ShellPal::Dim, StrFmt("%lld descargas registradas · v%d", (std::max)(0LL, p.downloads), p.version).c_str());
@@ -1913,10 +1947,10 @@ static void ProfileTable(const char* id, const std::vector<const C::Profile*>& r
     if (ImGui::BeginTable(id, 6, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_NoSavedSettings))
     {
         ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, font * 2.0f);
-        ImGui::TableSetupColumn("Perfil", ImGuiTableColumnFlags_WidthStretch, 1.6f);
+        ImGui::TableSetupColumn("Autor", ImGuiTableColumnFlags_WidthStretch, 1.2f);
         ImGui::TableSetupColumn("Juego", ImGuiTableColumnFlags_WidthStretch, 1.1f);
-        ImGui::TableSetupColumn("GPU", ImGuiTableColumnFlags_WidthStretch, 1.1f);
-        ImGui::TableSetupColumn("Configuración", ImGuiTableColumnFlags_WidthStretch, 1.4f);
+        ImGui::TableSetupColumn("GPU", ImGuiTableColumnFlags_WidthStretch, 1.3f);
+        ImGui::TableSetupColumn("Escalado y FG", ImGuiTableColumnFlags_WidthStretch, 1.5f);
         ImGui::TableSetupColumn("Descargas", ImGuiTableColumnFlags_WidthFixed, font * 5.5f);
         ImGui::TableHeadersRow();
         for (size_t i = 0; i < rows.size(); i++)
@@ -1929,17 +1963,14 @@ static void ProfileTable(const char* id, const std::vector<const C::Profile*>& r
             if (ImGui::Selectable((rank + "##row").c_str(), false, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap))
                 detailId = p.id;
             ImGui::TableSetColumnIndex(1);
-            P::Coloured(IlionTheme::ShellPal::Text, p.name.c_str());
-            P::Coloured(IlionTheme::ShellPal::Orange, p.author.c_str());
+            P::Big(P::FigureFont(), 1.05f, IlionTheme::ShellPal::Orange, p.author.c_str()); // el autor identifica el perfil
             ImGui::TableSetColumnIndex(2);
             P::Coloured(IlionTheme::InfoCyan, p.gameName.c_str(), true);
             ImGui::TableSetColumnIndex(3);
-            P::Coloured(ArchVendorColour(p.arch), C::NameOf(C::kArchs, p.arch), true);
+            P::Coloured(ArchVendorColour(p.arch), (p.gpu.empty() ? std::string(C::NameOf(C::kArchs, p.arch)) : p.gpu).c_str(), true);
             ImGui::TableSetColumnIndex(4);
-            P::Coloured(IlionTheme::ShellPal::Text2,
-                        (std::string(C::NameOf(C::kTechs, p.tech)) + (p.fg == "ninguno" ? std::string(" · sin FG") : StrFmt(" · %s %dX", C::NameOf(C::kFgs, p.fg), p.multiplier)))
-                            .c_str(),
-                        true);
+            P::Coloured(TechColour(p.tech), C::NameOf(C::kTechs, p.tech), true);
+            P::Coloured(FgColour(p.fg), (p.fg == "ninguno" ? std::string("sin FG") : StrFmt("%s %dX", C::NameOf(C::kFgs, p.fg), p.multiplier)).c_str(), true);
             ImGui::TableSetColumnIndex(5);
             P::Coloured(IlionTheme::ShellPal::Text, StrFmt("%lld", (std::max)(0LL, p.downloads)).c_str());
             ImGui::PopID();
@@ -2241,8 +2272,8 @@ static void ContributionsView()
         ImGui::SameLine();
         StatTile("##tDl", "Descargas recibidas", std::to_string(downloadsTotal), PodiumColour(1), tw);
         ImGui::SameLine();
-        StatTile("##tBest", "Mejor posición", best > 0 ? StrFmt("Nº %d", best) : std::string("Sin clasificación"), best > 0 ? PodiumColour((std::min)(best, 3)) : IlionTheme::ShellPal::Text2,
-                 tw);
+        StatTile("##tBest", best > 0 ? "Mejor posición" : "Mejor posición (aún sin clasificación)", best > 0 ? StrFmt("Nº %d", best) : std::string("—"),
+                 best > 0 ? PodiumColour((std::min)(best, 3)) : IlionTheme::ShellPal::Dim, tw);
 
         // PUBLICAR PERFIL, siempre a la vista
         ImGui::Spacing();
@@ -2256,6 +2287,18 @@ static void ContributionsView()
             if (IlionTheme::Button("ENTRAR##ContribLogin", ImVec2(0.0f, std::floor(font * 2.2f))))
                 cpageBack = Contributions, cpage = AccountView;
         }
+        else if (service.valid)
+        {
+            // ACTUALIZAR CIFRAS en la misma fila (antes ocupaba otra al final)
+            ImGui::SameLine();
+            ImGui::BeginDisabled(ws.busy);
+            if (IlionTheme::Button("ACTUALIZAR CIFRAS##ContribRefresh", ImVec2(0.0f, std::floor(font * 2.2f))))
+            {
+                RequestAuthorStats();
+                needCatalog = true; // el puesto sale del catálogo público
+            }
+            ImGui::EndDisabled();
+        }
 
         // Lo que se está publicando ahora y los errores de publicación (con el nombre del perfil)
         if (ws.busy && jobKind.rfind("publicar:", 0) == 0)
@@ -2267,7 +2310,6 @@ static void ContributionsView()
         }
 
         // Tus publicaciones, en una cuadrícula
-        ImGui::Spacing();
         IlionTheme::SectionPlate("TUS PUBLICACIONES");
         if (aportes.empty())
             P::Coloured(IlionTheme::ShellPal::Dim,
@@ -2308,7 +2350,7 @@ static void ContributionsView()
                         StatusChip(IlionTheme::ShellPilot(IlionTheme::ShellPal::Yellow), testCatalog ? "Sin comprobar (datos de prueba)" : "Aún no aparece en el catálogo");
                     const int pos = C::RankPosition(catalog, p.id);
                     P::Coloured(IlionTheme::ShellPal::Dim,
-                                StrFmt("%lld descargas · %s · v%d", (std::max)(0LL, p.downloads), pos > 0 ? StrFmt("Nº %d", pos).c_str() : "Sin clasificación", p.version).c_str(),
+                                StrFmt("%lld descargas%s · v%d", (std::max)(0LL, p.downloads), pos > 0 ? StrFmt(" · Nº %d en la clasificación", pos).c_str() : "", p.version).c_str(),
                                 true);
                     if (visible && IlionTheme::Button("VER"))
                         detailId = p.id, cpage = Explore;
@@ -2345,17 +2387,6 @@ static void ContributionsView()
                 ImGui::PopID();
             }
             ImGui::EndTable();
-        }
-        if (signedIn && service.valid)
-        {
-            ImGui::Spacing();
-            ImGui::BeginDisabled(ws.busy);
-            if (IlionTheme::Button("ACTUALIZAR CIFRAS##ContribRefresh"))
-            {
-                RequestAuthorStats();
-                needCatalog = true; // el puesto sale del catálogo público
-            }
-            ImGui::EndDisabled();
         }
     }
     ImGui::EndChild();
@@ -2500,6 +2531,7 @@ template <typename Ctx> static void CommunityPanel(Ctx& ctx)
                      });
     }
 
+    const ImVec2 headerOrigin = ImGui::GetCursorScreenPos();
     // La cuenta, arriba a la derecha (no es una pestaña)
     {
         const ImVec2 origin = ImGui::GetCursorScreenPos();
@@ -2619,6 +2651,8 @@ template <typename Ctx> static void CommunityPanel(Ctx& ctx)
                                     : session.Active()                 ? " · " + (session.alias.empty() ? std::string("sesión iniciada") : session.alias)
                                     : !session.refreshToken.empty()    ? std::string(" · sesión guardada")
                                                                        : std::string(" · sin sesión");
+        const ImVec2 back = ImGui::GetCursorScreenPos();
+        ImGui::SetCursorScreenPos(ImVec2(headerOrigin.x, headerOrigin.y + std::floor(font * 0.85f)));
         const ImVec2 lp = ImGui::GetCursorScreenPos();
         const float lh = ImGui::GetTextLineHeight();
         IlionTheme::ShellLed(ImGui::GetWindowDrawList(), ImVec2(lp.x + font * 0.7f, lp.y + lh * 0.5f), std::floor(font * 0.17f), toneMapColor(led), true);
@@ -2626,12 +2660,12 @@ template <typename Ctx> static void CommunityPanel(Ctx& ctx)
         P::Coloured(IlionTheme::ShellPal::Dim, (std::string(C::ServiceStateText(st)) + account).c_str());
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("%s", detail.c_str());
+        ImGui::SetCursorScreenPos(back);
     }
 
     // ---- Navegación: INICIO | EXPLORAR | MIS APORTES ----
     {
         static const char* names[] = { "INICIO", "EXPLORAR", "MIS APORTES" };
-        ImGui::Spacing();
         const float bw = std::floor(font * 9.5f);
         const float total = bw * 3.0f + ImGui::GetStyle().ItemSpacing.x * 2.0f;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (std::max)(0.0f, std::floor((ImGui::GetContentRegionAvail().x - total) * 0.5f)));
@@ -2686,11 +2720,14 @@ template <typename Ctx> static void CommunityPanel(Ctx& ctx)
             PublishScreen();
         else
             AccountScreen();
-        ImGui::Spacing();
-        P::Coloured(IlionTheme::ShellPal::Dim,
-                    "Perfiles compartidos voluntariamente y firmados por su autor. Descargar no activa: se activa en PERFILES con tu confirmación. "
-                    "Sin telemetría.",
-                    true);
+        if (cpage == Home || cpage == Explore)
+        {
+            ImGui::Spacing();
+            P::Coloured(IlionTheme::ShellPal::Dim,
+                        "Perfiles compartidos voluntariamente y firmados por su autor. Descargar no activa: se activa en PERFILES con tu confirmación. "
+                        "Sin telemetría.",
+                        true);
+        }
     }
     ImGui::EndChild();
     ImGui::PopStyleColor();

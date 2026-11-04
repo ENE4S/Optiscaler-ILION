@@ -592,6 +592,9 @@ constexpr int kCommunitySection = 9; // Full presentation only
 // The order of the modules in the sidebar and in Compact's tabs (Compact skips the community)
 static const int kNavOrder[] = { 0, kProfilesSection, kCommunitySection, 1, 2, 3, 4, 5, 6, 7 };
 static_assert(std::size(kNavOrder) == kSectionCount);
+// Full presentation sidebar: the core technologies first, then PERFILES and COMUNIDAD as complementary tools (Compact keeps kNavOrder)
+static const int kFullNavOrder[] = { 0, 1, 2, 3, 4, kProfilesSection, kCommunitySection, 5, 6, 7 };
+static_assert(std::size(kFullNavOrder) == kSectionCount);
 
 // The icon of a section (Profiles draws its own, kind 11)
 static int IconOf(int sectionIndex) { return sectionIndex == kProfilesSection ? 11 : sectionIndex == kCommunitySection ? 12 : sectionIndex; }
@@ -2765,7 +2768,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
 
         for (int n = 0; n < kSectionCount; n++)
         {
-            const int i = kNavOrder[n];
+            const int i = compact ? kNavOrder[n] : kFullNavOrder[n];
             if (!sectionShown(i))
                 continue; // the next one takes its place: no gap
 

@@ -2885,7 +2885,7 @@ static std::string ProviderOf(const UpscalerVariant& v)
 }
 
 // split: Industrial y Clean Olive completos, columna central de tres (ESCALADO | FG en una fila y detalles debajo)
-template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight, bool split = false)
+template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight, bool split = false, bool details = false)
 {
     auto config = Config::Instance();
     const auto& state = State::Instance();
@@ -3079,7 +3079,7 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight, boo
     ImGui::PushStyleColor(ImGuiCol_TableBorderStrong, toneMapColor(IlionTheme::ShellPal::Line));
     ImGui::PushStyleColor(ImGuiCol_TableBorderLight, toneMapColor(IlionTheme::ShellPal::Line));
     ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(font * 0.7f, font * 0.5f));
-    if (ImGui::BeginTable("##ProfilesActive", side ? 2 : 1, flags))
+    if (!details && ImGui::BeginTable("##ProfilesActive", side ? 2 : 1, flags))
     {
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
@@ -3121,7 +3121,7 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight, boo
     const double hz = RefreshHz();
     ImGui::PushStyleColor(ImGuiCol_TableBorderStrong, toneMapColor(IlionTheme::ShellPal::Line));
     ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(font * 0.7f, font * 0.45f));
-    if (ImGui::BeginTable("##ProfilesPerf", 4, ImGuiTableFlags_BordersOuter | ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings))
+    if (!details && ImGui::BeginTable("##ProfilesPerf", 4, ImGuiTableFlags_BordersOuter | ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings))
     {
         const auto figure = [&](int column, const char* label, const std::string& value, const ImVec4& colour, const std::string& unit)
         {
@@ -3135,17 +3135,23 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight, boo
         figure(0, "FPS REALES", shown.base > 0.0 ? StrFmt("%.0f", shown.base) : "—",
                shown.base > 0.0 ? IlionTheme::FpsBand(shown.baseMin) : IlionTheme::ShellPal::Dim,
                shown.base <= 0.0 ? std::string("sin datos") : shown.limited ? std::string("sujetos por un límite") : StrFmt("mín. %.0f (0,5 s)", shown.baseMin));
-        figure(1, "FPS FINALES", shown.final > 0.0 ? StrFmt("%.0f", shown.final) : "—", IlionTheme::ShellPal::Text, generating ? "con FG" : "sin FG");
+        figure(1, "FPS FINALES", shown.final > 0.0 ? StrFmt("%.0f", shown.final) : "—", IlionTheme::ShellPal::Text,
+               !generating ? std::string("sin FG") : status.multiplier > 1 ? StrFmt("con FG %dX", status.multiplier) : std::string("con FG"));
         figure(2, "MONITOR", hz > 0.0 ? StrFmt("%.0f", hz) : "—", IlionTheme::ShellPal::Text2, "Hz · referencia");
         figure(3, "FRAME TIME", shown.frameMs > 0.0 ? StrFmt("%.1f", shown.frameMs) : "—", IlionTheme::ShellPal::Text, "ms presentados");
         ImGui::EndTable();
     }
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
-    if (split)
-    {
-        ImGui::Spacing();
+    if (split && details)
         presetBox();
+    else if (split)
+    {
+        // Preset y resolución: lo esencial a la vista; recomendado, solicitado y el porqué, en DETALLES TÉCNICOS
+        Row(!upscaling ? Mark::Info : targetReached || target < 0 ? Mark::Ok : Mark::Wait,
+            std::string("Preset: ") + (!upscaling ? "sin escalado ahora" : activePreset >= 0 ? kPresets[activePreset].name : "?"),
+            upscaling ? ResText(feature->RenderWidth(), feature->RenderHeight()) + " → " + ResText(feature->TargetWidth(), feature->TargetHeight()) : std::string());
+        return;
     }
 
     // Objetivo del modo y coste del FG, solo con datos fiables
@@ -3312,7 +3318,30 @@ template <typename Ctx> static void Panel(Ctx& ctx)
 // fijo arriba)
 static const char* ShortText(Mode m);
 
-static void OptimizerBlock()
+// El estado de aplicación de una parte de la configuración: solo se dice «verificado» cuando corre de verdad
+enum class Applied
+{
+    NoChange, // la optimización no la cambia
+    Recommended, // recomendado, sin aplicar (decide el usuario)
+    Pending,  // solicitado: falta un reinicio o que el juego lo use
+    Applied,  // aplicado en la configuración, sin confirmar que corra
+    Verified, // corre ahora
+};
+
+static void AppliedRow(const char* what, const std::string& value, Applied a, const std::string& note = std::string())
+{
+    const char* label = a == Applied::Verified      ? "verificado"
+                        : a == Applied::Applied     ? "aplicado, sin verificar"
+                        : a == Applied::Pending     ? "pendiente"
+                        : a == Applied::Recommended ? "recomendado, no aplicado"
+                                                    : "sin cambio";
+    const Mark mark = a == Applied::Verified ? Mark::Ok : a == Applied::NoChange ? Mark::Info : Mark::Wait;
+    Row(mark, std::string(what) + ": " + value, std::string(label) + (note.empty() ? std::string() : " · " + note));
+}
+
+static Mode optimizedMode = Mode::Optimo; // el modo con el que se hizo la última optimización
+
+template <typename Ctx> static void OptimizerBlock(Ctx& ctx)
 {
     const float font = ImGui::GetFontSize();
     ImGui::BeginDisabled(running);
@@ -3340,31 +3369,72 @@ static void OptimizerBlock()
         ImGui::EndTooltip();
     }
     ImGui::Spacing();
-    // Propuesta: lo que decidió la última optimización (nada inventado antes de optimizar)
+    // CONFIGURACIÓN DEL PERFIL: lo que decidió la última optimización y, de cada parte, si está pendiente, aplicada o
+    // verificada (nada se da por activo solo por haberse pedido)
     if (finished && !plan.scaler.name.empty())
     {
-        Coloured(IlionTheme::ShellPal::Text2, "PROPUESTA DE LA ÚLTIMA OPTIMIZACIÓN");
-        Row(Mark::Info, "Escalador: " + plan.scaler.name, plan.scalerStage == Stage::Recommended ? "recomendado, no aplicado" : std::string());
+        Coloured(IlionTheme::ShellPal::Text2, "CONFIGURACIÓN DEL PERFIL");
+        Row(Mark::Info, std::string("Modo: ") + ModeName(optimizedMode),
+            optimizedMode != mode ? StrFmt("ahora está seleccionado %s: pulsa OPTIMIZAR para aplicarlo", ModeName(mode)) : std::string());
+
+        IFeature* feature = ctx.currentFeature;
+        const bool upscaling = feature != nullptr && feature->IsInited();
+        const auto catalog = GatherUpscalers(feature);
+        const UpscalerVariant* current = Current(catalog);
+        const bool scalerRuns = current != nullptr && KeyOf(*current) == plan.scaler.key && (plan.scaler.model == Model::Any || SelectedModel() == plan.scaler.model);
+        const std::string scalerText = plan.scaler.name + (plan.scaler.model == Model::Full ? " · modelo completo" : plan.scaler.model == Model::Lite ? " · INT8Lite" : "");
+        AppliedRow("Escalador", scalerText,
+                   plan.scalerStage == Stage::Recommended ? Applied::Recommended
+                   : scalerRuns                           ? (upscaling ? Applied::Verified : Applied::Applied)
+                   : plan.scalerStage == Stage::Failed    ? Applied::Pending
+                                                          : Applied::Pending,
+                   scalerRuns && !upscaling ? "el juego no escala ahora" : std::string());
+
+        const Saved saved = ReadSaved();
+        const Live lv = ReadLive(ctx, saved);
         if (plan.preset >= 0)
-            Row(Mark::Info, std::string("Preset: ") + kPresets[plan.preset].name, plan.viaMenu ? "se elige en el menú del juego" : std::string());
-        const std::string fgName = plan.fg == FgRoute::Alt         ? IlionCommunity::NameOf(IlionCommunity::kFgs, plan.fgAltId)
-                                   : plan.fg == FgRoute::XeFgNew   ? std::string("XeFG")
-                                   : plan.fg == FgRoute::XeFgFixed ? std::string("XeFG")
-                                   : plan.fg == FgRoute::DlssgGame ? std::string(IlionCommunity::NameOf(IlionCommunity::kFgs, plan.fgActiveId))
+            AppliedRow("Preset recomendado", kPresets[plan.preset].name,
+                       lv.reached || (upscaling && lv.activePreset == plan.preset) ? Applied::Verified : upscaling ? Applied::Pending : Applied::Applied,
+                       lv.reached || !upscaling ? std::string() : plan.viaMenu ? "elígelo en el menú del juego" : "falta que el juego cambie de resolución");
+
+        const auto status = IlionDynamicMfg::Get();
+        const bool generating = Generating(status);
+        const std::string fgName = plan.fg == FgRoute::Alt           ? IlionCommunity::NameOf(IlionCommunity::kFgs, plan.fgAltId)
+                                   : plan.fg == FgRoute::XeFgNew     ? std::string("XeFG")
+                                   : plan.fg == FgRoute::XeFgFixed   ? std::string("XeFG")
+                                   : plan.fg == FgRoute::DlssgGame   ? std::string(IlionCommunity::NameOf(IlionCommunity::kFgs, plan.fgActiveId))
                                    : plan.fg == FgRoute::DlssgOutput ? std::string("Salida DLSSG de ILION")
-                                   : plan.fg == FgRoute::FsrFg     ? std::string("FSR FG")
-                                                                   : std::string("sin cambio de FG");
-        Row(Mark::Info, plan.fg == FgRoute::None ? "Frame Generation: " + fgName : StrFmt("Frame Generation: %s %dX fijo", fgName.c_str(), plan.count + 1),
-            plan.restartFg ? "se aplica al reiniciar el juego" : std::string());
+                                   : plan.fg == FgRoute::FsrFg       ? std::string("FSR FG")
+                                                                     : std::string();
+        if (plan.fg == FgRoute::None)
+            AppliedRow("Frame Generation", generating ? std::string(status.name) + StrFmt(" %dX", status.multiplier) : std::string("sin FG"), Applied::NoChange,
+                       plan.fgWhy);
+        else
+        {
+            const int want = plan.count + 1;
+            const bool sameImpl = plan.fg != FgRoute::Alt || CurrentFgId() == plan.fgAltId;
+            const bool multOk = status.multiplier <= 0 || status.multiplier == want;
+            const Applied a = plan.fgStage == Stage::Recommended || plan.fgStage == Stage::Blocked ? Applied::Recommended
+                              : generating && sameImpl && multOk                                  ? Applied::Verified
+                              : plan.restartFg && !lv.fgLoaded                                    ? Applied::Pending
+                              : lv.fgLoaded                                                       ? Applied::Applied
+                                                                                                  : Applied::Pending;
+            AppliedRow("Frame Generation", StrFmt("%s %dX fijo", fgName.c_str(), want), a,
+                       a == Applied::Pending && plan.restartFg ? "se carga al reiniciar el juego"
+                       : a == Applied::Applied                ? "cargado, todavía sin generar"
+                       : generating && !multOk                ? StrFmt("genera %dX", status.multiplier)
+                                                              : std::string());
+        }
     }
     else if (!running)
-        Coloured(IlionTheme::ShellPal::Dim, "Pulsa OPTIMIZAR JUEGO: la propuesta aparece aquí y su explicación a la derecha.", true);
+        Coloured(IlionTheme::ShellPal::Dim, "Pulsa OPTIMIZAR JUEGO: la configuración del perfil aparece aquí.", true);
     ImGui::Spacing();
     ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPal::Orange));
     if (IlionTheme::Button(running ? "OPTIMIZANDO...##ProfilesGo" : "OPTIMIZAR JUEGO##ProfilesGo", ImVec2(ImGui::GetContentRegionAvail().x, std::floor(font * 2.4f))) &&
         !running)
     {
         Begin();
+        optimizedMode = mode;
         fromOptimize = true;
     }
     ImGui::PopStyleColor();

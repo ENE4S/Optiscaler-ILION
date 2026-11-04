@@ -2747,6 +2747,10 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight, boo
         }
         ImGui::Spacing();
         if (split)
+            Row(Mark::Info,
+                none ? std::string("Proveedor: —") : status.own ? std::string("Proveedor: ILION (salida de FG de OptiScaler)") : std::string("Proveedor: el juego (FG propio del juego)"),
+                std::string());
+        if (split)
             Row(generating ? Mark::Ok : none ? Mark::Info : Mark::Wait,
                 generating ? StrFmt("Generación real: sí, %dX", status.multiplier)
                 : none     ? std::string("Generación real: no hay FG")
@@ -2796,9 +2800,9 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight, boo
     }
     ImGui::PopStyleVar();
     ImGui::PopStyleColor(2);
-    if (split)
+    // Los detalles del preset en su propio recuadro, a todo el ancho de la columna central (split: debajo de las cifras)
+    const auto presetBox = [&]()
     {
-        // Debajo de los dos, a todo el ancho de la columna central: los detalles del preset en su propio recuadro
         ImGui::PushStyleColor(ImGuiCol_ChildBg, toneMapColor(panel));
         ImGui::PushStyleColor(ImGuiCol_Border, toneMapColor(IlionTheme::ShellPal::Line));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(font * 0.7f, font * 0.5f));
@@ -2808,7 +2812,7 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight, boo
         ImGui::EndChild();
         ImGui::PopStyleVar();
         ImGui::PopStyleColor(2);
-    }
+    };
     ImGui::Spacing();
 
     // ---- Rendimiento ----
@@ -2838,6 +2842,11 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight, boo
     }
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
+    if (split)
+    {
+        ImGui::Spacing();
+        presetBox();
+    }
 
     // Objetivo del modo y coste del FG, solo con datos fiables
     {
@@ -2918,7 +2927,7 @@ static void WatchResolution(IFeature* feature)
     lastH = h;
 }
 
-template <typename Ctx> static void Controls(Ctx& ctx);
+template <typename Ctx> static void Controls(Ctx& ctx, bool split = false);
 } // namespace IlionProfiles
 
 // ILION COMMUNITY (ilion_community.inl, incluido después): la columna derecha de PERFILES
@@ -2959,9 +2968,9 @@ template <typename Ctx> static void Panel(Ctx& ctx)
         ImGui::PushStyleColor(ImGuiCol_TableBorderStrong, toneMapColor(IlionTheme::ShellPal::Line));
         if (ImGui::BeginTable("##IlionProfiles3", 3, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_NoSavedSettings))
         {
-            ImGui::TableSetupColumn("##controls", ImGuiTableColumnFlags_WidthStretch, 0.80f);
-            ImGui::TableSetupColumn("##current", ImGuiTableColumnFlags_WidthStretch, 1.45f);
-            ImGui::TableSetupColumn("##community", ImGuiTableColumnFlags_WidthStretch, 1.25f);
+            ImGui::TableSetupColumn("##controls", ImGuiTableColumnFlags_WidthStretch, 0.92f);
+            ImGui::TableSetupColumn("##current", ImGuiTableColumnFlags_WidthStretch, 1.40f);
+            ImGui::TableSetupColumn("##community", ImGuiTableColumnFlags_WidthStretch, 1.18f);
             ImGui::TableNextRow();
             const auto column = [&](int index, const char* id, const auto& body)
             {
@@ -2970,7 +2979,7 @@ template <typename Ctx> static void Panel(Ctx& ctx)
                     body();
                 ImGui::EndChild();
             };
-            column(0, "##ProfilesLeft", [&]() { Controls(ctx); });
+            column(0, "##ProfilesLeft", [&]() { Controls(ctx, true); });
             column(1, "##ProfilesCenter", [&]() { ActiveMonitor(ctx, 1.0f, true); });
             column(2, "##ProfilesCommunity", [&]() { IlionCommunityUi::Panel(ctx); });
             ImGui::EndTable();
@@ -3004,7 +3013,40 @@ template <typename Ctx> static void Panel(Ctx& ctx)
 }
 
 // ---- Controles: juego y GPU, modos, OPTIMIZAR JUEGO con su aviso, guardar, cargar y restaurar ----
-template <typename Ctx> static void Controls(Ctx& ctx)
+// El color del fabricante real de la GPU (solo el nombre de la GPU se colorea)
+static ImVec4 VendorColour(VendorId::Value vendor)
+{
+    const bool olive = IlionTheme::shellLemonPilots;
+    switch (vendor)
+    {
+    case VendorId::AMD:
+        return olive ? ImVec4(0.93f, 0.26f, 0.20f, 1.0f) : ImVec4(1.00f, 0.22f, 0.18f, 1.0f);
+    case VendorId::Nvidia:
+        return olive ? ImVec4(0.62f, 0.86f, 0.18f, 1.0f) : ImVec4(0.46f, 0.85f, 0.00f, 1.0f);
+    case VendorId::Intel:
+        return olive ? ImVec4(0.36f, 0.64f, 1.00f, 1.0f) : ImVec4(0.25f, 0.58f, 1.00f, 1.0f);
+    default:
+        return IlionTheme::ShellPal::Text;
+    }
+}
+
+// La explicación breve de cada modo (la completa, en la ayuda contextual)
+static const char* ShortText(Mode m)
+{
+    switch (m)
+    {
+    case Mode::Calidad:
+        return "Máxima fidelidad: el escalador de más calidad y la resolución interna más alta para unos 60 FPS reales.";
+    case Mode::Equilibrado:
+        return "Compromiso: Calidad o Balanceado para unos 75 FPS reales; FG 2X fijo.";
+    case Mode::Rendimiento:
+        return "Fluidez: Balanceado o Rendimiento para la mitad de los Hz del monitor en FPS reales.";
+    default:
+        return "Predeterminado: la máxima fidelidad compatible para unos 70 FPS reales y FG 2X fijo si el monitor lo permite.";
+    }
+}
+
+template <typename Ctx> static void Controls(Ctx& ctx, bool split)
 {
     const auto& state = State::Instance();
     const GpuInformation gpu = IdentifyGpu::getPrimaryGpu();
@@ -3014,13 +3056,26 @@ template <typename Ctx> static void Controls(Ctx& ctx)
     const bool hasOriginal = Exists(OriginalPath());
 
     const std::string game = !state.gameName.empty() ? state.gameName : state.gameExe;
-    Big(UiFont(), 1.45f, IlionTheme::ShellPal::Text, game.empty() ? "Juego desconocido" : game.c_str(), true);
-    Coloured(IlionTheme::ShellPal::Text2, StrFmt("%s · %s", gpu.name.c_str(), ArchName(gpu).c_str()).c_str(), true);
-    Coloured(IlionTheme::ShellPal::Dim,
-             StrFmt("API %s · FSR 4: %s", std::string(magic_enum::enum_name(state.api)).c_str(),
-                    std::string(magic_enum::enum_name(gpu.fsr4Support)).c_str()).c_str(), true);
-    ImGui::Spacing();
-    ImGui::Spacing();
+    if (split)
+    {
+        // Juego, la GPU detectada en el color de su fabricante y la arquitectura con la API
+        Big(UiFont(), 1.5f, IlionTheme::ShellPal::Text, game.empty() ? "Juego desconocido" : game.c_str(), true);
+        Big(UiFont(), 1.15f, VendorColour(gpu.vendorId), gpu.name.empty() ? "GPU no identificada" : gpu.name.c_str(), true);
+        Coloured(IlionTheme::ShellPal::Text2, StrFmt("%s · %s", ArchName(gpu).c_str(), std::string(magic_enum::enum_name(state.api)).c_str()).c_str(), true);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("FSR 4 en esta GPU: %s", std::string(magic_enum::enum_name(gpu.fsr4Support)).c_str());
+        ImGui::Spacing();
+    }
+    else
+    {
+        Big(UiFont(), 1.45f, IlionTheme::ShellPal::Text, game.empty() ? "Juego desconocido" : game.c_str(), true);
+        Coloured(IlionTheme::ShellPal::Text2, StrFmt("%s · %s", gpu.name.c_str(), ArchName(gpu).c_str()).c_str(), true);
+        Coloured(IlionTheme::ShellPal::Dim,
+                 StrFmt("API %s · FSR 4: %s", std::string(magic_enum::enum_name(state.api)).c_str(),
+                        std::string(magic_enum::enum_name(gpu.fsr4Support)).c_str()).c_str(), true);
+        ImGui::Spacing();
+        ImGui::Spacing();
+    }
 
     Coloured(IlionTheme::ShellPal::Text2, "MODO");
     const float modeWidth = std::floor((ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2.0f);
@@ -3037,7 +3092,21 @@ template <typename Ctx> static void Controls(Ctx& ctx)
         if (selected)
             ImGui::PopStyleColor();
     }
-    Coloured(IlionTheme::ShellPal::Dim, PolicyOf(mode).text, true);
+    if (split)
+    {
+        // Dos líneas útiles; la explicación completa al pasar por encima
+        Coloured(IlionTheme::ShellPal::Text2, ShortText(mode), true);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::BeginTooltip();
+            ImGui::PushTextWrapPos(font * 26.0f);
+            ImGui::TextUnformatted(PolicyOf(mode).text);
+            ImGui::PopTextWrapPos();
+            ImGui::EndTooltip();
+        }
+    }
+    else
+        Coloured(IlionTheme::ShellPal::Dim, PolicyOf(mode).text, true);
     ImGui::Spacing();
 
     const float full = ImGui::GetContentRegionAvail().x;
@@ -3055,7 +3124,14 @@ template <typename Ctx> static void Controls(Ctx& ctx)
         OutcomeBanner(ctx, saved, ReadLive(ctx, saved));
     }
 
-    if (IlionTheme::Button("GUARDAR PERFIL##ProfilesSave", ImVec2(full, 0.0f)))
+    const float spacingX = ImGui::GetStyle().ItemSpacing.x;
+    const float half = std::floor((full - spacingX) * 0.5f);
+    const float needed = ImGui::CalcTextSize("RESTAURAR ORIGINAL").x + ImGui::GetStyle().FramePadding.x * 2.0f + font * 0.8f;
+    const bool pairs = split && half >= needed;
+    const float actionWidth = pairs ? half : full;
+    if (split)
+        ImGui::Spacing();
+    if (IlionTheme::Button("GUARDAR PERFIL##ProfilesSave", ImVec2(actionWidth, 0.0f)))
     {
         if (hasProfile && !ImGui::GetIO().KeyShift)
             lastMessage = "Ya hay un perfil: pulsa GUARDAR PERFIL con Mayús para sustituirlo (el anterior se conserva aparte)";
@@ -3065,18 +3141,22 @@ template <typename Ctx> static void Controls(Ctx& ctx)
             lastMessage = "Perfil guardado con la configuración actual";
         }
     }
+    if (pairs)
+        ImGui::SameLine();
     ImGui::BeginDisabled(!hasProfile);
-    if (IlionTheme::Button("CARGAR PERFIL##ProfilesLoad", ImVec2(full, 0.0f)))
+    if (IlionTheme::Button("CARGAR PERFIL##ProfilesLoad", ImVec2(actionWidth, 0.0f)))
         ApplyFile(ctx, ProfilePath(), "perfil", "Perfil", false);
     ImGui::EndDisabled();
     ImGui::BeginDisabled(!hasSession);
-    if (IlionTheme::Button("RESTAURAR SESIÓN##ProfilesRestoreSession", ImVec2(full, 0.0f)))
+    if (IlionTheme::Button("RESTAURAR SESIÓN##ProfilesRestoreSession", ImVec2(actionWidth, 0.0f)))
         ApplyFile(ctx, SessionPath(), "configuracion", "Restauración de la sesión", true);
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         ImGui::SetTooltip("%s", "La configuración de antes de la primera optimización de esta sesión del juego");
+    if (pairs)
+        ImGui::SameLine();
     ImGui::BeginDisabled(!hasOriginal);
-    if (IlionTheme::Button("RESTAURAR ORIGINAL##ProfilesRestoreOriginal", ImVec2(full, 0.0f)))
+    if (IlionTheme::Button("RESTAURAR ORIGINAL##ProfilesRestoreOriginal", ImVec2(actionWidth, 0.0f)))
         ApplyFile(ctx, OriginalPath(), "configuracion", "Restauración original", true);
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))

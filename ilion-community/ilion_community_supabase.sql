@@ -12,7 +12,7 @@
 --   * Moderar (aprobar / rechazar) solo desde el panel de Supabase (rol postgres): ningún cliente puede cambiar el estado.
 --   * Sin telemetría: no hay tablas de FPS, sesiones ni equipos.
 
-create extension if not exists pgcrypto;
+-- gen_random_uuid() es nativo desde PostgreSQL 13: no hace falta pgcrypto (instalarla en public sería un aviso de seguridad)
 
 -- ---- Autores ---------------------------------------------------------------------------------------------------------
 create table if not exists public.ilion_authors (
@@ -121,6 +121,7 @@ create table if not exists public.ilion_downloads (
     created_at timestamptz not null default now(),
     primary key (profile_id, user_id)
 );
+create index if not exists ilion_downloads_user on public.ilion_downloads (user_id);
 alter table public.ilion_downloads enable row level security;
 revoke all on public.ilion_downloads from anon, authenticated;
 

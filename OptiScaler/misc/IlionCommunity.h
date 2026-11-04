@@ -768,6 +768,18 @@ inline bool SafeToken(const std::string& s, size_t maxLen)
            std::all_of(s.begin(), s.end(), [](char c) { return isalnum((unsigned char) c) || c == '.' || c == '_' || c == '-'; });
 }
 
+// El servicio de ILION COMMUNITY (proyecto Supabase «ILION Community»): solo la dirección y la clave pública anon, que
+// son públicas por diseño (los permisos los aplica el servidor con RLS). Un servicio.json en la carpeta de datos la sustituye
+inline constexpr const char* kDefaultServiceUrl = "https://kynhydceunbqhyyafgyi.supabase.co";
+inline constexpr const char* kDefaultAnonKey =
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt5bmh5ZGNldW5icWh5eWFmZ3lpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTM3NjM3NzcsImV4cCI6MjEwOTMzOTc3N30."
+    "ja11m3dsTU3calvhzwB1Rg0EqTew1AVVwz85bXjuTcg";
+inline bool& UseBuiltInService()
+{
+    static bool use = true; // las pruebas lo desactivan para comprobar el caso sin configurar
+    return use;
+}
+
 inline ServiceConfig LoadService()
 {
     ServiceConfig c;
@@ -776,6 +788,13 @@ inline ServiceConfig LoadService()
     std::error_code ec;
     if (!std::filesystem::exists(path, ec))
     {
+        if (UseBuiltInService())
+        {
+            c.url = kDefaultServiceUrl;
+            c.anonKey = kDefaultAnonKey;
+            c.valid = true;
+            return c;
+        }
         c.problem = "Catálogo remoto no configurado (falta servicio.json)";
         return c;
     }

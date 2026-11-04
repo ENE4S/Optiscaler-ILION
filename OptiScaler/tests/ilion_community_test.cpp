@@ -54,6 +54,14 @@ int main()
     std::filesystem::remove_all(root, ec);
     std::filesystem::create_directories(root, ec);
     C::RootOverride() = root;
+    // Community4: el cliente trae el servicio público de ILION; aquí se comprueba también el caso sin configurar
+    {
+        const auto builtIn = C::LoadService();
+        CHECK(builtIn.valid && builtIn.url == "https://kynhydceunbqhyyafgyi.supabase.co" && C::SafeToken(builtIn.anonKey, 1024),
+              "servicio público incluido válido (solo URL y clave anon)");
+        CHECK(builtIn.anonKey.find("service_role") == std::string::npos, "sin claves administrativas en el cliente");
+        C::UseBuiltInService() = false;
+    }
 
     // 1. Ida y vuelta
     {

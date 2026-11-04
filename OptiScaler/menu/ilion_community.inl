@@ -519,7 +519,7 @@ static void Card(const C::Profile& p, const char* list, bool showDownloads, cons
         std::string badges = KindOf(p);
         badges += StrFmt(" · v%d", p.version);
         if (showDownloads)
-            badges += p.downloads >= 0 ? StrFmt(" · %lld descargas", p.downloads) : std::string(" · descargas: sin dato");
+            badges += p.downloads >= 0 ? StrFmt(" · %lld descargas registradas", p.downloads) : std::string(" · descargas: sin dato");
         if (favourites.count(p.id))
             badges += " · FAVORITO";
         P::Coloured(IlionTheme::ShellPal::Dim, badges.c_str(), true);
@@ -770,7 +770,7 @@ static void PodiumCard(const C::Profile& p, int rank)
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const ImVec2 wp = ImGui::GetWindowPos();
-        const float crown = std::floor(font * 3.0f);
+        const float crown = std::floor(font * 2.3f);
         // Franja luminosa del puesto en el borde izquierdo
         dl->AddRectFilled(wp, ImVec2(wp.x + font * 0.28f, wp.y + ImGui::GetWindowHeight()), ImGui::GetColorU32(toneMapColor(colour)));
         const ImVec2 start = ImGui::GetCursorScreenPos();
@@ -791,7 +791,7 @@ static void PodiumCard(const C::Profile& p, int rank)
                     (std::string("Frame Generation: ") + (p.fg == "ninguno" ? std::string("sin FG") : StrFmt("%s %dX fijo", C::NameOf(C::kFgs, p.fg), p.multiplier)))
                         .c_str(),
                     true);
-        P::Big(P::FigureFont(), 1.15f, colour, StrFmt("%lld descargas", p.downloads).c_str());
+        P::Big(P::FigureFont(), 1.1f, colour, StrFmt("%lld descargas registradas", p.downloads).c_str());
         ImGui::EndGroup();
         if (IlionTheme::Button("VER DETALLES"))
             ShowPreview(p, "top");
@@ -827,7 +827,7 @@ template <typename Ctx> static void TopPage(Ctx& ctx)
     ImGui::EndDisabled();
     ImGui::Spacing();
 
-    IlionTheme::SectionPlate("TOP 3 — PERFILES MÁS DESCARGADOS");
+    IlionTheme::SectionPlate("LOS 3 MÁS DESCARGADOS");
     const auto ranked = ByDownloads();
     // Solo cuentan descargas reales registradas por el servidor: sin descargas no hay puesto
     const int podium = C::PodiumCount(catalog, C::RankByDownloads(catalog));
@@ -838,13 +838,14 @@ template <typename Ctx> static void TopPage(Ctx& ctx)
     }
     if (podium == 0)
     {
+        ImGui::Spacing();
         P::Big(P::UiFont(), 1.15f, IlionTheme::ShellPal::Text2,
                catalog.empty() ? "Todavía no hay perfiles publicados" : "Todavía no hay descargas registradas", true);
         P::Coloured(IlionTheme::ShellPal::Dim,
-                    !service.valid    ? ("El catálogo remoto no está configurado (" + service.problem + "). El ranking aparecerá con datos reales del servidor.").c_str()
-                    : catalog.empty() ? "Pulsa ACTUALIZAR CATÁLOGO. Si sigue vacío, nadie ha publicado aún un perfil aprobado."
-                                      : "El ranking aparece con la primera descarga real. No se rellena con datos de ejemplo.",
+                    catalog.empty() ? "Sé el primero en compartir tu configuración con la comunidad."
+                                    : "El podio aparece con las primeras descargas registradas.",
                     true);
+        ImGui::Spacing();
         if (catalog.empty() && IlionTheme::Button("CREAR EL PRIMER PERFIL##CommunityFirstTop"))
         {
             draft = FromCurrent(ctx);
@@ -852,7 +853,8 @@ template <typename Ctx> static void TopPage(Ctx& ctx)
             page = Publish;
         }
     }
-    P::Coloured(IlionTheme::ShellPal::Dim, "Popularidad, no rendimiento: las descargas no indican que un perfil funcione mejor.", true);
+    P::Coloured(IlionTheme::ShellPal::Dim,
+                "Descargas registradas: una por cuenta con sesión iniciada. Indican popularidad, no rendimiento.", true);
 
     // El resto, en orden de descargas
     if ((int) ranked.size() > podium)
@@ -1272,6 +1274,74 @@ template <typename Ctx> static void PublishPage(Ctx& ctx, const C::Machine& m)
     ImGui::EndDisabled();
 }
 
+// MI CUENTA: lo publicado por la cuenta con los datos del servidor (estado de moderación y descargas registradas)
+static bool statsRequested = false;
+
+static void RequestAuthorStats()
+{
+    auto out = mineRemote;
+    RunWithSession("Consultando tus publicaciones...", "mios", [out](const C::ServiceConfig& cfg, C::Session& s) { return C::FetchMine(cfg, s, *out); });
+}
+
+static void AuthorStats()
+{
+    const auto ws = worker.Get();
+    if (!statsRequested && !ws.busy)
+    {
+        statsRequested = true;
+        RequestAuthorStats();
+    }
+    int approved = 0, pending = 0, rejected = 0;
+    long long total = 0;
+    std::vector<const C::Profile*> published;
+    for (const auto& e : mine)
+        if (e.review != "local")
+        {
+            published.push_back(&e);
+            approved += e.review == "aprobado";
+            pending += e.review == "pendiente";
+            rejected += e.review == "rechazado";
+            if (e.review == "aprobado" && e.downloads > 0)
+                total += e.downloads;
+        }
+    ImGui::Spacing();
+    IlionTheme::SectionPlate("MI PERFIL DE CREADOR");
+    P::Row(P::Mark::Info, StrFmt("Perfiles publicados: %d", (int) published.size()),
+           StrFmt("%d aprobados · %d pendientes de revisión · %d rechazados", approved, pending, rejected));
+    P::Row(total > 0 ? P::Mark::Ok : P::Mark::Info, StrFmt("Descargas registradas recibidas: %lld", total),
+           "De tus perfiles aprobados; una por cuenta con sesión, sin contar las tuyas");
+    // Reconocimientos: un puesto real en LOS 3 MÁS DESCARGADOS del catálogo
+    const auto order = C::RankByDownloads(catalog);
+    const int podium = C::PodiumCount(catalog, order);
+    bool any = false;
+    for (int i = 0; i < podium; i++)
+        for (const auto* e : published)
+            if (e->id == catalog[order[i]].id)
+            {
+                P::Row(P::Mark::Ok, StrFmt("Reconocimiento: Nº %d en LOS 3 MÁS DESCARGADOS", i + 1), e->name + " — " + e->gameName);
+                any = true;
+            }
+    if (!any)
+        P::Coloured(IlionTheme::ShellPal::Dim, "Reconocimientos: ninguno todavía. Llegan con un puesto en LOS 3 MÁS DESCARGADOS.", true);
+    if (!published.empty())
+    {
+        ImGui::Spacing();
+        P::Coloured(IlionTheme::ShellPal::Text2, "HISTORIAL DE PUBLICACIONES");
+        for (const auto* e : published)
+            P::Row(e->review == "aprobado" ? P::Mark::Ok : e->review == "pendiente" ? P::Mark::Wait : P::Mark::Bad, e->name + " — " + e->gameName,
+                   StrFmt("%s · v%d · %s", C::NameOf(C::kReviews, e->review), e->version,
+                          e->downloads >= 0 ? StrFmt("%lld descargas registradas", e->downloads).c_str() : "descargas: sin dato"));
+    }
+    ImGui::BeginDisabled(ws.busy);
+    if (IlionTheme::Button("ACTUALIZAR MIS ESTADÍSTICAS##CommunityStats"))
+        RequestAuthorStats();
+    ImGui::EndDisabled();
+    Flow("RETIRAR O EDITAR EN MIS PERFILES");
+    if (IlionTheme::Button("RETIRAR O EDITAR EN MIS PERFILES##CommunityToMine"))
+        page = Mine;
+    ImGui::Spacing();
+}
+
 template <typename Ctx> static void AccountPage(Ctx& ctx)
 {
     (void) ctx;
@@ -1314,9 +1384,12 @@ template <typename Ctx> static void AccountPage(Ctx& ctx)
             }
             ImGui::EndDisabled();
         }
+        if (!session.alias.empty())
+            AuthorStats();
         if (IlionTheme::Button("CERRAR SESIÓN##CommunityLogout"))
         {
             C::ForgetSession();
+            statsRequested = false;
             session = {};
             Say(true, "Sesión cerrada en este equipo");
         }
@@ -1455,50 +1528,90 @@ template <typename Ctx> static void Panel(Ctx& ctx)
                      });
     }
 
-    // ---- Cabecera ----
+    // ---- Cabecera: COMUNIDAD ILION ----
+    // Título en la tipografía de títulos de ILION (Russo One) con espaciado entre letras, centrado con su piloto. El
+    // piloto deja su halo entero dentro de la columna y separado del texto
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const ImVec2 p = ImGui::GetCursorScreenPos();
-        const float h = std::floor(font * 1.9f);
-        const ImVec4 accent = IlionTheme::ShellPilot(IlionTheme::ShellPal::Green);
-        // Piloto encendido junto al título
-        IlionTheme::ShellLed(dl, ImVec2(p.x + h * 0.32f, p.y + h * 0.5f), h * 0.18f, toneMapColor(accent), true);
-        ImGui::SetCursorScreenPos(ImVec2(p.x + h * 0.75f, p.y));
-        ImGui::BeginGroup();
-        P::Big(P::UiFont(), 1.7f, IlionTheme::ShellPal::Text, "ILION COMMUNITY");
-        P::Coloured(IlionTheme::ShellPal::Orange, "Perfiles de la comunidad");
-        ImGui::EndGroup();
-        const float right = p.x + ImGui::GetContentRegionAvail().x;
-        const float y = ImGui::GetItemRectMax().y + font * 0.35f;
-        dl->AddLine(ImVec2(p.x, y), ImVec2(right, y), ImGui::GetColorU32(toneMapColor(IlionTheme::ShellPal::Line)), 1.0f);
-        ImGui::SetCursorScreenPos(ImVec2(p.x, y + font * 0.45f));
+        const float width = ImGui::GetContentRegionAvail().x;
+        ImFont* tf = P::FigureFont();
+        const float ts = std::floor(font * 1.75f);
+        const float tracking = std::floor(font * 0.16f);
+        static const char* title = "COMUNIDAD ILION";
+        float tw = 0.0f;
+        for (const char* c = title; *c; c++)
+            tw += tf->CalcTextSizeA(ts, FLT_MAX, 0.0f, c, c + 1).x + (c[1] ? tracking : 0.0f);
+        const float r = std::floor(font * 0.24f);
+        const float halo = r * 3.4f; // el halo más grande de ShellLed llega a 3,2 radios
+        const float gap = std::floor(font * 0.85f);
+        const float margin = std::floor(font * 0.7f);
+        const float block = halo * 2.0f + gap + tw;
+        const float x0 = p.x + (std::max)(margin, std::floor((width - block) * 0.5f));
+        const float top = p.y + std::floor(font * 0.75f);
+        IlionTheme::ShellLed(dl, ImVec2(x0 + halo, top + ts * 0.52f), r, toneMapColor(IlionTheme::ShellPilot(IlionTheme::ShellPal::Green)), true);
+        float x = x0 + halo * 2.0f + gap;
+        const ImU32 titleColour = ImGui::GetColorU32(toneMapColor(IlionTheme::ShellPal::Text));
+        for (const char* c = title; *c; c++)
+        {
+            dl->AddText(tf, ts, ImVec2(x, top), titleColour, c, c + 1);
+            x += tf->CalcTextSizeA(ts, FLT_MAX, 0.0f, c, c + 1).x + tracking;
+        }
+        // Subtítulo centrado
+        static const char* subtitle = "Perfiles creados por nuestros usuarios";
+        ImFont* uf = P::UiFont();
+        const float ss = std::floor(font * 0.98f);
+        const ImVec2 sz = uf->CalcTextSizeA(ss, FLT_MAX, 0.0f, subtitle);
+        const float subY = top + ts + std::floor(font * 0.45f);
+        dl->AddText(uf, ss, ImVec2(p.x + std::floor((width - sz.x) * 0.5f), subY), ImGui::GetColorU32(toneMapColor(IlionTheme::ShellPal::Orange)), subtitle);
+        // Línea decorativa con márgenes y un tramo de acento en el centro
+        const float lineY = subY + sz.y + std::floor(font * 0.6f);
+        dl->AddLine(ImVec2(p.x + margin, lineY), ImVec2(p.x + width - margin, lineY), ImGui::GetColorU32(toneMapColor(IlionTheme::ShellPal::Line)), 1.0f);
+        const float accent = std::floor(tw * 0.35f);
+        dl->AddLine(ImVec2(p.x + std::floor((width - accent) * 0.5f), lineY), ImVec2(p.x + std::floor((width + accent) * 0.5f), lineY),
+                    ImGui::GetColorU32(toneMapColor(IlionTheme::ShellPal::Orange)), 2.0f);
+        ImGui::SetCursorScreenPos(ImVec2(p.x, lineY + std::floor(font * 0.6f)));
+        ImGui::Dummy(ImVec2(width, 0.0f));
     }
 
-    // ---- Estado real del servicio y de la cuenta ----
+    // ---- Estado del servicio y de la cuenta: una línea discreta (el detalle, al pasar por encima) ----
     {
         const C::ServiceState st = !service.valid ? C::ServiceState::NotConfigured : (C::ServiceState) C::LastServiceState().load();
-        const P::Mark mark = st == C::ServiceState::Connected                                          ? P::Mark::Ok
-                             : st == C::ServiceState::Unchecked || st == C::ServiceState::Offline ? P::Mark::Wait
-                             : st == C::ServiceState::NotConfigured                               ? P::Mark::Info
-                                                                                                  : P::Mark::Bad;
+        const ImVec4 led = st == C::ServiceState::Connected                                          ? IlionTheme::ShellPilot(IlionTheme::ShellPal::Green)
+                           : st == C::ServiceState::Unchecked || st == C::ServiceState::Offline ? IlionTheme::ShellPilot(IlionTheme::ShellPal::Yellow)
+                           : st == C::ServiceState::NotConfigured                               ? IlionTheme::ShellPal::Dim
+                                                                                                : IlionTheme::ShellPal::Red;
         const std::string detail = st == C::ServiceState::NotConfigured ? service.problem + ". Los perfiles locales funcionan igual"
                                    : st == C::ServiceState::Offline     ? std::string("El optimizador y los perfiles descargados funcionan sin conexión")
                                    : st == C::ServiceState::KeyRejected ? std::string("Revisa anon_key en servicio.json")
-                                   : st == C::ServiceState::SchemaMissing ? std::string("Ejecuta ilion_community_supabase.sql en el proyecto")
-                                                                          : std::string();
-        P::Row(mark, C::ServiceStateText(st), detail);
-        if (service.valid)
-            P::Row(session.Active() ? P::Mark::Ok : P::Mark::Info,
-                   session.Active() ? "Sesión: " + (session.alias.empty() ? std::string("iniciada, sin alias") : session.alias)
-                   : !session.refreshToken.empty() ? std::string("Sesión guardada, sin renovar todavía")
-                                                   : std::string("Sin sesión: consultar y descargar no la necesitan"),
-                   std::string());
+                                   : st == C::ServiceState::SchemaMissing ? std::string("Falta instalar el esquema de ILION en el servicio")
+                                                                          : std::string("Catálogo público de la comunidad");
+        const std::string account = !service.valid                    ? std::string()
+                                    : session.Active()                 ? " · " + (session.alias.empty() ? std::string("sesión iniciada") : session.alias)
+                                    : !session.refreshToken.empty()    ? std::string(" · sesión guardada")
+                                                                       : std::string(" · sin sesión");
+        const ImVec2 lp = ImGui::GetCursorScreenPos();
+        const float lh = ImGui::GetTextLineHeight();
+        IlionTheme::ShellLed(ImGui::GetWindowDrawList(), ImVec2(lp.x + font * 0.7f, lp.y + lh * 0.5f), std::floor(font * 0.17f), toneMapColor(led), true);
+        ImGui::SetCursorScreenPos(ImVec2(lp.x + font * 1.3f, lp.y));
+        P::Coloured(IlionTheme::ShellPal::Dim, (std::string(C::ServiceStateText(st)) + account).c_str());
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", detail.c_str());
     }
 
     // ---- Secciones: dos filas de botones compactos ----
-    static const char* names[] = { "MÁS DESCARGADOS", "CATÁLOGO", "MIS PERFILES", "DESCARGADOS", "PUBLICAR PERFIL", "CUENTA" };
+    static const char* names[] = { "POPULARES", "EXPLORAR", "MIS PERFILES", "DESCARGAS", "PUBLICAR", "MI CUENTA" };
+    ImGui::Spacing();
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
     const float w = std::floor((ImGui::GetContentRegionAvail().x - spacing * 2.0f) / 3.0f);
+    // Ninguna etiqueta se corta: si la más larga no cabe con su margen, el texto de las pestañas se reduce lo justo
+    float widest = 0.0f;
+    for (const char* n : names)
+        widest = (std::max)(widest, ImGui::CalcTextSize(n).x);
+    const float room = w - font * 1.0f;
+    const bool shrink = widest > room && widest > 0.0f;
+    if (shrink)
+        ImGui::PushFont(nullptr, std::floor(font * (std::max)(0.8f, room / widest)));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(font * 0.3f, ImGui::GetStyle().FramePadding.y));
     for (int i = 0; i < 6; i++)
     {
@@ -1523,6 +1636,8 @@ template <typename Ctx> static void Panel(Ctx& ctx)
             ImGui::PopStyleColor();
     }
     ImGui::PopStyleVar();
+    if (shrink)
+        ImGui::PopFont();
 
     // ---- Avisos: siempre a la vista, fuera del área desplazable ----
     if (!warning.empty())

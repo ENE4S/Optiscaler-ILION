@@ -1,5 +1,6 @@
 -- ILION COMMUNITY — migración incremental ilion_community_v2_fg (Community5)
--- Proyecto: ILION Community (kynhydceunbqhyyafgyi). NO EJECUTADA: pendiente de autorización.
+-- Proyecto: ILION Community (kynhydceunbqhyyafgyi). APLICADA el 2026-11-04 (migración 20261104055538), autorizada por el
+-- usuario tras un ensayo en transacción deshecha. Se aplicó sin begin/commit (apply_migration ya usa su transacción)
 --
 -- Qué hace:
 --   * Perfiles v2: la implementación de Frame Generation exacta (catálogo técnico de ILION) y su ruta de entrada

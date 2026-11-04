@@ -1,5 +1,6 @@
 -- ILION COMMUNITY — migración ilion_community_v3_publicacion (Community7)
--- Proyecto: ILION Community (kynhydceunbqhyyafgyi). NO EJECUTADA: pendiente de revisión y autorización.
+-- Proyecto: ILION Community (kynhydceunbqhyyafgyi). APLICADA el 2026-11-04 (migración 20261104073434), autorizada por el
+-- usuario tras un ensayo en transacción deshecha; pruebas de seguridad repetidas después.
 --
 -- Publicación inmediata sin aprobación previa, sin quitar ningún control de seguridad:
 --   * Al publicar (insert de un usuario con sesión), el servidor pone status = 'aprobado': el perfil es visible al momento

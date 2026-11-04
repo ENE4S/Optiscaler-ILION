@@ -20817,6 +20817,9 @@ const MenuCommon::MenuTab* MenuCommon::MenuTabs(size_t& count)
     static const MenuTab tabs[] = {
         { "MAIN", "Custom", "Boxes picked in Menu > Custom Tab.", RenderCustomTab },
         { "MAIN", "Profiles", "Smart per-game profiles (experimental).", RenderProfilesTab },
+        // ILION Comunidad: only the new interface in its Full presentation (never Compact or ILION Traditional)
+        { "MAIN", "Community", "Profiles shared by ILION users.", RenderCommunityPanel, false,
+          [](RenderMenuContext& c) { return shellActive && !shellCompact; } },
         { "MAIN", "Upscaling", "Backend and output scaling.", RenderUpscalerStateMessage },
         { "MAIN", "Frame Gen", "Frame generation source, output and pacing." },
         { "MAIN", "External FG", "MFG SUPER MOTION and AMD AFMF started and steered from here. Advanced mode only.",

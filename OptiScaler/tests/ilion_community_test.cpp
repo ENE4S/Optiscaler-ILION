@@ -368,7 +368,7 @@ int main()
         m.gpu = "AMD Radeon RX 6700 XT";
         CHECK(C::Overall(C::Compatibility(p, m)) == C::Fit::Partial, "otra GPU de la misma arquitectura: parcial");
         m.techs.clear();
-        CHECK(C::Overall(C::Compatibility(p, m)) == C::Fit::Incompatible, "tecnología ausente: no compatible");
+        CHECK(C::Overall(C::Compatibility(p, m)) == C::Fit::NeedsComponents, "tecnología ausente: requiere componentes");
         m.techs = { "xess" };
         m.fgs.insert("fsr_fg");
         p.fg = "fsr_fg";
@@ -549,11 +549,11 @@ int main()
         want.gpu = m.gpu;
         want.fg = "nvngx_enabler";
         want.fgRoute = "nvngx";
-        CHECK(C::Overall(C::Compatibility(want, m)) == C::Fit::Incompatible, "Enabler sin su DLL: no compatible");
+        CHECK(C::Overall(C::Compatibility(want, m)) == C::Fit::NeedsComponents, "Enabler sin su DLL: requiere componentes");
         m.fgs.insert("nvngx_enabler");
         CHECK(C::Overall(C::Compatibility(want, m)) == C::Fit::Confirmed, "Enabler con su DLL: compatible");
         want.fgRoute = "optifg";
-        CHECK(C::Overall(C::Compatibility(want, m)) == C::Fit::Incompatible, "ruta no disponible en el juego: no compatible");
+        CHECK(C::Overall(C::Compatibility(want, m)) == C::Fit::NeedsComponents, "ruta no disponible en el juego: requiere ajustes");
 
         // Estados de publicación
         CHECK(C::InList(C::kReviews, "por_publicar") && C::InList(C::kReviews, "retirado") && !C::IsServerReview("por_publicar") &&
@@ -576,6 +576,112 @@ int main()
         for (const auto& i : C::kModels)
             inSql = inSql && text.find(std::string("'") + i.id + "'") != std::string::npos;
         CHECK(inSql, "la migración v2 admite exactamente los identificadores del cliente");
+    }
+
+    // 14. Revisión de PERFILES y COMUNIDAD: jerarquía de FG, compatibilidad v1, autoría y clasificación
+    {
+        // Jerarquía acordada: Enabler, XeFG, Nukem y después el resto; Nukem nunca antes que los dos primeros
+        CHECK(C::FgPreferenceRank("nvngx_enabler") < C::FgPreferenceRank("xefg") && C::FgPreferenceRank("xefg") < C::FgPreferenceRank("nvngx_nukem"),
+              "preferencia Enabler → XeFG → Nukem");
+        bool restAfter = true;
+        for (const char* id : { "dlssg_nativo", "fsr_fg", "nvngx_ffx", "nvngx_combo", "nvngx_fglite" })
+            restAfter = restAfter && C::FgPreferenceRank(id) > C::FgPreferenceRank("nvngx_nukem");
+        CHECK(restAfter, "el resto, después de Nukem");
+        CHECK(C::FgPreferenceRank("dlssg_juego") >= 1000 && C::FgPreferenceRank("ninguno") >= 1000, "el DLSSG del juego y «sin FG» no se eligen");
+        bool everyKnown = true;
+        for (const char* id : C::kFgPreference)
+            everyKnown = everyKnown && C::FgImplOf(id) != nullptr;
+        CHECK(everyKnown, "la preferencia solo nombra implementaciones del catálogo");
+
+        // El perfil v1 de Dawnwalker (FSR 4 driver, XeFG 2X, ruta automática) es compatible con XeFG disponible
+        C::Profile v1 = Sample();
+        v1.schema = 1;
+        v1.gameExe = "dawnwalker.exe";
+        v1.gameName = "Dawnwalker";
+        v1.arch = "rdna3";
+        v1.gpu = "AMD Radeon RX 7900 XTX";
+        v1.tech = "fsr4_driver";
+        v1.model = "completo";
+        v1.fgRoute = "auto";
+        std::string err;
+        CHECK(C::Validate(v1, &err), "perfil v1 de Dawnwalker válido");
+        C::Machine dw;
+        dw.api = "DX12";
+        dw.arch = "rdna3";
+        dw.gpu = "AMD Radeon RX 7900 XTX";
+        dw.gameExe = "dawnwalker.exe";
+        dw.outW = 2560;
+        dw.outH = 1440;
+        dw.techs = { "fsr4_driver" };
+        dw.fgs = { "ninguno", "xefg" };
+        dw.routes = { "ninguno", "juego", "optifg", "streamline" };
+        CHECK(C::Overall(C::Compatibility(v1, dw)) == C::Fit::Confirmed, "v1 con ruta automática: compatible");
+        dw.fgs = { "ninguno" };
+        CHECK(C::Overall(C::Compatibility(v1, dw)) == C::Fit::NeedsComponents, "XeFG no localizado: requiere componentes, no incompatible");
+        dw.fgs = { "ninguno", "xefg" };
+        C::Profile lite = v1;
+        lite.schema = 2;
+        lite.fg = "nvngx_fglite";
+        lite.fgRoute = "nvngx";
+        dw.fgs.insert("nvngx_fglite");
+        dw.routes.insert("nvngx");
+        CHECK(C::Overall(C::Compatibility(lite, dw)) == C::Fit::Experimental, "FG Lite en RDNA 3: experimental");
+        C::Profile other = v1;
+        other.api = "Vulkan";
+        CHECK(C::Overall(C::Compatibility(other, dw)) == C::Fit::Incompatible, "otra API: no compatible");
+        CHECK(std::string(C::FitText(C::Fit::NeedsComponents)) == "Requiere componentes o ajustes", "texto de los cuatro estados");
+
+        // Autoría: Ene y ENE son el mismo autor; otra cuenta o un perfil descargado no se publican
+        std::vector<C::Profile> lib;
+        C::Profile ene = Sample();
+        ene.author = "Ene";
+        CHECK(C::AddOrUpdate(lib, ene) == C::AddResult::Added, "perfil de Ene");
+        C::Profile edited = ene;
+        edited.author = "ENE";
+        edited.preset = "balanceado";
+        CHECK(C::AddOrUpdate(lib, edited) == C::AddResult::Updated, "Ene / ENE: mismo autor sin distinguir mayúsculas");
+        C::Profile foreign = ene;
+        foreign.author = "Impostor";
+        CHECK(C::AddOrUpdate(lib, foreign) == C::AddResult::NotOwner, "otro alias sigue sin sustituir");
+        C::Profile downloadedCopy = ene;
+        downloadedCopy.origin = "comunidad";
+        CHECK(C::AddOrUpdate(lib, downloadedCopy) == C::AddResult::NotOwner, "un perfil descargado no sustituye uno propio");
+
+        C::ServiceConfig svc;
+        svc.url = "https://127.0.0.1:9";
+        svc.anonKey = "abc.def";
+        svc.valid = true;
+        C::Session s;
+        s.accessToken = "t";
+        s.userId = "user-1";
+        s.alias = "ENE";
+        C::Profile fromCommunity = Sample();
+        fromCommunity.origin = "comunidad";
+        const auto t0 = GetTickCount64();
+        CHECK(!C::Publish(svc, s, fromCommunity).first, "no se publica un perfil descargado");
+        C::Profile otherAccount = Sample();
+        otherAccount.authorId = "user-2";
+        otherAccount.id = "11111111-2222-3333-4444-555555555555";
+        CHECK(!C::Publish(svc, s, otherAccount).first, "no se publica un perfil de otra cuenta");
+        CHECK(GetTickCount64() - t0 < 1000, "esos rechazos no llegan a la red");
+        C::Profile noAlias = Sample();
+        C::Session s2 = s;
+        s2.alias.clear();
+        CHECK(!C::Publish(svc, s2, noAlias).first, "sin alias de cuenta no se publica");
+
+        // Clasificación con desempate determinista: descargas, después el publicado antes, después el identificador
+        std::vector<C::Profile> cat(3, Sample());
+        cat[0].id = "c";
+        cat[0].downloads = 10;
+        cat[0].created = "2026-11-03T00:00:00Z";
+        cat[1].id = "b";
+        cat[1].downloads = 10;
+        cat[1].created = "2026-11-01T00:00:00Z";
+        cat[2].id = "a";
+        cat[2].downloads = 10;
+        cat[2].created = "2026-11-01T00:00:00Z";
+        const auto order = C::RankByDownloads(cat);
+        CHECK(cat[order[0]].id == "a" && cat[order[1]].id == "b" && cat[order[2]].id == "c", "desempate: antigüedad y después identificador");
     }
 
     printf("ILION COMMUNITY: %d comprobaciones correctas, %d fallos\n", passed, failures);

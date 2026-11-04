@@ -252,7 +252,10 @@ struct Plan
     Stage presetStage = Stage::None;
     std::string presetWhy;
     FgRoute fg = FgRoute::None;
-    std::string fgAltId; // FgRoute::Alt: la implementación del catálogo técnico recomendada
+    std::string fgAltId;    // FgRoute::Alt: la implementación del catálogo técnico elegida
+    std::string fgAltRoute; // y su entrada
+    std::string fgActiveId; // la implementación cargada al evaluar
+    std::vector<std::pair<int, std::string>> fgDiag; // candidatos en orden de preferencia: 1 válido, 0 descartado, 2 elegido
     FGInput fgInput = FGInput::NoFG;
     int count = 0;
     Stage fgStage = Stage::None;
@@ -663,8 +666,32 @@ static bool FgAvailable(const std::string& id)
     if (id == "ninguno")
         return true;
     if (id == "xefg")
-        return status.provider == IlionDynamicMfg::Provider::XeFG ||
-               (!vulkan && std::filesystem::exists(Util::DllPath().parent_path() / L"libxess_fg.dll", ec));
+    {
+        if (status.provider == IlionDynamicMfg::Provider::XeFG || XeFGProxy::Module() != nullptr || GetModuleHandleW(L"libxess_fg.dll") != nullptr)
+            return true;
+        if (vulkan)
+            return false;
+        // Donde lo busca XeFGProxy::InitXeFG: la ruta de XeFGLibrary, la carpeta de ILION (MainDllPath) y la del juego;
+        // y una variante de XeMFG elegida en plugins\XeMFG\<variante>
+        auto config = Config::Instance();
+        const auto has = [&](const std::filesystem::path& place)
+        {
+            if (place.empty())
+                return false;
+            return std::filesystem::is_directory(place, ec) ? std::filesystem::exists(place / L"libxess_fg.dll", ec) : std::filesystem::exists(place, ec);
+        };
+        if (has(config->XeFGLibrary.value_or(L"")) || has(config->MainDllPath.value_or(L"")) || has(Util::DllPath().parent_path()) ||
+            has(Util::ExePath().parent_path()))
+            return true;
+        if (const auto variant = config->XeMfgVariant.value_or(L""); !variant.empty())
+        {
+            std::filesystem::path plugins(config->PluginPath.value_or(L"plugins"));
+            if (plugins.is_relative())
+                plugins = Util::DllPath().parent_path() / plugins;
+            return std::filesystem::is_directory(plugins / L"XeMFG" / variant, ec);
+        }
+        return false;
+    }
     if (id == "fsr_fg")
         return status.provider == IlionDynamicMfg::Provider::FsrFg || (!vulkan && dx12);
     if (id == "dlssg_nativo")
@@ -687,6 +714,40 @@ static bool FgAvailable(const std::string& id)
     return false;
 }
 
+// La implementación de FG cargada ahora (estado activo de ILION, no la configuración elegida para el próximo inicio)
+static std::string CurrentFgId()
+{
+    const auto& state = State::Instance();
+    const auto status = IlionDynamicMfg::Get();
+    const auto replacement = [&]() -> std::string
+    {
+        switch (state.activeFgNvngx)
+        {
+        case FGNvngxReplacement::Nukems:
+            return "nvngx_nukem";
+        case FGNvngxReplacement::Arturs:
+            return "nvngx_enabler";
+        case FGNvngxReplacement::FFX:
+            return "nvngx_ffx";
+        case FGNvngxReplacement::Combo:
+            return "nvngx_combo";
+        case FGNvngxReplacement::HelixSR:
+            return "nvngx_fglite";
+        default:
+            return "dlssg_nativo";
+        }
+    };
+    if (state.activeFgOutput == FGOutput::XeFG)
+        return "xefg";
+    if (state.activeFgOutput == FGOutput::FSRFG)
+        return "fsr_fg";
+    if (state.activeFgOutput == FGOutput::DLSSG || state.activeFgInput == FGInput::NvngxFG)
+        return replacement();
+    if (status.provider == IlionDynamicMfg::Provider::DlssgGame)
+        return "dlssg_juego";
+    return "ninguno";
+}
+
 // Las entradas de FG posibles en este juego (las condiciones del selector de entrada de FRAME GEN)
 static std::set<std::string> FgRoutesAvailable(IFeature* feature)
 {
@@ -698,7 +759,7 @@ static std::set<std::string> FgRoutesAvailable(IFeature* feature)
     if (state.swapchainApi != API::DX11 && state.streamlineVersion.major >= 2)
         r.insert("streamline");
     const auto sl = state.streamlineVersion;
-    if (!(state.swapchainApi == API::DX11 && (sl == feature_version { 0, 0, 0 } || sl > feature_version { 2, 0, 1 })))
+    if (sl.major >= 2 && !(state.swapchainApi == API::DX11 && sl > feature_version { 2, 0, 1 }))
         r.insert("nvngx");
     if (state.swapchainApi == API::DX12)
         r.insert("fsr31"), r.insert("fsr30");
@@ -1836,7 +1897,66 @@ template <typename Ctx> static void Tick(Ctx& ctx)
         }
         else
         {
-            const bool xefgDll = std::filesystem::exists(Util::DllPath().parent_path() / L"libxess_fg.dll");
+            // ---- Jerarquía acordada entre candidatos válidos: 1 DLSS Enabler, 2 XeFG / XeMFG, 3 Nukem, 4 el resto ----
+            // Válido = DLL presente, evidencia oficial o comunitaria en esta arquitectura, una entrada posible en este
+            // juego y la matriz de compatibilidad no lo evita. El orden de enumeración o la mera presencia de una DLL no
+            // deciden nada. El DLSSG oficial de NVIDIA ya activo (RTX 40/50) se conserva
+            const Arch archNow = ArchOf(gpu);
+            const std::string archId = CatalogArchId(archNow);
+            const auto routes = FgRoutesAvailable(feature);
+            plan.fgActiveId = CurrentFgId();
+            plan.fgDiag.clear();
+            std::string best, bestRoute;
+            for (const char* candidate : IlionCommunity::kFgPreference)
+            {
+                const std::string id = candidate;
+                const char* name = IlionCommunity::NameOf(IlionCommunity::kFgs, id);
+                const auto ev = IlionCommunity::FgEvidence(id, archId);
+                std::string route;
+                for (const char* r : { "nvngx", "streamline", "optifg", "fsr31", "fsr30" })
+                    if (route.empty() && IlionCommunity::FgRouteAllowed(id, r) && routes.count(r))
+                        route = r;
+                const char* why = nullptr;
+                if (ev == IlionCommunity::Evidence::None)
+                    why = "no compatible con esta arquitectura";
+                else if (!FgAvailable(id))
+                    why = "no instalado o no disponible en este juego";
+                else if (!IlionCommunity::FgRecommendable(id, archId))
+                    why = "evidencia experimental o insuficiente en esta GPU: solo se elige a mano";
+                else if (route.empty())
+                    why = "el juego no ofrece ahora una entrada compatible";
+                else if (rule.found && rule.Avoids(id.c_str()))
+                    why = "evitado por la matriz de compatibilidad de este juego";
+                if (why == nullptr && best.empty())
+                    best = id, bestRoute = route;
+                plan.fgDiag.push_back({ why == nullptr ? 1 : 0, StrFmt("%s: %s", name, why != nullptr ? why : StrFmt("válido (%s, entrada %s)",
+                                                                                                                    IlionCommunity::EvidenceText(ev), IlionCommunity::NameOf(IlionCommunity::kRoutes, route)).c_str()) });
+            }
+            const bool officialActive = (plan.fgActiveId == "dlssg_nativo" || plan.fgActiveId == "dlssg_juego") &&
+                                        IlionCommunity::FgEvidence(plan.fgActiveId, archId) == IlionCommunity::Evidence::Official;
+            const bool unknownActive = plan.fgActiveId == "dlssg_juego"; // un reemplazo instalado aparte: no se identifica
+            const bool improve = !best.empty() && !officialActive && !unknownActive &&
+                                 (plan.fgActiveId == "ninguno" || IlionCommunity::FgPreferenceRank(best) < IlionCommunity::FgPreferenceRank(plan.fgActiveId));
+            bool decided = false;
+            if (improve && best == "xefg" && !(rule.found && rule.Avoids("xefg")))
+            {
+                plan.fg = FgRoute::XeFgNew;
+                plan.fgInput = bestRoute == "streamline" ? FGInput::DLSSG : bestRoute == "fsr31" ? FGInput::FSRFG : bestRoute == "fsr30" ? FGInput::FSRFG30 : FGInput::Upscaler;
+                count = 1; // lo que XeFG admite se conoce al cargarlo: 2X hasta entonces
+                decided = true;
+            }
+            else if (improve)
+            {
+                plan.fg = FgRoute::Alt;
+                plan.fgAltId = best;
+                plan.fgAltRoute = bestRoute;
+                count = 1; // lo que admite se conoce al cargarlo: 2X hasta entonces
+                decided = true;
+            }
+            for (auto& d : plan.fgDiag)
+                if (decided && d.second.rfind(IlionCommunity::NameOf(IlionCommunity::kFgs, best), 0) == 0)
+                    d.first = 2;
+            if (!decided)
             switch (status.provider)
             {
             case IlionDynamicMfg::Provider::XeFG:
@@ -1855,13 +1975,6 @@ template <typename Ctx> static void Tick(Ctx& ctx)
                 count = 1;
                 break;
             default:
-                if (state.activeFgOutput == FGOutput::NoFG && xefgDll && !(rule.found && rule.Avoids("xefg")) &&
-                    (state.streamlineVersion.major >= 2 || (feature != nullptr && feature->IsInited())))
-                {
-                    plan.fg = FgRoute::XeFgNew;
-                    plan.fgInput = state.streamlineVersion.major >= 2 ? FGInput::DLSSG : FGInput::Upscaler;
-                    count = 1; // lo que XeFG admite se conoce al cargarlo: 2X hasta entonces
-                }
                 break;
             }
             // Lo que el proveedor admite de verdad
@@ -1875,7 +1988,7 @@ template <typename Ctx> static void Tick(Ctx& ctx)
             plan.count = count;
 
             // Los multiplicadores fijos evaluados y por qué se descarta cada uno
-            const int providerMax = plan.fg == FgRoute::FsrFg || plan.fg == FgRoute::XeFgNew ? 1
+            const int providerMax = plan.fg == FgRoute::FsrFg || plan.fg == FgRoute::XeFgNew || plan.fg == FgRoute::Alt ? 1
                                     : plan.fg == FgRoute::DlssgGame ? std::max(state.dlssgMfgMax.value_or(1), 1)
                                     : plan.fg == FgRoute::None      ? 0
                                                                     : std::max(IlionDynamicMfg::MaxCountLimit(), 1);
@@ -1898,45 +2011,26 @@ template <typename Ctx> static void Tick(Ctx& ctx)
             }
             // FSR FG solo genera 2X: si el modo pediría más y XeFG está comprobado en esta GPU, se dice (cambia la salida
             // de FG: reinicio; no se aplica solo)
-            const bool xefgAvailable = xefgDll && arch.xefgTested && !(rule.found && rule.Avoids("xefg"));
+            const bool xefgAvailable = FgAvailable("xefg") && arch.xefgTested && !(rule.found && rule.Avoids("xefg"));
             if (plan.fg == FgRoute::FsrFg && desired > 1 && xefgAvailable)
                 plan.fgAlt = StrFmt("XeFG admitiría %dX fijo para este modo; cambiar la salida de FG requiere reiniciar (no se aplica solo)", desired + 1);
-            if (plan.fg != FgRoute::None && plan.fg != FgRoute::XeFgNew)
+            if (plan.fg != FgRoute::None && plan.fg != FgRoute::XeFgNew && plan.fg != FgRoute::Alt)
                 plan.fgWhy = before.multiplier == count + 1 && Generating(status)
                                  ? StrFmt("se mantiene: %.0f reales × %d ≈ %.0f finales cumple el modo %s", base, count + 1, base * (count + 1), ModeName(mode))
                                  : StrFmt("%.0f reales × %d ≈ %.0f finales para el modo %s", base, count + 1, base * (count + 1), ModeName(mode));
-            // Catálogo técnico: el resto de implementaciones disponibles en este equipo, con su evidencia por arquitectura.
-            // Solo las de evidencia oficial o comunitaria se recomiendan; ninguna se activa sola (cambiar el FG requiere
-            // reiniciar y la elección de multiplicador sigue la medición)
+            // La jerarquía y sus descartes, en el registro (y con detalle en la columna técnica)
             {
-                const std::string archId = CatalogArchId(arch);
-                std::string others, bestAlt;
-                for (const auto& f : IlionCommunity::kFgImpls)
-                {
-                    const std::string id = f.id;
-                    if (id == "ninguno" || id == "dlssg_salida" || (id == "xefg" && plan.fg == FgRoute::XeFgNew) || !FgAvailable(id))
-                        continue;
-                    const auto ev = IlionCommunity::FgEvidence(id, archId);
-                    if (ev == IlionCommunity::Evidence::None)
-                        continue;
-                    others += StrFmt("%s%s (%s, hasta %dX)", others.empty() ? "" : " · ", IlionCommunity::NameOf(IlionCommunity::kFgs, id),
-                                     IlionCommunity::EvidenceText(ev), IlionCommunity::FgMaxMultiplier(id, archId));
-                    if (bestAlt.empty() && plan.fg == FgRoute::None && IlionCommunity::FgRecommendable(id, archId) && id != "dlssg_juego")
-                        bestAlt = id;
-                }
-                if (!others.empty())
-                    Add(Mark::Info, "Implementaciones de FG disponibles en este equipo", others);
-                if (!bestAlt.empty())
-                {
-                    plan.fg = FgRoute::Alt;
-                    plan.fgAltId = bestAlt;
-                    plan.fgStage = Stage::Recommended;
-                    plan.fgWhy = StrFmt("%s %dX fijo es la opción recomendable disponible (%s). Cambiar el FG requiere reiniciar: "
-                                        "actívalo desde un perfil o en FRAME GEN; no se activa solo",
-                                        IlionCommunity::NameOf(IlionCommunity::kFgs, bestAlt), count + 1,
-                                        IlionCommunity::EvidenceText(IlionCommunity::FgEvidence(bestAlt, archId)));
-                }
+                std::string list;
+                for (const auto& dg : plan.fgDiag)
+                    list += (list.empty() ? "" : " · ") + std::string(dg.first == 2 ? "► " : "") + dg.second;
+                Add(Mark::Info, StrFmt("Frame Generation: candidatos por preferencia (cargado ahora: %s)",
+                                       IlionCommunity::NameOf(IlionCommunity::kFgs, plan.fgActiveId)),
+                    list);
             }
+            if (plan.fg == FgRoute::Alt)
+                plan.fgWhy = StrFmt("%s %dX fijo para el próximo inicio: es la opción preferida válida (%s). Se aplica al reiniciar el juego",
+                                    IlionCommunity::NameOf(IlionCommunity::kFgs, plan.fgAltId), count + 1,
+                                    IlionCommunity::EvidenceText(IlionCommunity::FgEvidence(plan.fgAltId, CatalogArchId(arch))));
             if (plan.fg == FgRoute::None)
                 plan.fgWhy = "no hay una ruta fija verificada para esta combinación";
             else if (plan.fg == FgRoute::XeFgNew && !arch.xefgTested)
@@ -1951,7 +2045,9 @@ template <typename Ctx> static void Tick(Ctx& ctx)
 
         if (plan.fgStage == Stage::Selected)
         {
-            const char* route = plan.fg == FgRoute::XeFgFixed     ? "XeFG (ya cargado)"
+            const std::string altName = plan.fg == FgRoute::Alt ? std::string(IlionCommunity::NameOf(IlionCommunity::kFgs, plan.fgAltId)) + " (próximo inicio)" : std::string();
+            const char* route = plan.fg == FgRoute::Alt           ? altName.c_str()
+                                : plan.fg == FgRoute::XeFgFixed     ? "XeFG (ya cargado)"
                                 : plan.fg == FgRoute::DlssgGame   ? "DLSSG del juego"
                                 : plan.fg == FgRoute::DlssgOutput ? "salida DLSSG de ILION"
                                 : plan.fg == FgRoute::FsrFg       ? "FSR FG (ya cargado)"
@@ -2148,6 +2244,36 @@ template <typename Ctx> static void Tick(Ctx& ctx)
                            "de Frame Generation surtan efecto.", plan.count + 1));
                 Next();
                 break;
+            case FgRoute::Alt:
+            {
+                // La implementación preferida, en la configuración para el próximo inicio (nunca en caliente)
+                const auto* impl = IlionCommunity::FgImplOf(plan.fgAltId);
+                const std::string r = plan.fgAltRoute;
+                const FGInput in = r == "nvngx" ? FGInput::NvngxFG : r == "streamline" ? FGInput::DLSSG : r == "fsr31" ? FGInput::FSRFG
+                                   : r == "fsr30" ? FGInput::FSRFG30 : FGInput::Upscaler;
+                FGOutput outp = FGOutput::NoFG;
+                if (r != "nvngx" && impl != nullptr && impl->output[0] != 0)
+                    if (const auto e = magic_enum::enum_cast<FGOutput>(impl->output); e.has_value())
+                        outp = *e;
+                config->FGInput = in;
+                config->FGOutput = outp;
+                if (impl != nullptr && impl->nvngx[0] != 0)
+                    if (const auto e = magic_enum::enum_cast<FGNvngxReplacement>(impl->nvngx); e.has_value())
+                        config->FGNvngxReplacement = *e;
+                config->FGEnabled = true;
+                if (outp == FGOutput::DLSSG)
+                    config->FGDLSSGInterpolationCount = plan.count;
+                else if (r == "nvngx")
+                    config->FGDLSSGOverrideInterpolationCount = plan.count;
+                plan.fgStage = Stage::Restart;
+                plan.restartFg = true;
+                Add(Mark::Restart, "REINICIO DEL JUEGO NECESARIO",
+                    StrFmt("%s %dX fijo (entrada %s) seleccionado para el próximo inicio. Cierra y vuelve a iniciar el juego para que los "
+                           "cambios de Frame Generation surtan efecto.",
+                           IlionCommunity::NameOf(IlionCommunity::kFgs, plan.fgAltId), plan.count + 1, IlionCommunity::NameOf(IlionCommunity::kRoutes, r)));
+                Next();
+                break;
+            }
             default:
                 Next();
                 break;
@@ -3029,6 +3155,8 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight, boo
     }
 
     // ---- Registro de operaciones ----
+    if (split)
+        return; // la disposición nueva lo dibuja aparte (OperationLog), al final de su columna
     ImGui::Spacing();
     Coloured(IlionTheme::ShellPal::Dim, "REGISTRO DE OPERACIONES");
     ImGui::PushStyleColor(ImGuiCol_ChildBg, toneMapColor(panel));
@@ -3049,6 +3177,21 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight, boo
     }
     ImGui::EndChild();
     ImGui::PopStyleColor();
+}
+
+// El registro de operaciones sin barra propia (la columna ya se desplaza): las últimas 40
+static void OperationLog()
+{
+    const float font = ImGui::GetFontSize();
+    const Saved saved = ReadSaved();
+    ImGui::PushFont(UiFont(), std::floor(font * 0.92f));
+    if (steps.empty())
+        Coloured(IlionTheme::ShellPal::Dim,
+                 saved.exists ? StrFmt("Perfil guardado: modo %s · %s", saved.modeName.c_str(), saved.date.c_str()).c_str() : "Sin operaciones. Pulsa OPTIMIZAR JUEGO.",
+                 true);
+    for (size_t i = steps.size() > 40 ? steps.size() - 40 : 0; i < steps.size(); i++)
+        Row(steps[i].mark, steps[i].title, steps[i].detail);
+    ImGui::PopFont();
 }
 
 // La resolución interna real que el juego envía: un cambio en la misma sesión del juego (sin reiniciar) se anota, con su
@@ -3079,7 +3222,7 @@ template <typename Ctx> static void Controls(Ctx& ctx, bool split = false);
 // ILION COMMUNITY (ilion_community.inl, incluido después): la columna derecha de PERFILES
 namespace IlionCommunityUi
 {
-template <typename Ctx> static void Panel(Ctx& ctx);
+template <typename Ctx> static void ProfilesPanel(Ctx& ctx);
 }
 
 namespace IlionProfiles
@@ -3104,33 +3247,11 @@ template <typename Ctx> static void Panel(Ctx& ctx)
 
     const float font = ImGui::GetFontSize();
 
-    // Industrial y Clean Olive en su presentación Completa: tres columnas (optimizador | configuración actual | ILION
-    // COMMUNITY). Cada columna desplaza su propio contenido; la página no se desplaza. Compacta e ILION Tradicional
-    // conservan la disposición de siempre y no dibujan nada de la comunidad
+    // Industrial y Clean Olive en su presentación Completa: PERFILES en dos columnas (configuración y acciones | información
+    // técnica) con la alerta fija arriba; la comunidad es otra sección. Compacta e ILION Tradicional conservan la de siempre
     if (shellActive && IlionTheme::shell && !shellCompact)
     {
-        const float height = (std::max)(ImGui::GetContentRegionAvail().y, font * 24.0f);
-        ImGui::PushStyleColor(ImGuiCol_TableBorderLight, toneMapColor(IlionTheme::ShellPal::Line));
-        ImGui::PushStyleColor(ImGuiCol_TableBorderStrong, toneMapColor(IlionTheme::ShellPal::Line));
-        if (ImGui::BeginTable("##IlionProfiles3", 3, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_NoSavedSettings))
-        {
-            ImGui::TableSetupColumn("##controls", ImGuiTableColumnFlags_WidthStretch, 0.92f);
-            ImGui::TableSetupColumn("##current", ImGuiTableColumnFlags_WidthStretch, 1.40f);
-            ImGui::TableSetupColumn("##community", ImGuiTableColumnFlags_WidthStretch, 1.18f);
-            ImGui::TableNextRow();
-            const auto column = [&](int index, const char* id, const auto& body)
-            {
-                ImGui::TableSetColumnIndex(index);
-                if (ImGui::BeginChild(id, ImVec2(0.0f, height), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground))
-                    body();
-                ImGui::EndChild();
-            };
-            column(0, "##ProfilesLeft", [&]() { Controls(ctx, true); });
-            column(1, "##ProfilesCenter", [&]() { ActiveMonitor(ctx, 1.0f, true); });
-            column(2, "##ProfilesCommunity", [&]() { IlionCommunityUi::Panel(ctx); });
-            ImGui::EndTable();
-        }
-        ImGui::PopStyleColor(2);
+        IlionCommunityUi::ProfilesPanel(ctx);
         return;
     }
 
@@ -3156,6 +3277,92 @@ template <typename Ctx> static void Panel(Ctx& ctx)
 
     if (columns)
         ImGui::EndTable();
+}
+
+// ---- Disposición nueva (Industrial y Clean Olive completos): el optimizador, su propuesta y el diagnóstico del FG ----
+// Los cuatro modos, la explicación breve, la propuesta de la última optimización y OPTIMIZAR JUEGO (sin el aviso: está
+// fijo arriba)
+static const char* ShortText(Mode m);
+
+static void OptimizerBlock()
+{
+    const float font = ImGui::GetFontSize();
+    ImGui::BeginDisabled(running);
+    const float modeWidth = std::floor((ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2.0f);
+    for (int i = 0; i < (int) Mode::Count; i++)
+    {
+        if (i % 2 == 1)
+            ImGui::SameLine();
+        const bool selected = (int) mode == i;
+        if (selected)
+            ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPilot(IlionTheme::ShellPal::Green)));
+        if (IlionTheme::Button(StrFmt("%s##OptMode%d", ModeName((Mode) i), i).c_str(), ImVec2(modeWidth, 0.0f)))
+            mode = (Mode) i;
+        if (selected)
+            ImGui::PopStyleColor();
+    }
+    ImGui::EndDisabled();
+    Coloured(IlionTheme::ShellPal::Text2, ShortText(mode), true);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::BeginTooltip();
+        ImGui::PushTextWrapPos(font * 26.0f);
+        ImGui::TextUnformatted(PolicyOf(mode).text);
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
+    }
+    ImGui::Spacing();
+    // Propuesta: lo que decidió la última optimización (nada inventado antes de optimizar)
+    if (finished && !plan.scaler.name.empty())
+    {
+        Row(Mark::Info, "Escalador: " + plan.scaler.name, plan.scalerStage == Stage::Recommended ? "recomendado, no aplicado" : std::string());
+        if (plan.preset >= 0)
+            Row(Mark::Info, std::string("Preset: ") + kPresets[plan.preset].name, plan.viaMenu ? "se elige en el menú del juego" : std::string());
+        const std::string fgName = plan.fg == FgRoute::Alt         ? IlionCommunity::NameOf(IlionCommunity::kFgs, plan.fgAltId)
+                                   : plan.fg == FgRoute::XeFgNew   ? std::string("XeFG")
+                                   : plan.fg == FgRoute::XeFgFixed ? std::string("XeFG")
+                                   : plan.fg == FgRoute::DlssgGame ? std::string(IlionCommunity::NameOf(IlionCommunity::kFgs, plan.fgActiveId))
+                                   : plan.fg == FgRoute::DlssgOutput ? std::string("Salida DLSSG de ILION")
+                                   : plan.fg == FgRoute::FsrFg     ? std::string("FSR FG")
+                                                                   : std::string("sin cambio de FG");
+        Row(Mark::Info, plan.fg == FgRoute::None ? "Frame Generation: " + fgName : StrFmt("Frame Generation: %s %dX fijo", fgName.c_str(), plan.count + 1),
+            plan.restartFg ? "se aplica al reiniciar el juego" : std::string());
+    }
+    else if (!running)
+        Coloured(IlionTheme::ShellPal::Dim, "Pulsa OPTIMIZAR JUEGO: la propuesta aparece aquí y su explicación a la derecha.", true);
+    ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPal::Orange));
+    if (IlionTheme::Button(running ? "OPTIMIZANDO...##ProfilesGo" : "OPTIMIZAR JUEGO##ProfilesGo", ImVec2(ImGui::GetContentRegionAvail().x, std::floor(font * 2.4f))) &&
+        !running)
+    {
+        Begin();
+        fromOptimize = true;
+    }
+    ImGui::PopStyleColor();
+}
+
+// Qué FG corre, qué eligió la optimización y por qué se descartó cada candidato (columna técnica)
+static void FgDiagnosis()
+{
+    const auto status = IlionDynamicMfg::Get();
+    const std::string active = CurrentFgId();
+    Row(active == "ninguno" ? Mark::Info : Mark::Ok, std::string("Cargado ahora: ") + IlionCommunity::NameOf(IlionCommunity::kFgs, active),
+        status.provider == IlionDynamicMfg::Provider::None ? std::string("sin proveedor de FG activo")
+                                                           : StrFmt("proveedor %s%s", status.name, Generating(status) ? StrFmt(", generando %dX", status.multiplier).c_str() : ", sin generar"));
+    const auto config = Config::Instance();
+    if (State::Instance().activeFgNvngx == FGNvngxReplacement::Nukems && !config->FGNvngxReplacement.has_value())
+        Row(Mark::Wait, "Nukem es el reemplazo DLSSG por defecto de OptiScaler",
+            "Está cargado porque la entrada o la salida de FG es DLSSG y no se eligió otro reemplazo; no lo eligió el optimizador");
+    if (!finished || plan.fgDiag.empty())
+    {
+        Coloured(IlionTheme::ShellPal::Dim, "La comparación de implementaciones aparece al optimizar.", true);
+        return;
+    }
+    Coloured(IlionTheme::ShellPal::Text2, "Preferencia acordada: DLSS Enabler, XeFG, Nukem, el resto", true);
+    for (const auto& dg : plan.fgDiag)
+        Row(dg.first == 2 ? Mark::Ok : dg.first == 1 ? Mark::Info : Mark::Wait, (dg.first == 2 ? "Elegido · " : "") + dg.second, std::string());
+    if (!plan.fgWhy.empty())
+        Coloured(IlionTheme::ShellPal::Dim, ("Decisión: " + plan.fgWhy).c_str(), true);
 }
 
 // ---- Controles: juego y GPU, modos, OPTIMIZAR JUEGO con su aviso, guardar, cargar y restaurar ----

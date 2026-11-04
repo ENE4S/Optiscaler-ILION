@@ -337,6 +337,18 @@ inline int FgMaxMultiplier(const std::string& fg, const std::string& arch)
     return 4; // xefg, dlssg_salida
 }
 
+// Preferencia acordada entre candidatos válidos (no sustituye ninguna comprobación técnica): 1 DLSS Enabler, 2 XeFG / XeMFG,
+// 3 Nukem, 4 el resto según su evidencia. Lo que no aparece aquí (DLSSG del juego) no se elige: es del propio juego
+inline const char* const kFgPreference[] = { "nvngx_enabler", "xefg", "nvngx_nukem", "dlssg_nativo", "fsr_fg", "nvngx_ffx", "nvngx_combo", "nvngx_fglite" };
+
+inline int FgPreferenceRank(const std::string& id)
+{
+    for (int i = 0; i < (int) std::size(kFgPreference); i++)
+        if (id == kFgPreference[i])
+            return i;
+    return 1000;
+}
+
 // Recomendable automáticamente: solo con evidencia oficial o comunitaria (las experimentales, a mano)
 inline bool FgRecommendable(const std::string& fg, const std::string& arch)
 {
@@ -800,7 +812,10 @@ inline AddResult AddOrUpdate(std::vector<Profile>& list, const Profile& p)
     {
         if (e.id == p.id)
         {
-            if (e.author != p.author || e.authorId != p.authorId)
+            // La identidad de servidor manda; sin ella, el alias sin distinguir mayúsculas (Ene = ENE) y la procedencia
+            const auto lower = [](std::string s) { std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return (char) std::tolower(c); }); return s; };
+            const bool sameOwner = !e.authorId.empty() || !p.authorId.empty() ? e.authorId == p.authorId : lower(e.author) == lower(p.author);
+            if (!sameOwner || (e.origin != p.origin && (e.origin == "comunidad" || p.origin == "comunidad")))
                 return AddResult::NotOwner;
             e = p;
             return AddResult::Updated;
@@ -838,15 +853,19 @@ struct Check
 {
     Level level;
     std::string text;
-    bool note = false; // aviso general (no verificado técnicamente): no cuenta para el grado de compatibilidad
+    bool note = false;         // aviso general (no verificado técnicamente): no cuenta para el grado de compatibilidad
+    bool component = false;    // falta un componente o un ajuste (se resuelve instalando o configurando, no es imposible)
+    bool experimental = false; // evidencia experimental o insuficiente
 };
 
 // Grado de compatibilidad: confirmada (todo coincide), parcial (utilizable, con diferencias) o no compatible
 enum class Fit
 {
-    Confirmed,
-    Partial,
-    Incompatible,
+    Confirmed,       // compatible
+    Partial,         // compatible, con diferencias (otra GPU de la misma arquitectura, otra resolución)
+    NeedsComponents, // falta instalar algo o el juego no ofrece ahora la entrada: requiere componentes o ajustes
+    Experimental,    // la implementación es experimental en esta arquitectura
+    Incompatible,    // no puede funcionar en este equipo
 };
 
 inline std::vector<Check> Compatibility(const Profile& p, const Machine& m)
@@ -869,12 +888,12 @@ inline std::vector<Check> Compatibility(const Profile& p, const Machine& m)
     if (!ts.possible)
         out.push_back({ Level::Bad, std::string(NameOf(kTechs, p.tech)) + ": incompatible con tu GPU. " + ts.why });
     else if (m.techs.count(p.tech) == 0)
-        out.push_back({ Level::Bad, std::string(NameOf(kTechs, p.tech)) + ": no está instalada o no se puede usar ahora" });
+        out.push_back({ Level::Bad, std::string(NameOf(kTechs, p.tech)) + ": no está instalada o no se puede usar ahora", false, true });
     else
         out.push_back({ ts.validated ? Level::Ok : Level::Warn,
                         std::string(NameOf(kTechs, p.tech)) + (ts.validated ? ": disponible" : ": disponible, sin validar en tu arquitectura") });
     if (p.model == "int8lite" && !m.liteOffered)
-        out.push_back({ Level::Bad, "INT8Lite: el selector de FSR 4 no lo ofrece en tu equipo" });
+        out.push_back({ Level::Bad, "INT8Lite: el selector de FSR 4 no lo ofrece en tu equipo", false, true });
     const int maxMult = FgMaxMultiplier(p.fg, m.arch);
     if (p.fg != "ninguno")
     {
@@ -883,15 +902,19 @@ inline std::vector<Check> Compatibility(const Profile& p, const Machine& m)
         if (ev == Evidence::None)
             out.push_back({ Level::Bad, fgName + ": no compatible con tu arquitectura (" + NameOf(kArchs, m.arch) + ")" });
         else if (m.fgs.count(p.fg) == 0)
-            out.push_back({ Level::Bad, fgName + ": no está instalado o no se puede usar en este juego ahora" });
+            out.push_back({ Level::Bad, fgName + ": no está instalado o no se puede usar en este juego ahora", false, true });
         else if (p.multiplier > maxMult)
             out.push_back({ Level::Bad, fgName + " " + std::to_string(p.multiplier) + "X: admite hasta " + std::to_string(maxMult) + "X" });
         else if (p.fgRoute != "auto" && p.fgRoute != "juego" && m.routes.count(p.fgRoute) == 0)
-            out.push_back({ Level::Bad, std::string("Entrada de FG «") + NameOf(kRoutes, p.fgRoute) + "»: no disponible en este juego" });
+            out.push_back({ Level::Bad, std::string("Entrada de FG «") + NameOf(kRoutes, p.fgRoute) + "»: no disponible en este juego ahora", false, true });
         else
-            out.push_back({ ev == Evidence::Official || ev == Evidence::Community ? Level::Ok : Level::Warn,
+        {
+            const bool solid = ev == Evidence::Official || ev == Evidence::Community;
+            out.push_back({ solid ? Level::Ok : Level::Warn,
                             fgName + " " + std::to_string(p.multiplier) + "X fijo · " + EvidenceText(ev) +
-                                " (el proveedor confirma su máximo al cargarse)" });
+                                (p.fgRoute == "auto" ? " · ruta automática (perfil v1)" : "") + " (el proveedor confirma su máximo al cargarse)",
+                            false, false, !solid });
+        }
     }
     out.push_back({ Level::Warn,
                     p.review == "aprobado" ? "Revisado por moderación, no verificado técnicamente en tu equipo"
@@ -902,19 +925,33 @@ inline std::vector<Check> Compatibility(const Profile& p, const Machine& m)
 
 inline Fit Overall(const std::vector<Check>& checks)
 {
-    bool partial = false;
+    bool partial = false, components = false, experimental = false;
     for (const auto& c : checks)
     {
-        if (c.level == Level::Bad)
+        if (c.level == Level::Bad && !c.component)
             return Fit::Incompatible;
-        partial = partial || (c.level == Level::Warn && !c.note);
+        components = components || (c.level == Level::Bad && c.component);
+        experimental = experimental || c.experimental;
+        partial = partial || (c.level == Level::Warn && !c.note && !c.experimental);
     }
-    return partial ? Fit::Partial : Fit::Confirmed;
+    return components ? Fit::NeedsComponents : experimental ? Fit::Experimental : partial ? Fit::Partial : Fit::Confirmed;
 }
 
 inline const char* FitText(Fit f)
 {
-    return f == Fit::Confirmed ? "Compatibilidad confirmada" : f == Fit::Partial ? "Compatibilidad parcial" : "No compatible con este equipo";
+    switch (f)
+    {
+    case Fit::Confirmed:
+        return "Compatible";
+    case Fit::Partial:
+        return "Compatible, con diferencias";
+    case Fit::NeedsComponents:
+        return "Requiere componentes o ajustes";
+    case Fit::Experimental:
+        return "Experimental en este equipo";
+    default:
+        return "No compatible con este equipo";
+    }
 }
 
 inline bool Blocking(const std::vector<Check>& checks)
@@ -931,7 +968,15 @@ inline std::vector<size_t> RankByDownloads(const std::vector<Profile>& list)
     std::vector<size_t> order(list.size());
     for (size_t i = 0; i < order.size(); i++)
         order[i] = i;
-    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return list[a].downloads > list[b].downloads; });
+    std::stable_sort(order.begin(), order.end(),
+                     [&](size_t a, size_t b)
+                     {
+                         if (list[a].downloads != list[b].downloads)
+                             return list[a].downloads > list[b].downloads;
+                         if (list[a].created != list[b].created)
+                             return list[a].created < list[b].created; // a igualdad, el que se publicó antes
+                         return list[a].id < list[b].id;
+                     });
     return order;
 }
 
@@ -1461,9 +1506,14 @@ inline std::pair<bool, std::string> ClaimAlias(const ServiceConfig& c, Session& 
 inline std::pair<bool, std::string> Publish(const ServiceConfig& c, Session& s, Profile& p)
 {
     if (s.alias.empty())
-        return { false, "Reserva primero tu alias" };
-    if (p.author != s.alias)
-        return { false, "El perfil está firmado como «" + p.author + "», tu alias es «" + s.alias + "»" };
+        return { false, "Reserva primero tu alias público" };
+    // Solo perfiles creados en este equipo (o ya publicados por esta misma cuenta): nunca uno descargado o importado de
+    // otro autor. La firma pública es siempre el alias de la cuenta, no el texto guardado en el perfil
+    if (p.origin != "local")
+        return { false, "Solo puedes publicar perfiles creados por ti en este equipo (este es descargado o importado)" };
+    if (!p.authorId.empty() && p.authorId != s.userId)
+        return { false, "Este perfil lo publicó otra cuenta" };
+    p.author = s.alias;
     std::string err;
     if (!Validate(p, &err))
         return { false, err };
@@ -1490,7 +1540,7 @@ inline std::pair<bool, std::string> Publish(const ServiceConfig& c, Session& s, 
     p.version = j[0].value("version", p.version);
     p.review = j[0].value("status", std::string("pendiente"));
     p.origin = "local";
-    return { true, update ? "Perfil actualizado: queda pendiente de revisión" : "Perfil publicado: queda pendiente de revisión antes de aparecer en el catálogo" };
+    return { true, update ? "Perfil actualizado. Pendiente de moderación" : "Perfil enviado. Pendiente de moderación" };
 }
 
 // Los perfiles publicados por la cuenta, con su estado de moderación y descargas (la política de lectura deja ver los

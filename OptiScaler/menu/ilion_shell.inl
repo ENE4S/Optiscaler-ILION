@@ -382,6 +382,14 @@ static void Icon(int kind, ImVec2 c, float s, ImU32 col)
         dl->AddLine(p(-h * 0.35f, h * 0.45f), p(-h * 0.08f, h * 0.7f), col, t);
         dl->AddLine(p(-h * 0.08f, h * 0.7f), p(h * 0.45f, h * 0.2f), col, t);
         break;
+    case 12: // community: three people, the middle one in front
+        dl->AddCircle(p(0, -h * 0.42f), h * 0.3f, col, 0, t);
+        dl->AddBezierCubic(p(-h * 0.55f, h * 0.75f), p(-h * 0.5f, h * 0.05f), p(h * 0.5f, h * 0.05f), p(h * 0.55f, h * 0.75f), col, t);
+        dl->AddCircle(p(-h * 0.72f, -h * 0.22f), h * 0.22f, col, 0, t);
+        dl->AddCircle(p(h * 0.72f, -h * 0.22f), h * 0.22f, col, 0, t);
+        dl->AddLine(p(-h * 1.0f, h * 0.55f), p(-h * 0.72f, h * 0.18f), col, t);
+        dl->AddLine(p(h * 1.0f, h * 0.55f), p(h * 0.72f, h * 0.18f), col, t);
+        break;
     }
 }
 
@@ -567,17 +575,26 @@ static const Section kSections[] = {
         "Detecta o jogo e o hardware e aplica um perfil por jogo (experimental)",
         "Определение игры и оборудования, профиль для игры (эксперимент)" },
       { "Profiles" } },
+    // ILION Comunidad: its own module in the Full presentation only (Compact leaves it out of its tabs)
+    { { "COMMUNITY", "COMUNIDAD", "COMUNIDADE", "СООБЩЕСТВО" },
+      { "ILION Community", "Comunidad ILION", "Comunidade ILION", "Сообщество ILION" },
+      { "Profiles shared by ILION users: ranking, explore and your contributions",
+        "Perfiles compartidos por usuarios de ILION: clasificación, explorar y tus aportes",
+        "Perfis compartilhados por usuários do ILION: ranking, explorar e suas contribuições",
+        "Профили пользователей ILION: рейтинг, обзор и ваши публикации" },
+      { "Community" } },
 };
 // clang-format on
 
 constexpr int kSectionCount = (int) std::size(kSections);
 constexpr int kProfilesSection = 8;
-// The order of the modules in the sidebar and in Compact's tabs
-static const int kNavOrder[] = { 0, kProfilesSection, 1, 2, 3, 4, 5, 6, 7 };
+constexpr int kCommunitySection = 9; // Full presentation only
+// The order of the modules in the sidebar and in Compact's tabs (Compact skips the community)
+static const int kNavOrder[] = { 0, kProfilesSection, kCommunitySection, 1, 2, 3, 4, 5, 6, 7 };
 static_assert(std::size(kNavOrder) == kSectionCount);
 
 // The icon of a section (Profiles draws its own, kind 11)
-static int IconOf(int sectionIndex) { return sectionIndex == kProfilesSection ? 11 : sectionIndex; }
+static int IconOf(int sectionIndex) { return sectionIndex == kProfilesSection ? 11 : sectionIndex == kCommunitySection ? 12 : sectionIndex; }
 
 static int LangIndex()
 {
@@ -1345,6 +1362,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         { 7, { "Compatibility", "Compatibilidad", "Compatibilidade", "Совместимость" }, "Compatibility", &lCompat, 0 },
         { 7, { "Log", "Registro", "Registro", "Журнал" }, "Help / Status", &lLog, 0 },
         { 8, { "Profiles", "Perfiles", "Perfis", "Профили" }, "Profiles", nullptr, 0 },
+        { 9, { "Community", "Comunidad", "Comunidade", "Сообщество" }, "Community", nullptr, 0 },
     };
     // clang-format on
     constexpr int subCount = (int) std::size(subs);
@@ -1371,7 +1389,13 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
 
     // ILION dev.71: Clean Olive has no Status & compatibility module (Industrial and Traditional keep it)
     constexpr int kStatusSection = 7;
-    const auto sectionShown = [&](int i) { return !(olive && i == kStatusSection); };
+    const auto sectionShown = [&](int i) { return !(olive && i == kStatusSection) && !(compact && i == kCommunitySection); };
+    // PERFILES → COMPARTIR → COMUNIDAD y COMUNIDAD → DESCARGAR → PERFILES
+    if (IlionCommunityUi::requestedSection >= 0)
+    {
+        section = IlionCommunityUi::requestedSection == 9 ? kCommunitySection : kProfilesSection;
+        IlionCommunityUi::requestedSection = -1;
+    }
     if (!sectionShown(section))
         section = 0;
 
@@ -1468,6 +1492,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         Led::Off,
         Led::Off,
         Led::Off,
+        Led::Off, // community
     };
 
     // ILION dev.72: ILION Advisor's parts as functions of the shell, so another presentation can show them. Each one is
@@ -2080,11 +2105,16 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         // Tabs: the modules, and Diagnostics last
         {
             const float gap = 4.f;
-            const float tabW = std::floor((CW - 24 - gap * (kSectionCount - 1)) / kSectionCount);
+            constexpr int compactTabs = kSectionCount - 1; // the community is not part of Compact
+            const float tabW = std::floor((CW - 24 - gap * (compactTabs - 1)) / compactTabs);
+            int slot = 0;
             for (int n = 0; n < kSectionCount; n++)
             {
                 const int i = kNavOrder[n];
-                const ImVec2 p(12 + n * (tabW + gap), 66), q(12 + n * (tabW + gap) + tabW, 134);
+                if (i == kCommunitySection)
+                    continue;
+                const int at = slot++;
+                const ImVec2 p(12 + at * (tabW + gap), 66), q(12 + at * (tabW + gap) + tabW, 134);
                 const char* caps = i == kDiag ? Lx("DIAGNOSTICS", "DIAGNÓSTICO", "DIAGNÓSTICO", "ДИАГНОСТИКА") : kSections[i].caps[li];
                 At(p.x, p.y);
                 ImGui::PushID(200 + i);

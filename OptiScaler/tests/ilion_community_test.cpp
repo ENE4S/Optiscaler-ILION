@@ -684,6 +684,46 @@ int main()
         CHECK(cat[order[0]].id == "a" && cat[order[1]].id == "b" && cat[order[2]].id == "c", "desempate: antigüedad y después identificador");
     }
 
+    // 15. Community7: estados de publicación, clasificación de más de diez y catálogos de prueba locales
+    {
+        CHECK(std::string(C::NameOf(C::kReviews, "aprobado")) == "Publicado" && std::string(C::NameOf(C::kReviews, "rechazado")) == "Retirado por moderación" &&
+                  std::string(C::NameOf(C::kReviews, "retirado")) == "Retirado del catálogo",
+              "estados: publicado, retirado por moderación, retirado por el autor");
+        CHECK(!C::IsServerReview("local") && !C::IsServerReview("por_publicar"), "un perfil local o preparado no cuenta como publicado");
+
+        // Doce perfiles: el podio son los tres primeros por descargas y el TOP 10 sigue el mismo orden
+        std::vector<C::Profile> many;
+        for (int i = 0; i < 12; i++)
+        {
+            C::Profile q = Sample();
+            q.id = "prueba-" + std::to_string(100 + i);
+            q.downloads = 1000 - i * 37;
+            q.created = "2026-11-0" + std::to_string(1 + i % 3) + "T00:00:00Z";
+            many.push_back(q);
+        }
+        std::swap(many[2], many[9]);
+        const auto order = C::RankByDownloads(many);
+        bool sorted = true;
+        for (size_t i = 1; i < order.size(); i++)
+            sorted = sorted && many[order[i - 1]].downloads >= many[order[i]].downloads;
+        CHECK(sorted && C::PodiumCount(many, order) == 3 && many[order[0]].id == "prueba-100", "doce perfiles: orden por descargas y podio de tres");
+
+        // Los catálogos de prueba del paquete se leen como cualquier caché y son válidos
+        const auto base = std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() / L"ilion-community" / L"prueba";
+        int counts[4] = { -1, -1, -1, -1 };
+        const wchar_t* names[4] = { L"catalogo_prueba_0.json", L"catalogo_prueba_1.json", L"catalogo_prueba_3.json", L"catalogo_prueba_12.json" };
+        bool clean = true;
+        for (int i = 0; i < 4; i++)
+        {
+            const auto r = C::LoadList(base / names[i], C::kMaxCatalogBytes);
+            counts[i] = (int) r.profiles.size();
+            clean = clean && r.warning.empty();
+            for (const auto& q : r.profiles)
+                clean = clean && q.name.rfind("Prueba", 0) == 0 && q.review == "aprobado";
+        }
+        CHECK(counts[0] == 0 && counts[1] == 1 && counts[2] == 3 && counts[3] == 12 && clean, "catálogos de prueba 0 / 1 / 3 / 12 válidos y marcados como prueba");
+    }
+
     printf("ILION COMMUNITY: %d comprobaciones correctas, %d fallos\n", passed, failures);
     std::filesystem::remove_all(root, ec);
     return failures == 0 ? 0 : 1;

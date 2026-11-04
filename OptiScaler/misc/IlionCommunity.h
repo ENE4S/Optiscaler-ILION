@@ -26,7 +26,9 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <memory>
+#include <optional>
 #include <mutex>
 #include <random>
 #include <set>
@@ -103,7 +105,7 @@ inline const Item kReviews[] = { { "local", "Perfil local" },
                                  { "por_publicar", "Pendiente de publicación" },
                                  { "pendiente", "Pendiente de moderación" },
                                  { "aprobado", "Publicado" },
-                                 { "rechazado", "Rechazado" },
+                                 { "rechazado", "Retirado por moderación" },
                                  { "retirado", "Retirado del catálogo" } };
 // Estados que existen en el servidor (los demás solo en este equipo)
 inline bool IsServerReview(const std::string& r) { return r == "pendiente" || r == "aprobado" || r == "rechazado"; }
@@ -1499,7 +1501,18 @@ inline std::pair<bool, std::string> ClaimAlias(const ServiceConfig& c, Session& 
         SaveSession(s);
         return { true, "Alias reservado: " + alias };
     }
-    return { false, r.status == 409 ? std::string("Ese alias ya pertenece a otra cuenta") : ServerError(r) };
+    if (r.status == 409)
+    {
+        // Esta cuenta ya tenía alias (se reserva una sola vez): se recupera en lugar de pedirlo otra vez
+        FetchAlias(c, s);
+        if (!s.alias.empty())
+        {
+            SaveSession(s);
+            return { true, "Tu alias ya estaba registrado: " + s.alias };
+        }
+        return { false, "Ese alias ya pertenece a otra cuenta" };
+    }
+    return { false, ServerError(r) };
 }
 
 // Publica o actualiza (mismo id del servidor = nueva versión del mismo autor; el servidor lo comprueba con su identidad)
@@ -1540,6 +1553,9 @@ inline std::pair<bool, std::string> Publish(const ServiceConfig& c, Session& s, 
     p.version = j[0].value("version", p.version);
     p.review = j[0].value("status", std::string("pendiente"));
     p.origin = "local";
+    // «Publicado» solo si el servidor lo dejó visible (aprobado); con un servidor que aún modera, se dice tal cual
+    if (p.review == "aprobado")
+        return { true, update ? "Publicación actualizada. Visible en EXPLORAR" : "Perfil publicado. Ya es visible en EXPLORAR" };
     return { true, update ? "Perfil actualizado. Pendiente de moderación" : "Perfil enviado. Pendiente de moderación" };
 }
 

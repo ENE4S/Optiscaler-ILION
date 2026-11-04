@@ -2683,7 +2683,8 @@ template <typename Ctx> static Live ReadLive(Ctx& ctx, const Saved& saved)
 // El aviso de la optimización, debajo de OPTIMIZAR JUEGO. Rojo mientras falte algo por aplicar (con la acción concreta y
 // la resolución interna esperada), verde solo cuando todo lo que el perfil gestiona está comprobado con lo que corre de
 // verdad, ámbar cuando ahora no se puede comprobar. Se recalcula en cada fotograma: ILION lo verifica solo
-template <typename Ctx> static void OutcomeBanner(Ctx& ctx, const Saved& saved, const Live& lv)
+// compact: el cuadro pequeño de la columna izquierda (solo lo pendiente; desaparece cuando todo está verificado)
+template <typename Ctx> static void OutcomeBanner(Ctx& ctx, const Saved& saved, const Live& lv, bool compact = false)
 {
     // El plan de una optimización de esta sesión; tras cargar un perfil (Perfiles o ILION COMMUNITY) manda el guardado
     const bool fromPlan = finished && fromOptimize;
@@ -2786,6 +2787,35 @@ template <typename Ctx> static void OutcomeBanner(Ctx& ctx, const Saved& saved, 
     }
 
     const int level = !todo.empty() ? 2 : (!unverifiable.empty() || verified.empty()) ? 1 : 0;
+    if (compact)
+    {
+        // Verificado: nada que hacer, no se dibuja. Sin poder comprobar: una línea ámbar, sin alarma. Pendiente: el cuadro rojo
+        // con solo las acciones, proporcionado a la columna
+        if (level == 0)
+            return;
+        const float f = ImGui::GetFontSize();
+        if (level == 1)
+        {
+            Row(Mark::Wait, "Verificación pendiente", unverifiable.empty() ? std::string("Nada que comprobar todavía") : unverifiable);
+            return;
+        }
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, toneMapColor(ImVec4(0.24f, 0.035f, 0.03f, 1.0f)));
+        ImGui::PushStyleColor(ImGuiCol_Border, toneMapColor(IlionTheme::ShellPal::Red));
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 2.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(std::floor(f * 0.85f), std::floor(f * 0.6f)));
+        if (ImGui::BeginChild("##PendingBox", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding))
+        {
+            Coloured(IlionTheme::ShellPal::Red, fromPlan ? "ACCIONES PENDIENTES" : "PERFIL: ACCIONES PENDIENTES");
+            for (const auto& t : todo)
+                Coloured(IlionTheme::ShellPal::Text, ("→ " + t).c_str(), true);
+            if (!expected.empty())
+                Coloured(IlionTheme::ShellPal::Orange, expected.c_str(), true);
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(2);
+        return;
+    }
     const ImVec4 edge = level == 2 ? IlionTheme::ShellPal::Red
                         : level == 1 ? IlionTheme::ShellPilot(IlionTheme::ShellPal::Yellow)
                                      : IlionTheme::ShellPilot(IlionTheme::ShellPal::Green);
@@ -2907,9 +2937,8 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight, boo
         }
         else if (split)
             Row(Mark::Info, "Modelo: no aplica", current != nullptr ? "Esta tecnología no tiene modelos FSR 4 que elegir" : std::string());
-        if (split)
-            Row(upscaling ? Mark::Ok : Mark::Wait, upscaling ? "Estado: activo" : "Estado: sin escalar ahora",
-                upscaling ? "El juego envía escalado y este escalador lo procesa" : "El juego no envía escalado ahora");
+        if (split && !upscaling)
+            Coloured(IlionTheme::ShellPal::Dim, "El juego no envía escalado ahora", true);
     };
 
     // ---- Preset y resolución: recomendado, solicitado, activo, acción pendiente y reinicio, cada uno por separado ----
@@ -2940,7 +2969,7 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight, boo
             ImGui::Spacing();
         }
 
-        Row(Mark::Info, std::string("Recomendado: ") + (target >= 0 ? kPresets[target].name : "—"),
+        Row(Mark::Info, std::string(split ? "Recomendado por la optimización: " : "Recomendado: ") + (target >= 0 ? kPresets[target].name : "—"),
             target < 0 ? std::string() : finished ? StrFmt("Última optimización, modo %s", ModeName(mode)) : std::string("Perfil guardado"));
         if (targetViaMenu && target >= 0)
             Row(Mark::Info, "Solicitado: el preset que elija el menú del juego",
@@ -2974,12 +3003,15 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight, boo
             Row(Mark::Info, "Resolución interna antes del perfil: " + saved.prevRes,
                 "Ahora " + ResText(feature->RenderWidth(), feature->RenderHeight()));
         const bool actionPending = upscaling && target >= 0 && !targetReached;
+        // La acción pendiente y el reinicio ya están en el cuadro de pendientes (disposición nueva)
+        if (!split)
         Row(!actionPending ? Mark::Ok : ratioRestart ? Mark::Restart : Mark::Wait,
             !actionPending ? std::string("Acción pendiente: ninguna")
             : ratioRestart ? StrFmt("Acción pendiente: reinicia el juego y después elige «%s» en su menú", GameRowName(target))
             : targetViaMenu ? StrFmt("Acción pendiente: elige «%s» en el menú gráfico del juego", GameRowName(target))
                             : std::string("Acción pendiente: que el juego consulte de nuevo su resolución (cambia la calidad en su menú o reinícialo)"),
             actionPending ? "La optimización del preset no está aplicada hasta entonces" : std::string());
+        if (!split)
         Row(ratioRestart ? Mark::Restart : Mark::Ok,
             ratioRestart ? "Reinicio: necesario (la tabla de calidades cambió en esta sesión)" : "Reinicio: no necesario para el preset",
             std::string());
@@ -2993,7 +3025,7 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight, boo
             if (!whyPreset.empty())
                 Coloured(IlionTheme::ShellPal::Dim, ("Por qué este preset: " + whyPreset).c_str(), true);
         }
-        if (plan.scalerStage == Stage::Failed || plan.scalerStage == Stage::Recommended)
+        if (!split && (plan.scalerStage == Stage::Failed || plan.scalerStage == Stage::Recommended))
             Row(plan.scalerStage == Stage::Failed ? Mark::Bad : Mark::Wait,
                 (plan.scalerStage == Stage::Failed ? "Fallido: " : "Recomendado: ") + plan.scaler.name,
                 plan.scalerStage == Stage::Failed ? "Usa RESTAURAR SESIÓN" : "No aplicado en este modo");
@@ -3019,16 +3051,12 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight, boo
             Row(Mark::Info,
                 none ? std::string("Proveedor: —") : status.own ? std::string("Proveedor: ILION (salida de FG de OptiScaler)") : std::string("Proveedor: el juego (FG propio del juego)"),
                 std::string());
-        if (split)
-            Row(generating ? Mark::Ok : none ? Mark::Info : Mark::Wait,
-                generating ? StrFmt("Generación real: sí, %dX", status.multiplier)
-                : none     ? std::string("Generación real: no hay FG")
-                           : std::string("Generación real: no genera ahora"),
-                generating ? std::string("Lo informa el proveedor de FG en ejecución") : std::string());
         if (dynamic)
             Row(Mark::Wait, "Dynamic: configuración externa", dynamicWhat + ". No es una decisión del perfil; el perfil no lo modifica.");
-        else if (generating)
+        else if (generating && !split)
             Row(Mark::Ok, "Activo: multiplicador fijo", std::string());
+        if (split)
+            return; // lo pendiente y lo recomendado están en el cuadro de pendientes y en la propuesta
         if (fgWanted && !fgLoaded && saved.restart.find("fg") != std::string::npos)
             Row(Mark::Restart, "Pendiente para el próximo inicio: " + saved.fgOutput + (saved.fgCount.empty() ? "" : " " + saved.fgCount),
                 "Aún no cargado en esta sesión");
@@ -3146,7 +3174,7 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight, boo
     }
 
     // ---- Cambios de la última optimización ----
-    if (!changes.empty())
+    if (!changes.empty() && !split) // en la disposición nueva, el resumen está en la propuesta de la izquierda
     {
         ImGui::Spacing();
         Coloured(IlionTheme::ShellPal::Text2, "ÚLTIMA OPTIMIZACIÓN");
@@ -3315,6 +3343,7 @@ static void OptimizerBlock()
     // Propuesta: lo que decidió la última optimización (nada inventado antes de optimizar)
     if (finished && !plan.scaler.name.empty())
     {
+        Coloured(IlionTheme::ShellPal::Text2, "PROPUESTA DE LA ÚLTIMA OPTIMIZACIÓN");
         Row(Mark::Info, "Escalador: " + plan.scaler.name, plan.scalerStage == Stage::Recommended ? "recomendado, no aplicado" : std::string());
         if (plan.preset >= 0)
             Row(Mark::Info, std::string("Preset: ") + kPresets[plan.preset].name, plan.viaMenu ? "se elige en el menú del juego" : std::string());
@@ -3344,11 +3373,6 @@ static void OptimizerBlock()
 // Qué FG corre, qué eligió la optimización y por qué se descartó cada candidato (columna técnica)
 static void FgDiagnosis()
 {
-    const auto status = IlionDynamicMfg::Get();
-    const std::string active = CurrentFgId();
-    Row(active == "ninguno" ? Mark::Info : Mark::Ok, std::string("Cargado ahora: ") + IlionCommunity::NameOf(IlionCommunity::kFgs, active),
-        status.provider == IlionDynamicMfg::Provider::None ? std::string("sin proveedor de FG activo")
-                                                           : StrFmt("proveedor %s%s", status.name, Generating(status) ? StrFmt(", generando %dX", status.multiplier).c_str() : ", sin generar"));
     const auto config = Config::Instance();
     if (State::Instance().activeFgNvngx == FGNvngxReplacement::Nukems && !config->FGNvngxReplacement.has_value())
         Row(Mark::Wait, "Nukem es el reemplazo DLSSG por defecto de OptiScaler",

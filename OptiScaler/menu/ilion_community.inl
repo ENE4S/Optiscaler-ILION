@@ -2736,6 +2736,65 @@ template <typename Ctx> static void CommunityPanel(Ctx& ctx)
 }
 } // namespace IlionCommunityUi
 
-#pragma execution_character_set(pop)
 
 void MenuCommon::RenderCommunityPanel(RenderMenuContext& ctx) { IlionCommunityUi::CommunityPanel(ctx); }
+
+// ESCALADO (Industrial y Clean Olive Completos): quién controla la resolución interna. Sobre los forzados reales de
+// OptiScaler («Forzar todos» / «Forzar por preset de calidad», en Opciones avanzadas), sin un estado propio
+namespace IlionCommunityUi
+{
+template <typename Ctx> static void ResolutionControl(Ctx& ctx)
+{
+    auto config = Config::Instance();
+    IFeature* f = ctx.currentFeature;
+    const bool upscaling = f != nullptr && f->IsInited() && f->RenderWidth() > 0;
+    const float observed = upscaling ? (float) f->TargetWidth() / (float) f->RenderWidth() : 0.0f;
+    const bool ilion = P::IlionControlsRatio();
+    const float imposed = config->UpscaleRatioOverrideValue.value_or_default();
+    const float font = ImGui::GetFontSize();
+
+    IlionTheme::SectionPlate("CONTROL DE RESOLUCIÓN INTERNA");
+    const float bw = std::floor((ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f);
+    const auto choice = [&](const char* label, bool selected) -> bool
+    {
+        if (selected)
+            ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPilot(IlionTheme::ShellPal::Green)));
+        const bool pressed = IlionTheme::Button(label, ImVec2(bw, std::floor(font * 1.8f)));
+        if (selected)
+            ImGui::PopStyleColor();
+        return pressed && !selected;
+    };
+    if (choice("CONTROLADO POR EL JUEGO##RatioGame", !ilion))
+        P::ReleaseRatioToGame();
+    ImGui::SameLine();
+    if (choice("CONTROLADO POR ILION##RatioIlion", ilion))
+        P::GiveRatioToIlion(observed);
+
+    // Estado: impuesto, observado y si el juego aún no ha vuelto a pedir su resolución
+    if (P::IlionControlsRatio())
+        P::Row(P::Mark::Info, StrFmt("ILION impone %.2f (%s) a todas las calidades", imposed,
+                                     P::PresetOf(imposed) >= 0 ? P::kPresets[P::PresetOf(imposed)].name : "?"),
+               P::OwnerOfOverride() == P::RatioOwner::Perfiles ? "Lo puso PERFILES. El menú del juego no cambia la resolución interna"
+                                                               : "Ajuste manual («Forzar todos»). El menú del juego no cambia la resolución interna");
+    else
+        P::Row(P::Mark::Info, "El juego elige la resolución interna en su menú",
+               config->QualityRatioOverrideEnabled.value_or_default() ? "«Forzar por preset de calidad» activo: ILION redefine la proporción de cada fila, el juego elige la fila"
+                                                                      : "Sin forzados de proporción");
+    if (upscaling)
+    {
+        P::Row(P::Mark::Info, StrFmt("Observada: %u×%u → %u×%u (factor %.2f)", f->RenderWidth(), f->RenderHeight(), f->TargetWidth(), f->TargetHeight(), observed),
+               "La resolución que el juego envía ahora");
+        if (P::IlionControlsRatio() && std::fabs(observed - imposed) > imposed * 0.03f)
+            P::Row(P::Mark::Wait, "Pendiente: el juego aún usa la resolución anterior",
+                   P::RatioNeedsRestart(P::LoadRule()) ? "Este juego lee su resolución al arrancar: reinícialo"
+                                                       : "Se aplica cuando el juego vuelva a pedir su resolución: cambia la calidad en su menú o reinícialo");
+    }
+    else
+        P::Row(P::Mark::Info, "Resolución observada: no verificable ahora", "El juego no está escalando (menú o pantalla de carga)");
+    if (!P::IlionControlsRatio())
+        P::Coloured(IlionTheme::ShellPal::Dim, "Si la resolución no cambia al elegir otra calidad en el menú del juego, cambia de calidad otra vez o reinícialo: "
+                                               "el juego debe volver a pedirla.", true);
+}
+} // namespace IlionCommunityUi
+
+#pragma execution_character_set(pop)

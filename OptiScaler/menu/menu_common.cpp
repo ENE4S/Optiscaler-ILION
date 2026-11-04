@@ -18628,6 +18628,12 @@ void MenuCommon::RenderReShadePanel(RenderMenuContext& ctx)
     ReShadeAddAndCatalogue(rs, good, warn);
 }
 
+// ILION Perfiles (ilion_community.inl): CONTROL DE RESOLUCIÓN INTERNA en ESCALADO, presentación Completa
+namespace IlionCommunityUi
+{
+template <typename Ctx> static void ResolutionControl(Ctx& ctx);
+}
+
 // CUSTOM TAB -----------------------------
 struct MenuCommon::MenuBox
 {
@@ -18647,6 +18653,9 @@ const MenuCommon::MenuBox* MenuCommon::GetMenuBoxes(size_t& count)
     static const MenuBox boxes[] = {
         { "upscaler", "Upscaling", "Upscalers",
           [](RenderMenuContext& c) { if (IsUpscalerActive(c.currentFeature)) RenderCard(c, RenderActiveUpscalerSettings); } },
+        { "ilion_ratio_control", "Upscaling", "Internal resolution control",
+          [](RenderMenuContext& c) { if (shellActive && !shellCompact && IlionTheme::shell && IsUpscalerActive(c.currentFeature)) RenderCard(c, [](RenderMenuContext& x) { IlionCommunityUi::ResolutionControl(x); }); },
+          nullptr, false },
         { "upscale_ratio", "Upscaling", "Upscale Ratio Override",
           [](RenderMenuContext& c) { if (IsUpscalerActive(c.currentFeature)) RenderFoldedCard(c, "Advanced: Upscale Ratio Override", "Upscale Ratio Override", RenderUpscaleRatioSettings); } },
         { "output_scaling", "Upscaling", "Output Scaling",

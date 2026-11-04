@@ -1197,7 +1197,8 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
         const float blockWidth = std::ceil(lh + U(6) + labelWidth + U(10) + valueWidth);
         fgCompactStatesWidth = blockWidth;
 
-        const float indent = (std::max)(0.0f, std::floor(ImGui::GetContentRegionAvail().x - blockWidth - U(20)));
+        // ILION Perfiles EXP: 40 px from the right edge (20 px left them against it)
+        const float indent = (std::max)(0.0f, std::floor(ImGui::GetContentRegionAvail().x - blockWidth - U(40)));
         if (indent > 0.0f)
             ImGui::Indent(indent);
         drawStates();

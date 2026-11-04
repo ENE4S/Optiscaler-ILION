@@ -12079,7 +12079,8 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                                     ImGui::BeginTable("##CompactFgColumns", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings);
         if (compactColumns)
         {
-            const float statesWidth = (fgCompactStatesWidth > 0.0f ? fgCompactStatesWidth : ImGui::GetFontSize() * 18.0f) + ImGui::GetFontSize() * 1.25f;
+            // ILION Perfiles EXP: room for the states plus a clear margin from the card's right edge (they sat against it)
+            const float statesWidth = (fgCompactStatesWidth > 0.0f ? fgCompactStatesWidth : ImGui::GetFontSize() * 18.0f) + ImGui::GetFontSize() * 2.75f;
             ImGui::TableSetupColumn("##fgLeft", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("##fgStates", ImGuiTableColumnFlags_WidthFixed, statesWidth);
             ImGui::TableNextRow();
@@ -19984,9 +19985,6 @@ void MenuCommon::RenderExternalFgTab(RenderMenuContext& ctx)
         RenderAfmfSegment(scale, warnColour, running, optiFgOn);
         ImGui::EndTable();
     }
-
-    // ILION COMMUNITY: perfiles de la comunidad, plegable y aparte de los controles de FG de esta pestaña
-    RenderCommunityPanel(ctx);
 }
 
 

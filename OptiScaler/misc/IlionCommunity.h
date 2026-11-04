@@ -703,6 +703,27 @@ inline bool Blocking(const std::vector<Check>& checks)
     return std::any_of(checks.begin(), checks.end(), [](const Check& c) { return c.level == Level::Bad; });
 }
 
+// ---- Ranking por descargas -------------------------------------------------------------------------------------------
+// Las posiciones del catálogo ordenadas por las descargas que registra el servidor, de más a menos (los empates
+// conservan el orden del catálogo; sin dato, -1, al final). El podio (TOP 3) solo admite perfiles con descargas reales:
+// sin descargas no hay puesto, y nada se rellena
+inline std::vector<size_t> RankByDownloads(const std::vector<Profile>& list)
+{
+    std::vector<size_t> order(list.size());
+    for (size_t i = 0; i < order.size(); i++)
+        order[i] = i;
+    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return list[a].downloads > list[b].downloads; });
+    return order;
+}
+
+inline int PodiumCount(const std::vector<Profile>& list, const std::vector<size_t>& order)
+{
+    int n = 0;
+    while (n < 3 && n < (int) order.size() && list[order[n]].downloads > 0)
+        n++;
+    return n;
+}
+
 // ---- Servicio remoto -------------------------------------------------------------------------------------------------
 // servicio.json en la carpeta de datos: { "url": "https://<proyecto>.supabase.co", "anon_key": "<clave pública>" }.
 // Solo la clave pública (anon): las operaciones privilegiadas (moderación) se hacen en el servidor

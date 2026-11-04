@@ -262,6 +262,27 @@ int main()
         CHECK(!st.busy && !st.ok && st.serial >= 1, "excepción capturada");
     }
 
+    // 11. Ranking por descargas reales y podio sin relleno
+    {
+        std::vector<C::Profile> list;
+        const long long counts[] = { 5, -1, 120, 0, 120, 37 };
+        for (int i = 0; i < 6; i++)
+        {
+            C::Profile p = Sample();
+            p.id = "p" + std::to_string(i);
+            p.downloads = counts[i];
+            list.push_back(p);
+        }
+        const auto order = C::RankByDownloads(list);
+        CHECK(order.size() == 6 && list[order[0]].id == "p2" && list[order[1]].id == "p4", "más descargados primero, empate en orden del catálogo");
+        CHECK(list[order[2]].id == "p5" && list[order[3]].id == "p0" && list[order[4]].id == "p3" && list[order[5]].id == "p1", "orden descendente, sin dato al final");
+        CHECK(C::PodiumCount(list, order) == 3, "podio de tres con descargas reales");
+        std::vector<C::Profile> few { list[3], list[0] }; // 0 y 5 descargas
+        CHECK(C::PodiumCount(few, C::RankByDownloads(few)) == 1, "sin descargas no hay puesto");
+        std::vector<C::Profile> none;
+        CHECK(C::RankByDownloads(none).empty() && C::PodiumCount(none, {}) == 0, "catálogo vacío: podio vacío");
+    }
+
     printf("ILION COMMUNITY: %d comprobaciones correctas, %d fallos\n", passed, failures);
     std::filesystem::remove_all(root, ec);
     return failures == 0 ? 0 : 1;

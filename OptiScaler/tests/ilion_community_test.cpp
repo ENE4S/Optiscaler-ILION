@@ -283,6 +283,94 @@ int main()
         CHECK(C::RankByDownloads(none).empty() && C::PodiumCount(none, {}) == 0, "catálogo vacío: podio vacío");
     }
 
+    // 12. Community3: configuración del servicio, estado real, funcionamiento sin conexión, sesión y compatibilidad
+    {
+        Write(root / L"servicio.json", "{ esto no es json");
+        auto s = C::LoadService();
+        CHECK(!s.valid && s.problem.find("no es válido") != std::string::npos, "servicio.json roto: sin configurar, con motivo");
+        Write(root / L"servicio.json", "{\"url\":\"https://p.supabase.co\",\"anon_key\":\"clave con espacios\"}");
+        CHECK(!C::LoadService().valid, "clave con caracteres no válidos rechazada");
+        Write(root / L"servicio.json", "{\"url\":\"https://p.supabase.co/rest?x=1\",\"anon_key\":\"abc\"}");
+        CHECK(!C::LoadService().valid, "dirección con ruta o consulta rechazada");
+        Write(root / L"servicio.json", "{\"url\":\"https://proyecto.supabase.co/\",\"anon_key\":\"eyJh.eyJ.sig-_\"}");
+        s = C::LoadService();
+        CHECK(s.valid && s.url == "https://proyecto.supabase.co", "configuración válida, barra final quitada");
+
+        C::HttpResult r;
+        CHECK(C::Classify(r) == C::ServiceState::Offline, "sin respuesta: sin conexión");
+        r.status = 200;
+        CHECK(C::Classify(r) == C::ServiceState::Connected, "200: conectado");
+        r.status = 401;
+        CHECK(C::Classify(r) == C::ServiceState::KeyRejected, "401: clave rechazada");
+        r.status = 404;
+        CHECK(C::Classify(r) == C::ServiceState::SchemaMissing, "404: falta el esquema");
+        r.status = 400;
+        r.body = "{\"code\":\"PGRST205\"}";
+        CHECK(C::Classify(r) == C::ServiceState::SchemaMissing, "PGRST205: falta el esquema");
+        r.status = 500;
+        r.body.clear();
+        CHECK(C::Classify(r) == C::ServiceState::ServerError, "500: error del servicio");
+        CHECK(std::string(C::ServiceStateText(C::ServiceState::Unchecked)) != C::ServiceStateText(C::ServiceState::Connected),
+              "configurado no se muestra como conectado");
+
+        // Sin conexión: el estado lo dice y la caché del catálogo sigue disponible
+        std::vector<C::Profile> cached { Sample() };
+        cached[0].id = "11111111-2222-3333-4444-555555555555";
+        cached[0].origin = "comunidad";
+        CHECK(C::SaveList(root / L"catalogo.json", cached), "caché del catálogo guardada");
+        Write(root / L"servicio.json", "{\"url\":\"https://127.0.0.1:9\",\"anon_key\":\"abc.def\"}");
+        s = C::LoadService();
+        const auto f = C::FetchCatalog(s, nullptr);
+        CHECK(!f.first && (C::ServiceState) C::LastServiceState().load() == C::ServiceState::Offline, "sin conexión detectado de verdad");
+        const auto back = C::LoadList(root / L"catalogo.json");
+        CHECK(back.profiles.size() == 1 && back.profiles[0].id == cached[0].id, "catálogo consultable sin conexión tras el fallo");
+
+        // Sin sesión no se cuenta ni se publica nada (no llega a hacerse la petición)
+        C::Session none;
+        const auto t0 = GetTickCount64();
+        CHECK(!C::RegisterDownload(s, none, cached[0].id).first, "descarga sin sesión: no cuenta");
+        std::vector<C::Profile> mineOut;
+        CHECK(!C::FetchMine(s, none, mineOut).first, "mis publicaciones sin sesión: rechazado");
+        CHECK(!C::Withdraw(s, none, cached[0].id).first, "retirar sin sesión: rechazado");
+        C::Profile pub = Sample();
+        CHECK(!C::Publish(s, none, pub).first, "publicar sin alias ni sesión: rechazado");
+        CHECK(GetTickCount64() - t0 < 1000, "sin sesión no hay petición de red");
+        C::Session fake;
+        fake.accessToken = "a";
+        fake.userId = "u";
+        CHECK(!C::Withdraw(s, fake, "../../x").first, "identificador no válido rechazado");
+
+        // Grado de compatibilidad
+        C::Machine m;
+        m.api = "DX12";
+        m.arch = "rdna2";
+        m.gpu = "AMD Radeon RX 6600";
+        m.gameExe = "acvalhalla.exe";
+        m.outW = 2560;
+        m.outH = 1440;
+        m.techs = { "xess" };
+        m.fgs = { "ninguno", "xefg" };
+        C::Profile p = Sample();
+        CHECK(C::Overall(C::Compatibility(p, m)) == C::Fit::Confirmed, "mismo equipo: compatibilidad confirmada");
+        m.gpu = "AMD Radeon RX 6700 XT";
+        CHECK(C::Overall(C::Compatibility(p, m)) == C::Fit::Partial, "otra GPU de la misma arquitectura: parcial");
+        m.techs.clear();
+        CHECK(C::Overall(C::Compatibility(p, m)) == C::Fit::Incompatible, "tecnología ausente: no compatible");
+        m.techs = { "xess" };
+        m.fgs.insert("fsr_fg");
+        p.fg = "fsr_fg";
+        p.multiplier = 3; // FSR FG solo admite 2X
+        CHECK(C::Overall(C::Compatibility(p, m)) == C::Fit::Incompatible, "multiplicador no admitido: no compatible");
+
+        // Un perfil con campos de más (órdenes, rutas) no los conserva ni los ejecuta
+        auto j = C::ToJson(Sample());
+        j["comando"] = "cmd.exe /c calc";
+        j["dll"] = "C:\\evil.dll";
+        C::Profile q;
+        const bool parsed = C::ParseProfileText(j.dump(), q, nullptr);
+        CHECK(!parsed || (!C::ToJson(q).contains("comando") && !C::ToJson(q).contains("dll")), "campos extra (órdenes, DLL) descartados");
+    }
+
     printf("ILION COMMUNITY: %d comprobaciones correctas, %d fallos\n", passed, failures);
     std::filesystem::remove_all(root, ec);
     return failures == 0 ? 0 : 1;

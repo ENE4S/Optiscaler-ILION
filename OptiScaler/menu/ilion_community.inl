@@ -5,7 +5,8 @@
 // (ApplyFile: puntos de restauración, selección del escalador por el catálogo, FG por la configuración) y su aviso rojo /
 // verde (OutcomeBanner), que verifica con lo que corre de verdad.
 //
-// Sin telemetría: nada sale del equipo sin pulsar ACTUALIZAR CATÁLOGO, DESCARGAR, PUBLICAR o los botones de la cuenta.
+// Sin telemetría: al abrir la columna se consulta el catálogo público (y se renueva la sesión guardada); nada más sale del
+// equipo sin pulsar ACTUALIZAR CATÁLOGO, DESCARGAR, PUBLICAR, RETIRAR o los botones de la cuenta.
 // La red la hace curl.exe en su propio proceso desde un hilo de trabajo; la interfaz nunca espera.
 //
 // Incluido por menu_common.cpp después de ilion_profiles.inl. Guardado en UTF-8 con BOM.
@@ -65,6 +66,11 @@ static bool confirmPublish = false;
 static std::string publishId;
 static std::shared_ptr<C::Profile> publishResult; // el perfil que publica el hilo de trabajo
 
+// Servicio y perfiles propios publicados
+static bool autoChecked = false; // la comprobación real del servicio al abrir la columna por primera vez
+static auto mineRemote = std::make_shared<std::vector<C::Profile>>();
+static std::string withdrawId; // retirada pendiente de confirmar
+
 // Cuenta
 static char email[128] = {};
 static char code[16] = {};
@@ -80,6 +86,26 @@ static void Say(bool ok, const std::string& text)
     messageOk = ok;
     message = text;
 }
+
+// Un trabajo del hilo que necesita la sesión: la renueva antes si ha caducado
+template <typename F> static void RunWithSession(const char* task, const std::string& kind, F fn)
+{
+    const auto cfg = service;
+    *jobSession = session;
+    auto js = jobSession;
+    jobKind = kind;
+    worker.Start(task,
+                 [cfg, js, fn]() -> std::pair<bool, std::string>
+                 {
+                     if (!js->Active() || js->expires < (long long) std::time(nullptr))
+                         if (auto r = C::Refresh(cfg, *js); !r.first)
+                             return r;
+                     return fn(cfg, *js);
+                 });
+}
+
+// La configuración de ILION justo antes de la última activación de un perfil de la comunidad (para volver a ella)
+static std::filesystem::path SnapshotPath() { return P::FileOf(L".antes-comunidad.ini"); }
 
 static void AddWarning(const std::string& w)
 {
@@ -380,10 +406,22 @@ template <typename Ctx> static bool Apply(Ctx& ctx, const C::Profile& p, std::st
         out = "No se pudo escribir el perfil";
         return false;
     }
+    // Instantánea de la configuración actual: RESTAURAR LA CONFIGURACIÓN ANTERIOR vuelve exactamente a ella
+    P::SaveSnapshot(SnapshotPath(), "configuración anterior a activar un perfil de la comunidad", f);
+    if (!P::Exists(SnapshotPath()))
+    {
+        out = "No se activó: no se pudo guardar la configuración actual para poder restaurarla";
+        return false;
+    }
     P::ApplyFile(ctx, P::ProfilePath(), "perfil", "Perfil de la comunidad", false);
+    // El modo del optimizador pasa a ser el del perfil
+    for (int i = 0; i < 4; i++)
+        if (p.mode == C::kModes[i].id)
+            P::mode = (P::Mode) i;
+    P::modeLoaded = true;
     applied = p.id;
-    out = "Aplicado con los mecanismos de Perfiles. Copia del perfil anterior: " + wstring_to_string(backup.filename().wstring()) +
-          " · puntos de restauración en ILION\\Perfiles. Comprueba el aviso: verde solo cuando todo corre de verdad";
+    out = "Perfil activado con los mecanismos de Perfiles: escalador, modelo, preset y FG fijo escritos en la configuración. "
+          "El resultado real se comprueba abajo: verde solo cuando todo corre de verdad";
     return true;
 }
 
@@ -493,6 +531,8 @@ static void Card(const C::Profile& p, const char* list, bool showDownloads, cons
     ImGui::PopID();
 }
 
+static void DownloadProfile(const C::Profile& p);
+
 template <typename Ctx> static void Preview(Ctx& ctx)
 {
     if (previewKey.empty())
@@ -531,6 +571,11 @@ template <typename Ctx> static void Preview(Ctx& ctx)
     ImGui::Spacing();
     P::Coloured(IlionTheme::ShellPal::Text2, "COMPATIBILIDAD CON ESTE EQUIPO");
     const auto checks = C::Compatibility(preview, MachineOf(ctx));
+    {
+        const C::Fit fit = C::Overall(checks);
+        P::Row(fit == C::Fit::Confirmed ? P::Mark::Ok : fit == C::Fit::Partial ? P::Mark::Wait : P::Mark::Bad, C::FitText(fit),
+               fit == C::Fit::Partial ? "Utilizable: las diferencias se indican debajo" : std::string());
+    }
     for (const auto& c : checks)
         P::Row(c.level == C::Level::Ok ? P::Mark::Ok : c.level == C::Level::Warn ? P::Mark::Wait : P::Mark::Bad, c.text, std::string());
     P::Coloured(IlionTheme::ShellPal::Dim,
@@ -539,27 +584,54 @@ template <typename Ctx> static void Preview(Ctx& ctx)
                 true);
 
     const bool blocked = C::Blocking(checks);
+    // Descargar no activa: solo un perfil descargado (o propio) se puede activar
+    const bool local = previewKey.rfind("dl:", 0) == 0 || previewKey.rfind("mine:", 0) == 0 ||
+                       std::any_of(downloaded.begin(), downloaded.end(), [](const C::Profile& d) { return d.id == preview.id; });
     ImGui::Spacing();
     if (blocked)
-        P::Row(P::Mark::Bad, "No se puede aplicar en este equipo", "Resuelve lo marcado en rojo o elige otro perfil");
+        P::Row(P::Mark::Bad, "No se puede activar en este equipo", "Resuelve lo marcado en rojo o elige otro perfil");
+    else if (!local)
+    {
+        P::Row(P::Mark::Info, "Para activarlo, descárgalo primero", "Descargar lo guarda en DESCARGADOS sin cambiar nada de tu configuración");
+        if (IlionTheme::Button("DESCARGAR##CommunityPreviewDownload", ImVec2(ImGui::GetContentRegionAvail().x, 0.0f)))
+            DownloadProfile(preview);
+    }
     else
     {
-        ImGui::Checkbox("He revisado las diferencias y quiero aplicar este perfil##CommunityConfirm", &confirmApply);
+        P::Coloured(IlionTheme::ShellPal::Dim,
+                    "ACTIVAR PERFIL selecciona el escalador y su modelo, el preset (por la proporción de ILION o indicándote la opción "
+                    "del menú del juego), el modo del optimizador y el Frame Generation con multiplicador fijo. Antes guarda tu "
+                    "configuración actual para poder volver a ella.",
+                    true);
+        ImGui::Checkbox("He revisado las diferencias y quiero activar este perfil##CommunityConfirm", &confirmApply);
         ImGui::BeginDisabled(!confirmApply);
-        if (IlionTheme::Button("APLICAR PERFIL##CommunityApply", ImVec2(ImGui::GetContentRegionAvail().x, std::floor(font * 2.0f))))
+        ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPal::Orange));
+        if (IlionTheme::Button("ACTIVAR PERFIL##CommunityApply", ImVec2(ImGui::GetContentRegionAvail().x, std::floor(font * 2.2f))))
         {
             std::string out;
             Say(Apply(ctx, preview, out), out);
             confirmApply = false;
         }
+        ImGui::PopStyleColor();
         ImGui::EndDisabled();
     }
-    // El aviso de Perfiles: rojo con la acción exacta mientras falte algo, verde solo con todo verificado
+    // El resultado real: el aviso de Perfiles (rojo con la acción exacta mientras falte algo, verde solo con todo
+    // verificado con lo que corre) y lo que hizo la activación, paso a paso
     if (applied == preview.id)
     {
         ImGui::Spacing();
         const P::Saved saved = P::ReadSaved();
         P::OutcomeBanner(ctx, saved, P::ReadLive(ctx, saved));
+        ImGui::Spacing();
+        P::Coloured(IlionTheme::ShellPal::Text2, "RESULTADO DE LA ACTIVACIÓN");
+        for (const auto& s : P::steps)
+            P::Row(s.mark, s.title, s.detail);
+        if (P::Exists(SnapshotPath()) && IlionTheme::Button("RESTAURAR LA CONFIGURACIÓN ANTERIOR##CommunityRestore", ImVec2(ImGui::GetContentRegionAvail().x, 0.0f)))
+        {
+            P::ApplyFile(ctx, SnapshotPath(), "configuracion", "Configuración anterior al perfil de la comunidad", true);
+            applied.clear();
+            Say(true, "Configuración anterior restaurada (la de antes de la última activación)");
+        }
     }
     if (IlionTheme::Button("CERRAR VISTA PREVIA##CommunityClose"))
         previewKey.clear(), confirmApply = false;
@@ -597,14 +669,19 @@ static void DownloadProfile(const C::Profile& p)
     {
         Say(true, r == C::AddResult::Updated ? "Perfil descargado de nuevo (actualizado). No se ha aplicado"
                                              : "Perfil descargado. No se ha aplicado: ábrelo en DESCARGADOS");
-        // El contador del servidor no influye en nada local
-        if (service.valid && !worker.Get().busy)
+        // El contador del servidor: solo con sesión (una por cuenta y perfil). No influye en nada local
+        if (service.valid && !worker.Get().busy && (session.Active() || !session.refreshToken.empty()))
         {
-            const auto cfg = service;
             const std::string id = p.id;
-            jobKind = "descarga";
-            worker.Start("Registrando la descarga...", [cfg, id]() { C::RegisterDownload(cfg, id); return std::pair<bool, std::string> { true, "" }; });
+            RunWithSession("Registrando la descarga...", "descarga",
+                           [id](const C::ServiceConfig& cfg, C::Session& s)
+                           {
+                               const auto r = C::RegisterDownload(cfg, s, id);
+                               return std::pair<bool, std::string> { true, "Perfil descargado, no activado. " + r.second };
+                           });
         }
+        else if (service.valid)
+            Say(true, "Perfil descargado, no activado: ábrelo en DESCARGADOS. Sin sesión la descarga no cuenta para el ranking");
     }
 }
 
@@ -828,7 +905,7 @@ template <typename Ctx> static void CatalogPage(Ctx& ctx, const C::Machine& m)
         Card(p, "cat", true,
              [&]()
              {
-                 if (IlionTheme::Button("VISTA PREVIA"))
+                 if (IlionTheme::Button("VER DETALLES"))
                      ShowPreview(p, "cat");
                  Flow(favourites.count(p.id) ? "QUITAR FAVORITO" : "GUARDAR");
                  if (IlionTheme::Button(favourites.count(p.id) ? "QUITAR FAVORITO" : "GUARDAR"))
@@ -867,7 +944,7 @@ template <typename Ctx> static void DownloadedPage(Ctx& ctx, const C::Machine& m
         Card(p, "dl", true,
              [&]()
              {
-                 if (IlionTheme::Button("VISTA PREVIA"))
+                 if (IlionTheme::Button("ACTIVAR PERFIL"))
                      ShowPreview(p, "dl");
                  Flow(favourites.count(p.id) ? "QUITAR FAVORITO" : "GUARDAR");
                  if (IlionTheme::Button(favourites.count(p.id) ? "QUITAR FAVORITO" : "GUARDAR"))
@@ -945,9 +1022,31 @@ template <typename Ctx> static void MinePage(Ctx& ctx, const C::Machine& m)
                      confirmPublish = false;
                  }
                  ImGui::EndDisabled();
+                 if (p.review != "local")
+                 {
+                     Flow("RETIRAR DEL CATÁLOGO");
+                     ImGui::BeginDisabled(!service.valid || ws.busy);
+                     if (IlionTheme::Button("RETIRAR DEL CATÁLOGO"))
+                         withdrawId = p.id;
+                     ImGui::EndDisabled();
+                 }
                  Flow("ELIMINAR");
                  if (IlionTheme::Button("ELIMINAR"))
                      remove = p.id;
+                 if (withdrawId == p.id)
+                 {
+                     P::Row(P::Mark::Wait, "Retirar del catálogo comunitario", "Se borra del servidor; tu copia local se conserva como perfil sin publicar");
+                     if (IlionTheme::Button("CONFIRMAR RETIRADA##CommunityWithdrawGo"))
+                     {
+                         const std::string id = p.id;
+                         RunWithSession("Retirando el perfil...", "retirar:" + id,
+                                        [id](const C::ServiceConfig& cfg, C::Session& s) { return C::Withdraw(cfg, s, id); });
+                         withdrawId.clear();
+                     }
+                     Flow("CANCELAR##CommunityWithdrawCancel");
+                     if (IlionTheme::Button("CANCELAR##CommunityWithdrawCancel"))
+                         withdrawId.clear();
+                 }
                  // Publicar: el usuario ve lo que se envía y lo confirma
                  if (publishId == p.id)
                  {
@@ -991,6 +1090,18 @@ template <typename Ctx> static void MinePage(Ctx& ctx, const C::Machine& m)
         mine.erase(std::remove_if(mine.begin(), mine.end(), [&](const C::Profile& p) { return p.id == remove; }), mine.end());
         if (!C::SaveList(MinePath(), mine))
             Say(false, "No se pudo guardar la lista");
+    }
+    // El estado de moderación y las descargas de lo publicado, consultados al servidor
+    if (service.valid && (session.Active() || !session.refreshToken.empty()))
+    {
+        ImGui::BeginDisabled(ws.busy);
+        if (IlionTheme::Button("ACTUALIZAR ESTADO DE MIS PUBLICACIONES##CommunityMine"))
+        {
+            auto out = mineRemote;
+            RunWithSession("Consultando tus perfiles publicados...", "mios",
+                           [out](const C::ServiceConfig& cfg, C::Session& s) { return C::FetchMine(cfg, s, *out); });
+        }
+        ImGui::EndDisabled();
     }
     if (mine.empty())
     {
@@ -1248,7 +1359,49 @@ static void Collect()
     seenSerial = ws.serial;
     if (!ws.result.empty())
         Say(ws.ok, ws.result);
-    if (jobKind == "catalogo" && ws.ok)
+    // Los errores, con su tipo
+    if (!ws.ok && !ws.result.empty())
+    {
+        if (jobKind == "sesion" || jobKind == "codigo")
+            Say(false, "Error de autenticación: " + ws.result);
+        else if (jobKind.rfind("publicar:", 0) == 0)
+            Say(false, "Error de publicación: " + ws.result);
+    }
+    // Los trabajos con sesión la devuelven renovada
+    if (jobKind == "inicio" || jobKind == "mios" || jobKind == "descarga" || jobKind.rfind("retirar:", 0) == 0)
+        if (!jobSession->refreshToken.empty())
+            session = *jobSession;
+    if (jobKind == "mios" && ws.ok)
+    {
+        for (const auto& r : *mineRemote)
+        {
+            bool found = false;
+            for (auto& e : mine)
+                if (e.id == r.id)
+                {
+                    e.review = r.review, e.version = r.version, e.downloads = r.downloads, e.authorId = r.authorId;
+                    found = true;
+                }
+            if (!found && mine.size() < C::kMaxEntries)
+                mine.push_back(r);
+        }
+        C::SaveList(MinePath(), mine);
+    }
+    if (jobKind.rfind("retirar:", 0) == 0 && ws.ok)
+    {
+        // Ya no existe en el servidor: la copia local vuelve a ser un perfil sin publicar
+        const std::string id = jobKind.substr(8);
+        for (auto& e : mine)
+            if (e.id == id)
+            {
+                e.id = C::NewLocalId();
+                e.authorId.clear();
+                e.review = "local";
+                e.downloads = -1;
+            }
+        C::SaveList(MinePath(), mine);
+    }
+    if ((jobKind == "catalogo" || jobKind == "inicio") && ws.ok)
     {
         auto c = C::LoadList(CatalogPath(), C::kMaxCatalogBytes);
         catalog = c.profiles;
@@ -1284,6 +1437,24 @@ template <typename Ctx> static void Panel(Ctx& ctx)
         LoadAll();
     Collect();
 
+    // La primera vez que se ve la columna: comprobación real del servicio (el catálogo público) y, si hay sesión
+    // guardada, su renovación. En segundo plano; sin servicio configurado no se contacta con nada
+    if (!autoChecked && service.valid && !worker.Get().busy)
+    {
+        autoChecked = true;
+        const auto cfg = service;
+        *jobSession = session;
+        auto js = jobSession;
+        jobKind = "inicio";
+        worker.Start("Comprobando el servicio...",
+                     [cfg, js]()
+                     {
+                         if (!js->refreshToken.empty())
+                             C::Refresh(cfg, *js);
+                         return C::FetchCatalog(cfg, nullptr);
+                     });
+    }
+
     // ---- Cabecera ----
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -1301,6 +1472,27 @@ template <typename Ctx> static void Panel(Ctx& ctx)
         const float y = ImGui::GetItemRectMax().y + font * 0.35f;
         dl->AddLine(ImVec2(p.x, y), ImVec2(right, y), ImGui::GetColorU32(toneMapColor(IlionTheme::ShellPal::Line)), 1.0f);
         ImGui::SetCursorScreenPos(ImVec2(p.x, y + font * 0.45f));
+    }
+
+    // ---- Estado real del servicio y de la cuenta ----
+    {
+        const C::ServiceState st = !service.valid ? C::ServiceState::NotConfigured : (C::ServiceState) C::LastServiceState().load();
+        const P::Mark mark = st == C::ServiceState::Connected                                          ? P::Mark::Ok
+                             : st == C::ServiceState::Unchecked || st == C::ServiceState::Offline ? P::Mark::Wait
+                             : st == C::ServiceState::NotConfigured                               ? P::Mark::Info
+                                                                                                  : P::Mark::Bad;
+        const std::string detail = st == C::ServiceState::NotConfigured ? service.problem + ". Los perfiles locales funcionan igual"
+                                   : st == C::ServiceState::Offline     ? std::string("El optimizador y los perfiles descargados funcionan sin conexión")
+                                   : st == C::ServiceState::KeyRejected ? std::string("Revisa anon_key en servicio.json")
+                                   : st == C::ServiceState::SchemaMissing ? std::string("Ejecuta ilion_community_supabase.sql en el proyecto")
+                                                                          : std::string();
+        P::Row(mark, C::ServiceStateText(st), detail);
+        if (service.valid)
+            P::Row(session.Active() ? P::Mark::Ok : P::Mark::Info,
+                   session.Active() ? "Sesión: " + (session.alias.empty() ? std::string("iniciada, sin alias") : session.alias)
+                   : !session.refreshToken.empty() ? std::string("Sesión guardada, sin renovar todavía")
+                                                   : std::string("Sin sesión: consultar y descargar no la necesitan"),
+                   std::string());
     }
 
     // ---- Secciones: dos filas de botones compactos ----
@@ -1423,8 +1615,8 @@ template <typename Ctx> static void Panel(Ctx& ctx)
         }
         ImGui::Spacing();
         P::Coloured(IlionTheme::ShellPal::Dim,
-                    "Perfiles compartidos voluntariamente y firmados por su autor. Nada se aplica sin tu confirmación y nada sale del "
-                    "equipo sin que lo pidas. Sin telemetría.",
+                    "Perfiles compartidos voluntariamente y firmados por su autor. Descargar no activa: nada se aplica sin tu "
+                    "confirmación. Al abrir se consulta el catálogo público; no se envía ningún dato tuyo. Sin telemetría.",
                     true);
     }
     ImGui::EndChild();

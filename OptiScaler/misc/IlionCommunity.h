@@ -655,6 +655,15 @@ struct Check
 {
     Level level;
     std::string text;
+    bool note = false; // aviso general (no verificado técnicamente): no cuenta para el grado de compatibilidad
+};
+
+// Grado de compatibilidad: confirmada (todo coincide), parcial (utilizable, con diferencias) o no compatible
+enum class Fit
+{
+    Confirmed,
+    Partial,
+    Incompatible,
 };
 
 inline std::vector<Check> Compatibility(const Profile& p, const Machine& m)
@@ -693,9 +702,28 @@ inline std::vector<Check> Compatibility(const Profile& p, const Machine& m)
         else
             out.push_back({ Level::Ok, std::string(NameOf(kFgs, p.fg)) + " " + std::to_string(p.multiplier) + "X fijo (el proveedor confirma el máximo al cargarse)" });
     }
-    out.push_back({ Level::Warn, p.review == "aprobado" ? "Revisado por moderación, no verificado técnicamente en tu equipo"
-                                                        : "Perfil no verificado técnicamente: publicarlo no lo valida" });
+    out.push_back({ Level::Warn,
+                    p.review == "aprobado" ? "Revisado por moderación, no verificado técnicamente en tu equipo"
+                                           : "Perfil no verificado técnicamente: publicarlo no lo valida",
+                    true });
     return out;
+}
+
+inline Fit Overall(const std::vector<Check>& checks)
+{
+    bool partial = false;
+    for (const auto& c : checks)
+    {
+        if (c.level == Level::Bad)
+            return Fit::Incompatible;
+        partial = partial || (c.level == Level::Warn && !c.note);
+    }
+    return partial ? Fit::Partial : Fit::Confirmed;
+}
+
+inline const char* FitText(Fit f)
+{
+    return f == Fit::Confirmed ? "Compatibilidad confirmada" : f == Fit::Partial ? "Compatibilidad parcial" : "No compatible con este equipo";
 }
 
 inline bool Blocking(const std::vector<Check>& checks)
@@ -770,6 +798,45 @@ inline ServiceConfig LoadService()
     else
         c.valid = true;
     return c;
+}
+
+// El estado del servicio según la última respuesta real (nunca por existir servicio.json)
+enum class ServiceState
+{
+    Unchecked,     // configurado, aún sin consultar
+    NotConfigured, // falta servicio.json o no es válido
+    Connected,     // el servidor respondió al catálogo
+    Offline,       // sin respuesta: sin conexión, tiempo agotado o sin curl
+    KeyRejected,   // 401/403: la clave pública no es la de este proyecto
+    SchemaMissing, // 404: el proyecto existe pero falta ejecutar ilion_community_supabase.sql
+    ServerError,   // otra respuesta o una respuesta que no se entiende
+};
+
+inline const char* ServiceStateText(ServiceState s)
+{
+    switch (s)
+    {
+    case ServiceState::NotConfigured:
+        return "Servicio sin configurar";
+    case ServiceState::Connected:
+        return "Servicio conectado";
+    case ServiceState::Offline:
+        return "Sin conexión con el servicio";
+    case ServiceState::KeyRejected:
+        return "Clave pública rechazada por el servicio";
+    case ServiceState::SchemaMissing:
+        return "Servicio sin el esquema de ILION (falta ejecutar el SQL)";
+    case ServiceState::ServerError:
+        return "Error del servicio";
+    default:
+        return "Servicio sin comprobar";
+    }
+}
+
+inline std::atomic<int>& LastServiceState()
+{
+    static std::atomic<int> state { (int) ServiceState::Unchecked };
+    return state;
 }
 
 // La sesión del autor (Supabase Auth): el refresh token se guarda cifrado con DPAPI (solo este usuario de Windows)
@@ -995,6 +1062,20 @@ class Worker
     std::shared_ptr<Shared> _shared = std::make_shared<Shared>();
 };
 
+// Qué dice una respuesta del servicio sobre su estado (PostgREST: PGRST205 / 42P01 = la tabla no existe)
+inline ServiceState Classify(const HttpResult& r)
+{
+    if (r.status == 0)
+        return ServiceState::Offline;
+    if (r.status >= 200 && r.status < 300)
+        return ServiceState::Connected;
+    if (r.status == 401 || r.status == 403)
+        return ServiceState::KeyRejected;
+    if (r.status == 404 || r.body.find("PGRST205") != std::string::npos || r.body.find("42P01") != std::string::npos)
+        return ServiceState::SchemaMissing;
+    return ServiceState::ServerError;
+}
+
 // ---- Cliente del catálogo (contrato con el esquema de ilion_community_supabase.sql) ----------------------------------------
 inline std::vector<std::string> Headers(const ServiceConfig& c, const std::string& bearer, bool json = true)
 {
@@ -1052,11 +1133,13 @@ inline std::string CatalogUrl(const ServiceConfig& c)
 inline std::pair<bool, std::string> FetchCatalog(const ServiceConfig& c, int* count)
 {
     const HttpResult r = HttpRequest("GET", CatalogUrl(c), Headers(c, "", false), "");
-    if (r.status != 200)
-        return { false, ServerError(r) };
+    ServiceState state = Classify(r);
     const Json j = Json::parse(r.body, nullptr, false);
-    if (j.is_discarded() || !j.is_array())
-        return { false, "Respuesta del servidor no válida" };
+    if (r.status == 200 && (j.is_discarded() || !j.is_array()))
+        state = ServiceState::ServerError;
+    LastServiceState() = (int) state;
+    if (state != ServiceState::Connected)
+        return { false, std::string(ServiceStateText(state)) + ": " + (r.status == 200 ? std::string("respuesta no válida") : ServerError(r)) };
     std::vector<Profile> list;
     int bad = 0;
     for (const auto& row : j)
@@ -1074,11 +1157,16 @@ inline std::pair<bool, std::string> FetchCatalog(const ServiceConfig& c, int* co
     return { true, "Catálogo actualizado: " + std::to_string(list.size()) + " perfiles" + (bad ? " (" + std::to_string(bad) + " descartados por no ser válidos)" : "") };
 }
 
-// El contador de descargas (función del servidor). Un fallo no impide la descarga local
-inline void RegisterDownload(const ServiceConfig& c, const std::string& id)
+// El contador de descargas (función del servidor): solo cuenta con sesión iniciada, una vez por cuenta y perfil, y nunca
+// la del propio autor. El servidor decide; el cliente no envía ninguna cifra. Un fallo no impide la descarga local
+inline std::pair<bool, std::string> RegisterDownload(const ServiceConfig& c, const Session& s, const std::string& id)
 {
-    if (SafeToken(id, 64))
-        HttpRequest("POST", c.url + "/rest/v1/rpc/ilion_register_download", Headers(c, ""), Json { { "pid", id } }.dump(), 10000);
+    if (!SafeToken(id, 64) || !s.Active())
+        return { false, "Descarga no contada: inicia sesión para que cuente" };
+    const HttpResult r = HttpRequest("POST", c.url + "/rest/v1/rpc/ilion_register_download", Headers(c, s.accessToken), Json { { "pid", id } }.dump(), 10000);
+    if (r.status != 200)
+        return { false, "Descarga no contada: " + ServerError(r) };
+    return { true, r.body.find("true") != std::string::npos ? "Descarga contada en el servidor" : "Descarga ya contada antes (una por cuenta)" };
 }
 
 // Inicio de sesión del autor por código de un solo uso enviado por correo (Supabase Auth). El correo solo va al servicio
@@ -1187,6 +1275,47 @@ inline std::pair<bool, std::string> Publish(const ServiceConfig& c, Session& s, 
     p.review = j[0].value("status", std::string("pendiente"));
     p.origin = "local";
     return { true, update ? "Perfil actualizado: queda pendiente de revisión" : "Perfil publicado: queda pendiente de revisión antes de aparecer en el catálogo" };
+}
+
+// Los perfiles publicados por la cuenta, con su estado de moderación y descargas (la política de lectura deja ver los
+// propios aunque estén pendientes o rechazados)
+inline std::pair<bool, std::string> FetchMine(const ServiceConfig& c, const Session& s, std::vector<Profile>& out)
+{
+    if (!s.Active() || !SafeToken(s.userId, 64))
+        return { false, "Inicia sesión para consultar tus perfiles publicados" };
+    const HttpResult r = HttpRequest("GET", c.url + "/rest/v1/ilion_profiles?select=*,ilion_authors(alias)&author_id=eq." + s.userId + "&limit=100",
+                                     Headers(c, s.accessToken, false), "");
+    const Json j = Json::parse(r.body, nullptr, false);
+    if (r.status != 200 || !j.is_array())
+        return { false, ServerError(r) };
+    out.clear();
+    for (const auto& row : j)
+    {
+        Profile p;
+        if (out.size() < 100 && FromServerRow(row, p, nullptr))
+        {
+            p.authorId = s.userId;
+            p.origin = "local";
+            out.push_back(p);
+        }
+    }
+    return { true, "Estado de tus perfiles publicados actualizado (" + std::to_string(out.size()) + ")" };
+}
+
+// Retira del catálogo un perfil propio (la política de borrado solo lo permite a su autor)
+inline std::pair<bool, std::string> Withdraw(const ServiceConfig& c, const Session& s, const std::string& id)
+{
+    if (!s.Active() || !SafeToken(id, 64))
+        return { false, "Inicia sesión para retirar tus perfiles" };
+    std::vector<std::string> h = Headers(c, s.accessToken, false);
+    h.push_back("Prefer: return=representation");
+    const HttpResult r = HttpRequest("DELETE", c.url + "/rest/v1/ilion_profiles?id=eq." + id, h, "");
+    const Json j = Json::parse(r.body, nullptr, false);
+    if (r.status != 200 || !j.is_array())
+        return { false, ServerError(r) };
+    if (j.empty())
+        return { false, "No se retiró: el perfil no existe o no es tuyo" };
+    return { true, "Perfil retirado del catálogo" };
 }
 } // namespace IlionCommunity
 

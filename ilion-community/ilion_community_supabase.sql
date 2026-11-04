@@ -7,7 +7,9 @@
 --   * Publicar exige sesión (Supabase Auth). El autor lo fija el servidor (auth.uid()), no el cliente.
 --   * El alias es único sin distinguir mayúsculas y queda ligado a la cuenta: nadie publica con el alias de otro.
 --   * Una actualización del autor sube la versión y vuelve a revisión; no puede tocar descargas, autor ni fechas.
---   * Las descargas solo cambian por ilion_register_download (perfiles aprobados).
+--   * Las descargas solo cambian por ilion_register_download (perfiles aprobados): una por cuenta y perfil, nunca la del
+--     propio autor. Sin sesión se puede descargar, pero no cuenta. El cliente no envía ninguna cifra.
+--   * Moderar (aprobar / rechazar) solo desde el panel de Supabase (rol postgres): ningún cliente puede cambiar el estado.
 --   * Sin telemetría: no hay tablas de FPS, sesiones ni equipos.
 
 create extension if not exists pgcrypto;
@@ -112,19 +114,63 @@ drop policy if exists profiles_delete_own on public.ilion_profiles;
 create policy profiles_delete_own on public.ilion_profiles for delete to authenticated using (author_id = auth.uid());
 
 -- ---- Descargas -------------------------------------------------------------------------------------------------------
--- Cuenta una descarga de un perfil aprobado. Es un recuento aproximado (no evita repeticiones) y no mide rendimiento
-create or replace function public.ilion_register_download(pid uuid) returns void
+-- Quién ya contó una descarga de qué perfil (solo para no contarla dos veces). Nadie la lee desde el cliente
+create table if not exists public.ilion_downloads (
+    profile_id uuid not null references public.ilion_profiles (id) on delete cascade,
+    user_id    uuid not null references auth.users (id) on delete cascade,
+    created_at timestamptz not null default now(),
+    primary key (profile_id, user_id)
+);
+alter table public.ilion_downloads enable row level security;
+revoke all on public.ilion_downloads from anon, authenticated;
+
+-- Cuenta una descarga de un perfil aprobado: solo con sesión, una vez por cuenta y perfil, nunca la del autor.
+-- Devuelve true si la ha contado ahora. Mide popularidad, no rendimiento. Límite conocido: quien cree muchas cuentas de
+-- correo puede sumar una descarga por cuenta
+drop function if exists public.ilion_register_download(uuid);
+create or replace function public.ilion_register_download(pid uuid) returns boolean
 language plpgsql security definer set search_path = public as $$
+declare
+    uid uuid := auth.uid();
+    inserted int;
 begin
+    if uid is null then
+        return false;
+    end if;
+    if not exists (select 1 from public.ilion_profiles where id = pid and status = 'aprobado' and author_id <> uid) then
+        return false;
+    end if;
+    insert into public.ilion_downloads (profile_id, user_id) values (pid, uid) on conflict do nothing;
+    get diagnostics inserted = row_count;
+    if inserted = 0 then
+        return false;
+    end if;
     perform set_config('ilion.counter', 'on', true);
-    update public.ilion_profiles set downloads = downloads + 1 where id = pid and status = 'aprobado';
+    update public.ilion_profiles set downloads = downloads + 1 where id = pid;
     perform set_config('ilion.counter', 'off', true);
+    return true;
 end $$;
-revoke all on function public.ilion_register_download(uuid) from public;
-grant execute on function public.ilion_register_download(uuid) to anon, authenticated;
+revoke all on function public.ilion_register_download(uuid) from public, anon;
+grant execute on function public.ilion_register_download(uuid) to authenticated;
+
+-- ---- Permisos de tabla (las filas las limitan las políticas RLS de arriba) ------------------------------------------
+grant select on public.ilion_profiles, public.ilion_authors to anon, authenticated;
+grant insert on public.ilion_authors to authenticated;
+grant insert, update, delete on public.ilion_profiles to authenticated;
+revoke insert, update, delete on public.ilion_profiles, public.ilion_authors from anon;
+revoke update, delete on public.ilion_authors from authenticated;
 
 -- ---- Estadísticas básicas (sin telemetría) ----------------------------------------------------------------------------
 -- Preparado para futuras estadísticas agregadas: solo recuentos públicos de perfiles aprobados
 create or replace view public.ilion_stats with (security_invoker = on) as
 select count(*) as perfiles_publicados, coalesce(sum(downloads), 0) as descargas_totales
 from public.ilion_profiles where status = 'aprobado';
+
+-- ---- Comprobación (opcional, solo lectura): debe listar 3 tablas con RLS activado y 6 políticas -------------------------
+-- select tablename, rowsecurity from pg_tables where schemaname = 'public' and tablename like 'ilion_%';
+-- select tablename, policyname, cmd from pg_policies where tablename like 'ilion_%' order by 1, 2;
+
+-- ---- Moderación (desde el SQL Editor o el Table Editor de Supabase; nunca desde ILION) -------------------------------
+-- Pendientes:  select id, name, game_name, gpu, created_at from public.ilion_profiles where status = 'pendiente';
+-- Aprobar:     update public.ilion_profiles set status = 'aprobado'  where id = '<id>';
+-- Rechazar:    update public.ilion_profiles set status = 'rechazado' where id = '<id>';

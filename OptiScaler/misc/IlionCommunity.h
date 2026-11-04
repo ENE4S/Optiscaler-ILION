@@ -982,6 +982,42 @@ inline const char* FitText(Fit f)
     }
 }
 
+// La etiqueta de compatibilidad con su motivo real, por orden: versión, otro juego, API, GPU incompatible, tecnología no
+// disponible, multiplicador o entrada de FG, y si no hay bloqueo, con advertencias o activable. Nunca un «no compatible
+// con este equipo» genérico cuando la causa es, por ejemplo, que el perfil es de otro juego
+struct FitInfo
+{
+    Fit fit = Fit::Confirmed;
+    int level = 0; // 0 activable, 1 advertencias, 2 requiere componentes, 3 bloqueado
+    std::string label;
+};
+
+inline FitInfo FitOf(const Profile& p, const Machine& m)
+{
+    const auto checks = Compatibility(p, m);
+    FitInfo f;
+    f.fit = Overall(checks);
+    if (p.schema > kSchema)
+        return { Fit::Incompatible, 3, "Versión del perfil más nueva que este ILION" };
+    if (p.gameExe != m.gameExe)
+        return { Fit::Incompatible, 3, "Perfil de otro juego (" + p.gameName + ")" };
+    if (p.api != m.api)
+        return { Fit::Incompatible, 3, "API incompatible: el perfil es " + p.api + ", el juego usa " + m.api };
+    if (!TechSupport(p.tech, m.arch).possible)
+        return { Fit::Incompatible, 3, std::string("GPU incompatible con ") + NameOf(kTechs, p.tech) };
+    if (p.fg != "ninguno" && FgEvidence(p.fg, m.arch) == Evidence::None)
+        return { Fit::Incompatible, 3, std::string("GPU incompatible con ") + NameOf(kFgs, p.fg) };
+    for (const auto& c : checks)
+        if (c.level == Level::Bad && !c.component)
+            return { Fit::Incompatible, 3, c.text };
+    for (const auto& c : checks)
+        if (c.level == Level::Bad && c.component)
+            return { Fit::NeedsComponents, 2, "Tecnología no disponible: " + c.text };
+    if (f.fit == Fit::Experimental || f.fit == Fit::Partial)
+        return { f.fit, 1, f.fit == Fit::Experimental ? "Compatible con advertencias (FG experimental en tu GPU)" : "Compatible con advertencias" };
+    return { Fit::Confirmed, 0, "Compatible y activable" };
+}
+
 inline bool Blocking(const std::vector<Check>& checks)
 {
     return std::any_of(checks.begin(), checks.end(), [](const Check& c) { return c.level == Level::Bad; });

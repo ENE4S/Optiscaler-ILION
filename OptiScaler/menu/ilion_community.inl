@@ -647,6 +647,13 @@ static ImVec4 FgColour(const std::string& fg)
 }
 
 static void StatusChip(const ImVec4& colour, const char* text);
+static void FitChip(const C::FitInfo& f)
+{
+    StatusChip(f.level == 0   ? IlionTheme::ShellPilot(IlionTheme::ShellPal::Green)
+               : f.level == 3 ? IlionTheme::ShellPal::Red
+                              : IlionTheme::ShellPilot(IlionTheme::ShellPal::Yellow),
+               f.label.c_str());
+}
 
 // Un tramo de texto de color en la misma línea; si no cabe, pasa a la siguiente
 static void Seg(const ImVec4& colour, const std::string& text, bool first = false)
@@ -728,12 +735,8 @@ static void Card(const C::Profile& p, const char* list, bool showDownloads, cons
             P::Big(P::FigureFont(), 1.2f, IlionTheme::ShellPal::Text2, StrFmt("Nº %d", position).c_str());
             ImGui::SameLine();
         }
-        P::Big(P::FigureFont(), 1.3f, IlionTheme::ShellPal::Text, p.name.c_str(), true);
-        // 2. El autor, con su propio tratamiento
-        ImGui::PushFont(P::UiFont(), std::floor(font * 1.08f));
-        Seg(IlionTheme::ShellPal::Text2, "Creado por: ", true);
-        Seg(IlionTheme::ShellPal::Orange, p.author);
-        ImGui::PopFont();
+        // 1. El autor, identificador público del perfil (el nombre del perfil va discreto al final)
+        P::Big(P::FigureFont(), 1.3f, IlionTheme::ShellPal::Orange, p.author.c_str(), true);
         // 3. Juego · GPU · arquitectura · modo
         Seg(IlionTheme::InfoCyan, p.gameName, true);
         Seg(IlionTheme::ShellPal::Dim, " · ");
@@ -759,13 +762,9 @@ static void Card(const C::Profile& p, const char* list, bool showDownloads, cons
         // 6. Compatibilidad con este equipo · descargas registradas · estado
         if (cardMachine != nullptr)
         {
-            const C::Fit fit = C::Overall(C::Compatibility(p, *cardMachine));
-            StatusChip(fit == C::Fit::Confirmed ? IlionTheme::ShellPilot(IlionTheme::ShellPal::Green)
-                       : fit == C::Fit::Partial ? IlionTheme::ShellPilot(IlionTheme::ShellPal::Yellow)
-                                                : IlionTheme::ShellPal::Red,
-                       C::FitText(fit));
+            FitChip(C::FitOf(p, *cardMachine));
         }
-        std::string badges = KindOf(p) + StrFmt(" · v%d", p.version);
+        std::string badges = "perfil «" + p.name + "»" + StrFmt(" · v%d", p.version);
         if (showDownloads)
             badges += p.downloads >= 0 ? StrFmt(" · %lld descargas registradas", p.downloads) : std::string(" · descargas: sin dato");
         if (favourites.count(p.id))
@@ -935,8 +934,8 @@ static void PodiumCard(const C::Profile& p, int rank)
             P::Coloured(c, t.c_str());
             ImGui::PopFont();
         };
-        centred(P::FigureFont(), 1.2f * big, IlionTheme::ShellPal::Text, p.name);
-        centred(P::UiFont(), 1.0f, IlionTheme::ShellPal::Orange, "de " + p.author);
+        centred(P::FigureFont(), 1.2f * big, IlionTheme::ShellPal::Orange, p.author);
+        centred(P::UiFont(), 0.9f, IlionTheme::ShellPal::Dim, "perfil «" + p.name + "»");
         centred(P::UiFont(), 0.95f, IlionTheme::InfoCyan, p.gameName + "  ·  " + C::NameOf(C::kArchs, p.arch));
         centred(P::UiFont(), 0.95f, IlionTheme::ShellPal::Text2,
                 std::string(C::NameOf(C::kTechs, p.tech)) + (p.fg == "ninguno" ? std::string(" · sin FG") : StrFmt(" · %s %dX", C::NameOf(C::kFgs, p.fg), p.multiplier)));
@@ -1328,16 +1327,15 @@ template <typename Ctx> static void LibraryCard(Ctx& ctx, C::Profile& p, const C
             Seg(IlionTheme::ShellPal::Orange, "Copia editada · original de " + p.author, true);
         else
             Seg(IlionTheme::ShellPal::Orange, (p.origin == "importado" ? "Importado · de " : "Descargado · de ") + p.author, true);
-        // Compatibilidad solo cuando importa (si no es plenamente compatible)
-        const C::Fit fit = C::Overall(C::Compatibility(p, m));
-        if (fit != C::Fit::Confirmed && fit != C::Fit::Partial)
-            StatusChip(fit == C::Fit::Incompatible ? IlionTheme::ShellPal::Red : IlionTheme::ShellPilot(IlionTheme::ShellPal::Yellow), C::FitText(fit));
+        // Compatibilidad solo cuando importa, con su motivo real (otro juego, API, GPU, tecnología no disponible…)
+        if (const C::FitInfo fi = C::FitOf(p, m); fi.level >= 2)
+            FitChip(fi);
 
         if (activatingId == p.id)
         {
             // Confirmando la activación: solo esto, sin resultados anteriores
             const bool blocked = C::Blocking(C::Compatibility(p, m));
-            P::Row(blocked ? P::Mark::Bad : P::Mark::Wait, blocked ? "No se puede activar en este equipo" : "¿Activar este perfil?",
+            P::Row(blocked ? P::Mark::Bad : P::Mark::Wait, blocked ? "No se puede activar: " + C::FitOf(p, m).label : std::string("¿Activar este perfil?"),
                    blocked ? "El detalle está a la derecha" : "Antes se guarda tu configuración actual para poder volver a ella");
             ImGui::BeginDisabled(blocked);
             ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPal::Orange));
@@ -1527,9 +1525,9 @@ template <typename Ctx> static void SelectedInfo(Ctx& ctx, const C::Profile& p, 
     Seg(IlionTheme::ShellPal::Orange, IsOwn(p) ? (session.alias.empty() ? std::string("ti (perfil local)") : session.alias) : p.author);
     Seg(IlionTheme::ShellPal::Dim, "  ·  " + KindOf(p));
     const auto checks = C::Compatibility(p, m);
-    const C::Fit fit = C::Overall(checks);
-    P::Row(fit == C::Fit::Confirmed || fit == C::Fit::Partial ? P::Mark::Ok : fit == C::Fit::Incompatible ? P::Mark::Bad : P::Mark::Wait, C::FitText(fit),
-           fit == C::Fit::NeedsComponents ? "Lo que falta se indica en amarillo debajo" : std::string());
+    const C::FitInfo fi = C::FitOf(p, m);
+    P::Row(fi.level == 0 ? P::Mark::Ok : fi.level == 3 ? P::Mark::Bad : P::Mark::Wait, fi.label,
+           fi.level == 2 ? "Lo que falta se indica en amarillo debajo" : std::string());
     for (const auto& c : checks)
         if (!c.note)
             P::Row(c.level == C::Level::Ok ? P::Mark::Ok : c.level == C::Level::Bad && !c.component ? P::Mark::Bad : P::Mark::Wait, c.text, std::string());
@@ -1790,11 +1788,8 @@ static void DetailView(const C::Profile& p, const C::Machine& m)
     if (IlionTheme::Button("< VOLVER##DetailBack"))
         detailId.clear();
     ImGui::Spacing();
-    P::Big(P::FigureFont(), 1.5f, IlionTheme::ShellPal::Text, p.name.c_str(), true);
-    ImGui::PushFont(P::UiFont(), std::floor(font * 1.1f));
-    Seg(IlionTheme::ShellPal::Text2, "Creado por: ", true);
-    Seg(IlionTheme::ShellPal::Orange, p.author);
-    ImGui::PopFont();
+    P::Big(P::FigureFont(), 1.5f, IlionTheme::ShellPal::Orange, p.author.c_str(), true);
+    P::Coloured(IlionTheme::ShellPal::Dim, ("perfil «" + p.name + "»").c_str(), true);
     Seg(IlionTheme::InfoCyan, p.gameName, true);
     Seg(IlionTheme::ShellPal::Dim, "  ·  ");
     Seg(ArchVendorColour(p.arch), p.gpu);
@@ -1817,8 +1812,8 @@ static void DetailView(const C::Profile& p, const C::Machine& m)
     P::Coloured(IlionTheme::ShellPal::Dim, StrFmt("%lld descargas registradas · v%d", (std::max)(0LL, p.downloads), p.version).c_str());
     Block("COMPATIBILIDAD CON TU EQUIPO");
     const auto checks = C::Compatibility(p, m);
-    const C::Fit fit = C::Overall(checks);
-    P::Row(fit == C::Fit::Confirmed || fit == C::Fit::Partial ? P::Mark::Ok : fit == C::Fit::Incompatible ? P::Mark::Bad : P::Mark::Wait, C::FitText(fit), std::string());
+    const C::FitInfo fi = C::FitOf(p, m);
+    P::Row(fi.level == 0 ? P::Mark::Ok : fi.level == 3 ? P::Mark::Bad : P::Mark::Wait, fi.label, std::string());
     for (const auto& c : checks)
         if (!c.note)
             P::Row(c.level == C::Level::Ok ? P::Mark::Ok : c.level == C::Level::Bad && !c.component ? P::Mark::Bad : P::Mark::Wait, c.text, std::string());

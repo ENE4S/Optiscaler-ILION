@@ -1164,25 +1164,39 @@ static void LoadExternal(const CSimpleIniA& ini, const char* section)
     SetFrom(config->FramerateLimit, ini.GetValue(section, "limite_fps", nullptr), ParseFloat);
 }
 
-// Algún MFG dinámico activo o preparado para el próximo inicio: configuración externa al perfil
+// Un MFG dinámico que gobierna la ruta de FG efectiva: el que corre según el proveedor real (DynamicEnabled ya lo
+// decide por la salida activa) o el preparado para el próximo inicio en la salida configurada. Un ajuste guardado de
+// otra salida no gobierna nada y no cuenta: [XeFG] DynamicMFG=true con la salida DLSSG de OptiFG es un valor residual,
+// no un XeFG dinámico (Community10, KCD2). El dinámico ILION del DLSSG del juego lo cubre DynamicEnabled (DlssgGame)
 static bool ExternalDynamic(std::string* what = nullptr)
 {
     auto config = Config::Instance();
+    const auto& st = State::Instance();
     const auto status = IlionDynamicMfg::Get();
-    const char* found = nullptr;
+    const std::string output(magic_enum::enum_name(st.activeFgOutput));
+    std::string found;
     if (IlionDynamicMfg::DynamicEnabled())
-        found = status.provider == IlionDynamicMfg::Provider::XeFG       ? "MFG dinámico R3 de XeFG"
-                : status.provider == IlionDynamicMfg::Provider::DlssgGame ? "Dinámico del DLSSG del juego"
-                                                                          : "MFG dinámico de DLSSG";
+        found = (status.provider == IlionDynamicMfg::Provider::XeFG        ? std::string("MFG dinámico R3 de XeFG")
+                 : status.provider == IlionDynamicMfg::Provider::DlssgGame ? std::string("Dinámico del DLSSG del juego")
+                                                                           : std::string("MFG dinámico de DLSSG")) +
+                " (activo: salida " + output + ")";
     else if (status.backendDynamic)
-        found = "Dinámico automático del backend DLSSG";
-    else if (config->FGXeFGDynamicMFG.value_or_default())
-        found = "MFG dinámico R3 de XeFG (activado en la configuración)";
-    else if (config->FGDLSSGIlionDynamic.value_or_default())
-        found = "Dinámico ILION del DLSSG (activado en la configuración)";
-    if (what != nullptr && found != nullptr)
+        found = "Dinámico automático del backend DLSSG (lo informa el backend en esta sesión)";
+    else if (config->FGXeFGDynamicMFG.value_or_default() && st.activeFgOutput != FGOutput::XeFG && config->FGOutput.value_or_default() == FGOutput::XeFG)
+        found = "MFG dinámico R3 de XeFG preparado para el próximo inicio (salida configurada XeFG, DynamicMFG activado)";
+    if (what != nullptr && !found.empty())
         *what = found;
-    return found != nullptr;
+    return !found.empty();
+}
+
+// Ajustes dinámicos guardados que no gobiernan la ruta efectiva (solo informativo, nunca bloquea)
+static std::string InertDynamicSetting()
+{
+    auto config = Config::Instance();
+    const auto& st = State::Instance();
+    if (config->FGXeFGDynamicMFG.value_or_default() && st.activeFgOutput != FGOutput::XeFG && config->FGOutput.value_or_default() != FGOutput::XeFG)
+        return "[XeFG] DynamicMFG=true guardado, sin efecto: la salida de FG activa es " + std::string(magic_enum::enum_name(st.activeFgOutput));
+    return std::string();
 }
 
 // Escribe lo guardado en la configuración en memoria. withFg: también el FG fijo (no con un Dynamic externo activo).
@@ -1602,6 +1616,36 @@ static void SaveProfile(IFeature* feature)
 
 static std::string ResText(unsigned w, unsigned h) { return w > 0 ? StrFmt("%u×%u", w, h) : std::string("?"); }
 
+static const char* StageName(Stage s)
+{
+    switch (s)
+    {
+    case Stage::Recommended:
+        return "recomendado";
+    case Stage::Selected:
+        return "elegido";
+    case Stage::Pending:
+        return "pendiente";
+    case Stage::Restart:
+        return "reinicio";
+    case Stage::Applied:
+        return "aplicado";
+    case Stage::Verified:
+        return "verificado";
+    case Stage::Blocked:
+        return "rechazado";
+    case Stage::Failed:
+        return "fallido";
+    case Stage::GameMenu:
+        return "menu_juego";
+    default:
+        return "sin_cambio";
+    }
+}
+
+// Una línea de diagnóstico por optimización en OptiScaler.log: lo pedido, lo que corre y el porqué (sin datos personales)
+template <typename Ctx> static void LogOptimization(Ctx& ctx);
+
 // ---- Optimizar juego: un paso por fotograma; los de espera hasta que el sistema confirma -------------------------------------
 template <typename Ctx> static void Tick(Ctx& ctx)
 {
@@ -1892,6 +1936,7 @@ template <typename Ctx> static void Tick(Ctx& ctx)
         else if (dynamic)
         {
             plan.fgStage = Stage::Blocked;
+            plan.count = count; // el fijo que se habría pedido (sin esto se mostraba «1X»)
             plan.fgWhy = dynamicWhat + " está activo (configuración externa). Perfiles no lo modifica: desactívalo en FRAME GEN para usar " +
                          StrFmt("%dX fijo", count + 1);
         }
@@ -2395,6 +2440,7 @@ template <typename Ctx> static void Tick(Ctx& ctx)
             Add(Mark::Wait, "Perfil guardado: hay cambios pendientes", where);
         else
             Add(Mark::Ok, "Optimización completada y verificada", where);
+        LogOptimization(ctx);
         running = false;
         finished = true;
         break;
@@ -2655,6 +2701,31 @@ struct Live
     bool fgWanted = false, fgLoaded = false, savedThisSession = false;
     bool fgRestart = false, ratioRestart = false;
 };
+
+template <typename Ctx> static void LogOptimization(Ctx& ctx)
+{
+    const auto& state = State::Instance();
+    IFeature* feature = ctx.currentFeature;
+    const bool upscaling = feature != nullptr && feature->IsInited();
+    const auto catalog = GatherUpscalers(feature);
+    const UpscalerVariant* current = Current(catalog);
+    const auto status = IlionDynamicMfg::Get();
+    std::string dyn, inert = InertDynamicSetting();
+    const bool dynamic = ExternalDynamic(&dyn);
+    const float ratio = upscaling && feature->RenderWidth() > 0 ? (float) feature->TargetWidth() / (float) feature->RenderWidth() : 0.0f;
+    const int detected = PresetOf(ratio);
+    LOG_INFO("ILION Perfiles diag: game={} api={} input={} mode={} | scaler running={} requested={} ({}) model={} | preset requested={} ({}) detected={} "
+             "render={} output={} ratio={:.2f} | fg input={} output={} provider={} generating={} mult requested={} ({}) observed={} | dynamic={} inert={} "
+             "| fgWhy={}",
+             ExeKey(), magic_enum::enum_name(state.api), upscaling ? ApiUpscalerInputName(state.currentInputApiName) : std::string("none"), ModeName(mode),
+             current != nullptr ? current->name : std::string("none"), plan.scaler.name, StageName(plan.scalerStage),
+             current != nullptr && IsFsr4Full(*current) ? (SelectedModel() == Model::Lite ? "INT8Lite" : "full") : "n/a",
+             plan.preset >= 0 ? kPresets[plan.preset].name : "none", StageName(plan.presetStage), detected >= 0 ? kPresets[detected].name : "none",
+             upscaling ? ResText(feature->RenderWidth(), feature->RenderHeight()) : std::string("n/a"),
+             upscaling ? ResText(feature->TargetWidth(), feature->TargetHeight()) : std::string("n/a"), ratio, magic_enum::enum_name(state.activeFgInput),
+             magic_enum::enum_name(state.activeFgOutput), status.name, Generating(status), plan.fg == FgRoute::None ? 0 : plan.count + 1, StageName(plan.fgStage),
+             status.multiplier, dynamic ? dyn : std::string("no"), inert.empty() ? std::string("none") : inert, plan.fgWhy);
+}
 
 template <typename Ctx> static Live ReadLive(Ctx& ctx, const Saved& saved)
 {
@@ -2938,7 +3009,26 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight, boo
         else if (split)
             Row(Mark::Info, "Modelo: no aplica", current != nullptr ? "Esta tecnología no tiene modelos FSR 4 que elegir" : std::string());
         if (split && !upscaling)
-            Coloured(IlionTheme::ShellPal::Dim, "El juego no envía escalado ahora", true);
+            Coloured(IlionTheme::ShellPal::Dim, "El juego no envía escalado ahora: preset y resolución no verificables", true);
+        if (split && upscaling)
+        {
+            // Lo que envía el juego en cada fotograma (verificado), y el objetivo del perfil si aún no se alcanza
+            const bool pendingPreset = target >= 0 && !targetReached;
+            Row(pendingPreset ? Mark::Wait : Mark::Ok,
+                std::string("Preset: ") + (activePreset >= 0 ? kPresets[activePreset].name : "?") +
+                    (pendingPreset ? std::string(" → objetivo ") + kPresets[target].name : std::string()),
+                pendingPreset ? (targetViaMenu ? std::string("cambio pendiente: elígelo en el menú del juego")
+                                               : std::string("cambio pendiente: el juego aún no ha pedido la nueva resolución (algunos juegos necesitan reiniciar)"))
+                : target >= 0 ? std::string("aplicado y verificado")
+                              : std::string());
+            Row(Mark::Info, "Interna " + ResText(feature->RenderWidth(), feature->RenderHeight()) + " → salida " + ResText(feature->TargetWidth(), feature->TargetHeight()),
+                StrFmt("factor %.2f · lo que el juego envía ahora", ratio));
+            if (pendingPreset)
+                Row(Mark::Wait,
+                    "Interna objetivo: " + ResText((unsigned) std::lround(feature->TargetWidth() / kPresets[target].ratio),
+                                                   (unsigned) std::lround(feature->TargetHeight() / kPresets[target].ratio)),
+                    "se verifica cuando el juego la use");
+        }
     };
 
     // ---- Preset y resolución: recomendado, solicitado, activo, acción pendiente y reinicio, cada uno por separado ----
@@ -3146,13 +3236,7 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight, boo
     if (split && details)
         presetBox();
     else if (split)
-    {
-        // Preset y resolución: lo esencial a la vista; recomendado, solicitado y el porqué, en DETALLES TÉCNICOS
-        Row(!upscaling ? Mark::Info : targetReached || target < 0 ? Mark::Ok : Mark::Wait,
-            std::string("Preset: ") + (!upscaling ? "sin escalado ahora" : activePreset >= 0 ? kPresets[activePreset].name : "?"),
-            upscaling ? ResText(feature->RenderWidth(), feature->RenderHeight()) + " → " + ResText(feature->TargetWidth(), feature->TargetHeight()) : std::string());
-        return;
-    }
+        return; // preset y resolución están en la tarjeta ESCALADO; el detalle, en DETALLES TÉCNICOS
 
     // Objetivo del modo y coste del FG, solo con datos fiables
     {
@@ -3406,9 +3490,11 @@ template <typename Ctx> static void OptimizerBlock(Ctx& ctx)
                                    : plan.fg == FgRoute::DlssgOutput ? std::string("Salida DLSSG de ILION")
                                    : plan.fg == FgRoute::FsrFg       ? std::string("FSR FG")
                                                                      : std::string();
-        if (plan.fg == FgRoute::None)
-            AppliedRow("Frame Generation", generating ? std::string(status.name) + StrFmt(" %dX", status.multiplier) : std::string("sin FG"), Applied::NoChange,
-                       plan.fgWhy);
+        if (plan.fgStage == Stage::Blocked)
+            AppliedRow("Frame Generation", StrFmt("%dX fijo", plan.count + 1), Applied::Recommended, plan.fgWhy);
+        else if (plan.fg == FgRoute::None)
+            AppliedRow("Frame Generation", generating ? std::string(status.name) + StrFmt(" %dX (se mantiene)", status.multiplier) : std::string("sin FG"),
+                       Applied::NoChange, plan.fgWhy);
         else
         {
             const int want = plan.count + 1;
@@ -3427,7 +3513,50 @@ template <typename Ctx> static void OptimizerBlock(Ctx& ctx)
         }
     }
     else if (!running)
-        Coloured(IlionTheme::ShellPal::Dim, "Pulsa OPTIMIZAR JUEGO: la configuración del perfil aparece aquí.", true);
+    {
+        // La optimización guardada del juego sigue siendo la configuración del perfil: elegir otro modo no la borra; se
+        // sustituye solo al pulsar OPTIMIZAR JUEGO
+        const Saved saved = ReadSaved();
+        if (!saved.exists)
+            Coloured(IlionTheme::ShellPal::Dim, "Pulsa OPTIMIZAR JUEGO: la configuración del perfil aparece aquí.", true);
+        else
+        {
+            Coloured(IlionTheme::ShellPal::Text2, "CONFIGURACIÓN DEL PERFIL (guardada)");
+            Row(Mark::Info, "Modo: " + (saved.modeName.empty() ? std::string("—") : saved.modeName),
+                saved.modeName != ModeName(mode) ? StrFmt("seleccionado %s: pulsa OPTIMIZAR para aplicarlo · guardada el %s", ModeName(mode), saved.date.c_str())
+                                                 : "guardada el " + saved.date);
+            IFeature* feature = ctx.currentFeature;
+            const bool upscaling = feature != nullptr && feature->IsInited();
+            const auto catalog = GatherUpscalers(feature);
+            const UpscalerVariant* current = Current(catalog);
+            if (!saved.scalerKey.empty())
+            {
+                const bool wantLite = saved.model == std::to_string((int) FSR4Model::INT8Lite);
+                const bool runs = current != nullptr && KeyOf(*current) == saved.scalerKey && (!IsFsr4Full(*current) || DriverLiteSelected() == wantLite);
+                AppliedRow("Escalador", saved.scalerName + (current != nullptr && IsFsr4Full(*current) ? (wantLite ? " · INT8Lite" : " · modelo completo") : ""),
+                           runs ? (upscaling ? Applied::Verified : Applied::Applied) : Applied::Pending,
+                           runs && !upscaling ? "el juego no escala ahora" : std::string());
+            }
+            const Live lv = ReadLive(ctx, saved);
+            if (lv.target >= 0)
+                AppliedRow("Preset", kPresets[lv.target].name, lv.reached ? Applied::Verified : upscaling ? Applied::Pending : Applied::Applied,
+                           lv.reached || !upscaling ? std::string() : lv.viaMenu ? "elígelo en el menú del juego" : "falta que el juego cambie de resolución");
+            const auto status = IlionDynamicMfg::Get();
+            const int want = atoi(saved.fgCount.c_str());
+            if (lv.fgWanted && want > 1)
+            {
+                const bool gen = Generating(status);
+                AppliedRow("Frame Generation", saved.fgOutput + StrFmt(" %dX fijo", want),
+                           gen && (status.multiplier <= 0 || status.multiplier == want) ? Applied::Verified
+                           : lv.fgRestart                                               ? Applied::Pending
+                           : lv.fgLoaded                                                ? Applied::Applied
+                                                                                        : Applied::Pending,
+                           lv.fgRestart ? "se carga al reiniciar el juego" : gen && status.multiplier != want ? StrFmt("genera %dX", status.multiplier) : std::string());
+            }
+            else
+                AppliedRow("Frame Generation", "sin FG fijo en el perfil", Applied::NoChange);
+        }
+    }
     ImGui::Spacing();
     ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPal::Orange));
     if (IlionTheme::Button(running ? "OPTIMIZANDO...##ProfilesGo" : "OPTIMIZAR JUEGO##ProfilesGo", ImVec2(ImGui::GetContentRegionAvail().x, std::floor(font * 2.4f))) &&
@@ -3447,6 +3576,10 @@ static void FgDiagnosis()
     if (State::Instance().activeFgNvngx == FGNvngxReplacement::Nukems && !config->FGNvngxReplacement.has_value())
         Row(Mark::Wait, "Nukem es el reemplazo DLSSG por defecto de OptiScaler",
             "Está cargado porque la entrada o la salida de FG es DLSSG y no se eligió otro reemplazo; no lo eligió el optimizador");
+    if (const std::string inert = InertDynamicSetting(); !inert.empty())
+        Row(Mark::Info, "Ajuste guardado sin efecto", inert + ". No es un MFG dinámico activo y no bloquea nada");
+    if (std::string dyn; ExternalDynamic(&dyn))
+        Row(Mark::Wait, "MFG dinámico que gobierna la ruta actual", dyn);
     if (!finished || plan.fgDiag.empty())
     {
         Coloured(IlionTheme::ShellPal::Dim, "La comparación de implementaciones aparece al optimizar.", true);

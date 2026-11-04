@@ -793,6 +793,62 @@ int main()
               "código: menos de 6, más de 10 o con letras se rechaza sin llamar al servicio");
     }
 
+    // 17. Community10: el motivo real de la compatibilidad, empates del podio y catálogos de prueba extremos
+    {
+        C::Machine kcd;
+        kcd.api = "DX12";
+        kcd.arch = "rdna3";
+        kcd.gpu = "AMD Radeon RX 7900 XTX";
+        kcd.gameExe = "kcd2.exe";
+        kcd.outW = 2560;
+        kcd.outH = 1440;
+        kcd.techs = { "fsr4_driver" };
+        kcd.fgs = { "ninguno", "xefg" };
+        kcd.routes = { "ninguno", "juego", "optifg", "streamline" };
+        C::Profile adan = Sample();
+        adan.name = "ADAN";
+        adan.gameExe = "dawnwalker.exe";
+        adan.gameName = "Dawnwalker";
+        adan.arch = "rdna3";
+        adan.gpu = "AMD Radeon RX 7900 XTX";
+        adan.tech = "fsr4_driver";
+        adan.model = "completo";
+        const auto other = C::FitOf(adan, kcd);
+        CHECK(other.level == 3 && other.label == "Perfil de otro juego (Dawnwalker)", "ADAN en KCD2: «Perfil de otro juego», no un fallo de GPU");
+        C::Profile mine = adan;
+        mine.gameExe = "kcd2.exe";
+        CHECK(C::FitOf(mine, kcd).level == 0 && C::FitOf(mine, kcd).label == "Compatible y activable", "mismo juego y equipo: compatible y activable");
+        C::Profile api = mine;
+        api.api = "Vulkan";
+        CHECK(C::FitOf(api, kcd).label.rfind("API incompatible", 0) == 0, "otra API: el motivo es la API");
+        C::Profile gpu = mine;
+        gpu.tech = "dlss";
+        CHECK(C::FitOf(gpu, kcd).label.rfind("GPU incompatible", 0) == 0, "DLSS en Radeon: GPU incompatible");
+        C::Profile missing = mine;
+        missing.fg = "xefg";
+        kcd.fgs = { "ninguno" };
+        CHECK(C::FitOf(missing, kcd).level == 2 && C::FitOf(missing, kcd).label.rfind("Tecnología no disponible", 0) == 0, "XeFG no localizado: tecnología no disponible");
+        C::Profile newer = mine;
+        newer.schema = C::kSchema + 1;
+        CHECK(C::FitOf(newer, kcd).label.rfind("Versión", 0) == 0, "perfil de una versión más nueva: el motivo es la versión");
+
+        // Empates: a igualdad de descargas, el que se publicó antes; después, el identificador
+        std::vector<C::Profile> tie(3, Sample());
+        tie[0].id = "c", tie[0].downloads = 5, tie[0].created = "2026-11-03T00:00:00Z";
+        tie[1].id = "b", tie[1].downloads = 5, tie[1].created = "2026-11-01T00:00:00Z";
+        tie[2].id = "a", tie[2].downloads = 5, tie[2].created = "2026-11-01T00:00:00Z";
+        const auto o = C::RankByDownloads(tie);
+        CHECK(tie[o[0]].id == "a" && tie[o[1]].id == "b" && tie[o[2]].id == "c" && C::RankPosition(tie, "c") == 3, "empates: antigüedad y luego identificador");
+
+        const auto base = std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() / L"ilion-community" / L"prueba";
+        const auto none = C::LoadList(base / L"catalogo_prueba_sin_descargas.json", C::kMaxCatalogBytes);
+        const auto ties = C::LoadList(base / L"catalogo_prueba_empates_largos.json", C::kMaxCatalogBytes);
+        CHECK(none.warning.empty() && none.profiles.size() == 4 && C::PodiumCount(none.profiles, C::RankByDownloads(none.profiles)) == 0,
+              "catálogo con perfiles y 0 descargas: válido y sin podio");
+        CHECK(ties.warning.empty() && ties.profiles.size() == 6 && C::PodiumCount(ties.profiles, C::RankByDownloads(ties.profiles)) == 3,
+              "catálogo con empates y nombres largos: válido, podio de tres");
+    }
+
     printf("ILION COMMUNITY: %d comprobaciones correctas, %d fallos\n", passed, failures);
     std::filesystem::remove_all(root, ec);
     return failures == 0 ? 0 : 1;

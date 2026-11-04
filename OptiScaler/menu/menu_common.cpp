@@ -19984,6 +19984,9 @@ void MenuCommon::RenderExternalFgTab(RenderMenuContext& ctx)
         RenderAfmfSegment(scale, warnColour, running, optiFgOn);
         ImGui::EndTable();
     }
+
+    // ILION COMMUNITY: perfiles de la comunidad, plegable y aparte de los controles de FG de esta pestaña
+    RenderCommunityPanel(ctx);
 }
 
 
@@ -20797,6 +20800,7 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
 
 // ILION: pestaña PERFILES (prototipo experimental)
 #include "ilion_profiles.inl"
+#include "ilion_community.inl"
 
 // Tabs of the menu, in their order. Boxes of a tab come from GetMenuBoxes, by the label of the tab
 struct MenuCommon::MenuTab

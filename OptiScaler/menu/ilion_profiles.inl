@@ -282,6 +282,7 @@ static Before before;
 static std::string lastMessage;
 static std::vector<std::string> resEvents; // cambios de resolución interna vistos en esta sesión del juego
 static int optJudge = -2;                  // la base frente al objetivo en la última optimización (-2: sin datos)
+static bool fromOptimize = false;          // lo último fue OPTIMIZAR (plan propio); false tras cargar un perfil
 
 // ---- Archivos ------------------------------------------------------------------------------------------------------
 static std::filesystem::path Folder() { return Util::ExePath().parent_path() / L"ILION" / L"Perfiles"; }
@@ -2142,6 +2143,7 @@ template <typename Ctx> static void ApplyFile(Ctx& ctx, const std::filesystem::p
     Begin();
     running = false;
     finished = true;
+    fromOptimize = false;
 
     CSimpleIniA ini(true);
     if (ini.LoadFile(path.c_str()) < 0)
@@ -2399,8 +2401,8 @@ template <typename Ctx> static Live ReadLive(Ctx& ctx, const Saved& saved)
     l.savedThisSession = saved.session == SessionId();
     l.fgRestart = (plan.restartFg && state.activeFgOutput != FGOutput::XeFG) ||
                   (saved.restart.find("fg") != std::string::npos && l.fgWanted && !l.fgLoaded);
-    l.target = finished && plan.preset >= 0 ? plan.preset : PresetByName(saved.preset);
-    l.viaMenu = finished ? plan.viaMenu : saved.route == "menu";
+    l.target = finished && fromOptimize && plan.preset >= 0 ? plan.preset : PresetByName(saved.preset);
+    l.viaMenu = finished && fromOptimize ? plan.viaMenu : saved.route == "menu";
     l.reached = l.target >= 0 && l.activePreset == l.target;
     // Reinicio de la proporción: mientras la configuración de esta sesión no sea la que el juego leyó al arrancar
     l.ratioRestart = l.upscaling && !l.reached &&
@@ -2414,7 +2416,9 @@ template <typename Ctx> static Live ReadLive(Ctx& ctx, const Saved& saved)
 // verdad, ámbar cuando ahora no se puede comprobar. Se recalcula en cada fotograma: ILION lo verifica solo
 template <typename Ctx> static void OutcomeBanner(Ctx& ctx, const Saved& saved, const Live& lv)
 {
-    if (running || (!finished && !saved.exists))
+    // El plan de una optimización de esta sesión; tras cargar un perfil (Perfiles o ILION COMMUNITY) manda el guardado
+    const bool fromPlan = finished && fromOptimize;
+    if (running || (!fromPlan && !saved.exists))
         return;
     IFeature* feature = ctx.currentFeature;
     const auto status = IlionDynamicMfg::Get();
@@ -2424,7 +2428,7 @@ template <typename Ctx> static void OutcomeBanner(Ctx& ctx, const Saved& saved, 
     std::vector<std::string> verified;
     std::string unverifiable, expected;
 
-    if (finished && optJudge == -2)
+    if (fromPlan && optJudge == -2)
         todo.push_back("Medición pendiente: juega 15 s (sin FG si hay un límite o un Dynamic) y vuelve a pulsar OPTIMIZAR JUEGO");
 
     if (lv.fgRestart || lv.ratioRestart)
@@ -2433,8 +2437,8 @@ template <typename Ctx> static void OutcomeBanner(Ctx& ctx, const Saved& saved, 
                                                      : "Reinicia el juego: la tabla de resolución se lee al arrancar");
 
     // Escalador y modelo
-    const std::string wantKey = finished ? plan.scaler.key : saved.scalerKey;
-    const std::string wantName = finished ? (plan.scaler.variant.empty() ? plan.scaler.name : plan.scaler.variant) : saved.scalerName;
+    const std::string wantKey = fromPlan ? plan.scaler.key : saved.scalerKey;
+    const std::string wantName = fromPlan ? (plan.scaler.variant.empty() ? plan.scaler.name : plan.scaler.variant) : saved.scalerName;
     const bool scalerOk = current != nullptr && KeyOf(*current) == wantKey;
     if (!wantKey.empty())
     {
@@ -2448,7 +2452,7 @@ template <typename Ctx> static void OutcomeBanner(Ctx& ctx, const Saved& saved, 
     }
     if (scalerOk && IsFsr4Full(*current))
     {
-        const bool wantLite = finished ? plan.scaler.model == Model::Lite : saved.model == std::to_string((int) FSR4Model::INT8Lite);
+        const bool wantLite = fromPlan ? plan.scaler.model == Model::Lite : saved.model == std::to_string((int) FSR4Model::INT8Lite);
         if (DriverLiteSelected() != wantLite)
             todo.push_back(StrFmt("Modelo FSR 4: elige %s en ESCALADO, o pulsa OPTIMIZAR de nuevo", wantLite ? "INT8Lite" : "Automático (modelo completo)"));
         else
@@ -2488,14 +2492,14 @@ template <typename Ctx> static void OutcomeBanner(Ctx& ctx, const Saved& saved, 
     }
 
     // Frame Generation fijo
-    if (finished && plan.fgStage == Stage::Blocked)
+    if (fromPlan && plan.fgStage == Stage::Blocked)
         todo.push_back(StrFmt("Frame Generation %dX fijo no aplicado: hay un MFG dinámico externo. Perfiles no lo cambia; desactívalo en "
                               "FRAME GEN si quieres el fijo y vuelve a optimizar",
                               plan.count + 1));
     int wantCount = 0;
-    if (finished && (plan.fgStage == Stage::Applied || plan.fgStage == Stage::Verified || plan.fgStage == Stage::Restart))
+    if (fromPlan && (plan.fgStage == Stage::Applied || plan.fgStage == Stage::Verified || plan.fgStage == Stage::Restart))
         wantCount = plan.count + 1;
-    else if (!finished && !saved.fgCount.empty())
+    else if (!fromPlan && !saved.fgCount.empty())
         wantCount = atoi(saved.fgCount.c_str());
     if (wantCount > 0 && !lv.fgRestart)
     {
@@ -2525,9 +2529,9 @@ template <typename Ctx> static void OutcomeBanner(Ctx& ctx, const Saved& saved, 
     {
         Pilot(level == 2 ? Mark::Restart : level == 1 ? Mark::Wait : Mark::Ok, std::floor(font * 1.5f));
         Big(UiFont(), 1.3f, edge,
-            level == 2   ? (finished ? "OPTIMIZACIÓN PENDIENTE" : "PERFIL PENDIENTE DE APLICAR")
+            level == 2   ? (fromPlan ? "OPTIMIZACIÓN PENDIENTE" : "PERFIL PENDIENTE DE APLICAR")
             : level == 1 ? "VERIFICACIÓN PENDIENTE"
-                         : (finished ? "OPTIMIZACIÓN APLICADA CORRECTAMENTE" : "PERFIL APLICADO CORRECTAMENTE"),
+                         : (fromPlan ? "OPTIMIZACIÓN APLICADA CORRECTAMENTE" : "PERFIL APLICADO CORRECTAMENTE"),
             true);
         if (level == 2)
         {
@@ -2900,7 +2904,10 @@ template <typename Ctx> static void Panel(Ctx& ctx)
     const float full = ImGui::GetContentRegionAvail().x;
     ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPal::Orange));
     if (IlionTheme::Button(running ? "OPTIMIZANDO...##ProfilesGo" : "OPTIMIZAR JUEGO##ProfilesGo", ImVec2(full, std::floor(font * 2.6f))) && !running)
+    {
         Begin();
+        fromOptimize = true;
+    }
     ImGui::PopStyleColor();
     ImGui::Spacing();
     {

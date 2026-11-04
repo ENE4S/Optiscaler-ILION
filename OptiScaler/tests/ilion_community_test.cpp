@@ -724,6 +724,75 @@ int main()
         CHECK(counts[0] == 0 && counts[1] == 1 && counts[2] == 3 && counts[3] == 12 && clean, "catálogos de prueba 0 / 1 / 3 / 12 válidos y marcados como prueba");
     }
 
+    // 16. Community8: clasificación compartida por INICIO y MIS APORTES, copia editada, borrado local, nombres de FG, código
+    {
+        const auto base = std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() / L"ilion-community" / L"prueba";
+        // Puesto: el mismo orden y criterio que el podio (solo con descargas reales)
+        const auto c12 = C::LoadList(base / L"catalogo_prueba_12.json", C::kMaxCatalogBytes).profiles;
+        const auto order = C::RankByDownloads(c12);
+        bool same = true;
+        for (size_t i = 0; i < order.size(); i++)
+            same = same && C::RankPosition(c12, c12[order[i]].id) == (c12[order[i]].downloads > 0 ? (int) i + 1 : 0);
+        CHECK(same && C::RankPosition(c12, "no-existe") == 0, "puesto en MIS APORTES = posición en INICIO; fuera del catálogo, sin clasificación");
+        std::vector<C::Profile> zero = c12;
+        for (auto& q : zero)
+            q.downloads = 0;
+        CHECK(C::RankPosition(zero, zero[0].id) == 0 && C::PodiumCount(zero, C::RankByDownloads(zero)) == 0, "sin descargas: sin clasificación y sin podio");
+        CHECK(C::BestPosition(c12, { c12[order[5]].id, c12[order[2]].id }) == 3 && C::BestPosition(c12, {}) == 0, "mejor posición: el menor puesto real");
+        const auto c0 = C::LoadList(base / L"catalogo_prueba_0.json", C::kMaxCatalogBytes).profiles;
+        const auto c1 = C::LoadList(base / L"catalogo_prueba_1.json", C::kMaxCatalogBytes).profiles;
+        const auto c3 = C::LoadList(base / L"catalogo_prueba_3.json", C::kMaxCatalogBytes).profiles;
+        CHECK(C::PodiumCount(c0, C::RankByDownloads(c0)) == 0 && C::PodiumCount(c1, C::RankByDownloads(c1)) == 1 &&
+                  C::PodiumCount(c3, C::RankByDownloads(c3)) == 3 && C::PodiumCount(c12, C::RankByDownloads(c12)) == 3,
+              "podio con 0 / 1 / 3 / 12 perfiles: 0, 1, 3 y 3 puestos");
+
+        // Copia editada de un perfil descargado: autoría original, identidad local nueva, nunca publicable como propia
+        C::Profile original = Sample();
+        original.id = "11111111-2222-3333-4444-555555555555";
+        original.author = "OtroAutor";
+        original.authorId = "99999999-0000-0000-0000-000000000000";
+        original.origin = "comunidad";
+        original.review = "aprobado";
+        original.downloads = 42;
+        C::Profile edited = original;
+        edited.name = "Mi ajuste";
+        edited.multiplier = 3;
+        const C::Profile copy = C::EditedCopy(original, edited);
+        CHECK(copy.author == "OtroAutor" && copy.authorId == original.authorId && copy.origin == "comunidad" && copy.id != original.id &&
+                  copy.id.rfind("local-", 0) == 0 && copy.review == "local" && copy.downloads == -1 && copy.name == "Mi ajuste" && copy.multiplier == 3,
+              "copia editada: conserva la autoría, identidad local nueva y sin estado público");
+        CHECK(C::IsEditedCopy(copy) && !C::IsEditedCopy(original) && !C::IsEditedCopy(Sample()), "la copia editada se distingue del original y de lo propio");
+        C::Session s;
+        s.alias = "ENE";
+        s.userId = "aaaaaaaa-0000-0000-0000-000000000000";
+        C::Profile attempt = copy;
+        CHECK(!C::Publish(C::ServiceConfig {}, s, attempt).first, "una copia editada de otro autor no se publica como propia");
+        std::vector<C::Profile> dl { original };
+        CHECK(C::AddOrUpdate(dl, copy) == C::AddResult::Added && dl.size() == 2, "volver a descargar el original no pisa la copia editada");
+
+        // Eliminar: solo la copia de la lista local indicada
+        std::vector<C::Profile> mineList { Sample() }, remote { Sample() };
+        const std::string gone = mineList[0].id;
+        CHECK(C::RemoveLocal(mineList, gone) && mineList.empty() && remote.size() == 1 && !C::RemoveLocal(mineList, gone),
+              "eliminar borra la copia local y no toca lo publicado");
+
+        // Desplegables de FG: solo nombres, sin etiquetas de evidencia
+        bool names = true;
+        for (const auto& f : C::kFgImpls)
+        {
+            const std::string n = C::NameOf(C::kFgs, f.id);
+            names = names && !n.empty() && n.find("Compatibilidad") == std::string::npos && n.find("Experimental") == std::string::npos &&
+                    n.find("oficial") == std::string::npos;
+        }
+        CHECK(names, "los nombres de FG no llevan «Compatibilidad…» ni «Experimental»");
+
+        // Código del correo: se validan las cifras antes de llamar al servicio (el servicio envía 8)
+        C::Session v;
+        CHECK(!C::VerifyCode(C::ServiceConfig {}, "a@b.c", "12345", v).first && !C::VerifyCode(C::ServiceConfig {}, "a@b.c", "1234abcd", v).first &&
+                  !C::VerifyCode(C::ServiceConfig {}, "a@b.c", "12345678901", v).first,
+              "código: menos de 6, más de 10 o con letras se rechaza sin llamar al servicio");
+    }
+
     printf("ILION COMMUNITY: %d comprobaciones correctas, %d fallos\n", passed, failures);
     std::filesystem::remove_all(root, ec);
     return failures == 0 ? 0 : 1;

@@ -27,6 +27,7 @@ enum CPage
     Explore,
     Contributions,
     AccountView,
+    PublishView, // PUBLICAR PERFIL: elegir, revisar y publicar
 };
 static int cpage = Home;
 static int cpageBack = Home;
@@ -35,7 +36,13 @@ static std::string detailId;      // perfil del catálogo abierto en COMUNIDAD
 // PERFILES: la biblioteca local
 static std::string selectedId;
 static std::string activatingId;  // tarjeta con la activación abierta
-static std::string confirmShare;  // tarjeta con la confirmación de compartir abierta
+static std::string activationId;  // la tarjeta con el resultado de la última activación (solo esa lo muestra)
+static std::string activationText;
+static bool activationOk = false;
+static std::string publishPick;   // el perfil elegido en PUBLICAR PERFIL
+static std::string publishingName; // el nombre del perfil que se está publicando (lo lee la interfaz, no el hilo)
+static std::vector<C::Profile> aportes; // lo publicado por la cuenta según el servidor (caché aportes.json)
+static std::set<std::string> verifying; // publicados a la espera de verlos en el catálogo público
 static std::map<std::string, std::string> publishErrors; // el último error de publicación de cada perfil
 static std::optional<C::Profile> duplicateQueue;
 static std::string deleteQueue;
@@ -50,8 +57,10 @@ static std::string confirmDelete;
 static bool loaded = false;
 static std::vector<C::Profile> mine, downloaded, catalog;
 static std::set<std::string> favourites;
-static std::string warning, message;
-static bool messageOk = true;
+static std::string warning, message, communityMessage; // cada sección, sus propios mensajes
+static bool messageOk = true, communityOk = true;
+static int sayTarget = 0; // 0 PERFILES, 1 COMUNIDAD: dónde se dibuja ahora
+static int profilesFrame = -10, communityFrame = -10; // el último fotograma de cada sección: al volver, sin mensajes viejos
 static C::ServiceConfig service;
 static C::Session session;
 static C::Worker worker;
@@ -85,11 +94,15 @@ static std::filesystem::path MinePath() { return C::Root() / L"mis_perfiles.json
 static std::filesystem::path DownloadedPath() { return C::Root() / L"descargados.json"; }
 static std::filesystem::path CatalogPath() { return C::Root() / L"catalogo.json"; }
 static std::filesystem::path FavouritesPath() { return C::Root() / L"favoritos.json"; }
+static std::filesystem::path AportesPath() { return C::Root() / L"aportes.json"; }
 
+// Un mensaje para la sección que se está dibujando (los de PERFILES nunca aparecen en COMUNIDAD y al revés)
 static void Say(bool ok, const std::string& text)
 {
-    messageOk = ok;
-    message = text;
+    if (sayTarget == 1)
+        communityOk = ok, communityMessage = text;
+    else
+        messageOk = ok, message = text;
 }
 
 // Un trabajo del hilo que necesita la sesión: la renueva antes si ha caducado
@@ -139,6 +152,8 @@ static void LoadAll()
     auto c = C::LoadList(testCatalog ? C::Root() / L"catalogo_prueba.json" : CatalogPath(), C::kMaxCatalogBytes);
     catalog = c.profiles;
     AddWarning(c.warning);
+    auto a = C::LoadList(AportesPath());
+    aportes = a.profiles;
     std::string fw;
     favourites = C::LoadIds(FavouritesPath(), &fw);
     AddWarning(fw);
@@ -371,6 +386,24 @@ template <typename Ctx> static C::Profile FromCurrent(Ctx& ctx)
     return p;
 }
 
+// Lo que aún no se puede leer de verdad: GUARDAR COMO PERFIL lo exige en vez de rellenarlo con valores supuestos
+template <typename Ctx> static std::string UnknownNow(Ctx& ctx)
+{
+    const C::Machine m = MachineOf(ctx);
+    IFeature* f = ctx.currentFeature;
+    std::string missing;
+    const auto add = [&](const char* t) { missing += (missing.empty() ? std::string() : std::string(", ")) + t; };
+    if (m.outW <= 0 || m.outH <= 0)
+        add("la resolución de salida");
+    const auto catalogue = GatherUpscalers(f);
+    const UpscalerVariant* cur = P::Current(catalogue);
+    if (cur == nullptr || TechOf(*cur).empty())
+        add("el escalador activo");
+    if (f == nullptr || !f->IsInited() || f->RenderWidth() == 0)
+        add("el preset (la resolución interna)");
+    return missing;
+}
+
 // Lo que escribe un perfil en la configuración de FG de ILION (claves de perfil.ini de Perfiles). restart: cambia la
 // entrada, la salida o el reemplazo NVNGX cargados
 static bool WriteFg(CSimpleIniA& ini, const char* s, const C::Profile& p, std::string& what)
@@ -551,8 +584,8 @@ template <typename Ctx> static bool Apply(Ctx& ctx, const C::Profile& p, std::st
             P::mode = (P::Mode) i;
     P::modeLoaded = true;
     applied = p.id;
-    out = "Perfil activado con los mecanismos de Perfiles: " + std::string(v->name) + ", preset " + P::kPresets[presetIndex].name + ", " + fgWhat +
-          (fgRestart ? " (el cambio de FG se aplica al reiniciar el juego)" : "") + ". Verde solo cuando todo corre de verdad";
+    out = std::string(v->name) + ", preset " + P::kPresets[presetIndex].name + ", " + fgWhat +
+          (fgRestart ? ". El cambio de FG se aplica al reiniciar el juego" : "") + ". Lo que falte por comprobar está en el cuadro de pendientes";
     return true;
 }
 
@@ -762,6 +795,21 @@ static void DownloadProfile(const C::Profile& p)
     }
 }
 
+// La fecha local de un archivo (dd/mm/aaaa hh:mm), o vacía si no existe
+static std::string FileStamp(const std::filesystem::path& file)
+{
+    struct _stat64 st {};
+    if (_wstat64(file.c_str(), &st) != 0)
+        return std::string();
+    std::tm local {};
+    const time_t t = (time_t) st.st_mtime;
+    if (localtime_s(&local, &t) != 0)
+        return std::string();
+    char text[32] = {};
+    std::strftime(text, sizeof(text), "%d/%m/%Y %H:%M", &local);
+    return text;
+}
+
 // Cuándo se descargó el catálogo en caché (fecha del archivo): los números son de ese momento, no en vivo
 static std::string CatalogStamp()
 {
@@ -892,67 +940,18 @@ static void RequestAuthorStats()
     RunWithSession("Consultando tus publicaciones...", "mios", [out](const C::ServiceConfig& cfg, C::Session& s) { return C::FetchMine(cfg, s, *out); });
 }
 
-static void AuthorStats()
+// Al terminar un trabajo: se recoge su resultado en el hilo de la interfaz (sus mensajes son de COMUNIDAD)
+static void CollectJob();
+static C::Profile* FindCatalog(const std::string& id);
+static void Collect()
 {
-    const auto ws = worker.Get();
-    if (!statsRequested && !ws.busy)
-    {
-        statsRequested = true;
-        RequestAuthorStats();
-    }
-    int approved = 0, pending = 0, rejected = 0;
-    long long total = 0;
-    std::vector<const C::Profile*> published;
-    for (const auto& e : mine)
-        if (e.review != "local")
-        {
-            published.push_back(&e);
-            approved += e.review == "aprobado";
-            pending += e.review == "pendiente";
-            rejected += e.review == "rechazado";
-            if (e.review == "aprobado" && e.downloads > 0)
-                total += e.downloads;
-        }
-    ImGui::Spacing();
-    IlionTheme::SectionPlate("MI PERFIL DE CREADOR");
-    P::Row(P::Mark::Info, StrFmt("Perfiles publicados: %d", (int) published.size()),
-           StrFmt("%d aprobados · %d pendientes de revisión · %d rechazados", approved, pending, rejected));
-    P::Row(total > 0 ? P::Mark::Ok : P::Mark::Info, StrFmt("Descargas registradas recibidas: %lld", total),
-           "De tus perfiles aprobados; una por cuenta con sesión, sin contar las tuyas");
-    // Reconocimientos: un puesto real en LOS 3 MÁS DESCARGADOS del catálogo
-    const auto order = C::RankByDownloads(catalog);
-    const int podium = C::PodiumCount(catalog, order);
-    bool any = false;
-    for (int i = 0; i < podium; i++)
-        for (const auto* e : published)
-            if (e->id == catalog[order[i]].id)
-            {
-                P::Row(P::Mark::Ok, StrFmt("Reconocimiento: Nº %d en LOS 3 MÁS DESCARGADOS", i + 1), e->name + " — " + e->gameName);
-                any = true;
-            }
-    if (!any)
-        P::Coloured(IlionTheme::ShellPal::Dim, "Reconocimientos: ninguno todavía. Llegan con un puesto en LOS 3 MÁS DESCARGADOS.", true);
-    if (!published.empty())
-    {
-        ImGui::Spacing();
-        P::Coloured(IlionTheme::ShellPal::Text2, "HISTORIAL DE PUBLICACIONES");
-        for (const auto* e : published)
-            P::Row(e->review == "aprobado" ? P::Mark::Ok : e->review == "pendiente" ? P::Mark::Wait : P::Mark::Bad, e->name + " — " + e->gameName,
-                   StrFmt("%s · v%d · %s", C::NameOf(C::kReviews, e->review), e->version,
-                          e->downloads >= 0 ? StrFmt("%lld descargas registradas", e->downloads).c_str() : "descargas: sin dato"));
-    }
-    ImGui::BeginDisabled(ws.busy);
-    if (IlionTheme::Button("ACTUALIZAR MIS ESTADÍSTICAS##CommunityStats"))
-        RequestAuthorStats();
-    ImGui::EndDisabled();
-    Flow("EDITAR EN PERFILES");
-    if (IlionTheme::Button("EDITAR EN PERFILES##CommunityToProfiles"))
-        requestedSection = 8;
-    ImGui::Spacing();
+    const int keep = sayTarget;
+    sayTarget = 1;
+    CollectJob();
+    sayTarget = keep;
 }
 
-// Al terminar un trabajo: se recoge su resultado en el hilo de la interfaz
-static void Collect()
+static void CollectJob()
 {
     const auto ws = worker.Get();
     if (ws.serial == seenSerial)
@@ -974,18 +973,14 @@ static void Collect()
             session = *jobSession;
     if (jobKind == "mios" && ws.ok)
     {
-        for (const auto& r : *mineRemote)
-        {
-            bool found = false;
+        // MIS APORTES = lo que el servidor dice que publicó la cuenta. Las copias locales solo actualizan su versión: si se
+        // borró una en PERFILES, no reaparece
+        aportes = *mineRemote;
+        C::SaveList(AportesPath(), aportes);
+        for (const auto& r : aportes)
             for (auto& e : mine)
                 if (e.id == r.id)
-                {
                     e.review = r.review, e.version = r.version, e.downloads = r.downloads, e.authorId = r.authorId;
-                    found = true;
-                }
-            if (!found && mine.size() < C::kMaxEntries)
-                mine.push_back(r);
-        }
         C::SaveList(MinePath(), mine);
     }
     if (jobKind.rfind("retirar:", 0) == 0 && ws.ok)
@@ -998,16 +993,31 @@ static void Collect()
             {
                 e.id = C::NewLocalId();
                 e.authorId.clear();
-                e.review = "retirado";
+                e.review = "local";
                 e.downloads = -1;
+                if (selectedId == id)
+                    selectedId = e.id;
             }
         C::SaveList(MinePath(), mine);
+        C::RemoveLocal(aportes, id);
+        C::SaveList(AportesPath(), aportes);
+        verifying.erase(id);
+        Say(true, "Publicación retirada. Tu copia sigue en MIS PERFILES");
     }
+    if (jobKind == "catalogo" && !ws.ok)
+        verifying.clear(); // sin catálogo no se puede confirmar: queda «Aún no aparece en el catálogo»
     if ((jobKind == "catalogo" || jobKind == "inicio") && ws.ok && !testCatalog)
     {
         auto c = C::LoadList(CatalogPath(), C::kMaxCatalogBytes);
         catalog = c.profiles;
         AddWarning(c.warning);
+        // «Publicado» solo cuando el catálogo público lo muestra: tras esta lectura, lo encontrado queda confirmado
+        bool visible = true;
+        for (const auto& id : verifying)
+            visible = visible && FindCatalog(id) != nullptr;
+        if (!verifying.empty())
+            Say(visible, visible ? "Publicado: ya es visible en el catálogo público" : "El servidor aceptó la publicación, pero aún no aparece en el catálogo");
+        verifying.clear();
     }
     else if (jobKind == "sesion" && ws.ok)
     {
@@ -1029,6 +1039,12 @@ static void Collect()
                 if (e.id == oldId)
                     e = *publishResult;
             C::SaveList(MinePath(), mine);
+            // MIS APORTES: «Publicando…» hasta que el catálogo público lo muestre
+            C::RemoveLocal(aportes, publishResult->id);
+            aportes.push_back(*publishResult);
+            C::SaveList(AportesPath(), aportes);
+            if (publishResult->review == "aprobado" && !testCatalog)
+                verifying.insert(publishResult->id);
             if (selectedId == oldId)
                 selectedId = publishResult->id;
             if (shareId == oldId)
@@ -1114,8 +1130,7 @@ static void EditFields(C::Profile& d, const C::Machine& m)
     label("Frame Generation (multiplicador fijo)");
     {
         ImGui::SetNextItemWidth(-FLT_MIN);
-        const auto fgLabel = [&](const std::string& id)
-        { return std::string(C::NameOf(C::kFgs, id)) + (id == "ninguno" ? "" : std::string("  (") + C::EvidenceText(C::FgEvidence(id, d.arch)) + ")"); };
+        const auto fgLabel = [](const std::string& id) { return std::string(C::NameOf(C::kFgs, id)); }; // solo el nombre
         if (IlionTheme::BeginCombo("##EditFg", fgLabel(d.fg).c_str()))
         {
             for (const auto& f : C::kFgImpls)
@@ -1220,28 +1235,6 @@ static void StatusChip(const ImVec4& colour, const char* text)
     P::Coloured(colour, text);
 }
 
-// El estado de publicación de un perfil propio, en una palabra: Publicando, Error, Publicado, Pendiente de moderación,
-// Retirado. «Publicado» solo si el servidor lo dejó visible
-static std::pair<ImVec4, std::string> PublicationState(const C::Profile& p)
-{
-    const auto ws = worker.Get();
-    if (ws.busy && jobKind == "publicar:" + p.id)
-        return { IlionTheme::ShellPilot(IlionTheme::ShellPal::Yellow), "Publicando…" };
-    if (const auto it = publishErrors.find(p.id); it != publishErrors.end())
-        return { IlionTheme::ShellPal::Red, "Error: " + it->second };
-    if (p.review == "aprobado")
-        return { IlionTheme::ShellPilot(IlionTheme::ShellPal::Green), "Publicado" };
-    if (p.review == "pendiente")
-        return { IlionTheme::ShellPilot(IlionTheme::ShellPal::Yellow), "Pendiente de moderación" };
-    if (p.review == "rechazado")
-        return { IlionTheme::ShellPal::Red, "Retirado por moderación" };
-    if (p.review == "retirado")
-        return { IlionTheme::ShellPal::Dim, "Retirado por ti" };
-    if (p.review == "por_publicar")
-        return { IlionTheme::ShellPilot(IlionTheme::ShellPal::Yellow), "Preparado para compartir" };
-    return { IlionTheme::ShellPal::Dim, "Solo en este equipo" };
-}
-
 // Publicar ya (con sesión y alias): sin más formularios; el resultado llega a MIS APORTES
 static void StartPublish(const C::Profile& p)
 {
@@ -1250,6 +1243,7 @@ static void StartPublish(const C::Profile& p)
     auto js = jobSession;
     auto prof = std::make_shared<C::Profile>(p);
     jobKind = "publicar:" + p.id;
+    publishingName = p.name;
     publishResult = prof;
     publishErrors.erase(p.id);
     worker.Start("Publicando...",
@@ -1264,27 +1258,20 @@ static void StartPublish(const C::Profile& p)
                  });
 }
 
-// COMPARTIR: con sesión y alias, una sola confirmación (qué se comparte) y se publica; sin sesión, la cuenta en COMUNIDAD y
-// el perfil queda preparado para retomarlo
+// COMPARTIR (PERFILES): abre PUBLICAR PERFIL en COMUNIDAD con este perfil ya elegido (el mismo recorrido que desde COMUNIDAD)
+static void OpenPublish(const std::string& id, int back);
 static void Share(C::Profile& p)
 {
     selectedId = p.id;
-    const bool signedIn = session.Active() || !session.refreshToken.empty();
-    if (signedIn && !session.alias.empty())
-    {
-        confirmShare = p.id;
-        return;
-    }
-    if (!C::IsServerReview(p.review))
-        p.review = "por_publicar";
-    SaveLocalLists();
-    shareId = p.id;
-    cpageBack = Contributions;
-    cpage = AccountView;
+    OpenPublish(p.id, Contributions);
     requestedSection = 9;
 }
 
 // ---- PERFILES: tarjeta de la biblioteca con sus acciones a la vista ------------------------------------------------
+// Estados de la tarjeta, excluyentes: reposo (ACTIVAR · EDITAR · COMPARTIR · ELIMINAR, y el resultado de la última activación
+// si fue esta) | confirmando la activación | confirmando la eliminación. La publicación no se muestra aquí: está en MIS APORTES
+static std::string ShortError(const std::string& s) { return s.size() > 140 ? s.substr(0, 140) + "…" : s; }
+
 template <typename Ctx> static void LibraryCard(Ctx& ctx, C::Profile& p, const C::Machine& m)
 {
     const float font = ImGui::GetFontSize();
@@ -1296,42 +1283,44 @@ template <typename Ctx> static void LibraryCard(Ctx& ctx, C::Profile& p, const C
     ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, sel ? 2.0f : 1.0f);
     if (ImGui::BeginChild("##libCard", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding))
     {
-        // Nombre (pulsar muestra sus detalles a la derecha) y estado
+        // Nombre (pulsar muestra sus detalles a la derecha)
         if (ImGui::Selectable("##libName", sel, ImGuiSelectableFlags_AllowOverlap, ImVec2(0.0f, std::floor(font * 1.35f))))
             selectedId = sel ? std::string() : p.id;
         ImGui::SameLine(0.0f, 0.0f);
         ImGui::SetCursorPosX(ImGui::GetStyle().WindowPadding.x);
         P::Big(P::FigureFont(), 1.15f, IlionTheme::ShellPal::Text, p.name.c_str());
-        // Juego · escalado · FG, y la autoría si no es tuyo
+        // Juego · escalado · FG y multiplicador
         Seg(IlionTheme::InfoCyan, p.gameName, true);
         Seg(IlionTheme::ShellPal::Dim, "  ·  ");
         Seg(IlionTheme::InfoBlue, C::NameOf(C::kTechs, p.tech));
         Seg(IlionTheme::ShellPal::Dim, "  ·  ");
         Seg(IlionTheme::ShellPilot(IlionTheme::ShellPal::Green), p.fg == "ninguno" ? std::string("sin FG") : StrFmt("%s %dX", C::NameOf(C::kFgs, p.fg), p.multiplier));
-        if (!own)
-            Seg(IlionTheme::ShellPal::Orange, "De " + p.author + (p.origin == "importado" ? " (importado)" : ""), true);
-        // Compatibilidad solo cuando importa (si no es plenamente compatible) y el estado de publicación de los tuyos
+        // Procedencia: creado aquí, descargado, copia editada o importado (la autoría original se conserva)
+        if (own)
+            Seg(IlionTheme::ShellPal::Text2, "Creado en este equipo", true);
+        else if (C::IsEditedCopy(p))
+            Seg(IlionTheme::ShellPal::Orange, "Copia editada · original de " + p.author, true);
+        else
+            Seg(IlionTheme::ShellPal::Orange, (p.origin == "importado" ? "Importado · de " : "Descargado · de ") + p.author, true);
+        // Compatibilidad solo cuando importa (si no es plenamente compatible)
         const C::Fit fit = C::Overall(C::Compatibility(p, m));
         if (fit != C::Fit::Confirmed && fit != C::Fit::Partial)
             StatusChip(fit == C::Fit::Incompatible ? IlionTheme::ShellPal::Red : IlionTheme::ShellPilot(IlionTheme::ShellPal::Yellow), C::FitText(fit));
-        if (own && p.review != "local")
-        {
-            const auto st = PublicationState(p);
-            StatusChip(st.first, st.second.c_str());
-        }
 
-        // Acciones evidentes
         if (activatingId == p.id)
         {
+            // Confirmando la activación: solo esto, sin resultados anteriores
             const bool blocked = C::Blocking(C::Compatibility(p, m));
-            P::Row(blocked ? P::Mark::Bad : P::Mark::Wait, blocked ? "No se puede activar en este equipo" : "Antes se guarda tu configuración para poder volver",
-                   blocked ? "El detalle está a la derecha" : std::string());
+            P::Row(blocked ? P::Mark::Bad : P::Mark::Wait, blocked ? "No se puede activar en este equipo" : "¿Activar este perfil?",
+                   blocked ? "El detalle está a la derecha" : "Antes se guarda tu configuración actual para poder volver a ella");
             ImGui::BeginDisabled(blocked);
             ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPal::Orange));
             if (IlionTheme::Button("ACTIVAR AHORA"))
             {
                 std::string out;
-                Say(Apply(ctx, p, out), out);
+                activationOk = Apply(ctx, p, out);
+                activationText = out;
+                activationId = p.id;
                 activatingId.clear();
                 selectedId = p.id;
             }
@@ -1341,43 +1330,60 @@ template <typename Ctx> static void LibraryCard(Ctx& ctx, C::Profile& p, const C
             if (IlionTheme::Button("CANCELAR"))
                 activatingId.clear();
         }
-        else if (confirmShare == p.id)
+        else if (confirmDelete == p.id)
         {
-            P::Row(P::Mark::Wait, "Se publicará como " + session.alias,
-                   "Se comparten el nombre, el juego, la API, la GPU, la arquitectura, la resolución y la configuración. Nada más.");
-            ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPal::Orange));
-            if (IlionTheme::Button(C::IsServerReview(p.review) ? "ACTUALIZAR PUBLICACIÓN" : "PUBLICAR"))
-            {
-                StartPublish(p);
-                confirmShare.clear();
-                cpage = Contributions;
-                requestedSection = 9;
-            }
+            // Confirmando la eliminación: solo la copia de este equipo
+            const bool published = own && std::any_of(aportes.begin(), aportes.end(), [&](const C::Profile& a) { return a.id == p.id; });
+            P::Row(P::Mark::Wait, "¿Eliminar «" + p.name + "» de este equipo?",
+                   published ? "Solo se borra la copia local. Su publicación sigue en COMUNIDAD: retírala en MIS APORTES si quieres"
+                             : "Se borra de MIS PERFILES. No afecta a nada publicado");
+            ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPal::Red));
+            if (IlionTheme::Button("ELIMINAR##delGo"))
+                deleteQueue = p.id;
             ImGui::PopStyleColor();
-            Flow("CANCELAR");
-            if (IlionTheme::Button("CANCELAR"))
-                confirmShare.clear();
+            Flow("CANCELAR##del");
+            if (IlionTheme::Button("CANCELAR##del"))
+                confirmDelete.clear();
         }
         else
         {
+            // Reposo: el resultado de la última activación, si fue esta tarjeta, y las acciones
+            if (activationId == p.id)
+            {
+                StatusChip(activationOk ? IlionTheme::ShellPilot(IlionTheme::ShellPal::Green) : IlionTheme::ShellPal::Red,
+                           activationOk ? "Activado" : "No se activó");
+                P::Coloured(IlionTheme::ShellPal::Dim, ShortError(activationText).c_str(), true);
+            }
             ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPal::Orange));
             if (IlionTheme::Button("ACTIVAR"))
+            {
                 activatingId = p.id, selectedId = p.id;
+                confirmDelete.clear();
+                activationId.clear();
+                editing = false;
+            }
             ImGui::PopStyleColor();
+            Flow("EDITAR");
+            if (IlionTheme::Button("EDITAR"))
+            {
+                editing = true;
+                selectedId = p.id;
+                editDraft = p;
+                strncpy_s(editName, p.name.c_str(), _TRUNCATE);
+                activationId.clear();
+            }
             if (own)
             {
-                Flow("EDITAR");
-                if (IlionTheme::Button("EDITAR"))
-                {
-                    editing = true;
-                    selectedId = p.id;
-                    editDraft = p;
-                    strncpy_s(editName, p.name.c_str(), _TRUNCATE);
-                }
-                const char* share = C::IsServerReview(p.review) ? "ACTUALIZAR" : "COMPARTIR";
-                Flow(share);
-                if (IlionTheme::Button(share))
+                Flow("COMPARTIR");
+                if (IlionTheme::Button("COMPARTIR"))
                     Share(p);
+            }
+            Flow("ELIMINAR");
+            if (IlionTheme::Button("ELIMINAR"))
+            {
+                confirmDelete = p.id;
+                editing = editing && selectedId != p.id;
+                activationId.clear();
             }
             Flow("···");
             if (IlionTheme::Button("···"))
@@ -1391,7 +1397,8 @@ template <typename Ctx> static void LibraryCard(Ctx& ctx, C::Profile& p, const C
                 copy.id = C::NewLocalId();
                 copy.name = (copy.name.size() > 31 ? copy.name.substr(0, 31) : copy.name) + " (copia)";
                 copy.review = "local";
-                copy.authorId.clear();
+                if (IsOwn(copy))
+                    copy.authorId.clear();
                 copy.downloads = -1;
                 copy.created = copy.updated = C::NowUtc();
                 duplicateQueue = copy; // se añade al terminar el dibujo de la lista
@@ -1402,19 +1409,7 @@ template <typename Ctx> static void LibraryCard(Ctx& ctx, C::Profile& p, const C
                 const auto file = C::Root() / L"exportados" / (string_to_wstring(p.id) + L".ilionprofile.json");
                 Say(C::WriteAtomic(file, C::ToJson(p).dump(1)), "Copiado al portapapeles y exportado a " + wstring_to_string(file.wstring()));
             }
-            if (ImGui::MenuItem("Eliminar de la biblioteca"))
-                confirmDelete = p.id;
             ImGui::EndPopup();
-        }
-        if (confirmDelete == p.id)
-        {
-            P::Row(P::Mark::Wait, "¿Eliminar este perfil de la biblioteca?",
-                   C::IsServerReview(p.review) ? "Su publicación no se retira: hazlo en MIS APORTES" : std::string());
-            if (IlionTheme::Button("ELIMINAR"))
-                deleteQueue = p.id;
-            Flow("CANCELAR##del");
-            if (IlionTheme::Button("CANCELAR##del"))
-                confirmDelete.clear();
         }
     }
     ImGui::EndChild();
@@ -1422,10 +1417,14 @@ template <typename Ctx> static void LibraryCard(Ctx& ctx, C::Profile& p, const C
     ImGui::PopStyleColor(2);
     ImGui::PopID();
 
-    // El editor, debajo de su tarjeta y solo mientras se edita
-    if (editing && selectedId == p.id && own)
+    // El editor, debajo de su tarjeta y solo mientras se edita. En un perfil descargado se guarda una copia editada que
+    // conserva la autoría original
+    if (editing && selectedId == p.id)
     {
         ImGui::Indent(font * 0.6f);
+        if (!own)
+            P::Coloured(IlionTheme::ShellPal::Dim, ("Se guardará como copia editada. La autoría original (" + p.author + ") se conserva y lo publicado no cambia.").c_str(),
+                        true);
         EditFields(editDraft, m);
         C::Profile check = editDraft;
         check.name = editName;
@@ -1435,25 +1434,55 @@ template <typename Ctx> static void LibraryCard(Ctx& ctx, C::Profile& p, const C
             P::Row(P::Mark::Bad, "Falta completar: " + err, std::string());
         if (IlionTheme::Button("RELLENAR CON LO ACTUAL##EditFill"))
         {
-            const C::Profile keep = editDraft;
-            editDraft = FromCurrent(ctx);
-            editDraft.id = keep.id, editDraft.author = keep.author, editDraft.authorId = keep.authorId;
-            editDraft.review = keep.review, editDraft.created = keep.created, editDraft.version = keep.version;
+            if (const std::string missing = UnknownNow(ctx); !missing.empty())
+                Say(false, "Aún no se puede leer " + missing + ": entra en una partida y vuelve a intentarlo");
+            else
+            {
+                const C::Profile keep = editDraft;
+                editDraft = FromCurrent(ctx);
+                editDraft.id = keep.id, editDraft.author = keep.author, editDraft.authorId = keep.authorId, editDraft.origin = keep.origin;
+                editDraft.review = keep.review, editDraft.created = keep.created, editDraft.version = keep.version;
+            }
         }
         Flow("GUARDAR CAMBIOS##EditSave");
         ImGui::BeginDisabled(!valid);
         if (IlionTheme::Button("GUARDAR CAMBIOS##EditSave"))
         {
             check.updated = C::NowUtc();
-            const auto r = C::AddOrUpdate(mine, check);
-            if (r == C::AddResult::Updated)
+            if (own)
             {
-                SaveLocalLists();
-                editing = false;
-                Say(true, C::IsServerReview(check.review) ? "Cambios guardados. Pulsa ACTUALIZAR para llevarlos a la publicación" : "Cambios guardados");
+                const auto r = C::AddOrUpdate(mine, check);
+                if (r == C::AddResult::Updated)
+                {
+                    SaveLocalLists();
+                    editing = false;
+                    Say(true, "Cambios guardados en «" + check.name + "»");
+                }
+                else
+                    Say(false, "No se pudo guardar");
             }
             else
-                Say(false, r == C::AddResult::NotOwner ? "Este perfil no es tuyo: duplícalo para tener tu versión" : "No se pudo guardar");
+            {
+                // La copia editada sustituye a la descargada en la biblioteca; el original se puede volver a descargar
+                const C::Profile original = p; // p es el elemento de la lista que se sustituye
+                for (auto& e : downloaded)
+                    if (e.id == original.id)
+                    {
+                        if (C::IsEditedCopy(original))
+                        {
+                            e = check;
+                            e.author = original.author, e.authorId = original.authorId, e.origin = original.origin;
+                            e.review = "local", e.downloads = -1;
+                        }
+                        else
+                            e = C::EditedCopy(original, check);
+                        selectedId = e.id;
+                        break;
+                    }
+                SaveLocalLists();
+                editing = false;
+                Say(true, "Guardado como copia editada. El original de " + original.author + " sigue en COMUNIDAD");
+            }
         }
         ImGui::EndDisabled();
         Flow("CANCELAR##EditCancel");
@@ -1507,7 +1536,18 @@ template <typename Ctx> static void ProfilesPanel(Ctx& ctx)
     if (!loaded)
         LoadAll();
     Collect();
+    // Al volver a PERFILES (o desde COMUNIDAD), sin mensajes ni confirmaciones de antes
+    if (profilesFrame < ImGui::GetFrameCount() - 1)
+    {
+        message.clear();
+        activatingId.clear();
+        confirmDelete.clear();
+        P::lastMessage.clear();
+    }
+    profilesFrame = ImGui::GetFrameCount();
+    sayTarget = 0;
     SpacingScope spacing;
+    const float font = ImGui::GetFontSize();
     const C::Machine m = MachineOf(ctx);
     cardMachine = &m;
 
@@ -1534,11 +1574,14 @@ template <typename Ctx> static void ProfilesPanel(Ctx& ctx)
             ImGui::InputTextWithHint("##NewName", "Nombre del perfil (3 a 40 caracteres)", newName, 41);
             if (IlionTheme::Button("GUARDAR##SaveAsGo"))
             {
+                // Guarda lo que corre ahora, venga del optimizador o de una elección manual; lo que no se puede leer no se inventa
                 C::Profile p = FromCurrent(ctx);
                 p.name = newName;
                 p.author = session.alias.empty() ? "Local" : session.alias;
                 std::string err;
-                if (!C::Validate(p, &err))
+                if (const std::string missing = UnknownNow(ctx); !missing.empty())
+                    Say(false, "No se guardó: aún no se puede leer " + missing + ". Entra en una partida y vuelve a intentarlo");
+                else if (!C::Validate(p, &err))
                     Say(false, "No se guardó: " + err);
                 else
                 {
@@ -1593,60 +1636,86 @@ template <typename Ctx> static void ProfilesPanel(Ctx& ctx)
         }
         if (!deleteQueue.empty())
         {
-            const auto drop = [&](std::vector<C::Profile>& l) { l.erase(std::remove_if(l.begin(), l.end(), [&](const C::Profile& e) { return e.id == deleteQueue; }), l.end()); };
-            drop(mine);
-            drop(downloaded);
+            // Solo la copia de este equipo: lo publicado sigue en COMUNIDAD hasta que se retire en MIS APORTES
+            const C::Profile* gone = FindLocal(deleteQueue);
+            const std::string name = gone != nullptr ? gone->name : std::string();
+            C::RemoveLocal(mine, deleteQueue);
+            C::RemoveLocal(downloaded, deleteQueue);
             SaveLocalLists();
+            Say(true, "«" + name + "» eliminado de este equipo");
+            if (activationId == deleteQueue)
+                activationId.clear();
             if (selectedId == deleteQueue)
                 selectedId.clear();
             confirmDelete.clear();
             deleteQueue.clear();
         }
 
-        Block("IMPORTAR Y RESTAURAR");
-        if (IlionTheme::Button("IMPORTAR DEL PORTAPAPELES##LibImport"))
+        // IMPORTAR Y RECUPERAR, plegado: qué se importa o restaura y cuándo se guardó cada punto
+        ImGui::Spacing();
+        if (IlionTheme::shell)
+            ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPal::Text2));
+        const bool openImport = ImGui::CollapsingHeader("IMPORTAR Y RECUPERAR##LibImportRestore");
+        if (IlionTheme::shell)
+            ImGui::PopStyleColor();
+        if (openImport)
         {
-            const char* clip = ImGui::GetClipboardText();
-            C::Profile p;
-            std::string err;
-            if (clip == nullptr || !C::ParseProfileText(clip, p, &err))
-                Say(false, "No se importó: " + (clip == nullptr ? std::string("el portapapeles está vacío") : err));
-            else
+            ImGui::Indent(font * 0.4f);
+            P::Coloured(IlionTheme::ShellPal::Text2, "Importar perfil", true);
+            P::Coloured(IlionTheme::ShellPal::Dim, "Desde el portapapeles (un perfil exportado con «···» → Exportar). Se añade a MIS PERFILES sin activarlo.", true);
+            if (IlionTheme::Button("IMPORTAR PERFIL##LibImport"))
             {
-                p.origin = "importado";
-                const auto r = C::AddOrUpdate(downloaded, p);
-                Say(r == C::AddResult::Added || r == C::AddResult::Updated,
-                    r == C::AddResult::Duplicate  ? "Ya tienes ese perfil"
-                    : r == C::AddResult::NotOwner ? "Ya hay un perfil con ese identificador de otro autor: no se sustituye"
-                    : r == C::AddResult::Full     ? "La biblioteca está llena (500)"
-                                                  : "Perfil importado. No se ha activado");
-                if (r == C::AddResult::Added || r == C::AddResult::Updated)
-                    SaveLocalLists(), selectedId = p.id;
+                const char* clip = ImGui::GetClipboardText();
+                C::Profile p;
+                std::string err;
+                if (clip == nullptr || !C::ParseProfileText(clip, p, &err))
+                    Say(false, "No se importó: " + (clip == nullptr ? std::string("el portapapeles está vacío") : err));
+                else
+                {
+                    p.origin = "importado";
+                    const auto r = C::AddOrUpdate(downloaded, p);
+                    Say(r == C::AddResult::Added || r == C::AddResult::Updated,
+                        r == C::AddResult::Duplicate  ? "Ya tienes ese perfil"
+                        : r == C::AddResult::NotOwner ? "Ya hay un perfil con ese identificador de otro autor: no se sustituye"
+                        : r == C::AddResult::Full     ? "La biblioteca está llena (500)"
+                                                      : "Perfil importado en MIS PERFILES. No se ha activado");
+                    if (r == C::AddResult::Added || r == C::AddResult::Updated)
+                        SaveLocalLists(), selectedId = p.id;
+                }
             }
-        }
-        Flow("RESTAURAR##LibRestore");
-        if (IlionTheme::Button("RESTAURAR##LibRestore"))
-            ImGui::OpenPopup("##LibRestoreMenu");
-        if (ImGui::BeginPopup("##LibRestoreMenu"))
-        {
-            if (ImGui::MenuItem("La configuración anterior a la última activación", nullptr, false, P::Exists(SnapshotPath())))
+            ImGui::Spacing();
+            P::Coloured(IlionTheme::ShellPal::Text2, "Restaurar configuración anterior", true);
+            const auto point = [&](const char* id, const char* what, const std::filesystem::path& file, const char* kind, const char* label, bool restart)
             {
-                P::ApplyFile(ctx, SnapshotPath(), "configuracion", "Configuración anterior a la activación", true);
-                applied.clear();
-            }
-            if (ImGui::MenuItem("La de antes de la primera optimización de esta sesión", nullptr, false, P::Exists(P::SessionPath())))
-                P::ApplyFile(ctx, P::SessionPath(), "configuracion", "Restauración de la sesión", true);
-            if (ImGui::MenuItem("La original (antes de usar Perfiles en este juego)", nullptr, false, P::Exists(P::OriginalPath())))
-                P::ApplyFile(ctx, P::OriginalPath(), "configuracion", "Restauración original", true);
-            ImGui::Separator();
-            if (ImGui::MenuItem("Guardar la configuración actual en el perfil del juego"))
+                const std::string when = P::Exists(file) ? FileStamp(file) : std::string();
+                ImGui::BeginDisabled(when.empty());
+                if (IlionTheme::Button(id))
+                {
+                    P::ApplyFile(ctx, file, kind, label, restart);
+                    activationId.clear();
+                    Say(true, std::string("Restaurada: ") + what);
+                }
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+                P::Coloured(when.empty() ? IlionTheme::ShellPal::Dim : IlionTheme::ShellPal::Text, (std::string(what) + (when.empty() ? " — no hay copia" : " — guardada el " + when)).c_str(),
+                            true);
+            };
+            point("RESTAURAR##RestoreSnap", "la configuración de antes de la última activación de un perfil", SnapshotPath(), "configuracion", "Configuración anterior a la activación", true);
+            point("RESTAURAR##RestoreSession", "la de antes de la primera optimización de esta sesión", P::SessionPath(), "configuracion", "Restauración de la sesión", true);
+            point("RESTAURAR##RestoreOriginal", "la original, antes de usar Perfiles en este juego", P::OriginalPath(), "configuracion", "Restauración original", true);
+            ImGui::Spacing();
+            P::Coloured(IlionTheme::ShellPal::Text2, "Perfil del juego", true);
+            if (IlionTheme::Button("GUARDAR LO ACTUAL##ProfileSave"))
             {
                 P::SaveProfile(ctx.currentFeature);
-                P::lastMessage = "Perfil del juego guardado con la configuración actual";
+                Say(true, "Perfil del juego guardado con la configuración actual");
             }
-            if (ImGui::MenuItem("Volver a cargar el perfil del juego", nullptr, false, P::Exists(P::ProfilePath())))
+            Flow("VOLVER A CARGARLO##ProfileLoad");
+            ImGui::BeginDisabled(!P::Exists(P::ProfilePath()));
+            if (IlionTheme::Button("VOLVER A CARGARLO##ProfileLoad"))
                 P::ApplyFile(ctx, P::ProfilePath(), "perfil", "Perfil", false);
-            ImGui::EndPopup();
+            ImGui::EndDisabled();
+            ImGui::Unindent(font * 0.4f);
         }
 
         // ======== Derecha: información técnica ========
@@ -1796,8 +1865,8 @@ static void ExploreView(const C::Machine& m)
             shown.push_back(p);
     if (shown.empty())
     {
-        P::Big(P::FigureFont(), 1.2f, IlionTheme::ShellPal::Text2, catalog.empty() ? "Todavía no hay perfiles aprobados" : "Ningún perfil coincide", true);
-        P::Coloured(IlionTheme::ShellPal::Dim, catalog.empty() ? "Comparte el tuyo desde PERFILES." : "Prueba con «Todos» en juego o GPU.", true);
+        P::Big(P::FigureFont(), 1.2f, IlionTheme::ShellPal::Text2, catalog.empty() ? "Todavía no hay perfiles compartidos" : "Ningún perfil coincide", true);
+        P::Coloured(IlionTheme::ShellPal::Dim, catalog.empty() ? "Publica el tuyo con PUBLICAR PERFIL en MIS APORTES." : "Prueba con «Todos» en juego o GPU.", true);
         return;
     }
     const int cols = avail > font * 52.0f ? 2 : 1;
@@ -1826,10 +1895,102 @@ static void ExploreView(const C::Machine& m)
     }
 }
 
+// ---- COMUNIDAD: abrir PUBLICAR PERFIL (desde INICIO, MIS APORTES o COMPARTIR en PERFILES) ----------------------------
+static void OpenPublish(const std::string& id, int back)
+{
+    publishPick = id;
+    cpageBack = back;
+    cpage = PublishView;
+    detailId.clear();
+    communityMessage.clear();
+}
+
+// Una tabla compacta de perfiles del catálogo (TOP 10 o recién publicados). rankFrom > 0: numerada desde ese puesto
+static void ProfileTable(const char* id, const std::vector<const C::Profile*>& rows, int rankFrom)
+{
+    const float font = ImGui::GetFontSize();
+    ImGui::PushStyleColor(ImGuiCol_TableBorderLight, toneMapColor(IlionTheme::ShellPal::Line));
+    if (ImGui::BeginTable(id, 6, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_NoSavedSettings))
+    {
+        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, font * 2.0f);
+        ImGui::TableSetupColumn("Perfil", ImGuiTableColumnFlags_WidthStretch, 1.6f);
+        ImGui::TableSetupColumn("Juego", ImGuiTableColumnFlags_WidthStretch, 1.1f);
+        ImGui::TableSetupColumn("GPU", ImGuiTableColumnFlags_WidthStretch, 1.1f);
+        ImGui::TableSetupColumn("Configuración", ImGuiTableColumnFlags_WidthStretch, 1.4f);
+        ImGui::TableSetupColumn("Descargas", ImGuiTableColumnFlags_WidthFixed, font * 5.5f);
+        ImGui::TableHeadersRow();
+        for (size_t i = 0; i < rows.size(); i++)
+        {
+            const C::Profile& p = *rows[i];
+            ImGui::TableNextRow();
+            ImGui::PushID((int) i);
+            ImGui::TableSetColumnIndex(0);
+            const std::string rank = rankFrom > 0 ? std::to_string(rankFrom + (int) i) : std::string("—");
+            if (ImGui::Selectable((rank + "##row").c_str(), false, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap))
+                detailId = p.id;
+            ImGui::TableSetColumnIndex(1);
+            P::Coloured(IlionTheme::ShellPal::Text, p.name.c_str());
+            P::Coloured(IlionTheme::ShellPal::Orange, p.author.c_str());
+            ImGui::TableSetColumnIndex(2);
+            P::Coloured(IlionTheme::InfoCyan, p.gameName.c_str(), true);
+            ImGui::TableSetColumnIndex(3);
+            P::Coloured(ArchVendorColour(p.arch), C::NameOf(C::kArchs, p.arch), true);
+            ImGui::TableSetColumnIndex(4);
+            P::Coloured(IlionTheme::ShellPal::Text2,
+                        (std::string(C::NameOf(C::kTechs, p.tech)) + (p.fg == "ninguno" ? std::string(" · sin FG") : StrFmt(" · %s %dX", C::NameOf(C::kFgs, p.fg), p.multiplier)))
+                            .c_str(),
+                        true);
+            ImGui::TableSetColumnIndex(5);
+            P::Coloured(IlionTheme::ShellPal::Text, StrFmt("%lld", (std::max)(0LL, p.downloads)).c_str());
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::PopStyleColor();
+}
+
+// Una tarjeta centrada y compacta para los estados vacíos de INICIO, con su botón principal
+static void EmptyCard(const char* id, const char* title, const char* line, const char* button, bool crown)
+{
+    const float font = ImGui::GetFontSize();
+    ImGui::Spacing();
+    if (BeginCentered(id, font * 34.0f))
+    {
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, toneMapColor(IlionTheme::ShellPal::Panel));
+        ImGui::PushStyleColor(ImGuiCol_Border, toneMapColor(PodiumColour(1)));
+        if (ImGui::BeginChild("##EmptyCard", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding))
+        {
+            const float w = ImGui::GetContentRegionAvail().x;
+            if (crown)
+            {
+                const float size = std::floor(font * 2.6f);
+                Crown(ImGui::GetWindowDrawList(), ImVec2(ImGui::GetCursorScreenPos().x + (w - size) * 0.5f, ImGui::GetCursorScreenPos().y), size,
+                      toneMapColor(PodiumColour(1)), 1);
+                ImGui::Dummy(ImVec2(w, size));
+            }
+            ImGui::PushFont(P::FigureFont(), std::floor(font * 1.4f));
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (std::max)(0.0f, (w - ImGui::CalcTextSize(title).x) * 0.5f));
+            P::Coloured(IlionTheme::ShellPal::Text, title);
+            ImGui::PopFont();
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (std::max)(0.0f, (w - ImGui::CalcTextSize(line).x) * 0.5f));
+            P::Coloured(IlionTheme::ShellPal::Text2, line);
+            ImGui::Spacing();
+            const float bw = (std::min)(w, font * 16.0f);
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (std::max)(0.0f, (w - bw) * 0.5f));
+            ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPal::Orange));
+            if (IlionTheme::Button(button, ImVec2(bw, std::floor(font * 2.2f))))
+                OpenPublish(std::string(), Home);
+            ImGui::PopStyleColor();
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor(2);
+    }
+    ImGui::EndChild();
+}
+
 // ---- COMUNIDAD: una cifra en una tarjeta (MIS APORTES) ------------------------------------------------------------
 static void StatTile(const char* id, const char* label, const std::string& value, const ImVec4& colour, float width)
 {
-    const float font = ImGui::GetFontSize();
     ImGui::PushStyleColor(ImGuiCol_ChildBg, toneMapColor(IlionTheme::ShellPal::Panel));
     ImGui::PushStyleColor(ImGuiCol_Border, toneMapColor(IlionTheme::ShellPal::Line));
     if (ImGui::BeginChild(id, ImVec2(width, 0.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
@@ -1840,46 +2001,37 @@ static void StatTile(const char* id, const char* label, const std::string& value
     }
     ImGui::EndChild();
     ImGui::PopStyleColor(2);
-    (void) font;
 }
 
 // ---- COMUNIDAD: INICIO (podio 2 · 1 · 3 con el primero destacado, y el resto del TOP 10) ---------------------------
+// Clasificación: el mismo orden y criterio que MIS APORTES (C::RankByDownloads / C::RankPosition: solo con descargas reales)
 static void HomeView(const C::Machine& m)
 {
     const float font = ImGui::GetFontSize();
     const auto ranked = ByDownloads();
     const int podium = C::PodiumCount(catalog, C::RankByDownloads(catalog));
+    if (catalog.empty())
+    {
+        EmptyCard("##HomeEmpty", "Todavía no hay perfiles compartidos", "Comparte tu configuración y ocupa el primer puesto.", "PUBLICAR MI PERFIL##HomePublish",
+                  true);
+        return;
+    }
     if (podium == 0)
     {
-        // Estado vacío: una tarjeta centrada y proporcionada
+        // Hay perfiles pero ninguno con descargas: sin podio (nada se rellena) y los publicados, sin puesto
+        EmptyCard("##HomeNoDownloads", "Aún no hay descargas registradas", "El podio aparece con las primeras descargas.", "PUBLICAR MI PERFIL##HomePublish2",
+                  false);
+        std::vector<const C::Profile*> recent;
+        for (const auto& p : catalog)
+            recent.push_back(&p);
+        std::stable_sort(recent.begin(), recent.end(), [](const C::Profile* a, const C::Profile* b) { return a->created > b->created; });
+        if (recent.size() > 10)
+            recent.resize(10);
         ImGui::Spacing();
-        if (BeginCentered("##HomeEmpty", font * 34.0f))
+        if (BeginCentered("##HomeRecent", font * 70.0f))
         {
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, toneMapColor(IlionTheme::ShellPal::Panel));
-            ImGui::PushStyleColor(ImGuiCol_Border, toneMapColor(PodiumColour(1)));
-            if (ImGui::BeginChild("##HomeEmptyCard", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding))
-            {
-                const float w = ImGui::GetContentRegionAvail().x;
-                const float crown = std::floor(font * 2.6f);
-                Crown(ImGui::GetWindowDrawList(), ImVec2(ImGui::GetCursorScreenPos().x + (w - crown) * 0.5f, ImGui::GetCursorScreenPos().y), crown,
-                      toneMapColor(PodiumColour(1)), 1);
-                ImGui::Dummy(ImVec2(w, crown));
-                const char* title = catalog.empty() ? "El podio está libre" : "Aún no hay descargas registradas";
-                ImGui::PushFont(P::FigureFont(), std::floor(font * 1.4f));
-                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (std::max)(0.0f, (w - ImGui::CalcTextSize(title).x) * 0.5f));
-                P::Coloured(IlionTheme::ShellPal::Text, title);
-                ImGui::PopFont();
-                const char* line = catalog.empty() ? "Comparte tu configuración y ocupa el primer puesto." : "El podio aparece con las primeras descargas.";
-                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (std::max)(0.0f, (w - ImGui::CalcTextSize(line).x) * 0.5f));
-                P::Coloured(IlionTheme::ShellPal::Text2, line);
-                ImGui::Spacing();
-                const float bw = font * 14.0f;
-                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (std::max)(0.0f, (w - bw) * 0.5f));
-                if (IlionTheme::Button("COMPARTIR DESDE PERFILES##HomeShare", ImVec2(bw, std::floor(font * 1.9f))))
-                    requestedSection = 8;
-            }
-            ImGui::EndChild();
-            ImGui::PopStyleColor(2);
+            IlionTheme::SectionPlate("RECIÉN PUBLICADOS");
+            ProfileTable("##Recent", recent, 0);
         }
         ImGui::EndChild();
         return;
@@ -1914,57 +2066,150 @@ static void HomeView(const C::Machine& m)
     }
     ImGui::EndChild();
 
-    // Del cuarto al décimo, en una tabla compacta
-    if ((int) ranked.size() > podium)
+    // Del cuarto al décimo, solo con descargas reales (el mismo criterio que el podio)
+    std::vector<const C::Profile*> rest;
+    int unranked = 0;
+    for (int i = podium; i < (int) ranked.size(); i++)
+    {
+        if (ranked[i]->downloads > 0 && i < 10)
+            rest.push_back(ranked[i]);
+        unranked += ranked[i]->downloads > 0 ? 0 : 1;
+    }
+    if (!rest.empty() || unranked > 0)
     {
         ImGui::Spacing();
         if (BeginCentered("##HomeTop10", font * 70.0f))
         {
-            IlionTheme::SectionPlate("TOP 10");
-            ImGui::PushStyleColor(ImGuiCol_TableBorderLight, toneMapColor(IlionTheme::ShellPal::Line));
-            if (ImGui::BeginTable("##Top10", 6, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_NoSavedSettings))
+            if (!rest.empty())
             {
-                ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, font * 2.0f);
-                ImGui::TableSetupColumn("Perfil", ImGuiTableColumnFlags_WidthStretch, 1.6f);
-                ImGui::TableSetupColumn("Juego", ImGuiTableColumnFlags_WidthStretch, 1.1f);
-                ImGui::TableSetupColumn("GPU", ImGuiTableColumnFlags_WidthStretch, 1.1f);
-                ImGui::TableSetupColumn("Configuración", ImGuiTableColumnFlags_WidthStretch, 1.4f);
-                ImGui::TableSetupColumn("Descargas", ImGuiTableColumnFlags_WidthFixed, font * 5.5f);
-                ImGui::TableHeadersRow();
-                for (int i = podium; i < (int) ranked.size() && i < 10; i++)
-                {
-                    const C::Profile& p = *ranked[i];
-                    ImGui::TableNextRow();
-                    ImGui::PushID(i);
-                    ImGui::TableSetColumnIndex(0);
-                    if (ImGui::Selectable(StrFmt("%d##rank", i + 1).c_str(), false, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap))
-                        detailId = p.id;
-                    ImGui::TableSetColumnIndex(1);
-                    P::Coloured(IlionTheme::ShellPal::Text, p.name.c_str());
-                    P::Coloured(IlionTheme::ShellPal::Orange, p.author.c_str());
-                    ImGui::TableSetColumnIndex(2);
-                    P::Coloured(IlionTheme::InfoCyan, p.gameName.c_str(), true);
-                    ImGui::TableSetColumnIndex(3);
-                    P::Coloured(ArchVendorColour(p.arch), C::NameOf(C::kArchs, p.arch), true);
-                    ImGui::TableSetColumnIndex(4);
-                    P::Coloured(IlionTheme::ShellPal::Text2,
-                                (std::string(C::NameOf(C::kTechs, p.tech)) + (p.fg == "ninguno" ? std::string(" · sin FG") : StrFmt(" · %s %dX", C::NameOf(C::kFgs, p.fg), p.multiplier)))
-                                    .c_str(),
-                                true);
-                    ImGui::TableSetColumnIndex(5);
-                    P::Coloured(IlionTheme::ShellPal::Text, StrFmt("%lld", (std::max)(0LL, p.downloads)).c_str());
-                    ImGui::PopID();
-                }
-                ImGui::EndTable();
+                IlionTheme::SectionPlate("TOP 10");
+                ProfileTable("##Top10", rest, podium + 1);
             }
-            ImGui::PopStyleColor();
+            if (unranked > 0)
+                P::Coloured(IlionTheme::ShellPal::Dim, StrFmt("%d perfil%s sin descargas todavía, sin clasificación: están en EXPLORAR.", unranked, unranked == 1 ? "" : "es").c_str(),
+                            true);
         }
         ImGui::EndChild();
     }
     (void) m;
 }
 
+// ---- COMUNIDAD: PUBLICAR PERFIL (elegir → revisar lo que será público → publicar) ---------------------------------
+static void PublishScreen()
+{
+    const float font = ImGui::GetFontSize();
+    const auto ws = worker.Get();
+    const bool signedIn = session.Active() || !session.refreshToken.empty();
+    if (!BeginCentered("##Publish", font * 52.0f))
+    {
+        ImGui::EndChild();
+        return;
+    }
+    if (IlionTheme::Button("< VOLVER##PublishBack"))
+        cpage = cpageBack == PublishView || cpageBack == AccountView ? Home : cpageBack, publishPick.clear();
+    ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, toneMapColor(IlionTheme::ShellPal::Panel));
+    ImGui::PushStyleColor(ImGuiCol_Border, toneMapColor(IlionTheme::ShellPal::Line));
+    if (ImGui::BeginChild("##PublishCard", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding))
+    {
+        P::Big(P::FigureFont(), 1.3f, IlionTheme::ShellPal::Text, "PUBLICAR PERFIL");
+        P::Coloured(IlionTheme::ShellPal::Text2, "Elige uno de tus perfiles, revisa exactamente lo que será público y publícalo.", true);
+
+        // 1. Elegir
+        ImGui::Spacing();
+        IlionTheme::SectionPlate("1. ELIGE EL PERFIL");
+        if (mine.empty())
+        {
+            P::Coloured(IlionTheme::ShellPal::Dim, "Aún no tienes perfiles propios. En PERFILES, pulsa GUARDAR COMO PERFIL.", true);
+            if (IlionTheme::Button("IR A PERFILES##PublishToProfiles"))
+                requestedSection = 8;
+        }
+        for (const auto& p : mine)
+        {
+            const bool published = std::any_of(aportes.begin(), aportes.end(), [&](const C::Profile& a) { return a.id == p.id; });
+            const std::string label = p.name + "  ·  " + p.gameName + "  ·  " + C::NameOf(C::kTechs, p.tech) +
+                                      (p.fg == "ninguno" ? std::string(" · sin FG") : StrFmt(" · %s %dX", C::NameOf(C::kFgs, p.fg), p.multiplier)) +
+                                      (published ? "   (ya publicado: se actualizará)" : "");
+            if (ImGui::Selectable((label + "##pick" + p.id).c_str(), publishPick == p.id))
+                publishPick = p.id;
+        }
+
+        // 2. Revisar
+        const C::Profile* pick = nullptr;
+        for (const auto& p : mine)
+            if (p.id == publishPick)
+                pick = &p;
+        if (pick != nullptr)
+        {
+            ImGui::Spacing();
+            IlionTheme::SectionPlate("2. LO QUE SERÁ PÚBLICO");
+            if (ImGui::BeginTable("##PublishFields", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_NoSavedSettings))
+            {
+                ImGui::TableSetupColumn("##k", ImGuiTableColumnFlags_WidthStretch, 0.4f);
+                ImGui::TableSetupColumn("##v", ImGuiTableColumnFlags_WidthStretch, 0.6f);
+                const auto row = [](const char* k, const std::string& v)
+                {
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    P::Coloured(IlionTheme::ShellPal::Text2, k);
+                    ImGui::TableSetColumnIndex(1);
+                    P::Coloured(IlionTheme::ShellPal::Text, v.c_str(), true);
+                };
+                row("Autor (alias)", session.alias.empty() ? std::string("— (falta tu alias)") : session.alias);
+                row("Nombre", pick->name);
+                row("Juego", pick->gameName + "  (" + pick->gameExe + ")");
+                row("API", pick->api);
+                row("GPU y arquitectura", pick->gpu + "  ·  " + C::NameOf(C::kArchs, pick->arch));
+                row("Resolución de salida", StrFmt("%d×%d", pick->outW, pick->outH));
+                row("Modo", C::NameOf(C::kModes, pick->mode));
+                row("Escalado", std::string(C::NameOf(C::kTechs, pick->tech)) + (pick->model != "no_aplica" ? std::string(" · ") + C::NameOf(C::kModels, pick->model) : ""));
+                row("Preset", C::NameOf(C::kPresets, pick->preset));
+                row("Frame Generation", pick->fg == "ninguno" ? std::string("Sin Frame Generation")
+                                                              : StrFmt("%s %dX fijo · %s", C::NameOf(C::kFgs, pick->fg), pick->multiplier, C::NameOf(C::kRoutes, pick->fgRoute)));
+                ImGui::EndTable();
+            }
+            P::Coloured(IlionTheme::ShellPal::Dim, "Nada más: ni tu correo, ni rutas de archivos, ni datos del equipo fuera de esta lista.", true);
+
+            // 3. Publicar
+            ImGui::Spacing();
+            IlionTheme::SectionPlate("3. PUBLICAR");
+            const bool update = std::any_of(aportes.begin(), aportes.end(), [&](const C::Profile& a) { return a.id == pick->id; });
+            if (!service.valid)
+                P::Row(P::Mark::Info, "Servicio comunitario no disponible", service.problem);
+            else if (!signedIn)
+            {
+                P::Coloured(IlionTheme::ShellPal::Text2, "La cuenta solo hace falta para publicar. Al entrar vuelves aquí con este perfil elegido.", true);
+                if (IlionTheme::Button("ENTRAR PARA PUBLICAR##PublishLogin"))
+                    cpageBack = PublishView, cpage = AccountView;
+            }
+            else if (session.alias.empty())
+            {
+                if (IlionTheme::Button("ELEGIR MI ALIAS##PublishAlias"))
+                    cpageBack = PublishView, cpage = AccountView;
+            }
+            else
+            {
+                ImGui::BeginDisabled(ws.busy);
+                ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPal::Orange));
+                if (IlionTheme::Button(update ? "ACTUALIZAR PUBLICACIÓN##PublishGo" : "PUBLICAR##PublishGo", ImVec2(font * 16.0f, std::floor(font * 2.2f))))
+                {
+                    StartPublish(*pick);
+                    publishPick.clear();
+                    cpage = Contributions;
+                }
+                ImGui::PopStyleColor();
+                ImGui::EndDisabled();
+            }
+        }
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleColor(2);
+    ImGui::EndChild();
+}
+
 // ---- COMUNIDAD: MIS APORTES (cifras arriba y tus publicaciones en una cuadrícula) -----------------------------------
+// Lo publicado sale del servidor (aportes, con caché local): borrar un perfil en PERFILES no lo retira, y retirarlo aquí no
+// borra la copia local
 static void ContributionsView()
 {
     const float font = ImGui::GetFontSize();
@@ -1976,104 +2221,65 @@ static void ContributionsView()
         RequestAuthorStats(); // el estado real de lo publicado y sus descargas
     }
 
-    // Lo publicado de verdad (visible en el catálogo), lo retirado y lo pendiente de compartir
-    std::vector<C::Profile*> published, others, toShare;
+    int published = 0;
     long long downloadsTotal = 0;
-    int retired = 0, issues = 0;
-    for (auto& p : mine)
+    std::vector<std::string> ids;
+    for (const auto& a : aportes)
     {
-        if (p.review == "por_publicar")
-            toShare.push_back(&p);
-        else if (p.review == "aprobado")
-            published.push_back(&p), downloadsTotal += (std::max)(0LL, p.downloads);
-        else if (p.review != "local")
-            others.push_back(&p);
-        retired += p.review == "retirado" || p.review == "rechazado";
-        issues += publishErrors.count(p.id) ? 1 : 0;
+        published += a.review == "aprobado" ? 1 : 0;
+        downloadsTotal += a.review == "aprobado" ? (std::max)(0LL, a.downloads) : 0;
+        ids.push_back(a.id);
     }
+    const int best = C::BestPosition(catalog, ids);
 
     if (BeginCentered("##Contrib", font * 72.0f))
     {
         // Franja de cifras
         const float sp = ImGui::GetStyle().ItemSpacing.x;
-        const int tiles = 2 + ((retired + issues) > 0 ? 1 : 0);
-        const float tw = std::floor((ImGui::GetContentRegionAvail().x - sp * (tiles - 1)) / tiles);
-        StatTile("##tPub", "Perfiles publicados", std::to_string(published.size()), IlionTheme::ShellPilot(IlionTheme::ShellPal::Green), tw);
+        const float tw = std::floor((ImGui::GetContentRegionAvail().x - sp * 2.0f) / 3.0f);
+        StatTile("##tPub", "Publicaciones", std::to_string(published), IlionTheme::ShellPilot(IlionTheme::ShellPal::Green), tw);
         ImGui::SameLine();
         StatTile("##tDl", "Descargas recibidas", std::to_string(downloadsTotal), PodiumColour(1), tw);
-        if (tiles == 3)
+        ImGui::SameLine();
+        StatTile("##tBest", "Mejor posición", best > 0 ? StrFmt("Nº %d", best) : std::string("Sin clasificación"), best > 0 ? PodiumColour((std::min)(best, 3)) : IlionTheme::ShellPal::Text2,
+                 tw);
+
+        // PUBLICAR PERFIL, siempre a la vista
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPal::Orange));
+        if (IlionTheme::Button("PUBLICAR PERFIL##ContribPublish", ImVec2(font * 16.0f, std::floor(font * 2.2f))))
+            OpenPublish(std::string(), Contributions);
+        ImGui::PopStyleColor();
+        if (!signedIn)
         {
             ImGui::SameLine();
-            StatTile("##tRet", issues > 0 ? "Retirados o con incidencias" : "Retirados", std::to_string(retired + issues), IlionTheme::ShellPal::Red, tw);
+            if (IlionTheme::Button("ENTRAR##ContribLogin", ImVec2(0.0f, std::floor(font * 2.2f))))
+                cpageBack = Contributions, cpage = AccountView;
         }
 
-        // Lo que se está compartiendo: un paso (con sesión y alias) o la cuenta y vuelta aquí
-        for (C::Profile* p : toShare)
+        // Lo que se está publicando ahora y los errores de publicación (con el nombre del perfil)
+        if (ws.busy && jobKind.rfind("publicar:", 0) == 0)
+            StatusChip(IlionTheme::ShellPilot(IlionTheme::ShellPal::Yellow), ("Publicando «" + (publishingName) + "»…").c_str());
+        for (const auto& [id, err] : publishErrors)
         {
-            ImGui::Spacing();
-            ImGui::PushID(p->id.c_str());
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, toneMapColor(IlionTheme::ShellPal::PanelHi));
-            ImGui::PushStyleColor(ImGuiCol_Border, toneMapColor(IlionTheme::ShellPal::Orange));
-            if (ImGui::BeginChild("##shareCard", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding))
-            {
-                P::Coloured(IlionTheme::ShellPal::Orange, "PREPARADO PARA COMPARTIR");
-                P::Big(P::FigureFont(), 1.2f, IlionTheme::ShellPal::Text, p->name.c_str());
-                P::Coloured(IlionTheme::ShellPal::Text2, TechLine(*p).c_str(), true);
-                if (!signedIn)
-                {
-                    if (IlionTheme::Button("ENTRAR PARA PUBLICAR"))
-                        cpageBack = Contributions, cpage = AccountView;
-                }
-                else if (session.alias.empty())
-                {
-                    if (IlionTheme::Button("ELEGIR ALIAS PARA PUBLICAR"))
-                        cpageBack = Contributions, cpage = AccountView;
-                }
-                else
-                {
-                    P::Coloured(IlionTheme::ShellPal::Dim,
-                                ("Se publicará como " + session.alias + ". Se comparten el nombre, el juego, la API, la GPU, la arquitectura, la resolución y la configuración.")
-                                    .c_str(),
-                                true);
-                    ImGui::BeginDisabled(ws.busy);
-                    ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPal::Orange));
-                    if (IlionTheme::Button("PUBLICAR"))
-                        StartPublish(*p);
-                    ImGui::PopStyleColor();
-                    ImGui::EndDisabled();
-                }
-                Flow("NO COMPARTIR");
-                if (IlionTheme::Button("NO COMPARTIR"))
-                {
-                    p->review = "local";
-                    SaveLocalLists();
-                }
-                if (const auto it = publishErrors.find(p->id); it != publishErrors.end())
-                    StatusChip(IlionTheme::ShellPal::Red, ("Error: " + it->second).c_str());
-                else if (ws.busy && jobKind == "publicar:" + p->id)
-                    StatusChip(IlionTheme::ShellPilot(IlionTheme::ShellPal::Yellow), "Publicando…");
-            }
-            ImGui::EndChild();
-            ImGui::PopStyleColor(2);
-            ImGui::PopID();
+            const C::Profile* p = FindLocal(id);
+            StatusChip(IlionTheme::ShellPal::Red, ("No se publicó «" + (p != nullptr ? p->name : id) + "»: " + err).c_str());
         }
 
         // Tus publicaciones, en una cuadrícula
         ImGui::Spacing();
         IlionTheme::SectionPlate("TUS PUBLICACIONES");
-        std::vector<C::Profile*> cards = published;
-        cards.insert(cards.end(), others.begin(), others.end());
-        if (cards.empty())
+        if (aportes.empty())
             P::Coloured(IlionTheme::ShellPal::Dim,
-                        signedIn ? "Aún no has publicado. En PERFILES, pulsa COMPARTIR en uno de tus perfiles."
-                                 : "Entra con tu cuenta para ver tus publicaciones. En PERFILES, COMPARTIR te lleva a la cuenta.",
+                        signedIn ? "Aún no has publicado. Pulsa PUBLICAR PERFIL o COMPARTIR en una tarjeta de PERFILES."
+                                 : "Entra con tu cuenta para ver tus publicaciones. Explorar, descargar y activar funcionan sin cuenta.",
                         true);
         const int cols = ImGui::GetContentRegionAvail().x > font * 50.0f ? 3 : ImGui::GetContentRegionAvail().x > font * 32.0f ? 2 : 1;
-        if (!cards.empty() && ImGui::BeginTable("##ContribGrid", cols, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings))
+        if (!aportes.empty() && ImGui::BeginTable("##ContribGrid", cols, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings))
         {
-            for (size_t i = 0; i < cards.size(); i++)
+            for (size_t i = 0; i < aportes.size(); i++)
             {
-                C::Profile& p = *cards[i];
+                const C::Profile& p = aportes[i];
                 if (i % cols == 0)
                     ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex((int) (i % cols));
@@ -2084,37 +2290,50 @@ static void ContributionsView()
                 {
                     P::Big(P::FigureFont(), 1.1f, IlionTheme::ShellPal::Text, p.name.c_str(), true);
                     P::Coloured(IlionTheme::InfoCyan, p.gameName.c_str(), true);
-                    const auto st = PublicationState(p);
-                    StatusChip(st.first, st.second.c_str());
                     P::Coloured(IlionTheme::ShellPal::Text2,
                                 (std::string(C::NameOf(C::kTechs, p.tech)) + (p.fg == "ninguno" ? std::string(" · sin FG") : StrFmt(" · %s %dX", C::NameOf(C::kFgs, p.fg), p.multiplier)))
                                     .c_str(),
                                 true);
+                    // El estado público real: «Publicado» solo si el catálogo público lo muestra
+                    const bool visible = FindCatalog(p.id) != nullptr;
+                    if (p.review == "rechazado")
+                        StatusChip(IlionTheme::ShellPal::Red, "Retirado por moderación");
+                    else if (p.review == "pendiente")
+                        StatusChip(IlionTheme::ShellPilot(IlionTheme::ShellPal::Yellow), "Pendiente de moderación");
+                    else if (verifying.count(p.id))
+                        StatusChip(IlionTheme::ShellPilot(IlionTheme::ShellPal::Yellow), "Publicando… (comprobando el catálogo)");
+                    else if (visible)
+                        StatusChip(IlionTheme::ShellPilot(IlionTheme::ShellPal::Green), "Publicado");
+                    else
+                        StatusChip(IlionTheme::ShellPilot(IlionTheme::ShellPal::Yellow), testCatalog ? "Sin comprobar (datos de prueba)" : "Aún no aparece en el catálogo");
+                    const int pos = C::RankPosition(catalog, p.id);
                     P::Coloured(IlionTheme::ShellPal::Dim,
-                                StrFmt("%s · v%d%s", (p.updated.empty() ? p.created : p.updated).substr(0, 10).c_str(), p.version,
-                                       p.downloads >= 0 ? StrFmt(" · %lld descargas", p.downloads).c_str() : "")
-                                    .c_str());
-                    if (FindCatalog(p.id) != nullptr && IlionTheme::Button("VER"))
+                                StrFmt("%lld descargas · %s · v%d", (std::max)(0LL, p.downloads), pos > 0 ? StrFmt("Nº %d", pos).c_str() : "Sin clasificación", p.version).c_str(),
+                                true);
+                    if (visible && IlionTheme::Button("VER"))
                         detailId = p.id, cpage = Explore;
-                    if (C::IsServerReview(p.review) && p.review != "rechazado")
+                    if (p.review != "rechazado")
                     {
                         if (withdrawId != p.id)
                         {
-                            Flow("RETIRAR");
+                            if (visible)
+                                Flow("RETIRAR PUBLICACIÓN");
                             ImGui::BeginDisabled(!signedIn || ws.busy);
-                            if (IlionTheme::Button("RETIRAR"))
+                            if (IlionTheme::Button("RETIRAR PUBLICACIÓN"))
                                 withdrawId = p.id;
                             ImGui::EndDisabled();
                         }
                         else
                         {
-                            P::Coloured(IlionTheme::ShellPal::Text2, "Se quita del catálogo; tu perfil local se conserva.", true);
+                            P::Coloured(IlionTheme::ShellPal::Text2, "Se quita del catálogo. Tu copia en MIS PERFILES se conserva.", true);
+                            ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPal::Red));
                             if (IlionTheme::Button("CONFIRMAR RETIRADA"))
                             {
                                 const std::string id = p.id;
-                                RunWithSession("Retirando el perfil...", "retirar:" + id, [id](const C::ServiceConfig& cfg, C::Session& s) { return C::Withdraw(cfg, s, id); });
+                                RunWithSession("Retirando la publicación...", "retirar:" + id, [id](const C::ServiceConfig& cfg, C::Session& s) { return C::Withdraw(cfg, s, id); });
                                 withdrawId.clear();
                             }
+                            ImGui::PopStyleColor();
                             Flow("CANCELAR");
                             if (IlionTheme::Button("CANCELAR"))
                                 withdrawId.clear();
@@ -2132,7 +2351,10 @@ static void ContributionsView()
             ImGui::Spacing();
             ImGui::BeginDisabled(ws.busy);
             if (IlionTheme::Button("ACTUALIZAR CIFRAS##ContribRefresh"))
+            {
                 RequestAuthorStats();
+                needCatalog = true; // el puesto sale del catálogo público
+            }
             ImGui::EndDisabled();
         }
     }
@@ -2151,13 +2373,17 @@ static void AccountScreen()
     }
     if (IlionTheme::Button("< VOLVER##AccountBack"))
         cpage = cpageBack == AccountView ? Home : cpageBack;
+    const bool fromPublish = cpageBack == PublishView;
     ImGui::Spacing();
     ImGui::PushStyleColor(ImGuiCol_ChildBg, toneMapColor(IlionTheme::ShellPal::Panel));
     ImGui::PushStyleColor(ImGuiCol_Border, toneMapColor(IlionTheme::ShellPal::Line));
     if (ImGui::BeginChild("##AccountCard", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding))
     {
         P::Big(P::FigureFont(), 1.3f, IlionTheme::ShellPal::Text, "TU CUENTA");
-        P::Coloured(IlionTheme::ShellPal::Text2, "Solo hace falta para publicar. Explorar, descargar y activar funcionan sin cuenta.", true);
+        P::Coloured(IlionTheme::ShellPal::Text2,
+                    fromPublish ? "Entra para publicar el perfil elegido; después vuelves a PUBLICAR PERFIL."
+                                : "Solo hace falta para publicar y gestionar tus aportes. Explorar, descargar y activar funcionan sin cuenta.",
+                    true);
         ImGui::Spacing();
         if (!service.valid)
             P::Row(P::Mark::Info, "Servicio comunitario no disponible", service.problem);
@@ -2178,11 +2404,11 @@ static void AccountScreen()
                 }
                 ImGui::EndDisabled();
             }
-            else if (std::any_of(mine.begin(), mine.end(), [](const C::Profile& p) { return p.review == "por_publicar"; }))
+            else if (cpageBack == PublishView)
             {
                 ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPal::Orange));
                 if (IlionTheme::Button("CONTINUAR CON LA PUBLICACIÓN##AccountContinue"))
-                    cpage = Contributions;
+                    cpage = PublishView, cpageBack = Contributions;
                 ImGui::PopStyleColor();
             }
             ImGui::Spacing();
@@ -2191,6 +2417,8 @@ static void AccountScreen()
                 C::ForgetSession();
                 statsRequested = false;
                 session = {};
+                aportes.clear();
+                C::SaveList(AportesPath(), aportes);
                 Say(true, "Sesión cerrada en este equipo");
             }
         }
@@ -2209,9 +2437,9 @@ static void AccountScreen()
                 worker.Start("Pidiendo el código...", [cfg, mail]() { return C::RequestCode(cfg, mail); });
             }
             ImGui::EndDisabled();
-            P::Coloured(IlionTheme::ShellPal::Text2, "2. El código que llega al correo (todas sus cifras)", true);
+            P::Coloured(IlionTheme::ShellPal::Text2, "2. El código de 8 cifras que llega al correo", true);
             ImGui::SetNextItemWidth(font * 10.0f);
-            ImGui::InputTextWithHint("##AccountCode", "código", code, sizeof(code), ImGuiInputTextFlags_CharsDecimal);
+            ImGui::InputTextWithHint("##AccountCode", "8 cifras", code, 11, ImGuiInputTextFlags_CharsDecimal);
             ImGui::SameLine();
             ImGui::BeginDisabled(ws.busy);
             if (IlionTheme::Button("ENTRAR##AccountVerify"))
@@ -2239,6 +2467,11 @@ template <typename Ctx> static void CommunityPanel(Ctx& ctx)
     if (!loaded)
         LoadAll();
     Collect();
+    // Al volver a COMUNIDAD, sin mensajes de antes
+    if (communityFrame < ImGui::GetFrameCount() - 1)
+        communityMessage.clear(), withdrawId.clear();
+    communityFrame = ImGui::GetFrameCount();
+    sayTarget = 1;
     SpacingScope spacing;
     const float font = ImGui::GetFontSize();
 
@@ -2410,7 +2643,11 @@ template <typename Ctx> static void CommunityPanel(Ctx& ctx)
             if (sel)
                 ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPilot(IlionTheme::ShellPal::Green)));
             if (IlionTheme::Button(StrFmt("%s##CommunityTab%d", names[i], i).c_str(), ImVec2(bw, std::floor(font * 1.8f))))
+            {
+                if (cpage != i)
+                    communityMessage.clear(), withdrawId.clear(); // cada pestaña, sin mensajes de otra
                 cpage = i, detailId.clear();
+            }
             if (sel)
                 ImGui::PopStyleColor();
         }
@@ -2420,8 +2657,8 @@ template <typename Ctx> static void CommunityPanel(Ctx& ctx)
         const auto ws = worker.Get();
         if (ws.busy)
             P::Row(P::Mark::Wait, ws.task, "En segundo plano: el juego no espera");
-        else if (!message.empty())
-            P::Row(messageOk ? P::Mark::Ok : P::Mark::Bad, message, std::string());
+        else if (!communityMessage.empty())
+            P::Row(communityOk ? P::Mark::Ok : P::Mark::Bad, communityMessage, std::string());
     }
 
     // ---- Una única zona desplazable por vista ----
@@ -2445,6 +2682,8 @@ template <typename Ctx> static void CommunityPanel(Ctx& ctx)
             ExploreView(m);
         else if (cpage == Contributions)
             ContributionsView();
+        else if (cpage == PublishView)
+            PublishScreen();
         else
             AccountScreen();
         ImGui::Spacing();

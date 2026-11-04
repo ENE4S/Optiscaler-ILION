@@ -833,6 +833,32 @@ inline AddResult AddOrUpdate(std::vector<Profile>& list, const Profile& p)
     return AddResult::Added;
 }
 
+// Una copia editada de un perfil descargado: conserva la autoría original y su procedencia, con una identidad local nueva
+// (no se confunde con el publicado, una nueva descarga no la pisa y nunca se puede publicar como propia)
+inline Profile EditedCopy(const Profile& original, Profile edited)
+{
+    edited.id = NewLocalId();
+    edited.author = original.author;
+    edited.authorId = original.authorId;
+    edited.origin = original.origin;
+    edited.version = original.version;
+    edited.created = original.created;
+    edited.updated = NowUtc();
+    edited.review = "local";
+    edited.downloads = -1;
+    return edited;
+}
+
+inline bool IsEditedCopy(const Profile& p) { return p.origin == "comunidad" && p.id.rfind("local-", 0) == 0; }
+
+// Elimina un perfil de una lista local (solo la copia de este equipo; lo publicado no se toca)
+inline bool RemoveLocal(std::vector<Profile>& list, const std::string& id)
+{
+    const size_t before = list.size();
+    list.erase(std::remove_if(list.begin(), list.end(), [&](const Profile& e) { return e.id == id; }), list.end());
+    return list.size() != before;
+}
+
 // ---- Compatibilidad con el equipo actual --------------------------------------------------------------------------------
 struct Machine
 {
@@ -988,6 +1014,27 @@ inline int PodiumCount(const std::vector<Profile>& list, const std::vector<size_
     while (n < 3 && n < (int) order.size() && list[order[n]].downloads > 0)
         n++;
     return n;
+}
+
+// El puesto de un perfil en la clasificación de INICIO: el mismo orden (RankByDownloads) y el mismo criterio (solo con
+// descargas reales). 0 = sin clasificación (sin descargas o fuera del catálogo)
+inline int RankPosition(const std::vector<Profile>& list, const std::string& id)
+{
+    const auto order = RankByDownloads(list);
+    for (size_t i = 0; i < order.size(); i++)
+        if (list[order[i]].id == id)
+            return list[order[i]].downloads > 0 ? (int) i + 1 : 0;
+    return 0;
+}
+
+// El mejor puesto entre varios perfiles (0 si ninguno está clasificado)
+inline int BestPosition(const std::vector<Profile>& list, const std::vector<std::string>& ids)
+{
+    int best = 0;
+    for (const auto& id : ids)
+        if (const int r = RankPosition(list, id); r > 0 && (best == 0 || r < best))
+            best = r;
+    return best;
 }
 
 // ---- Servicio remoto -------------------------------------------------------------------------------------------------
@@ -1466,7 +1513,7 @@ inline std::pair<bool, std::string> FetchAlias(const ServiceConfig& c, Session& 
 inline std::pair<bool, std::string> VerifyCode(const ServiceConfig& c, const std::string& email, const std::string& code, Session& s)
 {
     if (code.size() < 6 || code.size() > 10 || !std::all_of(code.begin(), code.end(), ::isdigit))
-        return { false, "El código son cifras" };
+        return { false, "Escribe el código completo del correo (solo cifras)" };
     const HttpResult r = HttpRequest("POST", c.url + "/auth/v1/verify", Headers(c, ""), Json { { "type", "email" }, { "email", email }, { "token", code } }.dump());
     if (!ReadAuth(r, s))
         return { false, ServerError(r) };
@@ -1555,7 +1602,8 @@ inline std::pair<bool, std::string> Publish(const ServiceConfig& c, Session& s, 
     p.origin = "local";
     // «Publicado» solo si el servidor lo dejó visible (aprobado); con un servidor que aún modera, se dice tal cual
     if (p.review == "aprobado")
-        return { true, update ? "Publicación actualizada. Visible en EXPLORAR" : "Perfil publicado. Ya es visible en EXPLORAR" };
+        return { true, update ? "Actualización aceptada por el servidor. Comprobando el catálogo público…"
+                              : "Publicación aceptada por el servidor. Comprobando el catálogo público…" };
     return { true, update ? "Perfil actualizado. Pendiente de moderación" : "Perfil enviado. Pendiente de moderación" };
 }
 

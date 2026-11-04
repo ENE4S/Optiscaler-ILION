@@ -1780,7 +1780,7 @@ template <typename Ctx> static void Tick(Ctx& ctx)
             // mismo escalador, modelo y salida), si no una estimación por píxeles internos. Si ninguno llega, el más rápido
             const double want = WantFps(mode, RefreshHz());
             const double ref = measure.verified ? measure.p10 : measure.mean;
-            std::string table;
+            std::string table, qualityNote;
             target = -1;
             for (int p = policy.best; p <= policy.fastest; p++)
             {
@@ -1790,6 +1790,30 @@ template <typename Ctx> static void Tick(Ctx& ctx)
                     if (const Evidence e = LoadEvidence(EvidenceKey(before.scalerKey, before.model, p, before.th)); e.count >= 1)
                         measured = true, fps = e.p10;
                 table += StrFmt("%s%s %.0f%s", table.empty() ? "" : " · ", kPresets[p].name, fps, measured ? " (medido)" : " (est.)");
+                // Calidad (Community11): el margen por encima de lo que elegiría Óptimo (estimado entre 60 y 70 reales) solo se
+                // usa con FPS reales medidos sin FG y un 10 % de margen sobre 60, como prueba controlada que la próxima
+                // medición confirma o revierte (el historial manda). Nativa por el menú del juego, solo si ya se midió:
+                // el menú puede no tener fila nativa. Si no se cumple, queda como propuesta pendiente de validación
+                if (mode == Mode::Calidad && target < 0 && p < cur && !measured && fps >= want && fps < WantFps(Mode::Optimo, 0.0))
+                {
+                    const char* hold = p == 0 && RatioNeedsRestart(rule) ? "el menú del juego puede no tener una fila nativa o DLAA"
+                                       : !measure.verified             ? "los FPS reales no se han medido sin FG (con FG no se usan para subir de preset)"
+                                       : fps < want * 1.10             ? "el margen estimado es menor del 10 %"
+                                                                       : nullptr;
+                    if (hold != nullptr)
+                    {
+                        if (qualityNote.empty())
+                            qualityNote = StrFmt("Propuesta pendiente de validación: %s podría dar %.0f FPS reales (estimado), no se aplica porque %s. "
+                                                 "Para probarlo: elígelo, desactiva el FG, juega 15 s y pulsa OPTIMIZAR; la medición decide",
+                                                 kPresets[p].name, fps, hold);
+                        continue;
+                    }
+                    target = p;
+                    plan.presetWhy = StrFmt("Calidad: %s estimado en %.0f FPS reales (medidos sin FG en %s). Prueba controlada: la próxima "
+                                            "medición la confirma o vuelve al preset anterior",
+                                            kPresets[p].name, fps, kPresets[cur].name);
+                    continue;
+                }
                 if (target < 0 && fps >= want)
                 {
                     target = p;
@@ -1806,6 +1830,11 @@ template <typename Ctx> static void Tick(Ctx& ctx)
             }
             Add(Mark::Info, StrFmt("FPS reales por preset (%s)", measure.verified ? "el 90 % del tiempo" : "media, con FG"),
                 table + " · est.: píxeles internos elevados a 0,7, supone que limita la GPU");
+            if (!qualityNote.empty())
+            {
+                Add(Mark::Info, "Calidad: preset superior sin aplicar", qualityNote);
+                plan.presetWhy += ". " + qualityNote;
+            }
         }
         plan.preset = target;
         if (target != cur)
@@ -2030,6 +2059,8 @@ template <typename Ctx> static void Tick(Ctx& ctx)
             const Arch arch = ArchOf(gpu);
             if (plan.fg == FgRoute::DlssgGame && gpu.vendorId == VendorId::Nvidia && !arch.dlssMFG)
                 count = 1; // DLSSG de NVIDIA: más de un fotograma generado solo en RTX 50
+            if (mode == Mode::Calidad)
+                count = std::min(count, 1); // Calidad: 1X o 2X fijo, nunca 3X o más
             plan.count = count;
 
             // Los multiplicadores fijos evaluados y por qué se descarta cada uno
@@ -2564,9 +2595,18 @@ static void Big(ImFont* font, float scale, const ImVec4& colour, const char* tex
     ImGui::PopFont();
 }
 
+static bool infoWithoutPilot = false; // PERFILES en Industrial / Clean Olive Completos: un dato no lleva piloto
+
 static void Pilot(Mark mark, float size)
 {
     const ImVec2 p = ImGui::GetCursorScreenPos();
+    if (mark == Mark::Info && infoWithoutPilot)
+    {
+        // Verde activo, ámbar pendiente, rojo error: un dato descriptivo no es un piloto apagado
+        ImGui::Dummy(ImVec2(size, size));
+        ImGui::SameLine(0.0f, size * 0.3f);
+        return;
+    }
     IlionTheme::ShellLed(ImGui::GetWindowDrawList(), ImVec2(p.x + size * 0.5f, p.y + size * 0.5f), size * 0.3f, toneMapColor(MarkColour(mark)),
                          mark != Mark::Info);
     ImGui::Dummy(ImVec2(size, size));
@@ -3425,6 +3465,20 @@ static void AppliedRow(const char* what, const std::string& value, Applied a, co
 
 static Mode optimizedMode = Mode::Optimo; // el modo con el que se hizo la última optimización
 
+// El escalador con su modelo, sin repetir: el nombre de la variante (sin el sufijo de modelo que ya trajera) y el modelo una vez
+static std::string ScalerLabel(const std::string& name, Model model)
+{
+    std::string base = name;
+    if (const size_t cut = base.find(" · modelo"); cut != std::string::npos)
+        base.resize(cut);
+    const Arch arch = ArchOf(IdentifyGpu::getPrimaryGpu());
+    if (model == Model::Lite)
+        return base + " · INT8 Lite";
+    if (model == Model::Full)
+        return base + (arch.fsr4 ? StrFmt(" · %s completo", arch.fsr4Full) : std::string(" · modelo completo"));
+    return base;
+}
+
 template <typename Ctx> static void OptimizerBlock(Ctx& ctx)
 {
     const float font = ImGui::GetFontSize();
@@ -3466,7 +3520,7 @@ template <typename Ctx> static void OptimizerBlock(Ctx& ctx)
         const auto catalog = GatherUpscalers(feature);
         const UpscalerVariant* current = Current(catalog);
         const bool scalerRuns = current != nullptr && KeyOf(*current) == plan.scaler.key && (plan.scaler.model == Model::Any || SelectedModel() == plan.scaler.model);
-        const std::string scalerText = plan.scaler.name + (plan.scaler.model == Model::Full ? " · modelo completo" : plan.scaler.model == Model::Lite ? " · INT8Lite" : "");
+        const std::string scalerText = ScalerLabel(plan.scaler.variant.empty() ? plan.scaler.name : plan.scaler.variant, plan.scaler.model);
         AppliedRow("Escalador", scalerText,
                    plan.scalerStage == Stage::Recommended ? Applied::Recommended
                    : scalerRuns                           ? (upscaling ? Applied::Verified : Applied::Applied)
@@ -3493,7 +3547,7 @@ template <typename Ctx> static void OptimizerBlock(Ctx& ctx)
         if (plan.fgStage == Stage::Blocked)
             AppliedRow("Frame Generation", StrFmt("%dX fijo", plan.count + 1), Applied::Recommended, plan.fgWhy);
         else if (plan.fg == FgRoute::None)
-            AppliedRow("Frame Generation", generating ? std::string(status.name) + StrFmt(" %dX (se mantiene)", status.multiplier) : std::string("sin FG"),
+            AppliedRow("Frame Generation", generating ? std::string(status.name) + StrFmt(" · %dX (se mantiene)", status.multiplier) : std::string("sin FG"),
                        Applied::NoChange, plan.fgWhy);
         else
         {
@@ -3505,7 +3559,7 @@ template <typename Ctx> static void OptimizerBlock(Ctx& ctx)
                               : plan.restartFg && !lv.fgLoaded                                    ? Applied::Pending
                               : lv.fgLoaded                                                       ? Applied::Applied
                                                                                                   : Applied::Pending;
-            AppliedRow("Frame Generation", StrFmt("%s %dX fijo", fgName.c_str(), want), a,
+            AppliedRow("Frame Generation", StrFmt("%s · %dX fijo", fgName.c_str(), want), a,
                        a == Applied::Pending && plan.restartFg ? "se carga al reiniciar el juego"
                        : a == Applied::Applied                ? "cargado, todavía sin generar"
                        : generating && !multOk                ? StrFmt("genera %dX", status.multiplier)
@@ -3533,7 +3587,7 @@ template <typename Ctx> static void OptimizerBlock(Ctx& ctx)
             {
                 const bool wantLite = saved.model == std::to_string((int) FSR4Model::INT8Lite);
                 const bool runs = current != nullptr && KeyOf(*current) == saved.scalerKey && (!IsFsr4Full(*current) || DriverLiteSelected() == wantLite);
-                AppliedRow("Escalador", saved.scalerName + (current != nullptr && IsFsr4Full(*current) ? (wantLite ? " · INT8Lite" : " · modelo completo") : ""),
+                AppliedRow("Escalador", ScalerLabel(saved.scalerName, current != nullptr && IsFsr4Full(*current) ? (wantLite ? Model::Lite : Model::Full) : Model::Any),
                            runs ? (upscaling ? Applied::Verified : Applied::Applied) : Applied::Pending,
                            runs && !upscaling ? "el juego no escala ahora" : std::string());
             }
@@ -3546,7 +3600,7 @@ template <typename Ctx> static void OptimizerBlock(Ctx& ctx)
             if (lv.fgWanted && want > 1)
             {
                 const bool gen = Generating(status);
-                AppliedRow("Frame Generation", saved.fgOutput + StrFmt(" %dX fijo", want),
+                AppliedRow("Frame Generation", saved.fgOutput + StrFmt(" · %dX fijo", want),
                            gen && (status.multiplier <= 0 || status.multiplier == want) ? Applied::Verified
                            : lv.fgRestart                                               ? Applied::Pending
                            : lv.fgLoaded                                                ? Applied::Applied

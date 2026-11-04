@@ -1570,6 +1570,12 @@ template <typename Ctx> static void ProfilesPanel(Ctx& ctx)
     }
     profilesFrame = ImGui::GetFrameCount();
     sayTarget = 0;
+    // Pilotos con significado inequívoco en PERFILES: los datos descriptivos van sin piloto (solo mientras se dibuja PERFILES)
+    struct InfoPilots
+    {
+        InfoPilots() { P::infoWithoutPilot = true; }
+        ~InfoPilots() { P::infoWithoutPilot = false; }
+    } infoPilots;
     SpacingScope spacing;
     const float font = ImGui::GetFontSize();
     const C::Machine m = MachineOf(ctx);

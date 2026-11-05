@@ -2863,8 +2863,11 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         const float advX0 = a.x + std::clamp((fx - 40 - a.x) * 0.40f, 300.f, 420.f);
         const float advX1 = fx - 34;
 
-        Text(fUi, 16.f, ImVec2(a.x + 22, a.y + 18), pal::Yellow, Lx("CURRENT GAME", "JUEGO ACTUAL", "JOGO ATUAL", "ТЕКУЩАЯ ИГРА"));
+        const char* currentGameLabel = Lx("CURRENT GAME", "JUEGO ACTUAL", "JOGO ATUAL", "ТЕКУЩАЯ ИГРА");
+        Text(fUi, 16.f, ImVec2(a.x + 22, a.y + 18), pal::Yellow, currentGameLabel);
         const std::string game = !state.gameName.empty() ? state.gameName : state.gameExe;
+        // ILION v1.4.0: where the left column's content really ends (label, game name as drawn, API · ILION ACTIVE)
+        float leftEnd = a.x + 22 + Measure(fUi, 16.f, currentGameLabel).x;
         {
             const char* shownGame = game.empty() ? "-" : game.c_str();
             const float room = advX0 - 14 - (a.x + 22);
@@ -2874,6 +2877,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
             dl->PushClipRect(P(a.x, a.y), P(advX0 - 10, b.y), true);
             Text(fUi, gs, ImVec2(a.x + 22, a.y + 40 + (44.f - gs) * 0.5f), pal::Text, shownGame);
             dl->PopClipRect();
+            leftEnd = (std::max)(leftEnd, (std::min)(a.x + 22 + Measure(fUi, gs, shownGame).x, advX0 - 10));
         }
 
         std::string api = ApiName(state.api);
@@ -2888,9 +2892,17 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         // ILION Advisor: facts once a second while the menu is open, the suggestion changes only after holding 5 s
         advisorUpdate();
 
-        // ILION AL DÍA / ILION TERMINAL in the box Advisor used (its facts are still gathered above)
-        if (advX1 - advX0 > 200)
-            HomePanel::Draw(dl, P(advX0, a.y + 10), P(advX1, b.y - 10), ctx.frameTime);
+        // ILION AL DÍA / ILION TERMINAL in the box Advisor used (its facts are still gathered above). ILION v1.4.0: the
+        // same box (same width and height), centred in the real space between the end of the left column and the FPS
+        // figure (drawn from fx - 4). It only moves left, and keeps at least 14 px from the left column's content
+        const char* activeLabel = Lx("ILION ACTIVE", "ILION ACTIVO", "ILION ATIVO", "ILION АКТИВЕН");
+        leftEnd = (std::max)(leftEnd, sep + 44 + Measure(fUi, 20.f, activeLabel).x);
+        const float boxW = advX1 - advX0;
+        const float rightStart = fx - 4;
+        const float centred = leftEnd + ((rightStart - leftEnd) - boxW) * 0.5f;
+        const float boxX0 = (std::min)(advX0, (std::max)(centred, leftEnd + 14));
+        if (boxW > 200)
+            HomePanel::Draw(dl, P(boxX0, a.y + 10), P(boxX0 + boxW, b.y - 10), ctx.frameTime);
 
         // The diagnosis: hardware, the six answers with their level, reasons and warnings. It changes nothing
         advisorDiagnosis();
@@ -2898,7 +2910,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         // The pilot centred on the line of its text, its glow clear of the letters
         const float activeY = a.y + 108 + Measure(fUi, 20.f, "I").y * 0.5f;
         LedAt(dl, ImVec2(sep + 24, activeY), 6.f, Led::Green);
-        Text(fUi, 20.f, ImVec2(sep + 44, a.y + 108), pal::Green, Lx("ILION ACTIVE", "ILION ACTIVO", "ILION ATIVO", "ILION АКТИВЕН"));
+        Text(fUi, 20.f, ImVec2(sep + 44, a.y + 108), pal::Green, activeLabel);
 
         // FPS and frame time measured by ILION in this game
         const double ft = ctx.frameTime;

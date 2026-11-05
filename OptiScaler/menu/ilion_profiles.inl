@@ -907,25 +907,50 @@ static std::vector<Option> Alternatives(const UpscalerCatalog& catalog, const Ar
     };
     const auto backend = [&](Upscaler u) { return first([u](const UpscalerVariant& v) { return v.backend == u; }); };
 
+    // ILION v1.4.0: orden de evaluación por arquitectura. Solo amplía y ordena las candidatas; Decide() no cambia (a igual
+    // nivel gana la primera añadida, o la que ya corre). Lo que no es propio de la GPU necesita dos mediciones aquí
+    // (needsEvidence: «pendiente de validación»), y solo entra lo que el inventario da por usable (sin forzar nada).
+    //   NVIDIA: DLSS > FSR 4 compatible > FSR 4 comunitarias > HLX / HelixSR > XeSS > FSR 3.1 / 2.2
+    //   AMD:    FSR 4 driver > FSR 4 DLL > FSR 4 comunitaria completa (4.1.1B…) > Lite / INT8Lite / optimizadas > HLX > HelixSR > XeSS > FSR 3.1 / 2.2
+    //   Intel:  XeSS XMX > FSR 4 compatible > comunitarias > HLX / HelixSR > XeSS DP4a > FSR 3.1 / 2.2
+    if (arch.dlssSR)
+        add(backend(Upscaler::DLSS), Model::Any, 5, false, StrFmt("DLSS Super Resolution nativo (%s)", arch.name));
     const UpscalerVariant* driver = first(IsDriver);
+    const auto official = [](const UpscalerVariant& v) { return v.entry != nullptr && v.entry->amdOfficial; };
     if (arch.fsr4)
     {
         add(driver, Model::Full, 5, false, StrFmt("FSR 4 del driver AMD, modelo completo %s para %s", arch.fsr4Full, arch.name));
-        // INT8Lite del driver: en una GPU cuyo modelo propio ya es INT8Lite no hay elección
-        if (driver != nullptr && DriverLiteOffered() && !arch.liteIsFull)
-            add(driver, Model::Lite, 3, false, "INT8Lite del driver: modelo más ligero, menos fidelidad");
+        // La DLL oficial de AMD antes que las comunitarias completas
         for (const auto& v : catalog.variants)
-            if (IsFsr4Full(v) && !IsDriver(v))
+            if (IsFsr4Full(v) && !IsDriver(v) && official(v))
+                add(&v, Model::Full, 5, false, StrFmt("FSR 4 por DLL, modelo completo %s", arch.fsr4Full));
+        for (const auto& v : catalog.variants)
+            if (IsFsr4Full(v) && !IsDriver(v) && !official(v))
                 add(&v, Model::Full, 5, false, StrFmt("FSR 4 por DLL, modelo completo %s", arch.fsr4Full));
     }
-    if (arch.dlssSR)
-        add(backend(Upscaler::DLSS), Model::Any, 5, false, StrFmt("DLSS Super Resolution nativo (%s)", arch.name));
-    const bool amd = arch.family == ArchFamily::Rdna4 || arch.family == ArchFamily::Rdna3 || arch.family == ArchFamily::Rdna2 ||
-                     arch.family == ArchFamily::AmdApu || arch.family == ArchFamily::AmdOther;
-    if (amd)
+    else
+    {
+        // GPU sin FSR 4 propio (NVIDIA, Intel, RDNA 1, GTX…): una ruta compatible es candidata para evaluación, nunca
+        // funcional por existir la DLL. La oficial de AMD solo con un modelo INT8 forzado (Fsr4ForceModel), la ruta de
+        // OptiScaler en otras GPU; las comunitarias, si el inventario las da por usables
+        const bool int8Forced = IsFsr4Int8(Config::Instance()->Fsr4ForceModel.value_or_default());
         for (const auto& v : catalog.variants)
-            if (IsCommunityLite(v))
-                add(&v, Model::Any, 3, !rdna3, "FSR 4 Lite comunitaria (DLL independiente, menos fidelidad)");
+            if (IsFsr4Full(v) && !IsDriver(v) && official(v) && int8Forced)
+                add(&v, Model::Any, 4, true, "FSR 4 compatible (DLL de AMD con modelo INT8 forzado; pendiente de validación en esta GPU)");
+        for (const auto& v : catalog.variants)
+            if (IsFsr4Full(v) && !IsDriver(v) && !official(v))
+                add(&v, Model::Any, 4, true, "FSR 4 comunitaria completa (pendiente de validación en esta GPU)");
+    }
+    // INT8Lite del driver: en una GPU cuyo modelo propio ya es INT8Lite no hay elección
+    if (arch.fsr4 && driver != nullptr && DriverLiteOffered() && !arch.liteIsFull)
+        add(driver, Model::Lite, 4, false, "INT8Lite del driver: modelo más ligero, menos fidelidad");
+    // Lite comunitarias y optimizadas (Exact / Lossy / Lossy2), ahora en cualquier arquitectura. Al nivel de HLX y HelixSR
+    // pero antes en el orden (con un FSR 4 completo del nivel 5, Óptimo y Calidad no cambian)
+    for (const auto& v : catalog.variants)
+        if (IsCommunityLite(v))
+            add(&v, Model::Any, 4, !rdna3,
+                rdna3 ? std::string("FSR 4 Lite comunitaria (DLL independiente, menos fidelidad)")
+                      : std::string("FSR 4 Lite comunitaria (DLL independiente, menos fidelidad; pendiente de validación en esta GPU)"));
     for (const auto& v : catalog.variants)
         if (IsHlx(v))
             add(&v, Model::Any, 4, !rdna3, "HLX FSR 4 (fidelidad sin clasificar frente al FSR 4 completo)");

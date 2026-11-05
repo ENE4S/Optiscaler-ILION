@@ -28,6 +28,8 @@ create table if not exists public.ilion_news_editorial (
     title text check (title is null or char_length(title) between 4 and 200),
     url text check (url is null or url ~ '^https://'),
     source text not null default 'ILION' check (char_length(source) between 1 and 40),
+    summary text check (summary is null or char_length(summary) <= 300),      -- resumen propio (español)
+    image_url text check (image_url is null or image_url ~ '^https://'),       -- fotografía de la noticia
     pinned boolean not null default false,
     sponsored boolean not null default false,
     hide_url text check (hide_url is null or hide_url ~ '^https?://'),

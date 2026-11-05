@@ -50,6 +50,47 @@ int main()
     CHECK(s.blocks[N::Games][0].source != s.blocks[N::Games][1].source, "una por fuente antes de repetir");
     CHECK(s.blocks[N::Tech].size() == 1 && s.blocks[N::Mods].size() == 1, "si faltan noticias no se inventan; mods hasta 7 días");
 
+    // v1.4.0: resumen, imagen del elemento (feed u og:image), validación y recorte centrado de una imagen real
+    {
+        const N::Feed es { "Prueba ES", "https://example.com/es", N::Tech };
+        const std::string x = R"(<rss><channel>
+<item><title>Nueva GPU anunciada hoy</title><link>https://example.com/n1</link><pubDate>Wed, 04 Nov 2026 21:00:00 +0000</pubDate>
+<description>&lt;img src=&quot;https://cdn.example.com/a.jpg&quot; /&gt;Nueva GPU anunciada hoy. La compañía ha presentado su tarjeta con 16 GB de memoria y un consumo de 250 W. Llegará a las tiendas en diciembre. The post Nueva GPU appeared first on Ejemplo.</description></item>
+<item><title>Con media content</title><link>https://example.com/n2</link><pubDate>Wed, 04 Nov 2026 20:00:00 +0000</pubDate>
+<media:content url="https://cdn.example.com/b.png" medium="image" /><description>Texto breve de la noticia con suficientes caracteres.</description></item>
+<item><title>Enclosure de video</title><link>https://example.com/n3</link><pubDate>Wed, 04 Nov 2026 20:00:00 +0000</pubDate>
+<enclosure url="https://cdn.example.com/v.mp4" type="video/mp4" /></item>
+</channel></rss>)";
+        const auto it = N::ParseFeed(x, es);
+        CHECK(it.size() == 3 && it[0].imageUrl == "https://cdn.example.com/a.jpg", "imagen escapada dentro de la descripción");
+        CHECK(it.size() == 3 && it[0].summary.rfind("La compañía", 0) == 0 && it[0].summary.find("<img") == std::string::npos &&
+                  it[0].summary.find("The post") == std::string::npos,
+              "resumen sin repetir el titular, sin etiquetas ni coletillas");
+        CHECK(it.size() == 3 && it[1].imageUrl == "https://cdn.example.com/b.png" && it[2].imageUrl.empty(), "media:content sí, vídeo no");
+        CHECK(N::MetaImage(R"(<html><head><meta property="og:image" content="https://cdn.example.com/og.jpg"></head>)") == "https://cdn.example.com/og.jpg" &&
+                  N::MetaImage(R"(<meta name="twitter:image" content="https://cdn.example.com/tw.jpg">)") == "https://cdn.example.com/tw.jpg" &&
+                  N::MetaImage(R"(<meta property="og:image" content="javascript:x">)").empty(),
+              "og:image, twitter:image, y nada que no sea https");
+        CHECK(!N::LooksLikeImage("<html>no soy una imagen</html>") && N::LooksLikeImage(std::string("\xFF\xD8\xFF\xE0", 4)), "tipo por los primeros bytes");
+        // Una BMP real de 400x100 en memoria: se decodifica y se recorta al centro a 320x180 sin deformarla
+        const int w = 400, h = 100;
+        std::string bmp(54 + w * h * 3, '\0');
+        auto put = [&](size_t at, uint32_t v, int n) { for (int k = 0; k < n; k++) bmp[at + k] = (char) ((v >> (8 * k)) & 0xFF); };
+        bmp[0] = 'B', bmp[1] = 'M';
+        put(2, (uint32_t) bmp.size(), 4), put(10, 54, 4), put(14, 40, 4), put(18, w, 4), put(22, h, 4), put(26, 1, 2), put(28, 24, 2);
+        for (int yy = 0; yy < h; yy++)
+            for (int xx = 0; xx < w; xx++)
+            {
+                const size_t at = 54 + ((size_t) yy * w + xx) * 3;
+                bmp[at + 2] = (char) (xx < w / 2 ? 255 : 0); // izquierda roja, derecha negra
+            }
+        const auto px = N::DecodeCover(bmp);
+        CHECK(px && px->size() == (size_t) N::kImageW * N::kImageH * 4, "decodificada a 320x180 RGBA");
+        CHECK(px && (*px)[(90 * N::kImageW + 100) * 4] > 200 && (*px)[(90 * N::kImageW + 220) * 4] < 40 && (*px)[(90 * N::kImageW + 100) * 4 + 3] == 255,
+              "recorte centrado: rojo a la izquierda del centro, negro a la derecha");
+        CHECK(!N::DecodeCover(std::string(2000, 'x')), "lo que no es imagen no se decodifica");
+    }
+
     printf("ILION AL DIA: %d comprobaciones, %d fallos\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

@@ -116,15 +116,216 @@ static void OpenLink(const std::string& url)
     ShellExecuteW(nullptr, L"open", w.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
-// ---- ILION AL DÍA ------------------------------------------------------------------------------------------------------
-static int shownBlock = 0, nextBlock = 0;
-static double blockSince = 0.0, fadeStart = -10.0;
-static constexpr double kBlockSeconds = 15.0, kFadeSeconds = 0.4;
-
-static void GoToBlock(int b, double now)
+// ---- ILION AL DÍA: one news item at a time, its picture on the left ------------------------------------------------
+// Two textures of the picture size, made once and reused (the next picture is uploaded into the free one ahead of time),
+// released when TERMINAL is chosen. Pixels come decoded from the news thread: nothing is downloaded or decoded here
+struct PictureSlot
 {
-    nextBlock = (b + IlionNews::BlockCount) % IlionNews::BlockCount;
-    fadeStart = now;
+    ImTextureData* tex = nullptr;
+    std::string key; // the link of the item whose picture it holds
+};
+
+static PictureSlot slots[2];
+static std::vector<ImTextureData*> retiredTextures;
+static int current = 0, previous = -1; // indexes in the rotation
+static int slotOfCurrent = 0;          // the slot that shows the current item
+static double shownSince = 0.0, fadeStart = -10.0;
+static std::string currentLink;        // the item shown, kept across a refresh of the list
+static constexpr double kItemSeconds = 11.0, kFadeSeconds = 0.5;
+
+static void RetireTexture(ImTextureData*& tex)
+{
+    if (tex == nullptr)
+        return;
+    if (tex->TexID == ImTextureID_Invalid && tex->BackendUserData == nullptr)
+    {
+        ImGui::UnregisterUserTexture(tex);
+        IM_DELETE(tex);
+    }
+    else
+    {
+        tex->SetStatus(ImTextureStatus_WantDestroy); // the renderer releases it once no frame uses it
+        tex->UnusedFrames = 0;
+        retiredTextures.push_back(tex);
+    }
+    tex = nullptr;
+}
+
+static void ReleasePictures()
+{
+    for (auto& s : slots)
+        RetireTexture(s.tex), s.key.clear();
+}
+
+// Every frame: registration kept, a texture the renderer dropped (device reset) is created again from its pixels,
+// retired ones freed once destroyed
+static void MaintainPictures()
+{
+    auto& registered = ImGui::GetCurrentContext()->UserTextures;
+    for (auto it = retiredTextures.begin(); it != retiredTextures.end();)
+    {
+        if ((*it)->Status == ImTextureStatus_Destroyed)
+        {
+            ImGui::UnregisterUserTexture(*it);
+            IM_DELETE(*it);
+            it = retiredTextures.erase(it);
+            continue;
+        }
+        if (!registered.contains(*it))
+            ImGui::RegisterUserTexture(*it);
+        (*it)->UnusedFrames++;
+        ++it;
+    }
+    for (auto& s : slots)
+    {
+        if (s.tex == nullptr)
+            continue;
+        if (!registered.contains(s.tex))
+            ImGui::RegisterUserTexture(s.tex);
+        if (s.tex->Status == ImTextureStatus_Destroyed)
+            s.tex->SetStatus(ImTextureStatus_WantCreate);
+    }
+}
+
+// The item's picture into a slot (once per item; 320x180 RGBA copied, then uploaded by the renderer)
+static void Upload(PictureSlot& s, const IlionNews::Item& it)
+{
+    if (s.key == it.link)
+        return;
+    s.key = it.link;
+    if (!it.image)
+        return;
+    if (s.tex == nullptr)
+    {
+        s.tex = IM_NEW(ImTextureData)();
+        s.tex->Create(ImTextureFormat_RGBA32, IlionNews::kImageW, IlionNews::kImageH);
+        s.tex->UseColors = true;
+        s.tex->RefCount = 1;
+        s.tex->UsedRect = { 0, 0, (unsigned short) IlionNews::kImageW, (unsigned short) IlionNews::kImageH };
+        s.tex->SetStatus(ImTextureStatus_WantCreate);
+        ImGui::RegisterUserTexture(s.tex);
+    }
+    for (int y = 0; y < IlionNews::kImageH; y++)
+        memcpy(s.tex->GetPixelsAt(0, y), it.image->data() + (size_t) y * IlionNews::kImageW * 4, (size_t) IlionNews::kImageW * 4);
+    if (s.tex->Status == ImTextureStatus_OK || s.tex->Status == ImTextureStatus_WantUpdates)
+    {
+        const ImTextureRect rect { 0, 0, (unsigned short) IlionNews::kImageW, (unsigned short) IlionNews::kImageH };
+        s.tex->UpdateRect = rect;
+        s.tex->Updates.resize(0);
+        s.tex->Updates.push_back(rect);
+        s.tex->SetStatus(ImTextureStatus_WantUpdates);
+    }
+}
+
+// Words wrapped into at most maxLines lines of a width; the last one ends with an ellipsis at a word if it doesn't fit
+static std::vector<std::string> WrapWords(ImFont* f, float size, const std::string& text, float width, int maxLines)
+{
+    std::vector<std::string> lines;
+    std::string line;
+    size_t i = 0;
+    while (i < text.size())
+    {
+        size_t j = text.find(' ', i);
+        if (j == std::string::npos)
+            j = text.size();
+        const std::string word = text.substr(i, j - i);
+        const std::string tryLine = line.empty() ? word : line + " " + word;
+        if (TextW(f, size, tryLine) <= width || line.empty())
+            line = tryLine;
+        else
+        {
+            lines.push_back(line);
+            line = word;
+            if ((int) lines.size() == maxLines)
+            {
+                // Out of room: the last line takes an ellipsis after its last whole word
+                std::string& last = lines.back();
+                while (!last.empty() && TextW(f, size, last + "…") > width)
+                {
+                    const size_t sp = last.rfind(' ');
+                    last = sp == std::string::npos ? Fit(f, size, last, width) : last.substr(0, sp);
+                    if (sp == std::string::npos)
+                        return lines;
+                }
+                last += "…";
+                return lines;
+            }
+        }
+        i = j + 1;
+    }
+    if (!line.empty())
+        lines.push_back(TextW(f, size, line) <= width ? line : Fit(f, size, line, width));
+    return lines;
+}
+
+// One item: picture | headline (up to three lines), excerpt (one or two), outlet · age · category
+static void DrawItem(ImDrawList* dl, ImVec2 a, ImVec2 b, const IlionNews::Item& it, const PictureSlot& slot, float alpha, bool hovered)
+{
+    const float s = U(1.0f);
+    ImFont* f = fUi;
+    const float h = b.y - a.y, w = b.x - a.x;
+    // The picture: 16:9 at the full height, unless that takes more than 40 % of the width (then cropped from the centre)
+    const float pw = (std::min)(std::floor(h * 16.f / 9.f), std::floor(w * 0.40f));
+    const ImVec2 p0 = a, p1(a.x + pw, b.y);
+    const float aspect = pw / h, source = (float) IlionNews::kImageW / IlionNews::kImageH;
+    ImVec2 uv0(0, 0), uv1(1, 1);
+    if (aspect < source)
+    {
+        const float keep = aspect / source;
+        uv0.x = (1.0f - keep) * 0.5f, uv1.x = 1.0f - uv0.x;
+    }
+    else
+    {
+        const float keep = source / aspect;
+        uv0.y = (1.0f - keep) * 0.5f, uv1.y = 1.0f - uv0.y;
+    }
+    if (it.image && slot.tex != nullptr && slot.key == it.link)
+        dl->AddImageRounded(slot.tex->GetTexRef(), p0, p1, uv0, uv1, ImGui::GetColorU32(ImVec4(1, 1, 1, alpha)), 3.0f * s);
+    else
+    {
+        // No valid picture: a discreet plate with the outlet's name, never an invented image
+        dl->AddRectFilled(p0, p1, Col(Mix(pal::Panel, ImVec4(0, 0, 0, 1), 0.35f), alpha), 3.0f * s);
+        const std::string name = Fit(f, std::floor(12.f * s), it.source, pw - 12 * s);
+        const float nw = TextW(f, std::floor(12.f * s), name);
+        dl->AddText(f, std::floor(12.f * s), ImVec2(p0.x + (pw - nw) * 0.5f, p0.y + h * 0.5f - 7 * s), Col(pal::Dim, alpha), name.c_str());
+    }
+    dl->AddRect(p0, p1, Col(pal::Line, 0.9f * alpha), 3.0f * s, 0, 1.0f);
+
+    // Text column
+    const float tx = p1.x + 10 * s, tw = b.x - tx;
+    if (tw < 60 * s)
+        return;
+    const float metaSize = std::floor(10.5f * s), metaY = b.y - metaSize - 1 * s;
+    float titleSize = std::floor(15.f * s);
+    std::vector<std::string> title = WrapWords(f, titleSize, it.title, tw, 3);
+    if (title.size() == 3 && (title.back().size() >= 3 && title.back().compare(title.back().size() - 3, 3, "…") == 0))
+    {
+        // A smaller size when three lines don't hold the headline
+        titleSize = std::floor(13.5f * s);
+        title = WrapWords(f, titleSize, it.title, tw, 3);
+    }
+    float y = a.y;
+    const float tl = std::floor(titleSize * 1.12f);
+    for (const auto& line : title)
+    {
+        dl->AddText(f, titleSize, ImVec2(tx, y), Col(hovered ? pal::Green : pal::Text, alpha), line.c_str());
+        y += tl;
+    }
+    // The excerpt, in the room left above the meta line
+    const float sumSize = std::floor(11.5f * s), sl = std::floor(sumSize * 1.15f);
+    const int room = (int) ((metaY - 2 * s - (y + 2 * s)) / sl);
+    if (room > 0 && !it.summary.empty())
+    {
+        y += 2 * s;
+        for (const auto& line : WrapWords(f, sumSize, it.summary, tw, (std::min)(room, 2)))
+        {
+            dl->AddText(f, sumSize, ImVec2(tx, y), Col(pal::Text2, alpha), line.c_str());
+            y += sl;
+        }
+    }
+    std::string tag = it.sponsored ? "PATROCINADO" : it.pinned ? "DESTACADO" : it.rumor ? "RUMOR" : IlionNews::BlockName(it.block);
+    const std::string meta = Fit(f, metaSize, StrFmt("%s · %s · %s", it.source.c_str(), Ago(it.time).c_str(), tag.c_str()), tw - 70 * s);
+    dl->AddText(f, metaSize, ImVec2(tx, metaY), Col(it.rumor && !it.pinned ? pal::Orange : pal::Dim, alpha), meta.c_str());
 }
 
 static void DrawNews(ImDrawList* dl, ImVec2 a, ImVec2 b, bool hovered)
@@ -135,97 +336,90 @@ static void DrawNews(ImDrawList* dl, ImVec2 a, ImVec2 b, bool hovered)
     const double now = ImGui::GetTime();
     const float s = U(1.0f);
     ImFont* f = fUi;
+    const auto& list = snap.rotation;
+    const int n = (int) list.size();
 
-    // Rotation: 15 s per block, paused under the mouse, 400 ms cross-fade
-    if (blockSince == 0.0)
-        blockSince = now;
-    if (fadeStart < 0.0 && prefs.rotate && !hovered && now - blockSince >= kBlockSeconds)
-        GoToBlock(shownBlock + 1, now);
-    float alpha = 1.0f;
-    if (fadeStart >= 0.0)
+    if (n == 0)
     {
-        const double t = now - fadeStart;
-        if (t >= kFadeSeconds * 0.5 && shownBlock != nextBlock)
-            shownBlock = nextBlock;
-        if (t >= kFadeSeconds)
-            fadeStart = -10.0, blockSince = now;
-        alpha = t < kFadeSeconds * 0.5 ? (float) (1.0 - t / (kFadeSeconds * 0.5)) : (float) ((t - kFadeSeconds * 0.5) / (kFadeSeconds * 0.5));
-        alpha = std::clamp(alpha, 0.0f, 1.0f);
-    }
-
-    // Block row: name, indicators, arrows, auto rotation, freshness
-    const float y0 = a.y;
-    const float fs = std::floor(12.f * s);
-    dl->AddText(f, fs, ImVec2(a.x, y0), Col(pal::Yellow), IlionNews::BlockName(shownBlock));
-    float x = a.x + TextW(f, fs, IlionNews::BlockName(shownBlock)) + 8 * s;
-    for (int i = 0; i < IlionNews::BlockCount; i++)
-    {
-        const ImVec2 c(x + 4 * s + i * 11 * s, y0 + fs * 0.55f);
-        if (i == shownBlock)
-            dl->AddCircleFilled(c, 3.0f * s, Col(pal::Green));
-        else
-            dl->AddCircle(c, 3.0f * s, Col(pal::Dim), 0, 1.0f);
-    }
-    x += 3 * 11 * s + 10 * s;
-    if (Link("##NewsPrev", ImVec2(x, y0 - 1 * s), f, fs + 2 * s, "‹", Col(pal::Text2), Col(pal::Green), dl))
-        GoToBlock(shownBlock - 1, now);
-    x += 14 * s;
-    if (Link("##NewsNext", ImVec2(x, y0 - 1 * s), f, fs + 2 * s, "›", Col(pal::Text2), Col(pal::Green), dl))
-        GoToBlock(shownBlock + 1, now);
-    x += 16 * s;
-    if (Link("##NewsAuto", ImVec2(x, y0), f, fs, prefs.rotate ? "AUTO" : "PAUSA", Col(prefs.rotate ? pal::Green : pal::Orange), Col(pal::Text), dl))
-    {
-        prefs.rotate = !prefs.rotate;
-        SavePrefs();
-    }
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("%s", prefs.rotate ? "Rotación automática cada 15 s (se detiene con el ratón encima). Pulsa para pausarla"
-                                             : "Rotación pausada: usa las flechas. Pulsa para reanudarla");
-    const std::string fresh = snap.busy && snap.fetched == 0 ? std::string("conectando…")
-                              : snap.fetched == 0           ? std::string(snap.offline ? "sin conexión, sin caché" : "sin datos todavía")
-                              : snap.offline                ? "sin conexión · caché " + Ago(snap.fetched)
-                                                            : "act. " + Ago(snap.fetched);
-    const float fs2 = std::floor(10.5f * s);
-    dl->AddText(f, fs2, ImVec2(b.x - TextW(f, fs2, fresh), y0 + 1 * s), Col(snap.offline ? pal::Orange : pal::Dim), fresh.c_str());
-    if (ImGui::IsMouseHoveringRect(ImVec2(b.x - TextW(f, fs2, fresh), y0), ImVec2(b.x, y0 + fs2)))
-        ImGui::SetTooltip("Titulares de fuentes públicas (RSS): %d de %d fuentes respondieron. Enlaces al artículo original. Control editorial: %s",
-                          snap.sourcesOk, snap.sourcesTried, snap.editorial.c_str());
-
-    // Three headlines: category · title (one line), then outlet · date
-    const auto& items = snap.blocks[shownBlock];
-    float y = y0 + fs + 7 * s;
-    const float rowH = std::floor((b.y - y) / 3.0f);
-    if (items.empty())
-    {
-        const char* msg = snap.fetched == 0 && snap.busy ? "Buscando titulares en las fuentes…"
-                          : snap.fetched == 0            ? "Sin conexión con las fuentes y sin titulares guardados"
-                                                         : "Sin novedades verificadas en este bloque";
-        dl->AddText(f, fs, ImVec2(a.x, y + 4 * s), Col(pal::Dim, alpha), msg);
+        const char* msg = snap.fetched == 0 && snap.busy ? "Buscando noticias en las fuentes…"
+                          : snap.fetched == 0            ? "Sin conexión con las fuentes y sin noticias guardadas"
+                                                         : "Sin novedades verificadas";
+        dl->AddText(f, std::floor(12.f * s), ImVec2(a.x, a.y + 4 * s), Col(pal::Dim), msg);
         return;
     }
-    for (size_t i = 0; i < items.size() && i < 3; i++)
+
+    // Keep the item shown across a refresh of the list; else start from the first
+    if (current >= n || list[current].link != currentLink)
     {
-        const auto& it = items[i];
-        const float ty = y + i * rowH;
-        const float titleSize = std::floor(13.f * s);
-        std::string prefix = it.sponsored ? "PATROCINADO · " : it.pinned ? "DESTACADO · " : it.rumor ? "RUMOR · " : "";
-        const std::string title = Fit(f, titleSize, prefix + it.title, b.x - a.x);
-        ImGui::SetCursorScreenPos(ImVec2(a.x, ty));
-        const bool clicked = ImGui::InvisibleButton(StrFmt("##NewsItem%zu", i).c_str(), ImVec2(b.x - a.x, (std::max)(rowH - 2 * s, 1.0f)));
-        const bool over = ImGui::IsItemHovered();
-        dl->AddText(f, titleSize, ImVec2(a.x, ty), Col(over ? pal::Green : pal::Text, alpha), title.c_str());
-        if (!prefix.empty())
-            dl->AddText(f, titleSize, ImVec2(a.x, ty), Col(it.rumor && !it.pinned ? pal::Orange : pal::Yellow, alpha), prefix.c_str());
-        const std::string meta = StrFmt("%s · %s · %s · %s", IlionNews::BlockName(it.block), it.source.c_str(), DayMonth(it.time).c_str(), Ago(it.time).c_str());
-        dl->AddText(f, std::floor(10.5f * s), ImVec2(a.x, ty + titleSize + 1 * s), Col(pal::Dim, alpha), Fit(f, std::floor(10.5f * s), meta, b.x - a.x).c_str());
-        if (over)
-        {
-            ImGui::SetTooltip("%s\n%s · %s\n%s", it.title.c_str(), it.source.c_str(), DayMonth(it.time).c_str(), it.link.c_str());
-            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-        }
-        if (clicked)
-            OpenLink(it.link);
+        int found = 0;
+        for (int i = 0; i < n; i++)
+            if (list[i].link == currentLink)
+                found = i;
+        current = found, previous = -1, fadeStart = -10.0, shownSince = now;
+        slots[slotOfCurrent].key.clear();
     }
+    currentLink = list[current].link;
+
+    // Automatic rotation (paused while the mouse is on the item), manual arrows, a cross-fade without empty frames
+    const auto goTo = [&](int index)
+    {
+        if (n < 2)
+            return;
+        previous = current;
+        current = (index % n + n) % n;
+        currentLink = list[current].link;
+        slotOfCurrent ^= 1;
+        Upload(slots[slotOfCurrent], list[current]); // normally preloaded already: then nothing to do
+        fadeStart = now;
+        shownSince = now;
+    };
+    if (fadeStart < 0.0 && !hovered && now - shownSince >= kItemSeconds)
+        goTo(current + 1);
+
+    Upload(slots[slotOfCurrent], list[current]);
+    float t = 1.0f;
+    if (fadeStart >= 0.0)
+    {
+        t = (float) std::clamp((now - fadeStart) / kFadeSeconds, 0.0, 1.0);
+        if (t >= 1.0f)
+            fadeStart = -10.0, previous = -1;
+    }
+    // The next picture waits in the free slot while this one is on screen
+    if (previous < 0 && n > 1)
+        Upload(slots[slotOfCurrent ^ 1], list[(current + 1) % n]);
+
+    // The whole item opens its article
+    const ImVec2 navSize(70 * s, 14 * s);
+    ImGui::SetCursorScreenPos(a);
+    const bool clicked = ImGui::InvisibleButton("##NewsItem", ImVec2(b.x - a.x, (std::max)(b.y - a.y - navSize.y, 1.0f)));
+    const bool over = ImGui::IsItemHovered();
+    if (previous >= 0 && previous < n)
+        DrawItem(dl, a, b, list[previous], slots[slotOfCurrent ^ 1], 1.0f - t, false);
+    DrawItem(dl, a, b, list[current], slots[slotOfCurrent], t, over);
+    if (over)
+    {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        ImGui::SetTooltip("%s\n%s · %s\nPulsa para abrir el artículo original", list[current].title.c_str(), list[current].source.c_str(),
+                          DayMonth(list[current].time).c_str());
+    }
+    if (clicked)
+        OpenLink(list[current].link);
+
+    // ‹ n/total › at the bottom right, and the state of the feed on hover
+    const float ns = std::floor(11.f * s);
+    const std::string count = StrFmt("%d/%d", current + 1, n);
+    float x = b.x - TextW(f, ns + 2 * s, "›");
+    if (Link("##NewsNext", ImVec2(x, b.y - ns - 3 * s), f, ns + 2 * s, "›", Col(pal::Text2), Col(pal::Green), dl))
+        goTo(current + 1);
+    x -= TextW(f, ns, count) + 6 * s;
+    dl->AddText(f, ns, ImVec2(x, b.y - ns - 1 * s), Col(pal::Dim), count.c_str());
+    if (ImGui::IsMouseHoveringRect(ImVec2(x, b.y - ns - 2 * s), ImVec2(x + TextW(f, ns, count), b.y)))
+        ImGui::SetTooltip("Noticias de medios en español (RSS): %d de %d fuentes respondieron · %s%s. Control editorial: %s", snap.sourcesOk,
+                          snap.sourcesTried, snap.fetched > 0 ? ("actualizado " + Ago(snap.fetched)).c_str() : "sin actualizar",
+                          snap.offline ? " (sin conexión: se muestra lo guardado)" : "", snap.editorial.c_str());
+    x -= TextW(f, ns + 2 * s, "‹") + 6 * s;
+    if (Link("##NewsPrev", ImVec2(x, b.y - ns - 3 * s), f, ns + 2 * s, "‹", Col(pal::Text2), Col(pal::Green), dl))
+        goTo(current - 1);
 }
 
 // ---- ILION TERMINAL ----------------------------------------------------------------------------------------------------
@@ -241,10 +435,11 @@ static const ImVec4 Amber(1.00f, 0.72f, 0.20f, 1.0f);
 static const ImVec4 Red(1.00f, 0.28f, 0.20f, 1.0f);
 } // namespace crt
 
+// A reading: its label and its value in one or more coloured parts (VRAM: used in amber, total in green)
 struct Cell
 {
-    std::string label, value;
-    int level = 0; // 0 normal, 1 warning (amber), 2 critical (red), -1 not available
+    std::string label;
+    std::vector<std::pair<std::string, ImVec4>> parts;
 };
 
 static std::string Num(const IlionTerminal::Reading& r, const char* fmt, double scale = 1.0)
@@ -252,19 +447,15 @@ static std::string Num(const IlionTerminal::Reading& r, const char* fmt, double 
     return r.valid ? StrFmt(fmt, r.value * scale) : std::string("N/A");
 }
 
-static Cell C1(const char* label, const IlionTerminal::Reading& r, const char* fmt, double scale = 1.0, double warn = 1e9, double crit = 1e9)
+// base: the colour of a normal reading (green; the hotspot is amber); warn / crit: amber / red thresholds
+static Cell C1(const char* label, const IlionTerminal::Reading& r, const char* fmt, double scale = 1.0, double warn = 1e9, double crit = 1e9,
+               const ImVec4& base = crt::Green)
 {
-    Cell c { label, Num(r, fmt, scale), 0 };
-    if (!r.valid)
-        c.level = -1;
-    else if (r.value >= crit)
-        c.level = 2;
-    else if (r.value >= warn)
-        c.level = 1;
-    return c;
+    const ImVec4 colour = !r.valid ? crt::Dim : r.value >= crit ? crt::Red : r.value >= warn ? crt::Amber : base;
+    return { label, { { Num(r, fmt, scale), colour } } };
 }
 
-// The lines of each view: a title line and rows of two cells
+// The rows of each view (two cells each), its title and its footer
 static void BuildView(int view, const IlionTerminal::Sensors& s, double frameMs, std::string& title, std::vector<std::pair<Cell, Cell>>& rows, std::string& foot)
 {
     rows.clear();
@@ -272,15 +463,20 @@ static void BuildView(int view, const IlionTerminal::Sensors& s, double frameMs,
     {
         title = "GPU " + (s.gpuName.empty() ? std::string("N/A") : s.gpuName);
         rows.push_back({ C1("TEMP", s.gpuTemp, "%.0f°C", 1.0, 85, 95), C1("LOAD", s.gpuUsage, "%.0f%%") });
-        rows.push_back({ C1("HOTSPOT", s.gpuHotspot, "%.0f°C", 1.0, 100, 108), C1("CLOCK", s.gpuClock, "%.0fMHz") });
+        rows.push_back({ C1("HOTSPOT", s.gpuHotspot, "%.0f°C", 1.0, 1e9, 108, crt::Amber), C1("CLOCK", s.gpuClock, "%.0fMHz") });
         rows.push_back({ C1("INTAKE", s.gpuIntake, "%.0f°C"), C1("MEM CLK", s.gpuMemClock, "%.0fMHz") });
         rows.push_back({ C1("PWR CHIP", s.gpuChipPower, "%.0fW"), C1("VOLTAGE", s.gpuVoltage, "%.0fmV") });
         rows.push_back({ C1("PWR BOARD", s.gpuBoardPower, "%.0fW"), C1("FAN", s.fanRpm, "%.0fRPM") });
-        Cell vram { "VRAM", s.vramUsed.valid && s.vramTotal.valid ? StrFmt("%.1f/%.1fG", s.vramUsed.value / 1024.0, s.vramTotal.value / 1024.0) : "N/A", 0 };
-        if (!s.vramUsed.valid)
-            vram.level = -1;
-        else if (s.vramTotal.valid && s.vramUsed.value >= s.vramTotal.value * 0.95)
-            vram.level = 1;
+        // VRAM: the used part in amber, the card's total in green (red when it is almost full)
+        Cell vram { "VRAM", {} };
+        if (s.vramUsed.valid && s.vramTotal.valid)
+        {
+            const bool full = s.vramUsed.value >= s.vramTotal.value * 0.95;
+            vram.parts = { { StrFmt("%.1f", s.vramUsed.value / 1024.0), full ? crt::Red : crt::Amber }, { "/", crt::Dim },
+                           { StrFmt("%.1fG", s.vramTotal.value / 1024.0), crt::Green } };
+        }
+        else
+            vram.parts = { { "N/A", crt::Dim } };
         rows.push_back({ vram, C1("FAN %", s.fanPercent, "%.0f%%") });
         foot = StrFmt("VRAM FREE %s · SRC %s", Num(s.vramFree, "%.1fG", 1.0 / 1024.0).c_str(), s.gpuSource.c_str());
     }
@@ -289,7 +485,8 @@ static void BuildView(int view, const IlionTerminal::Sensors& s, double frameMs,
         title = "CPU " + (s.cpuName.empty() ? std::string("N/A") : s.cpuName);
         rows.push_back({ C1("LOAD", s.cpuUsage, "%.0f%%"), C1("TEMP", s.cpuTemp, "%.0f°C", 1.0, 90, 98) });
         rows.push_back({ C1("CLOCK", s.cpuClock, "%.2fGHz", 0.001), C1("POWER", s.cpuPower, "%.0fW") });
-        rows.push_back({ C1("BASE", s.cpuBase, "%.2fGHz", 0.001), { "CORES", s.cores > 0 ? StrFmt("%d/%dT", s.cores, s.threads) : "N/A", s.cores > 0 ? 0 : -1 } });
+        rows.push_back({ C1("BASE", s.cpuBase, "%.2fGHz", 0.001),
+                         { "CORES", { { s.cores > 0 ? StrFmt("%d/%dT", s.cores, s.threads) : std::string("N/A"), s.cores > 0 ? crt::Green : crt::Dim } } } });
         foot = s.cpuTemp.valid ? StrFmt("TEMP/PWR SRC %s · LOAD/CLOCK SRC WINDOWS", s.cpuTemp.source) : "TEMP/PWR: N/A SIN HWINFO (OPCIONAL)";
     }
     else if (view == 2)
@@ -308,13 +505,23 @@ static void BuildView(int view, const IlionTerminal::Sensors& s, double frameMs,
         if (frameMs > 0.0 && std::isfinite(frameMs))
             IlionTerminal::detail::Set(fps, 1000.0 / frameMs, "ILION"), IlionTerminal::detail::Set(ft, frameMs, "ILION");
         rows.push_back({ C1("GAME FPS", fps, "%.0f"), C1("FRAME", ft, "%.1fms") });
-        rows.push_back({ { "UPTIME", s.uptimeS.valid ? StrFmt("%lldh%02lldm", (long long) s.uptimeS.value / 3600, ((long long) s.uptimeS.value / 60) % 60) : "N/A", 0 },
+        rows.push_back({ { "UPTIME",
+                           { { s.uptimeS.valid ? StrFmt("%lldh%02lldm", (long long) s.uptimeS.value / 3600, ((long long) s.uptimeS.value / 60) % 60) : std::string("N/A"),
+                               s.uptimeS.valid ? crt::Green : crt::Dim } } },
                          C1("PROCS", s.processes, "%.0f") });
         rows.push_back({ C1("THREADS", s.threadsAll, "%.0f"), C1("HANDLES", s.handles, "%.0f") });
         foot = StrFmt("ADLX:%s NVML:%s PDH:%s HWINFO:%s AB:%s", s.adlx ? "OK" : "--", s.nvml ? "OK" : "--", s.pdh ? "OK" : "--", s.hwinfo ? "OK" : "--",
                       s.afterburner ? "OK" : "--");
     }
 }
+
+// A piece of text at a fixed place, for the typewriter (revealed in order, each at its final position)
+struct Piece
+{
+    float x;
+    std::string text;
+    ImVec4 colour;
+};
 
 static void DrawTerminal(ImDrawList* dl, ImVec2 a, ImVec2 b, double frameMs)
 {
@@ -364,40 +571,36 @@ static void DrawTerminal(ImDrawList* dl, ImVec2 a, ImVec2 b, double frameMs)
         if (tw > cw * 6)
             dl->AddText(f, fs, ImVec2(tx, a.y), Col(crt::Dim), Fit(f, fs, title, tw).c_str());
     }
-    const int cols = (std::max)(20, (int) ((b.x - a.x) / cw));
-    const int half = cols / 2;
-    const auto pad = [](std::string l, int n)
-    {
-        if ((int) l.size() < n)
-            l += std::string(n - l.size(), ' ');
-        return l;
-    };
 
-    // Lines as fixed-width text, with the colour of each value
-    struct Seg
-    {
-        std::string text;
-        ImVec4 colour;
-    };
-    std::vector<std::vector<Seg>> lines;
-    const auto cell = [&](const Cell& c, int width) -> std::vector<Seg>
-    {
-        const int valueW = (int) c.value.size();
-        const int labelW = (std::max)(1, width - valueW - 1);
-        std::string label = c.label.substr(0, (size_t) labelW);
-        const ImVec4 col = c.level == -1 ? crt::Dim : c.level == 2 ? crt::Red : c.level == 1 ? crt::Amber : crt::Green;
-        return { { pad(label, labelW), crt::Dim }, { c.value + " ", col } };
-    };
+    // Two columns at fixed places: each label at the start of its column, its value ending at the column's right edge
+    const float gap = cw * 2.0f;
+    const float colW = std::floor((b.x - a.x - gap) * 0.5f);
+    const float colX[2] = { a.x, a.x + colW + gap };
+    std::vector<std::vector<Piece>> lines;
     for (const auto& r : rows)
     {
-        auto l = cell(r.first, half);
-        auto rr = cell(r.second, cols - half);
-        l.insert(l.end(), rr.begin(), rr.end());
-        lines.push_back(l);
+        std::vector<Piece> line;
+        for (int c = 0; c < 2; c++)
+        {
+            const Cell& cell = c == 0 ? r.first : r.second;
+            float valueW = 0.0f;
+            for (const auto& p : cell.parts)
+                valueW += TextW(f, fs, p.first);
+            const float right = colX[c] + colW;
+            // The label never runs into its value: cut if the column is too narrow
+            line.push_back({ colX[c], Fit(f, fs, cell.label, (std::max)(cw, colW - valueW - cw)), crt::Dim });
+            float vx = right - valueW;
+            for (const auto& p : cell.parts)
+            {
+                line.push_back({ vx, p.first, p.second });
+                vx += TextW(f, fs, p.first);
+            }
+        }
+        lines.push_back(line);
     }
-    lines.push_back({ { Fit(f, fs, StrFmt("%s · UPD 1s", foot.c_str()), b.x - a.x), crt::Dim } });
+    lines.push_back({ { a.x, Fit(f, fs, StrFmt("%s · UPD 1s", foot.c_str()), b.x - a.x), crt::Dim } });
 
-    // A thin rule under the header and above the footer (lines, not text rows: the six rows and the footer fit)
+    // Thin rules under the header and above the footer (lines, not text rows)
     const float ruleY = a.y + lh + 1 * s;
     dl->AddLine(ImVec2(a.x, ruleY), ImVec2(b.x, ruleY), Col(crt::Dim, 0.7f), 1.0f);
     float y = ruleY + 2 * s;
@@ -411,26 +614,26 @@ static void DrawTerminal(ImDrawList* dl, ImVec2 a, ImVec2 b, double frameMs)
         int budget = t >= 1e8 ? INT_MAX : (int) ((t - startAt) * 110.0);
         if (budget <= 0)
             break;
-        float lx = a.x;
-        for (const auto& seg : lines[i])
+        float endX = a.x;
+        bool writing = false;
+        for (const auto& piece : lines[i])
         {
-            std::string shown = seg.text;
+            std::string shown = piece.text;
             if ((int) shown.size() > budget)
-                shown = shown.substr(0, (size_t) (std::max)(0, budget));
-            budget -= (int) seg.text.size();
+                shown = shown.substr(0, (size_t) (std::max)(0, budget)), writing = true;
+            budget -= (int) piece.text.size();
             // A light phosphor glow under the letters, then the letters
-            dl->AddText(f, fs, ImVec2(lx + 0.6f * s, y), Col(seg.colour, 0.22f * flicker), shown.c_str());
-            dl->AddText(f, fs, ImVec2(lx, y), Col(seg.colour, flicker), shown.c_str());
-            lx += TextW(f, fs, shown);
-            if (budget < 0)
+            dl->AddText(f, fs, ImVec2(piece.x + 0.6f * s, y), Col(piece.colour, 0.22f * flicker), shown.c_str());
+            dl->AddText(f, fs, ImVec2(piece.x, y), Col(piece.colour, flicker), shown.c_str());
+            endX = piece.x + TextW(f, fs, shown);
+            if (writing)
                 break;
         }
-        // The cursor follows the line being written; at the end it blinks after the last line
-        const bool writing = budget < 0;
+        // The cursor follows the text being written; at the end it blinks after the last line
         const bool last = i + 1 == lines.size() || y + 2 * lh > b.y + 1;
         if (!cursorDrawn && (writing || (last && fmod(now, 1.0) < 0.5)))
         {
-            dl->AddRectFilled(ImVec2(lx + 1 * s, y + 1 * s), ImVec2(lx + cw, y + lh - 1 * s), Col(crt::Green, writing ? 0.85f : 0.55f));
+            dl->AddRectFilled(ImVec2(endX + 1 * s, y + 1 * s), ImVec2(endX + cw, y + lh - 1 * s), Col(crt::Green, writing ? 0.85f : 0.55f));
             cursorDrawn = true;
         }
         if (writing)
@@ -444,6 +647,7 @@ static void Draw(ImDrawList* dl, ImVec2 a, ImVec2 b, double frameMs)
 {
     if (!prefsLoaded)
         LoadPrefs();
+    MaintainPictures();
     const float s = U(1.0f);
     const bool terminal = prefs.mode == 1;
     ImGui::PushID("##IlionHomePanel");
@@ -475,6 +679,7 @@ static void Draw(ImDrawList* dl, ImVec2 a, ImVec2 b, double frameMs)
         if (Link("##ModeTerminal", ImVec2(x, in0.y), fUi, hs, t2, terminal ? on : off, on, dl) && !terminal)
         {
             prefs.mode = 1;
+            ReleasePictures(); // the pictures' textures are not kept while TERMINAL is shown
             typedView = -1; // the terminal writes itself again when entered
             SavePrefs();
         }
@@ -491,6 +696,8 @@ static void Draw(ImDrawList* dl, ImVec2 a, ImVec2 b, double frameMs)
 
     const ImVec2 c0(in0.x, in0.y + hs + 8 * s);
     const bool hovered = ImGui::IsMouseHoveringRect(a, b);
+    if (prefs.mode == 1 && (slots[0].tex != nullptr || slots[1].tex != nullptr))
+        ReleasePictures(); // TERMINAL restored from the preferences
     if (prefs.mode == 1)
         DrawTerminal(dl, c0, in1, frameMs);
     else

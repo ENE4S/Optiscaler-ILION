@@ -1790,6 +1790,15 @@ template <typename Ctx> static void Tick(Ctx& ctx)
             Add(Mark::Info, StrFmt("Historial: medición registrada (%d de esta combinación)", e.count),
                 key + StrFmt(" · media acumulada %.0f, el 90%% del tiempo a %.0f", e.mean, e.p10));
         }
+        else if (measure.withFg && !measure.limited && measure.mean > 0.0 && IlionDynamicMfg::Get().baseMeasured && !before.scalerKey.empty() &&
+                 before.preset >= 0)
+        {
+            // Fotogramas reales del juego medidos con FG: un historial aparte, que solo usa Calidad para decidir Nativa
+            const std::string key = EvidenceKey(before.scalerKey, before.model, before.preset, before.th) + "|base-fg";
+            const Evidence e = RecordEvidence(key, measure.mean, measure.mean);
+            Add(Mark::Info, StrFmt("Historial con FG: %.0f FPS reales del juego registrados (%d de esta combinación)", measure.mean, e.count),
+                key + StrFmt(" · media acumulada %.0f", e.mean));
+        }
         const std::string detail = measure.verified ? StrFmt("Media %.0f · el 90%% del tiempo a %.0f o más · %.0f%% del tiempo con 60 o más · %s", measure.mean,
                                                              measure.p10, measure.share60 * 100.0, measure.source.c_str())
                                                     : measure.source;
@@ -1825,6 +1834,11 @@ template <typename Ctx> static void Tick(Ctx& ctx)
             // mismo escalador, modelo y salida), si no una estimación por píxeles internos. Si ninguno llega, el más rápido
             const double want = WantFps(mode, RefreshHz());
             const double ref = measure.verified ? measure.p10 : measure.mean;
+            // FPS reales sostenidos para Calidad / Nativa: la media de la ventana medida sin FG, o con FG solo si son
+            // fotogramas reales del juego medidos por ILION y sin límite (nunca los generados ni un valor instantáneo)
+            const double sustained = measure.verified                                                                   ? measure.mean
+                                     : measure.withFg && !measure.limited && IlionDynamicMfg::Get().baseMeasured       ? measure.mean
+                                                                                                                       : 0.0;
             std::string table, qualityNote;
             target = -1;
             for (int p = policy.best; p <= policy.fastest; p++)
@@ -1835,53 +1849,77 @@ template <typename Ctx> static void Tick(Ctx& ctx)
                     if (const Evidence e = LoadEvidence(EvidenceKey(before.scalerKey, before.model, p, before.th)); e.count >= 1)
                         measured = true, fps = e.p10;
                 table += StrFmt("%s%s %.0f%s", table.empty() ? "" : " · ", kPresets[p].name, fps, measured ? " (medido)" : " (est.)");
-                // Calidad (Community12). Nativa: se prueba cuando los FPS reales sostenidos medidos sin FG (percentil 10) en el
-                // preset actual llegan a 78; es un umbral para probar, no una estimación de Nativa. La próxima medición decide:
-                // con 60 o más se mantiene; si no, el historial lo marca y se vuelve al mejor preset anterior (sin repetir la
-                // prueba: lo medido manda). Por el menú del juego es una prueba manual que se verifica con la resolución real.
-                // Otros presets superiores entre 60 y 70 estimados: con medición sin FG y un 10 % de margen (Community11).
-                // Con 70 o más estimados, igual que Óptimo
-                if (mode == Mode::Calidad && target < 0 && p < cur && !measured)
+                // Calidad, Nativa (v1.4.0). Decide con FPS reales sostenidos: la media de la ventana medida (no un valor
+                // instantáneo), sin FG, o con FG solo si ILION mide los fotogramas reales del juego (baseMeasured: OptiFG,
+                // XeFG, DLSSG del juego) y ningún límite los fija. Antes, con FG activo nunca se probaba Nativa: en KCD2 se
+                // optimiza con OptiFG 2X, así que Calidad se quedaba en Ultra Calidad (motivo_preset del perfil del juego).
+                //   1. Nativa medida (la actual, o el historial de esta combinación): se elige con 60 o más.
+                //   2. Sin medir: con 78 o más sostenidos en el preset actual, prueba controlada; la próxima medición decide.
+                //   3. Si no: como Óptimo (estimación de 70 o más) o propuesta pendiente de validación
+                if (mode == Mode::Calidad && p == 0)
                 {
-                    if (p == 0)
+                    double native = -1.0;
+                    const char* nativeFrom = "";
+                    if (cur == 0 && sustained > 0.0)
+                        native = sustained, nativeFrom = "medida ahora";
+                    else if (cur != 0)
                     {
-                        if (measure.verified && ref >= kQualityNativeTrial)
+                        const std::string key = EvidenceKey(before.scalerKey, before.model, 0, before.th);
+                        if (const Evidence e = LoadEvidence(key); measure.verified && e.count >= 1)
+                            native = e.mean, nativeFrom = "medida antes, sin FG";
+                        else if (const Evidence f = LoadEvidence(key + "|base-fg"); f.count >= 1)
+                            native = f.mean, nativeFrom = "medida antes, fotogramas reales con FG";
+                    }
+                    if (native > 0.0)
+                    {
+                        table += StrFmt(" · Nativa %.0f sostenidos (%s)", native, nativeFrom);
+                        if (target < 0 && native >= want)
                         {
                             target = 0;
-                            plan.presetWhy = StrFmt("Calidad: %.0f FPS reales sostenidos medidos sin FG en %s (umbral %.0f): prueba de Nativa. Se "
-                                                    "mantiene si la próxima medición da 60 o más; si no, vuelve a %s%s",
-                                                    ref, kPresets[cur].name, kQualityNativeTrial, kPresets[cur].name,
-                                                    RatioNeedsRestart(rule) ? ". Prueba manual: elige «DLAA / Nativa» en el menú del juego" : "");
-                            continue;
+                            plan.presetWhy = StrFmt("Calidad: Nativa %s a %.0f FPS reales sostenidos (60 como mínimo): la de más calidad", nativeFrom, native);
                         }
-                        if (fps < WantFps(Mode::Optimo, 0.0))
-                        {
-                            if (qualityNote.empty())
-                                qualityNote = measure.verified ? StrFmt("Nativa se prueba con %.0f FPS reales sostenidos sin FG en el preset actual; ahora %.0f",
-                                                                        kQualityNativeTrial, ref)
-                                                               : std::string("Nativa: desactiva el FG, juega 15 s y pulsa OPTIMIZAR para medir los FPS reales");
-                            continue;
-                        }
-                    }
-                    else if (fps >= want && fps < WantFps(Mode::Optimo, 0.0))
-                    {
-                        const char* hold = !measure.verified ? "los FPS reales no se han medido sin FG (con FG no se usan para subir de preset)"
-                                           : fps < want * 1.10 ? "el margen estimado es menor del 10 %"
-                                                               : nullptr;
-                        if (hold != nullptr)
-                        {
-                            if (qualityNote.empty())
-                                qualityNote = StrFmt("Propuesta pendiente de validación: %s podría dar %.0f FPS reales (estimado), no se aplica porque %s. "
-                                                     "Para probarlo: elígelo, desactiva el FG, juega 15 s y pulsa OPTIMIZAR; la medición decide",
-                                                     kPresets[p].name, fps, hold);
-                            continue;
-                        }
-                        target = p;
-                        plan.presetWhy = StrFmt("Calidad: %s estimado en %.0f FPS reales (medidos sin FG en %s). Prueba controlada: la próxima "
-                                                "medición la confirma o vuelve al preset anterior",
-                                                kPresets[p].name, fps, kPresets[cur].name);
+                        else if (qualityNote.empty() && native < want)
+                            qualityNote = StrFmt("Nativa %s a %.0f FPS reales sostenidos: no llega a 60, se queda el mejor preset anterior", nativeFrom, native);
                         continue;
                     }
+                    if (target < 0 && cur != 0 && sustained >= kQualityNativeTrial)
+                    {
+                        target = 0;
+                        plan.presetWhy = StrFmt("Calidad: %.0f FPS reales sostenidos en %s (%s; umbral %.0f): prueba controlada de Nativa. Se mantiene "
+                                                "si la próxima medición da 60 o más; si no, vuelve a %s%s",
+                                                sustained, kPresets[cur].name, measure.verified ? "sin FG" : "fotogramas reales con FG", kQualityNativeTrial,
+                                                kPresets[cur].name, RatioNeedsRestart(rule) ? ". Prueba manual: elige «DLAA / Nativa» en el menú del juego" : "");
+                        continue;
+                    }
+                    if (target < 0 && fps < WantFps(Mode::Optimo, 0.0))
+                    {
+                        if (qualityNote.empty())
+                            qualityNote = sustained > 0.0 ? StrFmt("Nativa se prueba con %.0f FPS reales sostenidos en el preset actual; ahora %.0f",
+                                                                   kQualityNativeTrial, sustained)
+                                                          : std::string("Nativa: sin FPS reales fiables (con FG hace falta que ILION mida los fotogramas "
+                                                                        "reales y que no haya un límite); juega 15 s y pulsa OPTIMIZAR");
+                        continue;
+                    }
+                }
+                // Otros presets superiores en Calidad entre 60 y 70 estimados: con medición sin FG y un 10 % de margen
+                if (mode == Mode::Calidad && p != 0 && target < 0 && p < cur && !measured && fps >= want && fps < WantFps(Mode::Optimo, 0.0))
+                {
+                    const char* hold = !measure.verified ? "los FPS reales no se han medido sin FG (con FG no se usan para subir de preset)"
+                                       : fps < want * 1.10 ? "el margen estimado es menor del 10 %"
+                                                           : nullptr;
+                    if (hold != nullptr)
+                    {
+                        if (qualityNote.empty())
+                            qualityNote = StrFmt("Propuesta pendiente de validación: %s podría dar %.0f FPS reales (estimado), no se aplica porque %s. "
+                                                 "Para probarlo: elígelo, desactiva el FG, juega 15 s y pulsa OPTIMIZAR; la medición decide",
+                                                 kPresets[p].name, fps, hold);
+                        continue;
+                    }
+                    target = p;
+                    plan.presetWhy = StrFmt("Calidad: %s estimado en %.0f FPS reales (medidos sin FG en %s). Prueba controlada: la próxima "
+                                            "medición la confirma o vuelve al preset anterior",
+                                            kPresets[p].name, fps, kPresets[cur].name);
+                    continue;
                 }
                 if (target < 0 && fps >= want)
                 {
@@ -1912,6 +1950,9 @@ template <typename Ctx> static void Tick(Ctx& ctx)
             Add(Mark::Wait, StrFmt("Modo de escalado: %s → %s", kPresets[cur].name, kPresets[target].name),
                 plan.presetWhy + " (efecto estimado: se verifica al medir de nuevo)");
         }
+        else if (!IlionControlsRatio() && !RatioNeedsRestart(rule))
+            Add(Mark::Ok, StrFmt("Modo de escalado: %s (se mantiene) · lo mantiene el menú del juego", kPresets[cur].name),
+                plan.presetWhy + ". ILION no impone resolución: no hace falta para este preset");
         else
             Add(Mark::Ok, StrFmt("Modo de escalado: %s (se mantiene)", kPresets[cur].name), plan.presetWhy);
         Next();
@@ -3138,8 +3179,9 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight, boo
                 pendingPreset && gameControls ? std::string("el juego controla la resolución: no se impone (elígelo en su menú o da el control a ILION)")
                 : pendingPreset ? (targetViaMenu ? std::string("cambio pendiente: elígelo en el menú del juego")
                                                  : std::string("cambio pendiente: el juego aún no ha pedido la nueva resolución (algunos juegos necesitan reiniciar)"))
-                : target >= 0   ? std::string("verificado con la resolución que envía el juego")
-                                : std::string());
+                : target >= 0 && !ilionRatio ? std::string("verificado: lo mantiene el menú del juego, ILION no impone resolución")
+                : target >= 0                ? std::string("verificado con la resolución que envía el juego")
+                                             : std::string());
             Row(Mark::Info, "Interna " + ResText(feature->RenderWidth(), feature->RenderHeight()) + " → salida " + ResText(feature->TargetWidth(), feature->TargetHeight()),
                 StrFmt("factor %.2f · observada: lo que el juego envía ahora", ratio));
             // Control actual: ILION impone una proporción («Forzar todos») o el juego elige en su menú
@@ -3151,9 +3193,14 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight, boo
                     ReleaseRatioToGame();
             }
             else
-                Row(Mark::Info, "Control: el juego", config->QualityRatioOverrideEnabled.value_or_default()
-                                                         ? "elige la calidad en su menú; ILION redefine la proporción de cada fila"
-                                                         : "elige la calidad y la resolución interna en su menú");
+            {
+                Row(Mark::Info, "Control: el juego (ILION no impone resolución)",
+                    config->QualityRatioOverrideEnabled.value_or_default() ? "elige la calidad en su menú; ILION redefine la proporción de cada fila"
+                                                                           : "elige la calidad y la resolución interna en su menú");
+                // La acción contraria, a la vista: que ILION imponga el preset del perfil (o el que corre ahora)
+                if (!targetViaMenu && IlionTheme::Button("QUE ILION IMPONGA EL PRESET DEL PERFIL##ProfilesRatioTake"))
+                    GiveRatioToIlion(ratio);
+            }
             if (pendingPreset)
                 Row(Mark::Wait,
                     "Interna objetivo: " + ResText((unsigned) std::lround(feature->TargetWidth() / kPresets[target].ratio),
@@ -3627,7 +3674,8 @@ template <typename Ctx> static void OptimizerBlock(Ctx& ctx)
             const bool gameControls = !plan.viaMenu && !IlionControlsRatio();
             AppliedRow("Preset recomendado", kPresets[plan.preset].name,
                        reached ? Applied::Verified : gameControls ? Applied::Recommended : upscaling ? Applied::Pending : Applied::Applied,
-                       reached || !upscaling ? std::string()
+                       reached && gameControls ? "lo mantiene el menú del juego; ILION no impone resolución"
+                       : reached || !upscaling ? std::string()
                        : gameControls        ? "el juego controla la resolución interna"
                        : plan.viaMenu        ? "elígelo en el menú del juego"
                                              : "falta que el juego cambie de resolución");
@@ -3695,7 +3743,8 @@ template <typename Ctx> static void OptimizerBlock(Ctx& ctx)
                 const bool gameControls = !lv.viaMenu && !IlionControlsRatio();
                 AppliedRow("Preset", kPresets[lv.target].name,
                            lv.reached ? Applied::Verified : gameControls ? Applied::Recommended : upscaling ? Applied::Pending : Applied::Applied,
-                           lv.reached || !upscaling ? std::string()
+                           lv.reached && gameControls ? "lo mantiene el menú del juego; ILION no impone resolución"
+                           : lv.reached || !upscaling ? std::string()
                            : gameControls          ? "el juego controla la resolución interna"
                            : lv.viaMenu            ? "elígelo en el menú del juego"
                                                    : "falta que el juego cambie de resolución");

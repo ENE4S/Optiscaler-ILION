@@ -914,6 +914,9 @@ static double advLastRun = -10.0;
 static IlionAdvisor::Facts advFacts;
 } // namespace IlionShell
 
+// ILION AL DÍA + ILION TERMINAL: the box of Home that ILION Advisor used
+#include "ilion_home_panel.inl"
+
 // ILION dev.60: FG on/off, the multiplier of the loaded output and what is chosen, loaded and active. The same in Home
 // and next to the selection of the Frame Gen module; on/off is the FG key's own function
 void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
@@ -1023,8 +1026,13 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
     const char* names[4] = { Lx("Chosen:", "Elegido:", "Escolhido:", "Выбрано:"), Lx("Loaded:", "Cargado:", "Carregado:", "Загружено:"),
                              Lx("Generating:", "Generando:", "Gerando:", "Генерирует:"), "Streamline FG:" };
     float labelWidth = 0.0f;
-    for (const char* name : names)
-        labelWidth = (std::max)(labelWidth, ImGui::CalcTextSize(name).x);
+    // ILION: Home's card and Compact measure only the labels they draw («Streamline FG:» only with its row), so the
+    // values sit next to «Elegido / Cargado / Generando» instead of far to the right
+    const bool tightStates = homeLayout || shellCompact;
+    const bool streamlineRow = state.currentFGSwapchain != nullptr && state.activeFgInput == FGInput::DLSSG;
+    for (int n = 0; n < 4; n++)
+        if (!tightStates || n < 3 || streamlineRow)
+            labelWidth = (std::max)(labelWidth, ImGui::CalcTextSize(names[n]).x);
 
     const auto row = [&](Led led, const char* name, const std::string& value)
     {
@@ -1038,8 +1046,16 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
         // column twice (SameLine adds ColumnsOffset to a position that already holds it): in a column away from the
         // window's left edge the values ran off to the right edge and were cut. They wrap inside their column now
         ImGui::SameLine();
-        ImGui::SetCursorScreenPos(ImVec2(p.x + h + U(6) + labelWidth + U(10), ImGui::GetCursorScreenPos().y));
-        ImGui::TextWrapped("%s", value.c_str());
+        ImGui::SetCursorScreenPos(ImVec2(p.x + h + U(6) + labelWidth + (tightStates ? U(6) : U(10)), ImGui::GetCursorScreenPos().y));
+        if (tightStates)
+        {
+            // Wrapped a little inside the card's edge, never against it
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + (std::max)(ImGui::GetContentRegionAvail().x - U(8), U(40)));
+            ImGui::TextWrapped("%s", value.c_str());
+            ImGui::PopTextWrapPos();
+        }
+        else
+            ImGui::TextWrapped("%s", value.c_str());
     };
 
     const std::string chosen = StrFmt("%s / %s", std::string(magic_enum::enum_name(config->FGInput.value_or_default())).c_str(),
@@ -2282,62 +2298,20 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                         ImGui::TextColored(Tone(pal::Text2), " FPS  ·  %.1f ms", ft);
                     }
 
-                    // ILION Advisor: its confidence pilot, the suggested setting and the key to its diagnosis
+                    // ILION AL DÍA / ILION TERMINAL in the cell Advisor used
                     ImGui::TableSetColumnIndex(1);
                     ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, Col(Mix(pal::Bg, ImVec4(0, 0, 0, 1), 0.25f)));
-                    // ILION dev.77: room around its texts: above, at the left, and between its name and the suggestion
-                    ImGui::Dummy(ImVec2(0.0f, U(6.f)));
-                    ImGui::Indent(U(11.f));
+                    ImGui::Dummy(ImVec2(0.0f, U(4.f)));
+                    ImGui::Indent(U(4.f));
                     {
-                        const ImVec2 p = ImGui::GetCursorScreenPos();
-                        const float h = ImGui::GetTextLineHeight();
-                        IlionTheme::ShellLed(ImGui::GetWindowDrawList(), ImVec2(p.x + h * 0.5f, p.y + h * 0.5f), h * 0.28f, Tone(advisorConfidenceColour()), true);
-                        ImGui::Dummy(ImVec2(h, h));
+                        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+                        const float w = ImGui::GetContentRegionAvail().x - U(4.f);
+                        const float h = U(132.f);
+                        HomePanel::Draw(ImGui::GetWindowDrawList(), p0, ImVec2(p0.x + w, p0.y + h), ctx.frameTime);
+                        ImGui::SetCursorScreenPos(p0);
+                        ImGui::Dummy(ImVec2(w, h));
                     }
-                    ImGui::SameLine(0, U(6));
-                    ImGui::TextColored(Tone(pal::Green), "ILION ADVISOR");
-                    ImGui::SameLine(0, U(8));
-                    ImGui::TextColored(Tone(pal::Dim), "%s", Lx("Suggested setting", "Configuración sugerida", "Configuração sugerida", "Рекомендация"));
-                    ImGui::Dummy(ImVec2(0.0f, U(3.f)));
-
-                    const AdvisorSuggestion sug = advisorSuggestion();
-                    if (!sug.ready)
-                        ImGui::TextColored(Tone(sug.upColour), "%s", sug.up.c_str());
-                    else if (beginRows("##CompactAdvisor"))
-                    {
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(Tone(pal::Text2), "%s", Lx("Upscaling", "Escalado", "Escala", "Масштаб"));
-                        ImGui::TableNextColumn();
-                        ImGui::PushStyleColor(ImGuiCol_Text, Tone(sug.upColour));
-                        ImGui::TextWrapped("%s", sug.up.c_str());
-                        ImGui::PopStyleColor();
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(Tone(pal::Text2), "FG");
-                        ImGui::TableNextColumn();
-                        if (sug.fg)
-                        {
-                            ImGui::TextColored(Tone(sug.techColour), "%s", sug.tech);
-                            ImGui::SameLine(0, 0);
-                            ImGui::TextColored(Tone(pal::Green), "%s", sug.mult.c_str());
-                        }
-                        else
-                        {
-                            ImGui::PushStyleColor(ImGuiCol_Text, Tone(sug.fgColour));
-                            ImGui::TextWrapped("%s", sug.fgText.c_str());
-                            ImGui::PopStyleColor();
-                        }
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(Tone(pal::Text2), "NR");
-                        ImGui::TableNextColumn();
-                        ImGui::PushStyleColor(ImGuiCol_Text, Tone(sug.nrColour));
-                        ImGui::TextWrapped("%s", sug.nrText.c_str());
-                        ImGui::PopStyleColor();
-                        ImGui::EndTable();
-                    }
-                    if (IlionTheme::Button(Lx("Diagnosis###CompactAdvisorOpen", "Diagnóstico###CompactAdvisorOpen",
-                                              "Diagnóstico###CompactAdvisorOpen", "Диагностика###CompactAdvisorOpen")))
-                        openAdvisor = true;
-                    ImGui::Unindent(U(11.f));
+                    ImGui::Unindent(U(4.f));
                     ImGui::Dummy(ImVec2(0.0f, U(4.f)));
                     ImGui::EndTable();
                 }
@@ -2914,131 +2888,9 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         // ILION Advisor: facts once a second while the menu is open, the suggestion changes only after holding 5 s
         advisorUpdate();
 
-        // The Advisor's module: a lit bulb and its name, the hardware it detected on the left, its suggestion on the
-        // right. A click opens the diagnosis
+        // ILION AL DÍA / ILION TERMINAL in the box Advisor used (its facts are still gathered above)
         if (advX1 - advX0 > 200)
-        {
-            const ImVec2 m0(advX0, a.y + 10), m1(advX1, b.y - 10);
-            const float mid = std::floor((m0.x + m1.x) * 0.5f);
-
-            // A screen set into the console: a thin frame, a 1 px bevel (dark above and left, a little light below and
-            // right, so it reads as sunk), a matte surface a shade darker than the header
-            {
-                const ImVec2 f0 = P(m0), f1 = P(m1);
-                const float r = U(4.f);
-                dl->AddRectFilled(f0, f1, Col(Mix(pal::Bg, ImVec4(0, 0, 0, 1), 0.25f)), r);
-                dl->AddRect(f0, f1, Col(pal::Line), r, 0, 1.f);
-                const ImVec2 i0(f0.x + 1.f, f0.y + 1.f), i1(f1.x - 1.f, f1.y - 1.f);
-                dl->AddLine(ImVec2(i0.x + r, i0.y), ImVec2(i1.x - r, i0.y), Col(ImVec4(0, 0, 0, 0.55f)), 1.f);
-                dl->AddLine(ImVec2(i0.x, i0.y + r), ImVec2(i0.x, i1.y - r), Col(ImVec4(0, 0, 0, 0.45f)), 1.f);
-                dl->AddLine(ImVec2(i0.x + r, i1.y), ImVec2(i1.x - r, i1.y), Col(ImVec4(1, 1, 1, 0.05f)), 1.f);
-                dl->AddLine(ImVec2(i1.x, i0.y + r), ImVec2(i1.x, i1.y - r), Col(ImVec4(1, 1, 1, 0.04f)), 1.f);
-            }
-
-            // Pilot lamp of a Soviet panel: dark metal ring with a light edge above, a domed lens in the colour of the
-            // suggestion's confidence (green verified, yellow estimate, amber insufficient), a small reflection
-            {
-                const ImVec4 lens = advisorConfidenceColour();
-                const ImVec2 c = P(m0.x + 19, m0.y + 16);
-                const float rl = U(5.5f);
-                for (int k = 3; k >= 1; k--)
-                    dl->AddCircleFilled(c, rl + U(2.f) + k * U(1.6f), Col(lens, 0.035f * (4 - k) * IlionTheme::shellGlow));
-                dl->AddCircleFilled(c, rl + U(2.6f), Col(ImVec4(0.16f, 0.17f, 0.16f, 1.f)));
-                dl->AddCircle(c, rl + U(2.6f), Col(ImVec4(0.02f, 0.02f, 0.02f, 1.f)), 0, 1.f);
-                dl->PathArcTo(c, rl + U(2.0f), 3.6f, 5.6f, 12);
-                dl->PathStroke(Col(ImVec4(0.55f, 0.57f, 0.53f, 0.55f)), 0, 1.f);
-                dl->AddCircleFilled(c, rl + U(0.6f), Col(ImVec4(0, 0, 0, 1.f)));
-                dl->AddCircleFilled(c, rl, Col(Mix(lens, ImVec4(0, 0, 0, 1), 0.45f)));
-                dl->AddCircleFilled(c, rl * 0.68f, Col(lens));
-                dl->AddCircleFilled(ImVec2(c.x - rl * 0.38f, c.y - rl * 0.38f), rl * 0.26f, Col(ImVec4(1, 1, 1, 0.55f)));
-            }
-            Text(fBrand, 15.f, ImVec2(m0.x + 34, m0.y + 7), pal::Green, "ILION ADVISOR");
-
-            // Slots, not bright lines: a dark line with a faint light one beside it
-            dl->AddLine(P(m0.x + 8, m0.y + 30), P(m1.x - 8, m0.y + 30), Col(ImVec4(0, 0, 0, 0.6f)));
-            dl->AddLine(P(m0.x + 8, m0.y + 31), P(m1.x - 8, m0.y + 31), Col(ImVec4(1, 1, 1, 0.05f)));
-            dl->AddLine(P(mid, m0.y + 37), P(mid, m1.y - 8), Col(ImVec4(0, 0, 0, 0.6f)));
-            dl->AddLine(P(mid + 1, m0.y + 37), P(mid + 1, m1.y - 8), Col(ImVec4(1, 1, 1, 0.05f)));
-
-            const auto rows = [&](float x0, float x1, const char* head, const auto& draw)
-            {
-                dl->PushClipRect(P(x0, m0.y + 31), P(x1, m1.y - 4), true);
-                Text(fUi, 11.f, ImVec2(x0, m0.y + 35), pal::Dim, head);
-                draw();
-                dl->PopClipRect();
-            };
-
-            // Hardware it detected
-            const float labelW = 54.f;
-            rows(m0.x + 12, mid - 8, Lx("DETECTED HARDWARE", "HARDWARE DETECTADO", "HARDWARE DETECTADO", "ОБОРУДОВАНИЕ"), [&]()
-                 {
-                     const auto& gpu = IdentifyGpu::getPrimaryGpu();
-                     const float x = m0.x + 12;
-                     Text(fUi, 13.f, ImVec2(x, m0.y + 54), pal::Text2, "GPU");
-                     const ImVec4 gpuColour = gpu.vendorId == VendorId::AMD ? ImVec4(1.00f, 0.36f, 0.30f, 1.f) : pal::Text;
-                     Text(fUi, 13.f, ImVec2(x + labelW, m0.y + 54), gpuColour, gpu.name.empty() ? "-" : gpu.name.c_str());
-
-                     Text(fUi, 13.f, ImVec2(x, m0.y + 76), pal::Text2, "CPU");
-                     const std::string& cpu = CpuName();
-                     const size_t x3d = cpu.find("X3D");
-                     if (x3d == std::string::npos)
-                         Text(fUi, 13.f, ImVec2(x + labelW, m0.y + 76), pal::Text, cpu.c_str());
-                     else
-                     {
-                         const std::string head = cpu.substr(0, x3d);
-                         Text(fUi, 13.f, ImVec2(x + labelW, m0.y + 76), pal::Text, head.c_str());
-                         const float hx = x + labelW + Measure(fUi, 13.f, head.c_str()).x;
-                         Text(fUi, 13.f, ImVec2(hx, m0.y + 76), pal::Yellow, "X3D");
-                         Text(fUi, 13.f, ImVec2(hx + Measure(fUi, 13.f, "X3D").x, m0.y + 76), pal::Text, cpu.substr(x3d + 3).c_str());
-                     }
-
-                     Text(fUi, 13.f, ImVec2(x, m0.y + 98), pal::Text2, Lx("Screen", "Monitor", "Monitor", "Экран"));
-                     Text(fUi, 13.f, ImVec2(x + labelW, m0.y + 98), pal::Text,
-                          advFacts.refreshHz > 0.0 ? StrFmt("%.0f Hz", advFacts.refreshHz).c_str()
-                                                   : Lx("unknown", "desconocido", "desconhecido", "неизвестно"));
-                 });
-
-            // Its suggestion (not what is active now)
-            rows(mid + 10, m1.x - 10, Lx("SUGGESTION", "RECOMENDACIÓN", "RECOMENDAÇÃO", "РЕКОМЕНДАЦИЯ"), [&]()
-                 {
-                     const float x = mid + 10;
-                     const AdvisorSuggestion sug = advisorSuggestion();
-                     if (!sug.ready)
-                     {
-                         Text(fUi, 13.f, ImVec2(x, m0.y + 54), sug.upColour, sug.up.c_str());
-                         return;
-                     }
-
-                     const float lw = 66.f;
-                     Text(fUi, 13.f, ImVec2(x, m0.y + 54), pal::Text2, Lx("Upscaling", "Escalado", "Escala", "Масштаб"));
-                     Text(fUi, 13.f, ImVec2(x + lw, m0.y + 54), sug.upColour, sug.up.c_str());
-                     Text(fUi, 13.f, ImVec2(x, m0.y + 76), pal::Text2, "FG");
-                     if (sug.fg)
-                     {
-                         // The technology in its colour (XeFG in Intel blue, the others as before), the multiplier green
-                         Text(fUi, 13.f, ImVec2(x + lw, m0.y + 76), sug.techColour, sug.tech);
-                         Text(fUi, 13.f, ImVec2(x + lw + Measure(fUi, 13.f, sug.tech).x, m0.y + 76), pal::Green, sug.mult.c_str());
-                     }
-                     else
-                         Text(fUi, 13.f, ImVec2(x + lw, m0.y + 76), sug.fgColour, sug.fgText.c_str());
-                     Text(fUi, 13.f, ImVec2(x, m0.y + 98), pal::Text2, "NR");
-                     Text(fUi, 13.f, ImVec2(x + lw, m0.y + 98), sug.nrColour, sug.nrText.c_str());
-                 });
-
-            At(m0.x, m0.y);
-            if (ImGui::InvisibleButton("##IlionAdvisor", Sz(m1.x - m0.x, m1.y - m0.y)))
-                ImGui::OpenPopup("##IlionAdvisorPopup");
-            if (ImGui::IsItemHovered())
-            {
-                dl->AddRect(P(m0), P(m1), Col(pal::Green, 0.6f), U(4.f));
-                ImGui::PushFont(fUi, U(15.f));
-                ImGui::SetTooltip("%s", Lx("ILION Advisor: a suggestion, not what is active. Click for the diagnosis.",
-                                           "ILION Advisor: una recomendación, no lo que está activo. Pulsa para ver el diagnóstico.",
-                                           "ILION Advisor: uma recomendação, não o que está ativo. Clique para o diagnóstico.",
-                                           "ILION Advisor: рекомендация, а не текущее состояние. Нажмите для диагностики."));
-                ImGui::PopFont();
-            }
-        }
+            HomePanel::Draw(dl, P(advX0, a.y + 10), P(advX1, b.y - 10), ctx.frameTime);
 
         // The diagnosis: hardware, the six answers with their level, reasons and warnings. It changes nothing
         advisorDiagnosis();

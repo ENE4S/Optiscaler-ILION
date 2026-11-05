@@ -727,7 +727,7 @@ static void Card(const C::Profile& p, const char* list, bool showDownloads, cons
     ImGui::PushID((std::string(list) + p.id).c_str());
     ImGui::PushStyleColor(ImGuiCol_ChildBg, toneMapColor(IlionTheme::shell ? IlionTheme::ShellPal::Panel : ImGui::GetStyleColorVec4(ImGuiCol_FrameBg)));
     ImGui::PushStyleColor(ImGuiCol_Border, toneMapColor(IlionTheme::ShellPal::Line));
-    if (ImGui::BeginChild("##card", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY))
+    if (ImGui::BeginChild("##card", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding))
     {
         // 1. El nombre del perfil, el elemento principal
         if (position > 0)
@@ -927,11 +927,26 @@ static void PodiumCard(const C::Profile& p, int rank)
         const ImVec2 start = ImGui::GetCursorScreenPos();
         Crown(dl, ImVec2(start.x + (w - crown) * 0.5f, start.y), crown, toneMapColor(colour), rank);
         ImGui::Dummy(ImVec2(w, crown));
-        const auto centred = [&](ImFont* f, float scale, const ImVec4& c, const std::string& t)
+        const auto centred = [&](ImFont* f, float scale, const ImVec4& c, const std::string& text)
         {
             ImGui::PushFont(f, std::floor(font * scale));
+            // A long alias, profile or game name is cut with an ellipsis to the card's width (never runs out of it)
+            std::string t = text;
+            while (t.size() > 1 && ImGui::CalcTextSize((t + "…").c_str()).x > w && ImGui::CalcTextSize(t.c_str()).x > w)
+            {
+                unsigned char last = 0;
+                do
+                {
+                    last = (unsigned char) t.back();
+                    t.pop_back();
+                } while (!t.empty() && (last & 0xC0) == 0x80);
+            }
+            if (t != text)
+                t += "…";
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (std::max)(0.0f, (w - ImGui::CalcTextSize(t.c_str()).x) * 0.5f));
             P::Coloured(c, t.c_str());
+            if (t != text && ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", text.c_str());
             ImGui::PopFont();
         };
         centred(P::FigureFont(), 1.2f * big, IlionTheme::ShellPal::Orange, p.author);

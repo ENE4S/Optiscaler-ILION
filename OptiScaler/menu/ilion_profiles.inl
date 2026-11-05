@@ -3007,12 +3007,19 @@ template <typename Ctx> static Live ReadLive(Ctx& ctx, const Saved& saved)
 // la resolución interna esperada), verde solo cuando todo lo que el perfil gestiona está comprobado con lo que corre de
 // verdad, ámbar cuando ahora no se puede comprobar. Se recalcula en cada fotograma: ILION lo verifica solo
 // compact: el cuadro pequeño de la columna izquierda (solo lo pendiente; desaparece cuando todo está verificado)
+// The level the banner computed last (0 verified, 1 not verifiable now, 2 pending actions): only read by the mode
+// buttons to light a red pilot; it never feeds a decision
+static int lastOutcomeLevel = 0;
+
 template <typename Ctx> static void OutcomeBanner(Ctx& ctx, const Saved& saved, const Live& lv, bool compact = false)
 {
     // El plan de una optimización de esta sesión; tras cargar un perfil (Perfiles o ILION COMMUNITY) manda el guardado
     const bool fromPlan = finished && fromOptimize;
     if (running || (!fromPlan && !saved.exists))
+    {
+        lastOutcomeLevel = 0;
         return;
+    }
     IFeature* feature = ctx.currentFeature;
     const auto status = IlionDynamicMfg::Get();
     const auto catalog = GatherUpscalers(feature);
@@ -3114,6 +3121,7 @@ template <typename Ctx> static void OutcomeBanner(Ctx& ctx, const Saved& saved, 
     }
 
     const int level = !todo.empty() ? 2 : (!unverifiable.empty() || verified.empty()) ? 1 : 0;
+    lastOutcomeLevel = level;
     if (compact)
     {
         // Verificado: nada que hacer, no se dibuja. Sin poder comprobar: una línea ámbar, sin alarma. Pendiente: el cuadro rojo
@@ -3734,6 +3742,23 @@ template <typename Ctx> static void OptimizerBlock(Ctx& ctx)
             mode = (Mode) i;
         if (selected)
             ImGui::PopStyleColor();
+        // A red pilot on the mode whose configuration is applied when it no longer matches (the same state as the
+        // red ACCIONES PENDIENTES box, read from it); the selection highlight stays as it was
+        const int applied = finished && fromOptimize ? (int) optimizedMode : -1;
+        int appliedIndex = applied;
+        if (appliedIndex < 0)
+            for (int m = 0; m < (int) Mode::Count; m++)
+                if (ReadSaved().exists && ReadSaved().modeName == ModeName((Mode) m))
+                    appliedIndex = m;
+        if (appliedIndex == i && lastOutcomeLevel == 2 && !running)
+        {
+            const ImVec2 bmin = ImGui::GetItemRectMin(), bmax = ImGui::GetItemRectMax();
+            const float h = bmax.y - bmin.y;
+            IlionTheme::ShellLed(ImGui::GetWindowDrawList(), ImVec2(bmax.x - h * 0.5f, (bmin.y + bmax.y) * 0.5f), std::floor(h * 0.16f),
+                                 toneMapColor(IlionTheme::ShellPal::Red), true);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", "La configuración aplicada por este modo ya no coincide con la del juego: mira ACCIONES PENDIENTES");
+        }
     }
     ImGui::EndDisabled();
     Coloured(IlionTheme::ShellPal::Text2, ShortText(mode), true);

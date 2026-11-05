@@ -874,16 +874,23 @@ struct Option
     bool needsEvidence = false; // solo se elige con mediciones propias (dos o más)
 };
 
+// ILION v1.4.0: escaladores que el optimizador eligió y no llegaron a ejecutarse en esta sesión (paso 6). Quedan fuera de
+// las candidatas hasta reiniciar el juego: el siguiente OPTIMIZAR evalúa el siguiente compatible. No se guarda en disco
+static std::set<std::string>& ScalersFailedThisSession()
+{
+    static std::set<std::string> failed;
+    return failed;
+}
+
 static std::vector<Option> Alternatives(const UpscalerCatalog& catalog, const Arch& arch, int preset, unsigned outHeight,
                                         std::string* excluded)
 {
     std::vector<Option> out;
     const UpscalerVariant* cur = Current(catalog);
     const bool liteSelected = DriverLiteSelected();
-    const bool rdna3 = arch.family == ArchFamily::Rdna3;
     const auto add = [&](const UpscalerVariant* v, Model model, int tier, bool needsEvidence, const std::string& why)
     {
-        if (v == nullptr || !v->usable)
+        if (v == nullptr || !v->usable || ScalersFailedThisSession().count(KeyOf(*v)) > 0)
             return;
         for (const auto& o : out)
             if (o.choice.key == KeyOf(*v) && o.choice.model == model)
@@ -907,57 +914,60 @@ static std::vector<Option> Alternatives(const UpscalerCatalog& catalog, const Ar
     };
     const auto backend = [&](Upscaler u) { return first([u](const UpscalerVariant& v) { return v.backend == u; }); };
 
-    // ILION v1.4.0: orden de evaluación por arquitectura. Solo amplía y ordena las candidatas; Decide() no cambia (a igual
-    // nivel gana la primera añadida, o la que ya corre). Lo que no es propio de la GPU necesita dos mediciones aquí
-    // (needsEvidence: «pendiente de validación»), y solo entra lo que el inventario da por usable (sin forzar nada).
-    //   NVIDIA: DLSS > FSR 4 compatible > FSR 4 comunitarias > HLX / HelixSR > XeSS > FSR 3.1 / 2.2
-    //   AMD:    FSR 4 driver > FSR 4 DLL > FSR 4 comunitaria completa (4.1.1B…) > Lite / INT8Lite / optimizadas > HLX > HelixSR > XeSS > FSR 3.1 / 2.2
-    //   Intel:  XeSS XMX > FSR 4 compatible > comunitarias > HLX / HelixSR > XeSS DP4a > FSR 3.1 / 2.2
+    // ILION v1.4.0: orden de evaluación por arquitectura. Solo amplía y ordena las candidatas; Decide() no cambia: elige el
+    // nivel más alto (a igual nivel, la primera añadida o la que ya corre). Toda ruta compatible que el inventario da por
+    // usable (DLL válida, API, GPU) entra sin historial: la falta de mediciones no la deja fuera. Al aplicarla, el paso 6
+    // confirma que se ejecuta; si no, queda descartada en esta sesión y el siguiente OPTIMIZAR pasa a la siguiente.
+    // XeSS y FSR 3.1 / 2.2 quedan por debajo de todo FSR 4, sus variantes y Helix: solo ganan sin alternativa superior.
+    //   NVIDIA RTX: DLSS (5) > FSR 4 compatible / comunitarias / Lite / HLX / HelixSR (4) > XeSS (2) > FSR 3.1 / 2.2
+    //   AMD:        FSR 4 driver > DLL oficial > comunitaria completa (5) > INT8Lite / Lite / optimizadas > HLX > HelixSR (4) > XeSS > FSR 3.1 / 2.2
+    //   Otras (GTX, Intel, RDNA 1…): FSR 4 compatible y comunitaria completa (5) > Lite / HLX / HelixSR (4) > XeSS (XMX 3, DP4a 2) > FSR 3.1 / 2.2
     if (arch.dlssSR)
         add(backend(Upscaler::DLSS), Model::Any, 5, false, StrFmt("DLSS Super Resolution nativo (%s)", arch.name));
     const UpscalerVariant* driver = first(IsDriver);
     const auto official = [](const UpscalerVariant& v) { return v.entry != nullptr && v.entry->amdOfficial; };
+    // RDNA 2: el modelo INT8 RDNA2 es la ruta de OptiScaler con componentes de AMD; AMD no declara FSR 4 en RDNA 2
+    const std::string adapted = arch.family == ArchFamily::Rdna2 ? " (adaptación de OptiScaler; AMD no declara soporte en RDNA 2)" : "";
     if (arch.fsr4)
     {
-        add(driver, Model::Full, 5, false, StrFmt("FSR 4 del driver AMD, modelo completo %s para %s", arch.fsr4Full, arch.name));
-        // La DLL oficial de AMD antes que las comunitarias completas
+        add(driver, Model::Full, 5, false, StrFmt("FSR 4 del driver AMD, modelo completo %s para %s%s", arch.fsr4Full, arch.name, adapted.c_str()));
+        // La DLL oficial de AMD antes que las comunitarias completas (4.1.1B…)
         for (const auto& v : catalog.variants)
             if (IsFsr4Full(v) && !IsDriver(v) && official(v))
-                add(&v, Model::Full, 5, false, StrFmt("FSR 4 por DLL, modelo completo %s", arch.fsr4Full));
+                add(&v, Model::Full, 5, false, StrFmt("FSR 4 por DLL de AMD, modelo completo %s%s", arch.fsr4Full, adapted.c_str()));
         for (const auto& v : catalog.variants)
             if (IsFsr4Full(v) && !IsDriver(v) && !official(v))
-                add(&v, Model::Full, 5, false, StrFmt("FSR 4 por DLL, modelo completo %s", arch.fsr4Full));
+                add(&v, Model::Full, 5, false, StrFmt("FSR 4 comunitaria completa (DLL independiente), modelo %s", arch.fsr4Full));
     }
     else
     {
-        // GPU sin FSR 4 propio (NVIDIA, Intel, RDNA 1, GTX…): una ruta compatible es candidata para evaluación, nunca
-        // funcional por existir la DLL. La oficial de AMD solo con un modelo INT8 forzado (Fsr4ForceModel), la ruta de
-        // OptiScaler en otras GPU; las comunitarias, si el inventario las da por usables
+        // GPU sin FSR 4 propio: la DLL oficial de AMD solo con un modelo INT8 forzado (Fsr4ForceModel), la ruta de
+        // OptiScaler en otras GPU (el inventario ya la marca no usable sin él); las comunitarias si el inventario las da por
+        // usables. Por debajo de DLSS donde lo hay
+        const int full = arch.dlssSR ? 4 : 5;
         const bool int8Forced = IsFsr4Int8(Config::Instance()->Fsr4ForceModel.value_or_default());
         for (const auto& v : catalog.variants)
             if (IsFsr4Full(v) && !IsDriver(v) && official(v) && int8Forced)
-                add(&v, Model::Any, 4, true, "FSR 4 compatible (DLL de AMD con modelo INT8 forzado; pendiente de validación en esta GPU)");
+                add(&v, Model::Any, full, false, "FSR 4 compatible (DLL de AMD con modelo INT8 forzado; sin soporte declarado por AMD en esta GPU)");
         for (const auto& v : catalog.variants)
             if (IsFsr4Full(v) && !IsDriver(v) && !official(v))
-                add(&v, Model::Any, 4, true, "FSR 4 comunitaria completa (pendiente de validación en esta GPU)");
+                add(&v, Model::Any, full, false, "FSR 4 comunitaria completa (DLL independiente)");
     }
     // INT8Lite del driver: en una GPU cuyo modelo propio ya es INT8Lite no hay elección
     if (arch.fsr4 && driver != nullptr && DriverLiteOffered() && !arch.liteIsFull)
         add(driver, Model::Lite, 4, false, "INT8Lite del driver: modelo más ligero, menos fidelidad");
-    // Lite comunitarias y optimizadas (Exact / Lossy / Lossy2), ahora en cualquier arquitectura. Al nivel de HLX y HelixSR
-    // pero antes en el orden (con un FSR 4 completo del nivel 5, Óptimo y Calidad no cambian)
+    // Lite comunitarias y optimizadas (Exact / Lossy / Lossy2), en cualquier arquitectura, antes que HLX y HelixSR
     for (const auto& v : catalog.variants)
         if (IsCommunityLite(v))
-            add(&v, Model::Any, 4, !rdna3,
-                rdna3 ? std::string("FSR 4 Lite comunitaria (DLL independiente, menos fidelidad)")
-                      : std::string("FSR 4 Lite comunitaria (DLL independiente, menos fidelidad; pendiente de validación en esta GPU)"));
+            add(&v, Model::Any, 4, false, "FSR 4 Lite comunitaria (DLL independiente, menos fidelidad)");
     for (const auto& v : catalog.variants)
         if (IsHlx(v))
-            add(&v, Model::Any, 4, !rdna3, "HLX FSR 4 (fidelidad sin clasificar frente al FSR 4 completo)");
+            add(&v, Model::Any, 4, false, "HLX FSR 4 (fidelidad sin clasificar frente al FSR 4 completo)");
     for (const auto& v : catalog.variants)
         if (v.entry != nullptr && v.entry->family == IlionUpscalers::Family::HelixSR && !v.entry->hlx)
-            add(&v, Model::Any, 4, !rdna3, "HelixSR: red del modelo E de DLSS por FFX (fidelidad sin clasificar)");
-    add(backend(Upscaler::XeSS), Model::Any, arch.xessXmx ? 5 : 2, false,
+            add(&v, Model::Any, 4, false, "HelixSR: red del modelo E de DLSS por FFX (fidelidad sin clasificar)");
+    // XeSS, también con XMX, solo como último recurso por debajo de FSR 4 y Helix
+    add(backend(Upscaler::XeSS), Model::Any, arch.xessXmx ? 3 : 2, false,
         arch.xessXmx ? StrFmt("XeSS con XMX (%s)", arch.name) : std::string("XeSS DP4a"));
     add(first([](const UpscalerVariant& v) { return v.family == FamFsr31; }), Model::Any, 1, false, "FSR 3.1");
     add(backend(Upscaler::FSR22), Model::Any, 0, false, "FSR 2.2");
@@ -975,6 +985,7 @@ static std::vector<Option> Alternatives(const UpscalerCatalog& catalog, const Ar
             if (n++ < 5)
                 *excluded += (excluded->empty() ? "" : " · ") + v.name + " (" +
                              (d4r          ? std::string("necesita reiniciar; experimental")
+                              : ScalersFailedThisSession().count(KeyOf(v)) > 0 ? std::string("no llegó a ejecutarse en esta sesión")
                               : !v.usable  ? v.reason
                               : v.isDefault ? std::string("DLL por defecto: su tecnología no se identifica, no se compara")
                                             : std::string("sin validar en esta GPU")) +
@@ -2470,8 +2481,10 @@ template <typename Ctx> static void Tick(Ctx& ctx)
         if (elapsed > 10.0)
         {
             plan.scalerStage = Stage::Failed;
+            ScalersFailedThisSession().insert(plan.scaler.key); // ILION v1.4.0: fuera de las candidatas en esta sesión
             Last() = { Mark::Bad, "No llegó a ejecutarse: " + plan.scaler.name,
-                       "No se prueba otro escalador por tu cuenta. Usa RESTAURAR SESIÓN si el juego no escala bien." };
+                       "Queda descartado en esta sesión: el siguiente OPTIMIZAR evalúa el siguiente compatible. Usa RESTAURAR "
+                       "SESIÓN si el juego no escala bien." };
             litePending = false;
             Next();
         }

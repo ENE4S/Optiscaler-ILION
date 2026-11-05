@@ -1321,6 +1321,71 @@ static RatioOwner OwnerOfOverride(float* value = nullptr)
     return RatioOwner::External;
 }
 
+// ---- El generador real de FG (v1.4.0) ----------------------------------------------------------------------------------
+// La salida DLSSG de ILION (OptiFG) o el DLSSG del juego son una RUTA: OptiScaler pide DLSSG por Streamline y su gancho
+// NVNGX lo desvía al reemplazo cargado (DLSS Enabler, Nukem, FFX, FG Lite…). Señales que ya existen, sin tocar el FG:
+//   State::activeFgNvngx: el reemplazo en uso (OptiScaler lo pone a None si el elegido no carga y no hay sustituto, y al
+//     de sustitución si cambia).
+//   State::dlssgFgLastEvaluateTick: la última evaluación de la feature FrameGeneration en ese gancho; reciente = se genera
+//     por ese camino ahora.
+// XeFG y FSR FG son salidas propias de ILION: su generador es la propia salida. Sin señal, «proveedor no verificado»
+static bool Generating(const IlionDynamicMfg::Status& status);
+struct FgBackend
+{
+    std::string name;  // el generador real, o vacío
+    bool verified = false;
+    std::string route; // la ruta (para DETALLES TÉCNICOS)
+};
+
+static FgBackend FgBackendNow()
+{
+    const auto& state = State::Instance();
+    const auto status = IlionDynamicMfg::Get();
+    FgBackend b;
+    b.route = StrFmt("entrada %s · salida %s · reemplazo NVNGX %s", std::string(magic_enum::enum_name(state.activeFgInput)).c_str(),
+                     std::string(magic_enum::enum_name(state.activeFgOutput)).c_str(), std::string(magic_enum::enum_name(state.activeFgNvngx)).c_str());
+    if (!Generating(status))
+        return b;
+    if (state.activeFgOutput == FGOutput::XeFG)
+        return { "XeFG", true, b.route };
+    if (state.activeFgOutput == FGOutput::FSRFG)
+        return { "FSR FG", true, b.route };
+    const ULONGLONG last = state.dlssgFgLastEvaluateTick;
+    const bool evaluating = last > 0 && GetTickCount64() - last < 1500;
+    b.route += evaluating ? StrFmt(" · última evaluación DLSSG hace %llu ms", GetTickCount64() - last) : std::string(" · sin evaluaciones DLSSG recientes");
+    if (state.activeFgOutput == FGOutput::DLSSG || state.activeFgInput == FGInput::NvngxFG || status.provider == IlionDynamicMfg::Provider::DlssgGame)
+    {
+        if (!evaluating)
+            return b;
+        switch (state.activeFgNvngx)
+        {
+        case FGNvngxReplacement::Arturs:
+            return { "DLSS Enabler", true, b.route };
+        case FGNvngxReplacement::Nukems:
+            return { "Nukem", true, b.route };
+        case FGNvngxReplacement::FFX:
+            return { "FSR FG por FFX", true, b.route };
+        case FGNvngxReplacement::Combo:
+            return { "FFX + DLSS Enabler", true, b.route };
+        case FGNvngxReplacement::HelixSR:
+            return { "NVIDIA FG Lite (HelixSR)", true, b.route };
+        default:
+            // Sin reemplazo: el DLSSG oficial solo en una GPU NVIDIA; en otra, no se sabe quién genera
+            if (IdentifyGpu::getPrimaryGpu().vendorId == VendorId::Nvidia)
+                return { "DLSSG nativo de NVIDIA", true, b.route };
+            return b;
+        }
+    }
+    return b;
+}
+
+// El nombre que se muestra: el generador verificado, o la ruta con «proveedor no verificado»
+static std::string FgDisplayName(const char* routeName)
+{
+    const FgBackend b = FgBackendNow();
+    return b.verified ? b.name : std::string(routeName) + " · proveedor no verificado";
+}
+
 // ---- CONTROL DE RESOLUCIÓN INTERNA (Community12) ---------------------------------------------------------------------
 // El estado sale de los forzados reales de OptiScaler, sin otro interruptor. GetQualityOverrideRatio (NVNGX) y sus
 // equivalentes FFX / FSR2 / FSR3 / XeSS devuelven la proporción de «Forzar todos» (UpscaleRatioOverrideEnabled) para
@@ -1849,6 +1914,39 @@ template <typename Ctx> static void Tick(Ctx& ctx)
                     if (const Evidence e = LoadEvidence(EvidenceKey(before.scalerKey, before.model, p, before.th)); e.count >= 1)
                         measured = true, fps = e.p10;
                 table += StrFmt("%s%s %.0f%s", table.empty() ? "" : " · ", kPresets[p].name, fps, measured ? " (medido)" : " (est.)");
+                // Óptimo, Nativa (v1.4.0, política general): Nativa solo con margen alto, policy.up (91) FPS reales
+                // sostenidos, nunca con FG generados. Antes bastaba con llegar a 70: desde Ultra Calidad la estimación de
+                // Nativa no llegaba y no subía, pero si el juego ya estaba en Nativa (p. ej. tras Calidad) la medición
+                // (75) la mantenía: la decisión dependía del preset inicial. Ahora la misma regla vale desde cualquier
+                // punto. Nativa medida (la actual, o el historial de esta combinación, sin FG o con fotogramas reales con
+                // FG); si no, la estimación existente, que se verifica al medir de nuevo. Sin margen, el algoritmo de
+                // siempre sigue con el resto de presets
+                if (mode == Mode::Optimo && p == 0)
+                {
+                    double native = -1.0;
+                    const char* from = "estimado";
+                    if (cur == 0)
+                        native = sustained > 0.0 ? sustained : fps, from = "medido ahora";
+                    else
+                    {
+                        const std::string key = EvidenceKey(before.scalerKey, before.model, 0, before.th);
+                        if (const Evidence e = LoadEvidence(key); measure.verified && e.count >= 1)
+                            native = e.mean, from = "medido antes, sin FG";
+                        else if (const Evidence f = LoadEvidence(key + "|base-fg"); f.count >= 1)
+                            native = f.mean, from = "medido antes, fotogramas reales con FG";
+                        else
+                            native = fps;
+                    }
+                    if (target < 0 && native >= policy.up)
+                    {
+                        target = 0;
+                        plan.presetWhy = StrFmt("Óptimo: Nativa a %.0f FPS reales sostenidos (%s), con margen alto (%.0f o más)%s", native, from, policy.up,
+                                                std::string(from) == "estimado" ? ": pendiente de comprobar al medir de nuevo" : "");
+                    }
+                    else if (target < 0 && qualityNote.empty())
+                        qualityNote = StrFmt("Óptimo usa Nativa solo con %.0f FPS reales sostenidos o más; Nativa: %.0f (%s)", policy.up, native, from);
+                    continue;
+                }
                 // Calidad, Nativa (v1.4.0). Decide con FPS reales sostenidos: la media de la ventana medida (no un valor
                 // instantáneo), sin FG, o con FG solo si ILION mide los fotogramas reales del juego (baseMeasured: OptiFG,
                 // XeFG, DLSSG del juego) y ningún límite los fija. Antes, con FG activo nunca se probaba Nativa: en KCD2 se
@@ -1939,7 +2037,7 @@ template <typename Ctx> static void Tick(Ctx& ctx)
                 table + " · est.: píxeles internos elevados a 0,7, supone que limita la GPU");
             if (!qualityNote.empty())
             {
-                Add(Mark::Info, "Calidad: preset superior sin aplicar", qualityNote);
+                Add(Mark::Info, "Preset superior sin aplicar", qualityNote);
                 plan.presetWhy += ". " + qualityNote;
             }
         }
@@ -2869,7 +2967,7 @@ template <typename Ctx> static void LogOptimization(Ctx& ctx)
     const int detected = PresetOf(ratio);
     LOG_INFO("ILION Perfiles diag: game={} api={} input={} mode={} | scaler running={} requested={} ({}) model={} | preset requested={} ({}) detected={} "
              "render={} output={} ratio={:.2f} | fg input={} output={} provider={} generating={} mult requested={} ({}) observed={} | dynamic={} inert={} "
-             "| fgWhy={}",
+             "| backend={} | fgWhy={}",
              ExeKey(), magic_enum::enum_name(state.api), upscaling ? ApiUpscalerInputName(state.currentInputApiName) : std::string("none"), ModeName(mode),
              current != nullptr ? current->name : std::string("none"), plan.scaler.name, StageName(plan.scalerStage),
              current != nullptr && IsFsr4Full(*current) ? (SelectedModel() == Model::Lite ? "INT8Lite" : "full") : "n/a",
@@ -2877,7 +2975,8 @@ template <typename Ctx> static void LogOptimization(Ctx& ctx)
              upscaling ? ResText(feature->RenderWidth(), feature->RenderHeight()) : std::string("n/a"),
              upscaling ? ResText(feature->TargetWidth(), feature->TargetHeight()) : std::string("n/a"), ratio, magic_enum::enum_name(state.activeFgInput),
              magic_enum::enum_name(state.activeFgOutput), status.name, Generating(status), plan.fg == FgRoute::None ? 0 : plan.count + 1, StageName(plan.fgStage),
-             status.multiplier, dynamic ? dyn : std::string("no"), inert.empty() ? std::string("none") : inert, plan.fgWhy);
+             status.multiplier, dynamic ? dyn : std::string("no"), inert.empty() ? std::string("none") : inert,
+             FgBackendNow().verified ? FgBackendNow().name : std::string("unverified"), plan.fgWhy);
 }
 
 template <typename Ctx> static Live ReadLive(Ctx& ctx, const Saved& saved)
@@ -3305,7 +3404,7 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight, boo
         const bool none = status.provider == IlionDynamicMfg::Provider::None;
         const Mark mark = generating ? Mark::Ok : fgRestart ? Mark::Restart : none ? Mark::Info : Mark::Wait;
         BlockHead(mark, "FRAME GENERATION", generating ? "ACTIVO" : fgRestart ? "REINICIO" : none ? "DESACTIVADO" : "EN PAUSA");
-        Big(UiFont(), split ? 1.45f : 1.7f, IlionTheme::ShellPal::Text, none ? "Sin FG" : status.name, true);
+        Big(UiFont(), split ? 1.45f : 1.7f, IlionTheme::ShellPal::Text, none ? "Sin FG" : split ? FgDisplayName(status.name).c_str() : status.name, true);
         if (generating && status.multiplier > 0)
         {
             Big(FigureFont(), 1.6f, IlionTheme::InfoBlue, StrFmt("%dX", status.multiplier).c_str());
@@ -3315,10 +3414,12 @@ template <typename Ctx> static void ActiveMonitor(Ctx& ctx, float logHeight, boo
                                                                                                                    : "pedido");
         }
         ImGui::Spacing();
-        if (split)
-            Row(Mark::Info,
-                none ? std::string("Proveedor: —") : status.own ? std::string("Proveedor: ILION (salida de FG de OptiScaler)") : std::string("Proveedor: el juego (FG propio del juego)"),
-                std::string());
+        if (split && !none)
+        {
+            const FgBackend backend = FgBackendNow();
+            Row(backend.verified ? Mark::Ok : Mark::Wait, backend.verified ? "Generador verificado: " + backend.name : std::string("Proveedor no verificado"),
+                std::string("ruta: ") + status.name + (status.own ? " (salida de FG de OptiScaler)" : " (FG del juego)"));
+        }
         if (dynamic)
             Row(Mark::Wait, "Dynamic: configuración externa", dynamicWhat + ". No es una decisión del perfil; el perfil no lo modifica.");
         else if (generating && !split)
@@ -3693,7 +3794,7 @@ template <typename Ctx> static void OptimizerBlock(Ctx& ctx)
         if (plan.fgStage == Stage::Blocked)
             AppliedRow("Frame Generation", StrFmt("%dX fijo", plan.count + 1), Applied::Recommended, plan.fgWhy);
         else if (plan.fg == FgRoute::None)
-            AppliedRow("Frame Generation", generating ? std::string(status.name) + StrFmt(" · %dX (se mantiene)", status.multiplier) : std::string("sin FG"),
+            AppliedRow("Frame Generation", generating ? FgDisplayName(status.name) + StrFmt(" · %dX (se mantiene)", status.multiplier) : std::string("sin FG"),
                        Applied::NoChange, plan.fgWhy);
         else
         {
@@ -3754,7 +3855,7 @@ template <typename Ctx> static void OptimizerBlock(Ctx& ctx)
             if (lv.fgWanted && want > 1)
             {
                 const bool gen = Generating(status);
-                AppliedRow("Frame Generation", saved.fgOutput + StrFmt(" · %dX fijo", want),
+                AppliedRow("Frame Generation", (gen ? FgDisplayName(saved.fgOutput.c_str()) : saved.fgOutput + " · proveedor no verificado") + StrFmt(" · %dX fijo", want),
                            gen && (status.multiplier <= 0 || status.multiplier == want) ? Applied::Verified
                            : lv.fgRestart                                               ? Applied::Pending
                            : lv.fgLoaded                                                ? Applied::Applied
@@ -3784,6 +3885,8 @@ static void FgDiagnosis()
     if (State::Instance().activeFgNvngx == FGNvngxReplacement::Nukems && !config->FGNvngxReplacement.has_value())
         Row(Mark::Wait, "Nukem es el reemplazo DLSSG por defecto de OptiScaler",
             "Está cargado porque la entrada o la salida de FG es DLSSG y no se eligió otro reemplazo; no lo eligió el optimizador");
+    if (const FgBackend backend = FgBackendNow(); Generating(IlionDynamicMfg::Get()))
+        Row(Mark::Info, backend.verified ? "Generador: " + backend.name : std::string("Generador: proveedor no verificado"), "Ruta de FG: " + backend.route);
     if (const std::string inert = InertDynamicSetting(); !inert.empty())
         Row(Mark::Info, "Ajuste guardado sin efecto", inert + ". No es un MFG dinámico activo y no bloquea nada");
     if (std::string dyn; ExternalDynamic(&dyn))

@@ -264,6 +264,8 @@ struct Plan
     Stage fgStage = Stage::None;
     std::string fgWhy;
     bool restartFg = false;
+    bool fgHotTried = false;   // FG was off and this optimization turned it on in hot (same input and output loaded)
+    std::string fgAvoidedBy;   // the route the game's compatibility matrix avoids, when that is why FG isn't applied
     bool restartRatio = false;
     bool viaMenu = false; // el preset se cambia desde el menú del juego (tabla de calidades leída al arrancar)
     bool belowWant = false; // ningún preset del modo llega a lo que el modo busca
@@ -2251,6 +2253,8 @@ template <typename Ctx> static void Tick(Ctx& ctx)
             case IlionDynamicMfg::Provider::DlssgOutput:
                 if (!(rule.found && rule.Avoids("dlssg_salida")))
                     plan.fg = FgRoute::DlssgOutput;
+                else
+                    plan.fgAvoidedBy = "la salida DLSSG";
                 break;
             case IlionDynamicMfg::Provider::FsrFg:
                 plan.fg = FgRoute::FsrFg;
@@ -2316,7 +2320,11 @@ template <typename Ctx> static void Tick(Ctx& ctx)
                                     IlionCommunity::NameOf(IlionCommunity::kFgs, plan.fgAltId), count + 1,
                                     IlionCommunity::EvidenceText(IlionCommunity::FgEvidence(plan.fgAltId, CatalogArchId(arch))));
             if (plan.fg == FgRoute::None)
-                plan.fgWhy = "no hay una ruta fija verificada para esta combinación";
+                plan.fgWhy = plan.fgAvoidedBy.empty()
+                                 ? std::string("no hay una ruta fija verificada para esta combinación")
+                                 : "la matriz de compatibilidad de este juego evita " + plan.fgAvoidedBy +
+                                       " (compatibilidad.ini, «evitar»): el optimizador no la activa" +
+                                       (Generating(status) ? "; el FG actual se deja como está" : "; el FG sigue apagado");
             else if (plan.fg == FgRoute::XeFgNew && !arch.xefgTested)
             {
                 // Posible, pero sin comprobar por ILION en esta arquitectura: se recomienda, no se activa
@@ -2506,12 +2514,43 @@ template <typename Ctx> static void Tick(Ctx& ctx)
             case FgRoute::XeFgFixed:
             case FgRoute::DlssgOutput:
             case FgRoute::DlssgGame:
-                if (!config->FGEnabled.has_value() || !config->FGEnabled.value())
+            {
+                // The route the plan asks for is the one loaded (same FGInput and FGOutput): nothing to replace and no
+                // restart. If FG was turned off by hand it is turned on again here, the same way as the «Frame
+                // generation on» switch (ToggleFrameGeneration: FGEnabled and fgChanged, so OptiScaler really activates
+                // the generator); the game's own DLSSG comes back through its multiplier (SetMaxCount, as its switch)
+                const bool own = plan.fg != FgRoute::DlssgGame;
+                const bool wasOff = !Generating(IlionDynamicMfg::Get());
+                if (own && !CanToggleFrameGeneration(state))
+                {
+                    // Not switchable now (no FG swapchain or input in use): kept for the next start, never shown as active
                     config->FGEnabled = true;
+                    plan.fgStage = Stage::Restart;
+                    plan.restartFg = true;
+                    Add(Mark::Restart, "REINICIO DEL JUEGO NECESARIO",
+                        "Frame Generation queda activado en la configuración, pero la ruta cargada no se puede encender en caliente ahora "
+                        "(sin cadena de FG en uso). Reinicia el juego para aplicarlo.");
+                    Next();
+                    break;
+                }
+                if (own && !config->IsFGEnabled())
+                {
+                    config->FGEnabled = true;
+                    state.fgChanged = true;
+                    fgHotkeyLeftDefault = false; // the FG key's next press turns it off, not back to «follow the game»
+                    plan.fgHotTried = true;
+                }
+                else if (!config->FGEnabled.has_value() || !config->FGEnabled.value())
+                    config->FGEnabled = true;
+                plan.fgHotTried = plan.fgHotTried || (wasOff && !own);
                 IlionDynamicMfg::SetMaxCount(plan.count);
                 plan.fgStage = Stage::Applied;
-                Add(Mark::Wait, StrFmt("Aplicando %dX fijo", plan.count + 1), "Esperando a que el proveedor genere con ese multiplicador");
+                Add(Mark::Wait,
+                    plan.fgHotTried ? StrFmt("Reactivando Frame Generation %dX en caliente", plan.count + 1) : StrFmt("Aplicando %dX fijo", plan.count + 1),
+                    plan.fgHotTried ? "La misma entrada y salida ya cargadas: sin reinicio ni cambios de DLL. Esperando a que genere"
+                                    : "Esperando a que el proveedor genere con ese multiplicador");
                 break;
+            }
             case FgRoute::FsrFg:
                 plan.fgStage = Stage::Applied;
                 Add(Mark::Wait, "FSR FG 2X: sin cambios", "Comprobando que genera");
@@ -2571,6 +2610,15 @@ template <typename Ctx> static void Tick(Ctx& ctx)
             plan.fgStage = Stage::Verified;
             Last() = { Mark::Ok, StrFmt("Frame Generation verificado: %s %dX fijo", status.name, plan.count + 1),
                        status.appliedSource == IlionDynamicMfg::AppliedSource::Measured ? "Multiplicador medido en los presents" : "Multiplicador aplicado por ILION" };
+            Next();
+        }
+        else if (elapsed > 8.0 && plan.fgHotTried && !Generating(status))
+        {
+            // Turned on in hot and it doesn't generate: this generator needs a new start; it is not shown as active
+            plan.fgStage = Stage::Restart;
+            plan.restartFg = true;
+            Last() = { Mark::Restart, "Frame Generation no se reactivó en caliente: REINICIO DEL JUEGO NECESARIO",
+                       "Queda activado en la configuración, con la misma entrada y salida. El generador no volvió a generar sin reiniciar." };
             Next();
         }
         else if (elapsed > 8.0)

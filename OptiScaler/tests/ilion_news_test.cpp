@@ -1,4 +1,4 @@
-// ILION AL DÍA: offline checks of the feed reader (no network)
+﻿// ILION AL DÍA: offline checks of the feed reader (no network)
 #include "misc/IlionNews.h"
 #include <cstdio>
 
@@ -89,6 +89,27 @@ int main()
         CHECK(px && (*px)[(90 * N::kImageW + 100) * 4] > 200 && (*px)[(90 * N::kImageW + 220) * 4] < 40 && (*px)[(90 * N::kImageW + 100) * 4 + 3] == 255,
               "recorte centrado: rojo a la izquierda del centro, negro a la derecha");
         CHECK(!N::DecodeCover(std::string(2000, 'x')), "lo que no es imagen no se decodifica");
+    }
+
+    // Codificación: entidades con nombre y numéricas, UTF-8 directo, bytes no válidos
+    {
+        CHECK(N::CleanText("Acci&oacute;n, Espa&ntilde;a, ping&uuml;ino, &iquest;Qu&eacute;? &iexcl;S&iacute;! &Ntilde;u, &Aacute;lvaro, M&uacute;sica") ==
+                  "Acción, España, pingüino, ¿Qué? ¡Sí! Ñu, Álvaro, Música",
+              "entidades con nombre de Latin-1 (á é í ó ú ñ Ñ ü ¿ ¡)");
+        CHECK(N::CleanText("Rock&rsquo;s &ldquo;GTA VI&rdquo; &hellip; 2026 &ndash; 50&euro; &copy; &deg;") == "Rock’s “GTA VI” … 2026 – 50€ © °",
+              "tipografía: comillas, puntos suspensivos, rayas, euro, grados");
+        CHECK(N::CleanText("Pok&#233;mon &#xF1; &#8217; Bj&ouml;rk Dvo&#345;&#225;k") == "Pokémon ñ ’ Björk Dvořák", "entidades numéricas y nombres internacionales");
+        CHECK(N::CleanText("Ya está aquí: ñandú, ¿cuándo? ¡ahora! Zoë · Łódź") == "Ya está aquí: ñandú, ¿cuándo? ¡ahora! Zoë · Łódź", "UTF-8 directo, intacto");
+        CHECK(N::CleanText("Bien\xC3 roto \xFF fin") == "Bien\xEF\xBF\xBD roto \xEF\xBF\xBD fin", "bytes no válidos: U+FFFD, nunca texto roto");
+        CHECK(N::CleanText("a&nbsp;b&amp;oacute;") == "a b&oacute;" && N::CleanText(N::CleanText("a&amp;oacute;")) == "aó",
+              "nbsp, y descripción doblemente escapada");
+        const N::Feed es { "Prueba", "https://example.com/es", N::Games };
+        const auto it = N::ParseFeed(R"(<rss><item><title>El regreso de &lt;b&gt;Pok&eacute;mon&lt;/b&gt;: &iquest;listo?</title><link>https://example.com/x</link><pubDate>Wed, 04 Nov 2026 21:00:00 +0000</pubDate><description>&lt;p&gt;Nintendo confirm&oacute; la fecha del pr&oacute;ximo juego de la saga en Espa&ntilde;a.&lt;/p&gt;</description></item></rss>)", es);
+        CHECK(it.size() == 1 && it[0].title == "El regreso de Pokémon: ¿listo?" && it[0].summary == "Nintendo confirmó la fecha del próximo juego de la saga en España.",
+              "titular y resumen de un feed con entidades y HTML escapado");
+        CHECK(N::CleanText("Rendimiento: A < B y C > D") == "Rendimiento: A < B y C > D", "un «<» suelto es texto, no una etiqueta");
+        CHECK(std::string(N::BlockName(N::Tech)) == "TECNOLOGÍA" && std::string(N::kFeeds[1].source) == "IGN España",
+              "los textos fijos del código salen en UTF-8 (sin doble codificación)");
     }
 
     printf("ILION AL DIA: %d comprobaciones, %d fallos\n", checks, failures);

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // ILION TERMINAL: technical telemetry for the Home screen (replaces ILION Advisor's box). Read only, nothing is set.
 //
@@ -25,6 +25,8 @@
 #include <thread>
 
 #include "HwTelemetry.h"
+
+#pragma execution_character_set(push, "utf-8")
 
 namespace IlionTerminal
 {
@@ -501,3 +503,5 @@ class Monitor
     Sensors latest;
 };
 } // namespace IlionTerminal
+
+#pragma execution_character_set(pop)

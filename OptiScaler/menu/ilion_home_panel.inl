@@ -1,4 +1,4 @@
-// ILION AL DÍA + ILION TERMINAL: the box of Home that ILION Advisor used (Full: the centre of the header; Compact: the
+﻿// ILION AL DÍA + ILION TERMINAL: the box of Home that ILION Advisor used (Full: the centre of the header; Compact: the
 // second cell of its header). Advisor's suggestion was replaced by PERFILES; its facts are still gathered as before.
 // Only this box changes: nothing here touches the game, a profile, the upscaler or FG. Its preferences live in
 // %LOCALAPPDATA%\ILION\inicio.json, never in OptiScaler.ini.
@@ -109,10 +109,15 @@ static void OpenLink(const std::string& url)
 {
     if (url.rfind("https://", 0) != 0 && url.rfind("http://", 0) != 0)
         return;
-    std::wstring w(url.begin(), url.end()); // validated ASCII link from the feed
-    for (wchar_t& c : w)
+    for (unsigned char c : url)
         if (c < 0x20)
             return;
+    // UTF-8 to UTF-16 (a link may carry accents): not byte by byte
+    const int len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, url.c_str(), (int) url.size(), nullptr, 0);
+    if (len <= 0)
+        return;
+    std::wstring w((size_t) len, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, url.c_str(), (int) url.size(), w.data(), len);
     ShellExecuteW(nullptr, L"open", w.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 

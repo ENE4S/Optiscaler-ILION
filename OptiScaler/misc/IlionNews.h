@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // ILION AL DÍA: real headlines from the public RSS feeds of gaming and technology outlets, for the Home screen
 // (replaces ILION Advisor's box).
@@ -19,6 +19,8 @@
 #include "IlionCommunity.h"
 
 #include <wincodec.h>
+
+#pragma execution_character_set(push, "utf-8")
 
 #include <algorithm>
 #include <atomic>
@@ -108,6 +110,59 @@ inline void AppendUtf8(std::string& out, unsigned cp)
             out += (char) (0x80 | (cp & 0x3F));
 }
 
+// Named HTML entities: all of Latin-1 (á, ñ, ¿, ¡, ü, º…) and the usual typography (’, “, …, –, €). Without them,
+// a feed that writes «Acci&oacute;n» showed the entity itself
+inline unsigned NamedEntity(const std::string& e)
+{
+    static const char* latin1[96] = { "nbsp", "iexcl", "cent", "pound", "curren", "yen", "brvbar", "sect", "uml", "copy", "ordf", "laquo",
+                                      "not", "shy", "reg", "macr", "deg", "plusmn", "sup2", "sup3", "acute", "micro", "para", "middot",
+                                      "cedil", "sup1", "ordm", "raquo", "frac14", "frac12", "frac34", "iquest", "Agrave", "Aacute", "Acirc",
+                                      "Atilde", "Auml", "Aring", "AElig", "Ccedil", "Egrave", "Eacute", "Ecirc", "Euml", "Igrave", "Iacute",
+                                      "Icirc", "Iuml", "ETH", "Ntilde", "Ograve", "Oacute", "Ocirc", "Otilde", "Ouml", "times", "Oslash",
+                                      "Ugrave", "Uacute", "Ucirc", "Uuml", "Yacute", "THORN", "szlig", "agrave", "aacute", "acirc", "atilde",
+                                      "auml", "aring", "aelig", "ccedil", "egrave", "eacute", "ecirc", "euml", "igrave", "iacute", "icirc",
+                                      "iuml", "eth", "ntilde", "ograve", "oacute", "ocirc", "otilde", "ouml", "divide", "oslash", "ugrave",
+                                      "uacute", "ucirc", "uuml", "yacute", "thorn", "yuml" };
+    for (unsigned i = 0; i < 96; i++)
+        if (e == latin1[i])
+            return 160 + i;
+    static const struct
+    {
+        const char* name;
+        unsigned cp;
+    } other[] = { { "ndash", 0x2013 }, { "mdash", 0x2014 }, { "lsquo", 0x2018 }, { "rsquo", 0x2019 }, { "sbquo", 0x201A },
+                  { "ldquo", 0x201C }, { "rdquo", 0x201D }, { "bdquo", 0x201E }, { "hellip", 0x2026 }, { "bull", 0x2022 },
+                  { "euro", 0x20AC }, { "trade", 0x2122 }, { "prime", 0x2032 }, { "lsaquo", 0x2039 }, { "rsaquo", 0x203A },
+                  { "OElig", 0x152 }, { "oelig", 0x153 }, { "Scaron", 0x160 }, { "scaron", 0x161 }, { "Yuml", 0x178 }, { "thinsp", 0x2009 },
+                  { "ensp", 0x2002 }, { "emsp", 0x2003 }, { "zwnj", 0x200C }, { "zwj", 0x200D } };
+    for (const auto& o : other)
+        if (e == o.name)
+            return o.cp;
+    return 0;
+}
+
+// Bytes that are not valid UTF-8 become U+FFFD: what reaches ImGui and the cache is always valid text
+inline std::string ValidUtf8(const std::string& s)
+{
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size();)
+    {
+        const unsigned char c = (unsigned char) s[i];
+        const int n = c < 0x80 ? 1 : (c >> 5) == 0x6 ? 2 : (c >> 4) == 0xE ? 3 : (c >> 3) == 0x1E ? 4 : 0;
+        bool ok = n > 0 && i + n <= s.size();
+        for (int k = 1; ok && k < n; k++)
+            ok = ((unsigned char) s[i + k] & 0xC0) == 0x80;
+        if (ok && n == 2 && c < 0xC2)
+            ok = false; // overlong
+        if (ok)
+            out.append(s, i, n), i += n;
+        else
+            out += "\xEF\xBF\xBD", i++; // U+FFFD, written as bytes so it doesn't depend on the source encoding
+    }
+    return out;
+}
+
 // Text of an element: CDATA unwrapped, tags removed, entities decoded, spaces collapsed
 inline std::string CleanText(std::string s)
 {
@@ -116,16 +171,16 @@ inline std::string CleanText(std::string s)
         const size_t b = s.find("]]>", a);
         s = s.substr(0, a) + s.substr(a + 9, (b == std::string::npos ? s.size() : b) - a - 9) + (b == std::string::npos ? "" : s.substr(b + 3));
     }
+    // A tag starts with < and a letter, / ! or ? and ends at its >; a lone «<» (A < B) is text
     std::string noTags;
-    bool inTag = false;
-    for (char c : s)
+    for (size_t i = 0; i < s.size(); i++)
     {
-        if (c == '<')
-            inTag = true;
-        else if (c == '>')
-            inTag = false;
-        else if (!inTag)
-            noTags += c;
+        const char next = i + 1 < s.size() ? s[i + 1] : 0;
+        const size_t close = s[i] == '<' && (std::isalpha((unsigned char) next) || next == '/' || next == '!' || next == '?') ? s.find('>', i) : std::string::npos;
+        if (close != std::string::npos)
+            i = close;
+        else
+            noTags += s[i];
     }
     std::string out;
     for (size_t i = 0; i < noTags.size(); i++)
@@ -154,6 +209,8 @@ inline std::string CleanText(std::string s)
             out += '\'';
         else if (e == "nbsp")
             out += ' ';
+        else if (const unsigned cp = NamedEntity(e); cp != 0)
+            AppendUtf8(out, cp == 160 ? 32 : cp); // a non-breaking space as a plain one
         else if (!e.empty() && e[0] == '#')
             AppendUtf8(out, (unsigned) strtoul(e.c_str() + (e.size() > 1 && (e[1] == 'x' || e[1] == 'X') ? 2 : 1), nullptr,
                                                 e.size() > 1 && (e[1] == 'x' || e[1] == 'X') ? 16 : 10));
@@ -171,7 +228,7 @@ inline std::string CleanText(std::string s)
     }
     while (!collapsed.empty() && collapsed.back() == ' ')
         collapsed.pop_back();
-    return collapsed;
+    return ValidUtf8(collapsed);
 }
 
 inline std::string Inner(const std::string& xml, const char* tag, size_t from = 0, size_t to = std::string::npos)
@@ -371,7 +428,7 @@ inline std::vector<Item> ParseFeed(const std::string& xml, const Feed& feed)
         Item it;
         it.source = feed.source;
         it.block = feed.block;
-        it.title = CleanText(Inner(xml, "title", a, b));
+        it.title = CleanText(CleanText(Inner(xml, "title", a, b))); // twice: some outlets escape HTML inside the title too
         if (atom)
         {
             const size_t l = xml.find("<link", a);
@@ -583,7 +640,8 @@ inline void SaveCache(const Snapshot& s)
             j["items"].push_back({ { "title", it.title }, { "link", it.link }, { "source", it.source }, { "time", it.time }, { "block", it.block },
                                    { "rumor", it.rumor }, { "editorial", it.editorial }, { "pinned", it.pinned }, { "summary", it.summary },
                                    { "image", it.imageUrl } });
-    C::WriteAtomic(CachePath(), j.dump(1));
+    // Never throws: a byte that is not UTF-8 would make dump() throw on the news thread
+    C::WriteAtomic(CachePath(), j.dump(1, ' ', false, C::Json::error_handler_t::replace));
 }
 
 inline bool LoadCache(Snapshot& s)
@@ -785,3 +843,5 @@ class Service
     Snapshot snap;
 };
 } // namespace IlionNews
+
+#pragma execution_character_set(pop)

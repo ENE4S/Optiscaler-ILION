@@ -677,6 +677,25 @@ bool FFXFeatureDx12::InitFFX(const NVSDK_NGX_Parameter* InParameters)
             State::Instance().ffxUpscalerVersionsDx12.ids[Config::Instance()->FfxUpscalerIndex.value_or_default()];
         backendDesc.header.pNext = &override.header;
 
+        // ILION BLACKLIGHT: the AMD driver's DX12 provider called directly (the "FSR 4 · Driver" variant) got the SDK 1.x
+        // chain only: no upscaler version. AMD's SDK 2.x dll always sends ffxCreateContextDescUpscaleVersion ("must be
+        // set to FFX_UPSCALER_VERSION") when it hands the upscale to the driver, and ILION's Vulkan driver path already
+        // does (FFXFeature_Vk). Without it the driver can't know which upscaler API the caller speaks. As on Vulkan: the
+        // version descriptor, no version override (the driver provider is a single provider)
+        struct UpscaleVersionDesc
+        {
+            ffxCreateContextDescHeader header;
+            uint32_t version;
+        } upscaleVersion {};
+
+        if (FfxApiProxy::SrDriverProviderActive())
+        {
+            upscaleVersion.header.type = 0x0001000Bu;                 // FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE_VERSION
+            upscaleVersion.version = (4u << 22) | (1u << 12) | 2u;   // 4.1.2, the newest the driver accepts
+            backendDesc.header.pNext = &upscaleVersion.header;
+            LOG_INFO("AMD driver FSR 4 provider (direct): context made with the upscaler version descriptor 4.1.2");
+        }
+
         LOG_DEBUG("_createContext!");
 
         {

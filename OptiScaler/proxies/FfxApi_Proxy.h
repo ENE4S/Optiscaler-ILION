@@ -555,6 +555,9 @@ class FfxApiProxy
     }
     static bool SrIndexManual() { return _srIndexManual; }
 
+    // ILION BLACKLIGHT: the upscaler in use is an AMD driver provider (amdxcffx64), called directly without AMD's SDK dll
+    static bool SrDriverProviderActive() { return upscaling_dx12.driverProvider; }
+
     // ILION: the provider of its FFX version list the dll in use runs by itself. An FFX dll also lists the AMD driver's
     // provider (an external one, bit 31 of its id): ILION's IAmdExtFfxApi (FSR4Upgrade) hands it to every FFX dll that
     // asks, and it comes first as the newest. Index 0 would make a community build pass the upscale to the driver.

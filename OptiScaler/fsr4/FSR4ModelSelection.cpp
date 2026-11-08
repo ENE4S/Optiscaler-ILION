@@ -32,6 +32,16 @@ uint32_t getCorrectedPreset(uint32_t preset)
 
     State::Instance().currentFsr4Preset = correctedPreset;
 
+    // ILION R2: what FFX asked and what it gets, once per change, to check the model each preset loads
+    static uint32_t lastAsked = UINT32_MAX, lastGiven = UINT32_MAX;
+    if (preset != lastAsked || correctedPreset != lastGiven)
+    {
+        lastAsked = preset;
+        lastGiven = correctedPreset;
+        LOG_INFO("FSR 4 model preset: asked {}, given {}{}", preset, correctedPreset,
+                 Config::Instance()->Fsr4Preset.has_value() ? " (Fsr4Preset set in the ini)" : "");
+    }
+
     return correctedPreset;
 }
 

@@ -278,6 +278,10 @@ struct Plan
 
 static Mode mode = Mode::Optimo;
 static bool modeLoaded = false;
+// ILION v1.4.0 BLACKLIGHT: perfil cero, «Sin perfil / Control manual». Ningún modo activo: OPTIMIZAR no se puede usar y
+// nada se aplica al entrar ni al salir (los ajustes del juego quedan como estén). Se recuerda por juego con un archivo
+// propio (.manual.ini), sin tocar el perfil guardado. Los cuatro modos no cambian
+static bool manual = false;
 static std::vector<Step> steps;
 static std::vector<Step> changes; // el resumen de la última optimización
 static bool running = false;
@@ -312,6 +316,7 @@ static std::filesystem::path ProfilePath() { return FileOf(L".perfil.ini"); }
 static std::filesystem::path PreviousPath() { return FileOf(L".perfil.anterior.ini"); }
 static std::filesystem::path OriginalPath() { return FileOf(L".original.ini"); }
 static std::filesystem::path SessionPath() { return FileOf(L".sesion.ini"); }
+static std::filesystem::path ManualPath() { return FileOf(L".manual.ini"); }
 static std::filesystem::path LegacyRestorePath() { return FileOf(L".restauracion.ini"); }
 static std::filesystem::path MatrixPath() { return Folder() / L"compatibilidad.ini"; }
 
@@ -319,6 +324,26 @@ static bool Exists(const std::filesystem::path& p)
 {
     std::error_code ec;
     return std::filesystem::exists(p, ec);
+}
+
+// Perfil cero: solo cambia el estado y su archivo; no aplica, restaura ni apaga nada
+static void SetManual(bool on)
+{
+    if (manual == on)
+        return;
+    manual = on;
+    std::error_code ec;
+    if (on)
+    {
+        std::filesystem::create_directories(ManualPath().parent_path(), ec);
+        CSimpleIniA ini;
+        ini.SetUnicode(true);
+        ini.SetValue("perfil_cero", "activo", "true");
+        ini.SetValue("perfil_cero", "nota", "Sin perfil / Control manual: el optimizador de perfiles no interviene");
+        ini.SaveFile(ManualPath().c_str());
+    }
+    else
+        std::filesystem::remove(ManualPath(), ec);
 }
 
 static std::string NowText()
@@ -3732,6 +3757,7 @@ template <typename Ctx> static void Panel(Ctx& ctx)
         for (int i = 0; i < (int) Mode::Count; i++)
             if (saved.modeName == ModeName((Mode) i))
                 mode = (Mode) i;
+        manual = Exists(ManualPath());
     }
 
     Tick(ctx);
@@ -3821,11 +3847,14 @@ template <typename Ctx> static void OptimizerBlock(Ctx& ctx)
     {
         if (i % 2 == 1)
             ImGui::SameLine();
-        const bool selected = (int) mode == i;
+        const bool selected = !manual && (int) mode == i;
         if (selected)
             ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPilot(IlionTheme::ShellPal::Green)));
         if (IlionTheme::Button(StrFmt("%s##OptMode%d", ModeName((Mode) i), i).c_str(), ImVec2(modeWidth, 0.0f)))
+        {
             mode = (Mode) i;
+            SetManual(false);
+        }
         if (selected)
             ImGui::PopStyleColor();
         // A red pilot on the mode whose configuration is applied when it no longer matches (the same state as the
@@ -3836,7 +3865,7 @@ template <typename Ctx> static void OptimizerBlock(Ctx& ctx)
             for (int m = 0; m < (int) Mode::Count; m++)
                 if (ReadSaved().exists && ReadSaved().modeName == ModeName((Mode) m))
                     appliedIndex = m;
-        if (appliedIndex == i && lastOutcomeLevel == 2 && !running)
+        if (!manual && appliedIndex == i && lastOutcomeLevel == 2 && !running)
         {
             const ImVec2 bmin = ImGui::GetItemRectMin(), bmax = ImGui::GetItemRectMax();
             const float h = bmax.y - bmin.y;
@@ -3846,15 +3875,27 @@ template <typename Ctx> static void OptimizerBlock(Ctx& ctx)
                 ImGui::SetTooltip("%s", "La configuración aplicada por este modo ya no coincide con la del juego: mira ACCIONES PENDIENTES");
         }
     }
+    // Perfil cero, a todo el ancho bajo los cuatro modos
+    if (manual)
+        ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPilot(IlionTheme::ShellPal::Green)));
+    if (IlionTheme::Button("SIN PERFIL / CONTROL MANUAL##OptModeManual", ImVec2(ImGui::GetContentRegionAvail().x, 0.0f)))
+        SetManual(true);
+    if (manual)
+        ImGui::PopStyleColor();
     ImGui::EndDisabled();
-    Coloured(IlionTheme::ShellPal::Text2, ShortText(mode), true);
-    if (ImGui::IsItemHovered())
+    if (manual)
+        Coloured(IlionTheme::ShellPal::Text2, "Ningún perfil activo · control manual. El optimizador no aplica nada: escalado, multiplicador y proveedor de FG quedan como los configures. Elige un modo para volver a usar los perfiles.", true);
+    else
     {
-        ImGui::BeginTooltip();
-        ImGui::PushTextWrapPos(font * 26.0f);
-        ImGui::TextUnformatted(PolicyOf(mode).text);
-        ImGui::PopTextWrapPos();
-        ImGui::EndTooltip();
+        Coloured(IlionTheme::ShellPal::Text2, ShortText(mode), true);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::BeginTooltip();
+            ImGui::PushTextWrapPos(font * 26.0f);
+            ImGui::TextUnformatted(PolicyOf(mode).text);
+            ImGui::PopTextWrapPos();
+            ImGui::EndTooltip();
+        }
     }
     ImGui::Spacing();
     // CONFIGURACIÓN DEL PERFIL: lo que decidió la última optimización y, de cada parte, si está pendiente, aplicada o
@@ -3979,8 +4020,13 @@ template <typename Ctx> static void OptimizerBlock(Ctx& ctx)
     }
     ImGui::Spacing();
     ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPal::Orange));
-    if (IlionTheme::Button(running ? "OPTIMIZANDO...##ProfilesGo" : "OPTIMIZAR JUEGO##ProfilesGo", ImVec2(ImGui::GetContentRegionAvail().x, std::floor(font * 2.4f))) &&
-        !running)
+    ImGui::BeginDisabled(manual);
+    const bool goPressed = IlionTheme::Button(running ? "OPTIMIZANDO...##ProfilesGo" : "OPTIMIZAR JUEGO##ProfilesGo",
+                                              ImVec2(ImGui::GetContentRegionAvail().x, std::floor(font * 2.4f)));
+    ImGui::EndDisabled();
+    if (manual && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("%s", "Sin perfil / Control manual: elige un modo para optimizar");
+    if (goPressed && !running && !manual)
     {
         Begin();
         optimizedMode = mode;
@@ -4086,15 +4132,26 @@ template <typename Ctx> static void Controls(Ctx& ctx, bool split)
     {
         if (i % 2 == 1)
             ImGui::SameLine();
-        const bool selected = (int) mode == i;
+        const bool selected = !manual && (int) mode == i;
         if (selected)
             ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPilot(IlionTheme::ShellPal::Green)));
         if (IlionTheme::Button(StrFmt("%s##ProfileMode%d", ModeName((Mode) i), i).c_str(), ImVec2(modeWidth, 0.0f)))
+        {
             mode = (Mode) i;
+            SetManual(false);
+        }
         if (selected)
             ImGui::PopStyleColor();
     }
-    if (split)
+    if (manual)
+        ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPilot(IlionTheme::ShellPal::Green)));
+    if (IlionTheme::Button("SIN PERFIL / CONTROL MANUAL##ProfileModeManual", ImVec2(ImGui::GetContentRegionAvail().x, 0.0f)))
+        SetManual(true);
+    if (manual)
+        ImGui::PopStyleColor();
+    if (manual)
+        Coloured(IlionTheme::ShellPal::Text2, "Ningún perfil activo · control manual. El optimizador no aplica nada: escalado, multiplicador y proveedor de FG quedan como los configures. Elige un modo para volver a usar los perfiles.", true);
+    else if (split)
     {
         // Dos líneas útiles; la explicación completa al pasar por encima
         Coloured(IlionTheme::ShellPal::Text2, ShortText(mode), true);
@@ -4113,7 +4170,13 @@ template <typename Ctx> static void Controls(Ctx& ctx, bool split)
 
     const float full = ImGui::GetContentRegionAvail().x;
     ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(IlionTheme::ShellPal::Orange));
-    if (IlionTheme::Button(running ? "OPTIMIZANDO...##ProfilesGo" : "OPTIMIZAR JUEGO##ProfilesGo", ImVec2(full, std::floor(font * 2.6f))) && !running)
+    ImGui::BeginDisabled(manual);
+    const bool goPressed =
+        IlionTheme::Button(running ? "OPTIMIZANDO...##ProfilesGo" : "OPTIMIZAR JUEGO##ProfilesGo", ImVec2(full, std::floor(font * 2.6f)));
+    ImGui::EndDisabled();
+    if (manual && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("%s", "Sin perfil / Control manual: elige un modo para optimizar");
+    if (goPressed && !running && !manual)
     {
         Begin();
         fromOptimize = true;

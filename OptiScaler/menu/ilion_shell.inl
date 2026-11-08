@@ -1254,6 +1254,22 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
     drawStates();
     if (!same)
         TextWrappedColored(Tone(pal::Orange), "%s", pendingNote);
+
+    // ILION v1.4.0 R2: Radeon Anti-Lag switched on in Adrenalin was seen to break frame pacing with frame generation.
+    // Only a notice: ILION doesn't read or change the driver's setting
+    if (IdentifyGpu::getPrimaryGpu().vendorId == VendorId::AMD)
+    {
+        ImGui::Dummy(Sz(0.f, 4.f));
+        TextWrappedColored(Tone(pal::Dim), "%s",
+                           Lx("AMD Anti-Lag switched on in Adrenalin can cause stutter and frame pacing problems with Frame Generation. "
+                              "Switching it off is recommended.",
+                              "AMD Anti-Lag activado desde Adrenalin puede provocar tirones y problemas de frame pacing con Frame "
+                              "Generation. Se recomienda desactivarlo.",
+                              "O AMD Anti-Lag ativado no Adrenalin pode causar travamentos e problemas de frame pacing com a Frame "
+                              "Generation. Recomenda-se desativá-lo.",
+                              "AMD Anti-Lag, включённый в Adrenalin, может вызывать рывки и проблемы с равномерностью кадров при "
+                              "генерации кадров. Рекомендуется отключить его."));
+    }
 }
 
 void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)

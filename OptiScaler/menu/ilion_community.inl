@@ -583,6 +583,7 @@ template <typename Ctx> static bool Apply(Ctx& ctx, const C::Profile& p, std::st
         if (p.mode == C::kModes[i].id)
             P::mode = (P::Mode) i;
     P::modeLoaded = true;
+    P::SetManual(false); // activar un perfil de la comunidad es elegir su modo (acción explícita)
     applied = p.id;
     out = std::string(v->name) + ", preset " + P::kPresets[presetIndex].name + ", " + fgWhat +
           (fgRestart ? ". El cambio de FG se aplica al reiniciar el juego" : "") + ". Lo que falte por comprobar está en el cuadro de pendientes";

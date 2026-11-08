@@ -10,6 +10,7 @@
 #include <hooks/Streamline_Hooks.h>
 #include <hooks/Xell_Hooks.h>
 #include <misc/FrameLimit.h>
+#include <misc/IlionDynamicCapRule.h>
 #include <proxies/XeFG_Proxy.h>
 
 #include <algorithm>
@@ -474,40 +475,36 @@ bool ExternalCapSuspended()
 
 float CapFps()
 {
-    if (!TargetAsCap())
-    {
-        capSuspendedAt.store(0);
-        return 0.0f;
-    }
-
+    // ILION v1.4.0 R3: the cap is Dynamic MFG's. It holds the frames only while Dynamic MFG runs for the provider in
+    // use (IlionDynamicCapRule); with a fixed multiplier it never applies, whatever the saved "Use target as cap" says.
+    // R2 capped fixed XeFG, ILION's DLSSG, FSR FG and the game's DLSSG (real frames held at target / multiplier).
+    // Re-evaluated on every call (FrameLimit::targetFps): switching Dynamic off removes the cap at the next frame
     const auto& state = State::Instance();
+    const Provider provider = Current();
 
-    // The Vulkan -> D3D12 XeFG bridge keeps its limiter as it was until it is validated
-    if (state.swapchainInteropApi == SwapchainInteropApi::VkwDx12)
-        return 0.0f;
-    const float target = TargetFps();
+    IlionDynamicCapRule::Inputs in;
+    in.targetAsCap = TargetAsCap();
+    in.vulkanBridge = state.swapchainInteropApi == SwapchainInteropApi::VkwDx12;
+    in.target = TargetFps();
+    in.ownRunning = provider != Provider::DlssgGame && OwnRunning();
+    in.xefgDynamic = provider == Provider::XeFG && XeFG_DynamicMFG::Allowed();
+    in.xefgControllerCap = state.xefgDynamicCapFps;
+    in.dlssgOutputDynamic = provider == Provider::DlssgOutput && Config::Instance()->FGDLSSGForceDMFG.value_or_default();
+    in.ilionDrivesExternal = provider == Provider::DlssgGame && IlionDrivesExternal();
+    in.externalGenerating = provider == Provider::DlssgGame && in.ilionDrivesExternal && ExternalGenerating();
 
-    switch (Current())
-    {
-    case Provider::XeFG:
-        // R3: Dynamic's controller sets the cap it holds (it accounts for the automatic target and the rounding)
-        if (XeFG_DynamicMFG::Allowed())
-            return OwnRunning() && state.xefgDynamicCapFps > 0.0f ? state.xefgDynamicCapFps : 0.0f;
-        return OwnRunning() && target > 0.0f ? target : 0.0f;
-    case Provider::DlssgOutput:
-    case Provider::FsrFg:
-        return OwnRunning() && target > 0.0f ? target : 0.0f;
-    case Provider::DlssgGame:
-        // ILION Dynamic: the backend has no controller of its own, the cap holds. The backend's Dynamic holds the
-        // target by itself; a fixed multiplier is capped until the loop guard trips
-        if (IlionDrivesExternal())
-            return ExternalGenerating() && target > 0.0f ? target : 0.0f;
-        if (BackendDynamic() || ExternalCapSuspended())
-            return 0.0f;
-        return ExternalGenerating() && target > 0.0f ? target : 0.0f;
-    default:
-        return 0.0f;
-    }
+    const auto ruleProvider = provider == Provider::XeFG          ? IlionDynamicCapRule::Provider::XeFG
+                              : provider == Provider::DlssgGame   ? IlionDynamicCapRule::Provider::DlssgGame
+                              : provider == Provider::DlssgOutput ? IlionDynamicCapRule::Provider::DlssgOutput
+                              : provider == Provider::FsrFg       ? IlionDynamicCapRule::Provider::FsrFg
+                                                                  : IlionDynamicCapRule::Provider::None;
+    const float cap = IlionDynamicCapRule::Cap(ruleProvider, in);
+
+    // No cap: the fixed-multiplier loop guard has nothing to keep (no residual state for the next time it applies)
+    if (cap <= 0.0f)
+        capSuspendedAt.store(0);
+
+    return cap;
 }
 
 ExternalMode ExternalDynamicMode()
@@ -824,7 +821,7 @@ Status Get()
         s.backendDynamic = BackendDynamic();
         s.ilionDrives = IlionDrivesExternal();
         s.ilionRefused = IlionExternalRefused();
-        if (TargetAsCap() && TargetFps() > 0.0f)
+        if (TargetAsCap() && TargetFps() > 0.0f && DynamicEnabled())
         {
             s.capByBackend = s.backendDynamic;
             s.capSuspended = !s.backendDynamic && !s.ilionDrives && ExternalCapSuspended();

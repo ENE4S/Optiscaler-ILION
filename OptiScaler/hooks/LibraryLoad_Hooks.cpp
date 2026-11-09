@@ -28,6 +28,7 @@
 #include <hooks/Gdi32_Hooks.h>
 #include <hooks/Streamline_Hooks.h>
 #include <framegen/nvngx/Nvngx_HelixSR.h>
+#include <framegen/nvngx/Nvngx_XeMfgXmx.h>
 
 #include <fsr4/FSR4ModelSelection.h>
 #include <fsr4/FSR4Upgrade.h>
@@ -70,6 +71,14 @@ HMODULE LibraryLoadHooks::LoadLibraryCheckW(std::wstring libName, LPCWSTR lpLibF
         !helixFolder.empty() && Util::IsSubpath(std::filesystem::path(libName), helixFolder))
     {
         LOG_INFO("{} is HelixSR's (NVIDIA FG Lite): loaded as it is", libNameA);
+        return nullptr;
+    }
+
+    // ILION v1.4.0 fase 2: XeMFG XMX loads its own libxess_fg.dll from its folder: loaded as it is
+    if (const auto xmxFolder = Nvngx_XeMfgXmx::LoadedFolder();
+        !xmxFolder.empty() && Util::IsSubpath(std::filesystem::path(libName), xmxFolder))
+    {
+        LOG_INFO("{} is XeMFG XMX's: loaded as it is", libNameA);
         return nullptr;
     }
 

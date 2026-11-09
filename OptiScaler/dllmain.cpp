@@ -1493,7 +1493,15 @@ void CheckMemoryForProxies()
 
     XeSSProxy::InitXeSS();
     XeSSProxy::InitXeSSDx11();
-    XeFGProxy::InitXeFG();
+    // ILION v1.4.0 fase 2: not with XeMFG XMX as the DLSSG replacement (it loads its own libxess_fg.dll; one already in
+    // the process can make its XeFG Init fail, "Failed to create heap"), unless ILION's XeFG output is chosen. ILION's
+    // XeFG still loads on demand (XeFG_Dx12, FG_Hooks)
+    if (const auto cfg = Config::Instance();
+        cfg->FGNvngxReplacement.value_or_default() != FGNvngxReplacement::XeMfgXmx ||
+        cfg->FGOutput.value_or_default() == FGOutput::XeFG)
+        XeFGProxy::InitXeFG();
+    else
+        LOG_INFO("XeMFG XMX selected: ILION's libxess_fg.dll isn't preloaded");
     XeLLProxy::InitXeLL();
 
     XellHooks::Hook();

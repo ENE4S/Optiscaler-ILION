@@ -39,6 +39,7 @@
 
 #include <framegen/nvngx/Nvngx_FG.h>
 #include <framegen/nvngx/Nvngx_HelixSR.h>
+#include <framegen/nvngx/Nvngx_XeMfgXmx.h>
 #include <framegen/reprojection/Reprojection_Dx12.h>
 
 #include <nvapi/fakenvapi.h>
@@ -1669,6 +1670,8 @@ static const char* NvngxFgName(FGNvngxReplacement provider)
         return "Combo";
     case FGNvngxReplacement::HelixSR:
         return "FG Lite";
+    case FGNvngxReplacement::XeMfgXmx:
+        return "XeMFG XMX";
     default:
         return nullptr;
     }
@@ -1733,6 +1736,36 @@ static void DrawFgLiteState()
     }
     if (FgLiteShaderModel66() == 0)
         WrappedText(warn, Tr("This GPU's driver has no shader model 6.6: HelixSR frame generation can't run on it"));
+}
+
+// ILION v1.4.0 fase 2: under the selector while XeMFG XMX is chosen: what is installed and what its own log says about
+// this session (the XMX path is confirmed only by "model: 16" with the ported model and no error after it)
+static void DrawXeMfgXmxState()
+{
+    const auto install = Nvngx_XeMfgXmx::FindInstall();
+    const ImVec4 warn = IlionTheme::LampAmber;
+    if (install.dll.empty())
+    {
+        WrappedText(warn, Tr("XeMFG XMX not found. Extract realdody's dlssg-to-xefg-xmx release into OptiScaler\\custom\\XeMFG "
+                             "XMX (dlssg\\dlssg_to_xefg_intel_is_better.dll). ILION doesn't include it"));
+        return;
+    }
+    if (!install.programs)
+        WrappedText(warn, Tr("No xefg_mfg_programs folder next to it: the XMX model can't be ported"));
+
+    const auto& backend = Nvngx_XeMfgXmx::ReadBackend();
+    if (!backend.logThisSession)
+    {
+        WrappedText(ImGui::GetStyle().Colors[ImGuiCol_TextDisabled], Tr("Its log hasn't been written in this session yet"));
+        return;
+    }
+    if (!backend.lastError.empty())
+        WrappedText(IlionTheme::LampRed, StrFmt(Tr("XeMFG XMX error: %s"), backend.lastError.c_str()).c_str());
+    else if (backend.XmxConfirmed())
+        WrappedText(IlionTheme::LampGreen,
+                    StrFmt(Tr("XMX path confirmed by its log: model 16, XeFG %s"), backend.xefgVersion.c_str()).c_str());
+    else if (!backend.networkPath.empty())
+        WrappedText(warn, StrFmt(Tr("Path: %s (not confirmed yet)"), backend.networkPath.c_str()).c_str());
 }
 
 // generatedFrames: frames generated per rendered one in the last DLSSG evaluation, 0 when there is none
@@ -8636,6 +8669,10 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
             {
                 fgText = formatFg("FG Lite", Nvngx_FG::getMaxFakeFramesCount());
             }
+            else if (activeNvngxFg == FGNvngxReplacement::XeMfgXmx)
+            {
+                fgText = formatFg("XeMFG XMX", Nvngx_FG::getMaxFakeFramesCount());
+            }
             else if (state.activeFgOutput == FGOutput::DLSSG && fg)
             {
                 fgText = formatFg("DLSSG", fg->GetMaxInterpolationCount());
@@ -10735,6 +10772,29 @@ static FgCrtData GatherFgCrt(State& state)
         return d;
     }
 
+    // ILION v1.4.0 fase 2: XeMFG XMX. The multiplier is IlionDynamicMfg's for the game's DLSSG (measured at the
+    // presents, else the one asked for, marked as such), the same figure the overlay and INICIO show
+    if (nvngxOutput && nvngx == FGNvngxReplacement::XeMfgXmx)
+    {
+        const auto install = Nvngx_XeMfgXmx::FindInstall();
+        const auto& backend = Nvngx_XeMfgXmx::ReadBackend();
+        d.engine = "XeMFG XMX";
+        d.variant = !backend.logThisSession     ? "-"
+                    : !backend.lastError.empty() ? "error"
+                    : backend.XmxConfirmed()    ? "XMX (model 16)"
+                                                : "XMX not confirmed";
+        if (!install.dll.empty())
+            d.file = wstring_to_string(install.dll.filename().wstring());
+        if (!backend.xefgVersion.empty())
+            d.version = "XeFG " + backend.xefgVersion;
+
+        const auto status = IlionDynamicMfg::Get();
+        if (status.provider == IlionDynamicMfg::Provider::DlssgGame && status.multiplier > 0)
+            d.multiplier = StrFmt("%dx%s", status.multiplier,
+                                  status.appliedSource == IlionDynamicMfg::AppliedSource::Measured ? "" : " (asked)");
+        return d;
+    }
+
     if (nvngxOutput)
     {
         // DLSS Enabler and the other DLSSG replacements: their own dll and the version they report, never an .asi
@@ -12002,6 +12062,11 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
           "NVIDIA's DLSS frame generation, light mode (310.9.16), run by HelixSR 2.0.0 on GPUs that are not NVIDIA's\n\n"
           "Install HelixSR 2.0.0 with frame generation yourself: its setup builds NVIDIA's parts on your PC\n"
           "ILION includes none of it. DirectX 12 games with DLSS frame generation. One generated frame" },
+        { FGNvngxReplacement::XeMfgXmx, "XeMFG XMX (experimental)",
+          "Intel XeSS frame generation with the ported XMX multi frame model, up to 6X\n"
+          "(realdody's dlssg-to-xefg-xmx, GPL-3.0)\n\n"
+          "Extract its release into OptiScaler\\custom\\XeMFG XMX yourself: ILION includes none of it\n"
+          "DirectX 12 games. Its log confirms the XMX path (model 16)" },
     };
 
     // clang-format on
@@ -12052,6 +12117,12 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
     nvngxOptions[fgNvngxHelixIndex].set_disabled(FgLiteInstall().dll.empty(),
                                                  "Missing HelixSR-fsrfg\\amd_fidelityfx_dx12.dll (HelixSR 2.0.0)");
     nvngxOptions[fgNvngxHelixIndex].accent = "FG Lite";
+
+    // ILION v1.4.0 fase 2: XeMFG XMX needs realdody's DLL and DirectX 12
+    auto constexpr fgNvngxXmxIndex = (uint32_t) FGNvngxReplacement::XeMfgXmx;
+    nvngxOptions[fgNvngxXmxIndex].set_disabled(state.swapchainApi == API::Vulkan, "Unsupported API");
+    nvngxOptions[fgNvngxXmxIndex].set_disabled(Nvngx_XeMfgXmx::FindInstall().dll.empty(),
+                                               "Missing OptiScaler\\custom\\XeMFG XMX\\dlssg\\dlssg_to_xefg_intel_is_better.dll");
 
     // TODO: Automatically switch to any other option
 
@@ -12136,6 +12207,8 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                 ShowTooltip("What backend to use instead of the real DLSSG");
                 if (config->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::HelixSR)
                     DrawFgLiteState();
+                else if (config->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::XeMfgXmx)
+                    DrawXeMfgXmxState();
             }
             else
             {
@@ -12155,6 +12228,8 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                 ShowTooltip("What backend to use instead of the real DLSSG");
                 if (config->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::HelixSR)
                     DrawFgLiteState();
+                else if (config->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::XeMfgXmx)
+                    DrawXeMfgXmxState();
             }
 
             ImGui::EndTable();

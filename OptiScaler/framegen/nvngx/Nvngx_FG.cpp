@@ -10,6 +10,7 @@
 #include "Nvngx_Nukems.h"
 #include "Nvngx_Arturs.h"
 #include "Nvngx_HelixSR.h"
+#include "Nvngx_XeMfgXmx.h"
 #include "Nvngx_FFX.h"
 #include "Nvngx_Combo.h"
 #include <imgui/ImGuiNotify.hpp>
@@ -44,6 +45,10 @@ IFGNvngx* Nvngx_FG::getProvider()
         _provider = std::make_unique<Nvngx_HelixSR>();
         break;
 
+    case FGNvngxReplacement::XeMfgXmx:
+        _provider = std::make_unique<Nvngx_XeMfgXmx>();
+        break;
+
     case FGNvngxReplacement::None:
     default:
         return nullptr;
@@ -56,6 +61,19 @@ IFGNvngx* Nvngx_FG::getProvider()
         LOG_ERROR("NVIDIA FG Lite is not available (HelixSR 2.0.0 frame generation not found): no fallback");
         ImGui::InsertNotification(
             { ImGuiToastType::Error, 20000, "NVIDIA FG Lite is not available.\nHelixSR 2.0.0 frame generation not found." });
+        Config::Instance()->FGNvngxReplacement.set_volatile_value(FGNvngxReplacement::None);
+        State::Instance().activeFgNvngx = FGNvngxReplacement::None;
+        _provider.reset();
+        return nullptr;
+    }
+
+    // ILION v1.4.0 fase 2: XeMFG XMX either loads or stays off, the menu says why: another generator in its place would
+    // show as XeMFG XMX
+    if (selectedProvider == FGNvngxReplacement::XeMfgXmx && !_provider->isDx12Available())
+    {
+        LOG_ERROR("XeMFG XMX is not available (dlssg_to_xefg_intel_is_better.dll not found or not loadable): no fallback");
+        ImGui::InsertNotification({ ImGuiToastType::Error, 20000,
+                                    "XeMFG XMX is not available.\nOptiScaler\\custom\\XeMFG XMX\\dlssg not found." });
         Config::Instance()->FGNvngxReplacement.set_volatile_value(FGNvngxReplacement::None);
         State::Instance().activeFgNvngx = FGNvngxReplacement::None;
         _provider.reset();

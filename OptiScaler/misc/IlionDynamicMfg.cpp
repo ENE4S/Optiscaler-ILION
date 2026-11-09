@@ -68,6 +68,8 @@ const char* ExternalName(FGNvngxReplacement replacement)
         return "Combo";
     case FGNvngxReplacement::HelixSR:
         return "NVIDIA FG Lite";
+    case FGNvngxReplacement::XeMfgXmx:
+        return "XeMFG XMX";
     default:
         return "DLSSG";
     }

@@ -741,6 +741,8 @@ static bool FgAvailable(const std::string& id)
         return !vulkan && FfxApiProxy::IsFGReady(false) && state.artursFgFileAvailable;
     if (id == "nvngx_fglite")
         return !vulkan && !FgLiteInstall().dll.empty();
+    if (id == "nvngx_xemfg_xmx") // ILION v1.4.0 fase 2: realdody's XeMFG XMX, its DLL in OptiScaler\custom\XeMFG XMX
+        return !vulkan && !Nvngx_XeMfgXmx::FindInstall().dll.empty();
     return false;
 }
 
@@ -763,6 +765,8 @@ static std::string CurrentFgId()
             return "nvngx_combo";
         case FGNvngxReplacement::HelixSR:
             return "nvngx_fglite";
+        case FGNvngxReplacement::XeMfgXmx:
+            return "nvngx_xemfg_xmx";
         default:
             return "dlssg_nativo";
         }
@@ -1432,6 +1436,8 @@ static FgBackend FgBackendNow()
             return { "FFX + DLSS Enabler", true, b.route };
         case FGNvngxReplacement::HelixSR:
             return { "NVIDIA FG Lite (HelixSR)", true, b.route };
+        case FGNvngxReplacement::XeMfgXmx:
+            return { "XeMFG XMX (realdody)", true, b.route };
         default:
             // Sin reemplazo: el DLSSG oficial solo en una GPU NVIDIA; en otra, no se sabe quién genera
             if (IdentifyGpu::getPrimaryGpu().vendorId == VendorId::Nvidia)

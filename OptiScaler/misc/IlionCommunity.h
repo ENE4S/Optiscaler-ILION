@@ -91,6 +91,7 @@ inline const Item kFgs[] = { { "ninguno", "Sin FG" },
                              { "nvngx_ffx", "FSR 3/4 FG por FFX" },
                              { "nvngx_combo", "FFX + Enabler" },
                              { "nvngx_fglite", "NVIDIA FG Lite (HelixSR)" },
+                             { "nvngx_xemfg_xmx", "XeMFG XMX (realdody)" },
                              { "dlssg_salida", "Salida DLSSG (perfil v1, reemplazo sin indicar)" } };
 // La entrada de datos del FG (FGInput de ILION)
 inline const Item kRoutes[] = { { "ninguno", "Sin FG" },
@@ -244,6 +245,9 @@ struct FgImpl
     bool needsGameDlssg;    // necesita que el juego tenga DLSSG
 };
 
+// The server accepts XeMFG XMX profiles once ilion_community_v4_xemfg_xmx.sql is applied (not yet)
+inline constexpr bool kServerHasXeMfgXmx = false;
+
 inline const FgImpl kFgImpls[] = {
     { "ninguno", "", "", "NoFG", "", "ninguno", "", false, false },
     { "xefg", "XeFG", "Intel (XeSS FG)", "XeFG", "", "optifg,streamline,fsr31,fsr30", "libxess_fg.dll", false, false },
@@ -258,6 +262,8 @@ inline const FgImpl kFgImpls[] = {
     { "nvngx_combo", "FSR 3/4 FG + Enabler", "FidelityFX + DLSS Enabler", "DLSSG", "Combo", "nvngx,streamline,optifg,fsr31,fsr30",
       "dlss-enabler-headless.dll", true, false },
     { "nvngx_fglite", "NVIDIA FG Lite", "HelixSR 2.0.0", "DLSSG", "HelixSR", "nvngx,streamline,optifg,fsr31,fsr30", "", true, false },
+    { "nvngx_xemfg_xmx", "XeMFG XMX", "realdody (dlssg-to-xefg-xmx)", "DLSSG", "XeMfgXmx", "nvngx,streamline,optifg,fsr31,fsr30", "",
+      true, false },
     { "dlssg_salida", "DLSSG", "Salida DLSSG (v1)", "DLSSG", "", "auto,optifg,streamline,fsr31,fsr30", "", true, false },
 };
 
@@ -317,6 +323,8 @@ inline Evidence FgEvidence(const std::string& fg, const std::string& arch)
         return amd ? Evidence::Experimental : Evidence::Unknown;
     if (fg == "nvngx_fglite")
         return IsNvidiaArch(arch) ? Evidence::None : amd ? Evidence::Experimental : Evidence::Unknown;
+    if (fg == "nvngx_xemfg_xmx") // XeSS FG through realdody's DLSSG replacement: tried on RDNA 3 (Cyberpunk, 2X-6X)
+        return rtx || amd || IsIntelArch(arch) ? Evidence::Experimental : Evidence::Unknown;
     if (fg == "dlssg_salida")
         return Evidence::Unknown;
     return Evidence::None;
@@ -334,7 +342,7 @@ inline int FgMaxMultiplier(const std::string& fg, const std::string& arch)
         return arch == "rtx50" ? 4 : 2;
     if (fg == "dlssg_juego")
         return arch == "rtx40" ? 2 : 4;
-    if (fg == "nvngx_enabler" || fg == "nvngx_combo")
+    if (fg == "nvngx_enabler" || fg == "nvngx_combo" || fg == "nvngx_xemfg_xmx")
         return 6;
     return 4; // xefg, dlssg_salida
 }
@@ -1609,6 +1617,10 @@ inline std::pair<bool, std::string> Publish(const ServiceConfig& c, Session& s, 
         return { false, "Solo puedes publicar perfiles creados por ti en este equipo (este es descargado o importado)" };
     if (!p.authorId.empty() && p.authorId != s.userId)
         return { false, "Este perfil lo publicó otra cuenta" };
+    // ILION v1.4.0 fase 2: the server's catalogue doesn't list XeMFG XMX yet (ilion_community_v4_xemfg_xmx.sql)
+    if (p.fg == "nvngx_xemfg_xmx" && !kServerHasXeMfgXmx)
+        return { false, "Los perfiles con XeMFG XMX se guardan y se aplican en este equipo; publicarlos requiere actualizar "
+                        "el servidor de COMUNIDAD (pendiente)" };
     p.author = s.alias;
     std::string err;
     if (!Validate(p, &err))

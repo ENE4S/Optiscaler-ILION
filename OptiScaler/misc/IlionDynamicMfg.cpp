@@ -11,6 +11,7 @@
 #include <hooks/Xell_Hooks.h>
 #include <misc/FrameLimit.h>
 #include <misc/IlionDynamicCapRule.h>
+#include <framegen/nvngx/Nvngx_XeMfgXmx.h>
 #include <proxies/XeFG_Proxy.h>
 
 #include <algorithm>
@@ -772,6 +773,12 @@ Status Get()
             s.appliedSource = source;
             s.gen = source == AppliedSource::Measured ? Gen::Confirmed : Gen::Detected;
             s.reported = ExternalReported();
+
+            // ILION v1.4.0 fase 2: XeMFG XMX whose last XeFG context failed (its log) generates nothing: presents counted
+            // per real frame are Streamline's slots, not generated frames
+            if (state.activeFgNvngx == FGNvngxReplacement::XeMfgXmx && s.gen == Gen::Confirmed &&
+                Nvngx_XeMfgXmx::ReadBackend().ContextFailed())
+                s.gen = Gen::Detected;
         }
         else
         {

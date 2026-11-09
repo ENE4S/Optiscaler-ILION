@@ -1753,14 +1753,25 @@ static void DrawXeMfgXmxState()
     if (!install.programs)
         WrappedText(warn, Tr("No xefg_mfg_programs folder next to it: the XMX model can't be ported"));
 
-    const auto& backend = Nvngx_XeMfgXmx::ReadBackend();
+    const auto backend = Nvngx_XeMfgXmx::ReadBackend();
+    if (!backend.otherLibxessFg.empty())
+        WrappedText(warn, StrFmt(Tr("Another libxess_fg.dll is loaded in the game: %s. realdody: it can make XeFG's Init fail "
+                                    "(\"Failed to create heap\")"),
+                                 backend.otherLibxessFg.c_str())
+                              .c_str());
     if (!backend.logThisSession)
     {
         WrappedText(ImGui::GetStyle().Colors[ImGuiCol_TextDisabled], Tr("Its log hasn't been written in this session yet"));
         return;
     }
-    if (!backend.lastError.empty())
-        WrappedText(IlionTheme::LampRed, StrFmt(Tr("XeMFG XMX error: %s"), backend.lastError.c_str()).c_str());
+    if (backend.ContextFailed())
+        WrappedText(IlionTheme::LampRed,
+                    StrFmt(Tr("The last XeFG context failed (%s; %s). Without a context XeMFG XMX generates nothing: the "
+                              "presents counted are Streamline's. It retries when the resolution or the path changes"),
+                           backend.contextError.c_str(), backend.lastError.c_str())
+                        .c_str());
+    else if (!backend.lastError.empty())
+        WrappedText(warn, StrFmt(Tr("XeMFG XMX error: %s"), backend.lastError.c_str()).c_str());
     else if (backend.XmxConfirmed())
         WrappedText(IlionTheme::LampGreen,
                     StrFmt(Tr("XMX path confirmed by its log: model 16, XeFG %s"), backend.xefgVersion.c_str()).c_str());
@@ -8671,7 +8682,16 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
             }
             else if (activeNvngxFg == FGNvngxReplacement::XeMfgXmx)
             {
-                fgText = formatFg("XeMFG XMX", Nvngx_FG::getMaxFakeFramesCount());
+                // ILION v1.4.0 fase 2: compact, from the same status as FRAME GEN and INICIO (IlionDynamicMfg); how sure
+                // it is stays in FRAME GEN. Not confirmed: "?"; its context failed: "error"
+                const auto xmx = IlionDynamicMfg::Get();
+                if (Nvngx_XeMfgXmx::ReadBackend().ContextFailed())
+                    fgText = " (XeMFG XMX error)";
+                else if (xmx.multiplier > 0)
+                    fgText = std::format(" (XeMFG XMX \xC3\x97{}{})", xmx.multiplier,
+                                         xmx.gen == IlionDynamicMfg::Gen::Confirmed ? "" : "?");
+                else
+                    fgText = " (XeMFG XMX)";
             }
             else if (state.activeFgOutput == FGOutput::DLSSG && fg)
             {
@@ -10777,12 +10797,15 @@ static FgCrtData GatherFgCrt(State& state)
     if (nvngxOutput && nvngx == FGNvngxReplacement::XeMfgXmx)
     {
         const auto install = Nvngx_XeMfgXmx::FindInstall();
-        const auto& backend = Nvngx_XeMfgXmx::ReadBackend();
+        const auto backend = Nvngx_XeMfgXmx::ReadBackend();
         d.engine = "XeMFG XMX";
-        d.variant = !backend.logThisSession     ? "-"
-                    : !backend.lastError.empty() ? "error"
-                    : backend.XmxConfirmed()    ? "XMX (model 16)"
-                                                : "XMX not confirmed";
+        // VAR: the XeFG model its log says the context was made with (16 = the ported XMX model); the context's result is
+        // the state (an error isn't a variant)
+        d.variant = !backend.logThisSession || backend.contextModel < 0 ? "-"
+                    : backend.contextModel == 16                       ? "XMX (model 16)"
+                                                                       : StrFmt("model %d", backend.contextModel);
+        if (backend.ContextFailed())
+            d.status = 2; // loaded, not generating
         if (!install.dll.empty())
             d.file = wstring_to_string(install.dll.filename().wstring());
         if (!backend.xefgVersion.empty())
@@ -10790,8 +10813,9 @@ static FgCrtData GatherFgCrt(State& state)
 
         const auto status = IlionDynamicMfg::Get();
         if (status.provider == IlionDynamicMfg::Provider::DlssgGame && status.multiplier > 0)
-            d.multiplier = StrFmt("%dx%s", status.multiplier,
-                                  status.appliedSource == IlionDynamicMfg::AppliedSource::Measured ? "" : " (asked)");
+            d.multiplier = StrFmt("%dx%s", status.multiplier, status.gen == IlionDynamicMfg::Gen::Confirmed ? "" : "?");
+        else
+            d.multiplier = "-";
         return d;
     }
 

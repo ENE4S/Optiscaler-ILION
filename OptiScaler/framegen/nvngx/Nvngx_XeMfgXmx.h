@@ -45,7 +45,10 @@ class Nvngx_XeMfgXmx : public Nvngx_DllProxy
     };
     static Install FindInstall();
 
-    // What its own log says about this session (dlssg_to_xefg_intel_is_better.log next to the DLL, written by it)
+    // What its own log says about this session (dlssg_to_xefg_intel_is_better.log next to the DLL, written by it and
+    // flushed line by line). Its code (FrameGenerator::CreateContext): an XeFG context is created on the first evaluation
+    // and logs "Creating XeFG context"; when XeFG's Init fails it logs the error and makes no other context until the
+    // output size, format or path changes, and its evaluations return without generating
     struct Backend
     {
         bool logThisSession = false; // the log was written after this game started
@@ -54,11 +57,14 @@ class Nvngx_XeMfgXmx : public Nvngx_DllProxy
         std::string networkPath;     // "XMX (native), model 16"
         int contextModel = -1;       // model of the last "Creating XeFG context", -1 none
         bool xmxModel = false;       // "Ported XMX MFG model installed"
-        std::string lastError;       // the last [error] after the last context creation, empty when none
+        std::string contextError;    // the first [error] after the last context creation (its cause), empty when none
+        std::string lastError;       // the last [error] after it ("XeFG Init error: -1000"), empty when none
+        std::string otherLibxessFg;  // another libxess_fg.dll loaded in the game (not its own), empty when none
+        bool ContextFailed() const { return logThisSession && contextModel >= 0 && !lastError.empty(); }
         bool XmxConfirmed() const { return logThisSession && xmxModel && contextModel == 16 && lastError.empty(); }
     };
-    // Re-read at most every two seconds, and only when the file changed
-    static const Backend& ReadBackend();
+    // Re-read at most every two seconds, and only when the file changed. Thread safe: a copy
+    static Backend ReadBackend();
 
     // The folder of the DLL being loaded or loaded (empty before). Files under it load as they are (LibraryLoad_Hooks):
     // its libxess_fg.dll and programs are its own

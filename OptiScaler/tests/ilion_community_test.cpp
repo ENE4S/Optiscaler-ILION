@@ -562,10 +562,15 @@ int main()
         CHECK(std::string(C::NameOf(C::kReviews, "aprobado")) == "Publicado" && std::string(C::NameOf(C::kReviews, "local")) == "Perfil local",
               "un perfil local no se llama publicado");
 
-        // Coherencia con la migración: cada identificador del cliente está en la lista cerrada del servidor
-        const auto sql = std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() / L"ilion-community" / L"ilion_community_v2_fg.sql";
-        std::ifstream in(sql, std::ios::binary);
-        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        // Coherencia con las migraciones: cada identificador del cliente está en la lista cerrada del servidor (v2, y v4 para
+        // XeMFG XMX: preparada, se aplica con autorización)
+        const auto dir = std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() / L"ilion-community";
+        std::string text;
+        for (const auto* name : { L"ilion_community_v2_fg.sql", L"ilion_community_v4_xemfg_xmx.sql" })
+        {
+            std::ifstream in(dir / name, std::ios::binary);
+            text += std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        }
         bool inSql = !text.empty();
         for (const auto& i : C::kFgs)
             inSql = inSql && text.find(std::string("'") + i.id + "'") != std::string::npos;
@@ -576,6 +581,39 @@ int main()
         for (const auto& i : C::kModels)
             inSql = inSql && text.find(std::string("'") + i.id + "'") != std::string::npos;
         CHECK(inSql, "la migración v2 admite exactamente los identificadores del cliente");
+
+        // ILION v1.4.0 fase 2: XeMFG XMX, su propio identificador (no XeFG, Enabler ni Nukem), hasta 6X, la misma ruta que los
+        // demás reemplazos de DLSSG; se guarda y se lee exacto; no se publica hasta que el servidor lo admita
+        const auto* xmx = C::FgImplOf("nvngx_xemfg_xmx");
+        CHECK(xmx != nullptr && std::string(xmx->nvngx) == "XeMfgXmx" && std::string(xmx->output) == "DLSSG" &&
+                  std::string(C::NameOf(C::kFgs, "nvngx_xemfg_xmx")) == "XeMFG XMX (realdody)",
+              "XeMFG XMX en el catálogo con su nombre y su reemplazo");
+        CHECK(C::FgMaxMultiplier("nvngx_xemfg_xmx", "rdna3") == 6 && C::FgMaxMultiplier("xefg", "rdna3") == 4 &&
+                  C::FgEvidence("nvngx_xemfg_xmx", "rdna3") == C::Evidence::Experimental,
+              "XeMFG XMX hasta 6X, distinto de XeFG");
+        {
+            C::Profile x = Sample();
+            x.arch = "rdna3";
+            x.gpu = "AMD Radeon RX 7900 XTX";
+            x.fg = "nvngx_xemfg_xmx";
+            x.fgRoute = "nvngx";
+            x.multiplier = 6;
+            C::Profile back;
+            std::string e;
+            CHECK(C::Validate(x, &e) && C::ParseProfileText(C::ToJson(x).dump(), back, &e) && back.fg == "nvngx_xemfg_xmx" &&
+                      back.multiplier == 6 && back.fgRoute == "nvngx",
+                  "un perfil XeMFG XMX 6X se guarda y se lee exacto");
+            C::Profile e1 = x, e2 = x;
+            e2.fg = "nvngx_enabler";
+            CHECK(C::ContentHash(e1) != C::ContentHash(e2), "XeMFG XMX no se confunde con DLSS Enabler");
+            C::ServiceConfig cfg;
+            C::Session s;
+            s.alias = "prueba";
+            s.userId = "u";
+            x.origin = "local";
+            const auto pub = C::Publish(cfg, s, x);
+            CHECK(!pub.first && pub.second.find("XeMFG XMX") != std::string::npos, "no se publica hasta actualizar el servidor");
+        }
     }
 
     // 14. Revisión de PERFILES y COMUNIDAD: jerarquía de FG, compatibilidad v1, autoría y clasificación

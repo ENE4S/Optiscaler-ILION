@@ -7,6 +7,8 @@
 #include <mutex>
 #include <vector>
 
+#include <tlhelp32.h>
+
 namespace fs = std::filesystem;
 
 static constexpr const wchar_t* kDllName = L"dlssg_to_xefg_intel_is_better.dll";
@@ -153,13 +155,38 @@ static FILETIME ProcessStartTime()
     return created;
 }
 
-const Nvngx_XeMfgXmx::Backend& Nvngx_XeMfgXmx::ReadBackend()
+// Another libxess_fg.dll in the game's process: realdody documents that one already loaded can make XeFG's Init fail
+// with "Failed to create heap". Its own copy (under its folder) doesn't count
+static std::string OtherLibxessFg(const fs::path& ownFolder)
 {
+    std::string found;
+    const HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, GetCurrentProcessId());
+    if (snap == INVALID_HANDLE_VALUE)
+        return found;
+    MODULEENTRY32W entry { sizeof(entry) };
+    for (BOOL more = Module32FirstW(snap, &entry); more; more = Module32NextW(snap, &entry))
+    {
+        if (_wcsicmp(entry.szModule, L"libxess_fg.dll") != 0)
+            continue;
+        const fs::path path(entry.szExePath);
+        if (!ownFolder.empty() && Util::IsSubpath(path, ownFolder))
+            continue;
+        found = wstring_to_string(path.wstring());
+        break;
+    }
+    CloseHandle(snap);
+    return found;
+}
+
+Nvngx_XeMfgXmx::Backend Nvngx_XeMfgXmx::ReadBackend()
+{
+    static std::mutex lock;
     static Backend backend;
     static ULONGLONG checked = 0;
     static uintmax_t lastSize = 0;
     static fs::file_time_type lastWrite {};
 
+    std::scoped_lock guard(lock);
     const ULONGLONG now = GetTickCount64();
     if (checked != 0 && now - checked < 2000)
         return backend;
@@ -172,12 +199,16 @@ const Nvngx_XeMfgXmx::Backend& Nvngx_XeMfgXmx::ReadBackend()
         return backend;
     }
 
+    backend.otherLibxessFg = OtherLibxessFg(install.dll.parent_path());
+
     const fs::path log = install.dll.parent_path() / L"dlssg_to_xefg_intel_is_better.log";
     std::error_code ec;
     const auto size = fs::file_size(log, ec);
     if (ec)
     {
+        const auto other = backend.otherLibxessFg;
         backend = {};
+        backend.otherLibxessFg = other;
         return backend;
     }
     const auto write = fs::last_write_time(log, ec);
@@ -187,6 +218,7 @@ const Nvngx_XeMfgXmx::Backend& Nvngx_XeMfgXmx::ReadBackend()
     lastWrite = write;
 
     Backend b;
+    b.otherLibxessFg = backend.otherLibxessFg;
     {
         WIN32_FILE_ATTRIBUTE_DATA data {};
         const FILETIME start = ProcessStartTime();
@@ -222,11 +254,16 @@ const Nvngx_XeMfgXmx::Backend& Nvngx_XeMfgXmx::ReadBackend()
         else if (line.find("Creating XeFG context:") != std::string::npos)
         {
             b.lastError.clear(); // errors before this context belong to an earlier one
+            b.contextError.clear();
             if (auto m = after("model: "); !m.empty())
                 b.contextModel = atoi(m.c_str());
         }
         else if (auto e = after("[error] "); !e.empty())
+        {
+            if (b.contextModel >= 0 && b.contextError.empty())
+                b.contextError = e;
             b.lastError = e;
+        }
     }
 
     backend = b;

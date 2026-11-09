@@ -685,6 +685,7 @@ inline constexpr Translation kSpanish[] = {
     { "State:", "Estado:" },
     { "generating (confirmed)", "generando (confirmado)" },
     { "generating (detected)", "generando (detectado)" },
+    { "backend error: not generating", "error del backend: no genera" },
     { "unknown", "desconocido" },
     { "measured", "medidos" },
     { "estimated", "estimados" },

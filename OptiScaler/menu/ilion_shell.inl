@@ -1084,7 +1084,13 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
     {
         // The game's DLSSG: confirmed when its backend reports presented frames, detected when it evaluates with
         // frames to generate, unknown while a replacement is loaded and nothing tells
-        if (fgStatus.gen == IlionDynamicMfg::Gen::Confirmed || fgStatus.gen == IlionDynamicMfg::Gen::Detected)
+        if (fgStatus.backendError)
+        {
+            // ILION v1.4.0 fase 2: the replacement can't generate (XeMFG XMX: its XeFG context failed)
+            active = StrFmt("%s: %s", fgStatus.name, Lx("error, not generating", "error, no genera", "erro, não gera", "ошибка, не генерирует"));
+            activeLed = Led::Red;
+        }
+        else if (fgStatus.gen == IlionDynamicMfg::Gen::Confirmed || fgStatus.gen == IlionDynamicMfg::Gen::Detected)
         {
             const bool confirmed = fgStatus.gen == IlionDynamicMfg::Gen::Confirmed;
             active = StrFmt("%s %dx (%s)", fgStatus.name, fgStatus.multiplier,

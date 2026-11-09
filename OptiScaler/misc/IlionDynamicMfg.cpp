@@ -774,11 +774,16 @@ Status Get()
             s.gen = source == AppliedSource::Measured ? Gen::Confirmed : Gen::Detected;
             s.reported = ExternalReported();
 
-            // ILION v1.4.0 fase 2: XeMFG XMX whose last XeFG context failed (its log) generates nothing: presents counted
-            // per real frame are Streamline's slots, not generated frames
-            if (state.activeFgNvngx == FGNvngxReplacement::XeMfgXmx && s.gen == Gen::Confirmed &&
-                Nvngx_XeMfgXmx::ReadBackend().ContextFailed())
-                s.gen = Gen::Detected;
+            // ILION v1.4.0 fase 2: XeMFG XMX whose last XeFG context failed (its log) generates nothing (realdody's
+            // FrameGenerator returns before capturing or executing): the presents counted per real frame are Streamline's
+            // frame slots, not generated frames. Not generating, with the backend's error; what was asked stays
+            if (state.activeFgNvngx == FGNvngxReplacement::XeMfgXmx && Nvngx_XeMfgXmx::ReadBackend().ContextFailed())
+            {
+                s.gen = Gen::Off;
+                s.multiplier = 0;
+                s.appliedSource = AppliedSource::None;
+                s.backendError = true;
+            }
         }
         else
         {

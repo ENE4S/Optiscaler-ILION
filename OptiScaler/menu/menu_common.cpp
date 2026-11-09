@@ -8685,8 +8685,8 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                 // ILION v1.4.0 fase 2: compact, from the same status as FRAME GEN and INICIO (IlionDynamicMfg); how sure
                 // it is stays in FRAME GEN. Not confirmed: "?"; its context failed: "error"
                 const auto xmx = IlionDynamicMfg::Get();
-                if (Nvngx_XeMfgXmx::ReadBackend().ContextFailed())
-                    fgText = " (XeMFG XMX error)";
+                if (xmx.backendError)
+                    fgText = " (XeMFG XMX: error)";
                 else if (xmx.multiplier > 0)
                     fgText = std::format(" (XeMFG XMX \xC3\x97{}{})", xmx.multiplier,
                                          xmx.gen == IlionDynamicMfg::Gen::Confirmed ? "" : "?");
@@ -13012,7 +13012,8 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
         return;
 
     // State: confirmed (the provider reports presented frames), detected (asked for / evaluating), unknown, off
-    const char* gen = status.gen == Dmfg::Gen::Confirmed  ? Tr("generating (confirmed)")
+    const char* gen = status.backendError                 ? Tr("backend error: not generating")
+                      : status.gen == Dmfg::Gen::Confirmed  ? Tr("generating (confirmed)")
                       : status.gen == Dmfg::Gen::Detected ? Tr("generating (detected)")
                       : status.gen == Dmfg::Gen::Unknown  ? Tr("unknown")
                                                           : Tr("Off");
@@ -21487,7 +21488,10 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
                               : fgNow.gen == IlionDynamicMfg::Gen::Detected ? ShellText("detected", "detectado", "detectado", "обнаружено")
                               : fgNow.gen == IlionDynamicMfg::Gen::Unknown  ? ShellText("unknown", "desconocido", "desconhecido", "неизвестно")
                                                                             : nullptr;
-            if (running || how != nullptr)
+            if (fgNow.backendError)
+                ImGui::Text("%s: %s (%s)", ShellText("Generating", "Generando", "Gerando", "Генерирует"),
+                            ShellText("no", "no", "não", "нет"), fgNow.name);
+            else if (running || how != nullptr)
                 ImGui::Text("%s: %s %dx (%s%s)", ShellText("Generating", "Generando", "Gerando", "Генерирует"),
                             fgNow.name, fgNow.multiplier, how != nullptr ? how : ShellText("yes", "sí", "sim", "да"),
                             fgNow.own ? "" : ShellText(", external", ", externa", ", externa", ", внешняя"));

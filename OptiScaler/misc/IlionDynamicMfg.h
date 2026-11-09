@@ -62,6 +62,7 @@ struct Status
     bool backendDynamic = false; // the game's DLSSG runs in Streamline eDynamic: its backend chooses multiplier and max
     bool capByBackend = false;   // "Use target as cap" on, not applied by ILION: the backend's Dynamic owns the target
     bool capSuspended = false;   // "Use target as cap" on, suspended: the backend applied more than asked under the cap
+    bool backendError = false;   // the DLSSG replacement reports it can't generate (XeMFG XMX: its XeFG context failed)
     bool ilionDrives = false;    // the game's DLSSG: ILION Dynamic picks its count (eOn)
     const char* ilionRefused = nullptr; // the game's DLSSG: why ILION Dynamic stopped, nullptr when it didn't
     float baseFps = 0.0f;

@@ -154,6 +154,13 @@ const char* Nvngx_XeMfgXmx::NetworkPathName(NetworkPath path)
     }
 }
 
+bool Nvngx_XeMfgXmx::InUse()
+{
+    const auto config = Config::Instance();
+    return config->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::XeMfgXmx &&
+           (config->FGInput.value_or_default() == FGInput::NvngxFG || config->FGOutput.value_or_default() == FGOutput::DLSSG);
+}
+
 bool Nvngx_XeMfgXmx::PluginApiAccepted()
 {
     for (const auto& tab : PluginApi::GetTabs())

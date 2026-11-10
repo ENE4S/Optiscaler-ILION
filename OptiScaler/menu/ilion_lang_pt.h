@@ -164,17 +164,17 @@ inline constexpr Translation kPortuguese[] = {
       "O registro dele ainda não foi escrito nesta sessão" },
     { "XeMFG XMX error: %s",
       "Erro do XeMFG XMX: %s" },
-    { "Another libxess_fg.dll version is loaded in the game: %s. It can make XeFG\'s Init fail (\"Failed to create heap\")",
-      "Há outra versão de libxess_fg.dll carregada no jogo: %s. Ela pode fazer o Init do XeFG falhar (\"Failed to create heap\")" },
-    { "XeFG 1.3.1 is in use: on AMD GPUs XeMFG XMX needs libxess_fg.dll 1.3.4 (ILION\'s, in the OptiScaler folder)",
-      "O XeFG 1.3.1 está em uso: em GPUs AMD, o XeMFG XMX precisa da libxess_fg.dll 1.3.4 (a do ILION, na pasta OptiScaler)" },
+    { "Another libxess_fg.dll version is loaded in the game: %s",
+      "Há outra versão de libxess_fg.dll carregada no jogo: %s" },
+    { "XeFG 1.3.1 is in use: on AMD GPUs XeMFG XMX needs libxess_fg.dll 1.3.4 in its folder (custom\\XeMFG XMX\\dlssg)",
+      "O XeFG 1.3.1 está em uso: em GPUs AMD, o XeMFG XMX precisa da libxess_fg.dll 1.3.4 na pasta dele (custom\\XeMFG XMX\\dlssg)" },
     { "Intel XeSS frame generation with the ported XMX multi frame model, up to 6X\n"
       "(realdody\'s dlssg-to-xefg-xmx, GPL-3.0)\n\n"
-      "NVIDIA, Intel and AMD GPUs, DirectX 12 games. It uses ILION\'s libxess_fg.dll 1.3.4\n\n"
+      "NVIDIA, Intel and AMD GPUs, DirectX 12 games. It needs libxess_fg.dll 1.3.4 in its folder\n\n"
       "Extract its release into OptiScaler\\custom\\XeMFG XMX yourself: ILION doesn\'t include it",
       "Geração de quadros Intel XeSS com o modelo multiquadro XMX portado, até 6X\n"
       "(dlssg-to-xefg-xmx de realdody, GPL-3.0)\n\n"
-      "GPUs NVIDIA, Intel e AMD, jogos DirectX 12. Usa a libxess_fg.dll 1.3.4 do ILION\n\n"
+      "GPUs NVIDIA, Intel e AMD, jogos DirectX 12. Precisa da libxess_fg.dll 1.3.4 na pasta dele\n\n"
       "Extraia você mesmo a versão dele em OptiScaler\\custom\\XeMFG XMX: o ILION não a inclui" },
     { "The last XeFG context failed (%s; %s). Without a context XeMFG XMX generates nothing: the presents counted are Streamline's. It retries when the resolution or the path changes",
       "O último contexto XeFG falhou (%s; %s). Sem contexto, o XeMFG XMX não gera quadros: as apresentações contadas são do Streamline. Ele tenta de novo ao mudar a resolução ou a rota" },

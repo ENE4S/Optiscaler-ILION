@@ -659,17 +659,17 @@ inline constexpr Translation kSpanish[] = {
       "No hay carpeta xefg_mfg_programs junto a él: el modelo XMX no se puede portar" },
     { "Its log hasn't been written in this session yet", "Su registro aún no se ha escrito en esta sesión" },
     { "XeMFG XMX error: %s", "Error de XeMFG XMX: %s" },
-    { "Another libxess_fg.dll version is loaded in the game: %s. It can make XeFG\'s Init fail (\"Failed to create heap\")",
-      "Hay otra versión de libxess_fg.dll cargada en el juego: %s. Puede hacer fallar el Init de XeFG (\"Failed to create heap\")" },
-    { "XeFG 1.3.1 is in use: on AMD GPUs XeMFG XMX needs libxess_fg.dll 1.3.4 (ILION\'s, in the OptiScaler folder)",
-      "Se está usando XeFG 1.3.1: en GPU AMD, XeMFG XMX necesita libxess_fg.dll 1.3.4 (la de ILION, en la carpeta OptiScaler)" },
+    { "Another libxess_fg.dll version is loaded in the game: %s",
+      "Hay otra versión de libxess_fg.dll cargada en el juego: %s" },
+    { "XeFG 1.3.1 is in use: on AMD GPUs XeMFG XMX needs libxess_fg.dll 1.3.4 in its folder (custom\\XeMFG XMX\\dlssg)",
+      "Se está usando XeFG 1.3.1: en GPU AMD, XeMFG XMX necesita libxess_fg.dll 1.3.4 en su carpeta (custom\\XeMFG XMX\\dlssg)" },
     { "Intel XeSS frame generation with the ported XMX multi frame model, up to 6X\n"
       "(realdody\'s dlssg-to-xefg-xmx, GPL-3.0)\n\n"
-      "NVIDIA, Intel and AMD GPUs, DirectX 12 games. It uses ILION\'s libxess_fg.dll 1.3.4\n\n"
+      "NVIDIA, Intel and AMD GPUs, DirectX 12 games. It needs libxess_fg.dll 1.3.4 in its folder\n\n"
       "Extract its release into OptiScaler\\custom\\XeMFG XMX yourself: ILION doesn\'t include it",
       "Generación de fotogramas Intel XeSS con el modelo multifotograma XMX portado, hasta 6X\n"
       "(dlssg-to-xefg-xmx de realdody, GPL-3.0)\n\n"
-      "GPU NVIDIA, Intel y AMD, juegos DirectX 12. Usa la libxess_fg.dll 1.3.4 de ILION\n\n"
+      "GPU NVIDIA, Intel y AMD, juegos DirectX 12. Necesita libxess_fg.dll 1.3.4 en su carpeta\n\n"
       "Extrae tú mismo su versión en OptiScaler\\custom\\XeMFG XMX: ILION no la incluye" },
     { "The last XeFG context failed (%s; %s). Without a context XeMFG XMX generates nothing: the presents counted are Streamline's. It retries when the resolution or the path changes",
       "El último contexto XeFG falló (%s; %s). Sin contexto, XeMFG XMX no genera fotogramas: las presentaciones contadas son de Streamline. Lo reintenta al cambiar la resolución o la ruta" },

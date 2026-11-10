@@ -42,6 +42,7 @@
 #include <hooks/Advapi32_Hooks.h>
 #include <hooks/Streamline_Hooks.h>
 #include <plugins/PluginApi.h>
+#include <framegen/nvngx/Nvngx_XeMfgXmx.h>
 
 #include <nvapi/NvApiHooks.h>
 
@@ -236,7 +237,7 @@ void LoadAsiPlugins()
     // ILION v1.4.0: XeMFG XMX (realdody) as the DLSSG replacement is another implementation of the same technique (its
     // XeFG port comes from MFG-Unlocker): no XeMFG variant with it, never two in one process. The choice stays in the
     // config
-    const bool xmxReplacement = Config::Instance()->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::XeMfgXmx;
+    const bool xmxReplacement = Nvngx_XeMfgXmx::InUse();
     if (const auto variant = Config::Instance()->XeMfgVariant.value_or(L""); !variant.empty() && xmxReplacement)
     {
         LOG_INFO(L"XeMFG XMX selected: XeMFG variant {} not loaded", variant);
@@ -1512,9 +1513,10 @@ void CheckMemoryForProxies()
 
     XeSSProxy::InitXeSS();
     XeSSProxy::InitXeSSDx11();
-    // ILION v1.4.0: always, as OptiScaler v10 does with XeMFG XMX too. realdody's release ships no
-    // libxess_fg.dll: it then uses this one (OptiScaler\libxess_fg.dll, three folders above it), a single module
-    XeFGProxy::InitXeFG();
+    // ILION v1.4.1: OptiScaler\libxess_fg.dll (1.3.1.78) for ILION's XeFG output and its XeMFG variants. Not with
+    // XeMFG XMX in use: realdody loads its own 1.3.4 from its folder, one libxess_fg in the process
+    if (!Nvngx_XeMfgXmx::InUse())
+        XeFGProxy::InitXeFG();
     XeLLProxy::InitXeLL();
 
     XellHooks::Hook();

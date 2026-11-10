@@ -7,10 +7,10 @@
 // ILION v1.4.0: XeMFG XMX ([FrameGen] FGNvngxReplacement = XeMFG XMX). realdody's dlssg-to-xefg-xmx
 // (github.com/realdody/dlssg-to-xefg-xmx, GPL-3.0; its MFG-Unlocker port is MIT): a DLSSG replacement with the same
 // NVSDK_NGX_D3D12_* exports as Nukem's, that runs Intel XeSS frame generation with the ported XMX multi frame model,
-// up to 6X. DirectX 12 only, NVIDIA, Intel and AMD GPUs. ILION ships libxess_fg.dll 1.3.4 (OptiScaler\libxess_fg.dll),
-// the build realdody's direct XeFG context needs on AMD (with 1.3.1 its Init fails there: "Failed to create heap");
-// realdody's release itself is not included: the user extracts it into OptiScaler\custom\XeMFG XMX
-// (dlssg\dlssg_to_xefg_intel_is_better.dll and its xefg_mfg_programs folder).
+// up to 6X. DirectX 12 only, NVIDIA, Intel and AMD GPUs. It uses libxess_fg.dll 1.3.4 from its own folder
+// (custom\XeMFG XMX\dlssg), the build its direct XeFG context needs on AMD (with 1.3.1 its Init fails there: "Failed to
+// create heap"); OptiScaler\libxess_fg.dll stays 1.3.1.78, the build the XeMFG variants of ILION's XeFG output patch.
+// With XeMFG XMX in use ILION doesn't preload its own copy (InUse), so one libxess_fg is loaded.
 // It is loaded and called through the same DLSSG replacement path as Nukem's / DLSS Enabler; its metrics are ILION's
 // own for the game's DLSSG (IlionDynamicMfg), nothing parallel. Its log is read only to tell which XeFG path runs.
 class Nvngx_XeMfgXmx : public Nvngx_DllProxy
@@ -49,6 +49,11 @@ class Nvngx_XeMfgXmx : public Nvngx_DllProxy
     static const char* NetworkPathName(NetworkPath path);
     // OptiPluginInit was called and it accepted the API (its tab is in the menu)
     static bool PluginApiAccepted();
+
+    // XeMFG XMX runs this session: it is the DLSSG replacement and the FG route uses one (FG input DLSSG via Nvngx, or
+    // FG output DLSSG). Read from the config, the same answer at startup and later. With it, ILION neither preloads
+    // OptiScaler\libxess_fg.dll nor loads an XeMFG variant
+    static bool InUse();
 
     // What is installed, read from the files only (nothing is loaded by it)
     struct Install

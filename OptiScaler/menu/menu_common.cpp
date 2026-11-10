@@ -1771,11 +1771,6 @@ static void DrawXeMfgXmxState()
         WrappedText(warn, Tr("With Default the game isn't asking for frame generation: pick a multiplier (x2 to x6) or turn "
                              "DLSS Frame Generation on in the game"));
 
-    if (!backend.otherLibxessFg.empty())
-        WrappedText(warn, StrFmt(Tr("Another libxess_fg.dll version is loaded in the game: %s. It can make XeFG's Init fail "
-                                    "(\"Failed to create heap\")"),
-                                 backend.otherLibxessFg.c_str())
-                              .c_str());
     if (!backend.logThisSession)
     {
         WrappedText(ImGui::GetStyle().Colors[ImGuiCol_TextDisabled], Tr("Its log hasn't been written in this session yet"));
@@ -1789,10 +1784,14 @@ static void DrawXeMfgXmxState()
                            backend.contextError.c_str(), backend.lastError.c_str())
                         .c_str());
 
-        // The cause found on AMD (RX 7900 XTX, Cyberpunk): XeFG 1.3.1 fails there, 1.3.4 works
+        // The causes it can have: XeFG 1.3.1 (fails on AMD, 1.3.4 works), or another libxess_fg version loaded beside it.
+        // Shown only here: a game's own copy (Cyberpunk's 1.1.0) doesn't stop a context that works
         if (backend.OldXefg())
-            WrappedText(warn, Tr("XeFG 1.3.1 is in use: on AMD GPUs XeMFG XMX needs libxess_fg.dll 1.3.4 (ILION's, in the "
-                                 "OptiScaler folder)"));
+            WrappedText(warn, Tr("XeFG 1.3.1 is in use: on AMD GPUs XeMFG XMX needs libxess_fg.dll 1.3.4 in its folder "
+                                 "(custom\\XeMFG XMX\\dlssg)"));
+        else if (!backend.otherLibxessFg.empty())
+            WrappedText(warn, StrFmt(Tr("Another libxess_fg.dll version is loaded in the game: %s"), backend.otherLibxessFg.c_str())
+                                  .c_str());
 
         // The ported model 16 is what fails here: XeFG's DP4a model 18 is the other path realdody offers on non Intel GPUs
         if (backend.contextModel != 18)
@@ -12247,7 +12246,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
         { FGNvngxReplacement::XeMfgXmx, "XeMFG XMX (experimental)",
           "Intel XeSS frame generation with the ported XMX multi frame model, up to 6X\n"
           "(realdody's dlssg-to-xefg-xmx, GPL-3.0)\n\n"
-          "NVIDIA, Intel and AMD GPUs, DirectX 12 games. It uses ILION's libxess_fg.dll 1.3.4\n\n"
+          "NVIDIA, Intel and AMD GPUs, DirectX 12 games. It needs libxess_fg.dll 1.3.4 in its folder\n\n"
           "Extract its release into OptiScaler\\custom\\XeMFG XMX yourself: ILION doesn't include it" },
     };
 

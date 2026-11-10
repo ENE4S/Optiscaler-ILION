@@ -164,17 +164,17 @@ inline constexpr Translation kRussian[] = {
       "Его журнал в этой сессии ещё не записан" },
     { "XeMFG XMX error: %s",
       "Ошибка XeMFG XMX: %s" },
-    { "Another libxess_fg.dll version is loaded in the game: %s. It can make XeFG\'s Init fail (\"Failed to create heap\")",
-      "В игре загружена другая версия libxess_fg.dll: %s. Она может вызвать сбой Init XeFG (\"Failed to create heap\")" },
-    { "XeFG 1.3.1 is in use: on AMD GPUs XeMFG XMX needs libxess_fg.dll 1.3.4 (ILION\'s, in the OptiScaler folder)",
-      "Используется XeFG 1.3.1: на GPU AMD XeMFG XMX нужна libxess_fg.dll 1.3.4 (из ILION, в папке OptiScaler)" },
+    { "Another libxess_fg.dll version is loaded in the game: %s",
+      "В игре загружена другая версия libxess_fg.dll: %s" },
+    { "XeFG 1.3.1 is in use: on AMD GPUs XeMFG XMX needs libxess_fg.dll 1.3.4 in its folder (custom\\XeMFG XMX\\dlssg)",
+      "Используется XeFG 1.3.1: на GPU AMD XeMFG XMX нужна libxess_fg.dll 1.3.4 в его папке (custom\\XeMFG XMX\\dlssg)" },
     { "Intel XeSS frame generation with the ported XMX multi frame model, up to 6X\n"
       "(realdody\'s dlssg-to-xefg-xmx, GPL-3.0)\n\n"
-      "NVIDIA, Intel and AMD GPUs, DirectX 12 games. It uses ILION\'s libxess_fg.dll 1.3.4\n\n"
+      "NVIDIA, Intel and AMD GPUs, DirectX 12 games. It needs libxess_fg.dll 1.3.4 in its folder\n\n"
       "Extract its release into OptiScaler\\custom\\XeMFG XMX yourself: ILION doesn\'t include it",
       "Генерация кадров Intel XeSS с перенесённой многокадровой моделью XMX, до 6X\n"
       "(dlssg-to-xefg-xmx от realdody, GPL-3.0)\n\n"
-      "GPU NVIDIA, Intel и AMD, игры DirectX 12. Использует libxess_fg.dll 1.3.4 из ILION\n\n"
+      "GPU NVIDIA, Intel и AMD, игры DirectX 12. Нужна libxess_fg.dll 1.3.4 в его папке\n\n"
       "Распакуйте его релиз в OptiScaler\\custom\\XeMFG XMX сами: ILION его не включает" },
     { "The last XeFG context failed (%s; %s). Without a context XeMFG XMX generates nothing: the presents counted are Streamline's. It retries when the resolution or the path changes",
       "Последний контекст XeFG не создан (%s; %s). Без контекста XeMFG XMX не генерирует кадры: подсчитанные показы принадлежат Streamline. Повтор при смене разрешения или пути" },

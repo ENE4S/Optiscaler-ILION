@@ -311,6 +311,7 @@ copy NUL "$(SolutionDir)x64\Release\a\!! EXTRACT ALL FILES TO GAME FOLDER !!" /Y
   <ItemGroup>
     <ClInclude Include="framegen\nvngx\Nvngx_Combo.h" />
     <ClInclude Include="plugins\PluginApi.h" />
+    <ClInclude Include="misc\IlionXmxProbe.h" />
     <ClInclude Include="..\plugin_sdk\optiscaler_plugin.h" />
     <ClInclude Include="framegen\reprojection\swapchain\reprojectionSwapchain.h" />
     <ClInclude Include="fsr4\FSR4Upgrade.h" />
@@ -708,6 +709,7 @@ copy NUL "$(SolutionDir)x64\Release\a\!! EXTRACT ALL FILES TO GAME FOLDER !!" /Y
     <ClCompile Include="framegen\nvngx\Nvngx_HelixSR.cpp" />
     <ClCompile Include="framegen\nvngx\Nvngx_XeMfgXmx.cpp" />
     <ClCompile Include="plugins\PluginApi.cpp" />
+    <ClCompile Include="misc\IlionXmxProbe.cpp" />
     <ClCompile Include="framegen\nvngx\Nvngx_Arturs.cpp" />
     <ClCompile Include="NVNGX_Parameter.cpp" />
     <ClCompile Include="framegen\nvngx\Nvngx_DllProxy.cpp" />

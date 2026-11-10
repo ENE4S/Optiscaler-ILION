@@ -4,6 +4,7 @@
 #include <proxies/Ntdll_Proxy.h>
 #include <proxies/XeFG_Proxy.h>
 #include <plugins/PluginApi.h>
+#include <misc/IlionXmxProbe.h>
 
 #include <fstream>
 #include <mutex>
@@ -74,6 +75,7 @@ void Nvngx_XeMfgXmx::LoadLibraries()
         std::scoped_lock lock(folderLock);
         loadedFolder = install.dll.parent_path();
     }
+    IlionXmxProbe::SetFolder(install.dll.parent_path());
 
     // The loader's own LoadLibrary, as for HelixSR: the DLL is a DLSSG replacement, not a name OptiScaler handles
     HMODULE module = NtdllProxy::LoadLibraryExW_Ldr(install.dll.c_str(), NULL, 0);
@@ -116,7 +118,42 @@ void Nvngx_XeMfgXmx::LoadLibraries()
     const auto init = (PFN_OptiPluginInit) GetProcAddress(dll, OPTI_PLUGIN_INIT_NAME);
     if (init == nullptr)
         LOG_WARN("XeMFG XMX: this build has no OptiPluginInit (older than build-10): no network path choice");
-    PluginApi::InitPlugin(dll, init, std::string(PluginName));
+    {
+        IlionXmxProbe::Scope probe {};
+        PluginApi::InitPlugin(dll, init, std::string(PluginName));
+    }
+}
+
+NVSDK_NGX_Result Nvngx_XeMfgXmx::D3D12_Init(unsigned long long InApplicationId, const wchar_t* InApplicationDataPath,
+                                            ID3D12Device* InDevice, const NVSDK_NGX_FeatureCommonInfo* InFeatureInfo,
+                                            NVSDK_NGX_Version InSDKVersion)
+{
+    IlionXmxProbe::Scope probe {};
+    return Nvngx_DllProxy::D3D12_Init(InApplicationId, InApplicationDataPath, InDevice, InFeatureInfo, InSDKVersion);
+}
+
+NVSDK_NGX_Result Nvngx_XeMfgXmx::D3D12_Init_Ext(unsigned long long InApplicationId, const wchar_t* InApplicationDataPath,
+                                                ID3D12Device* InDevice, NVSDK_NGX_Version InSDKVersion,
+                                                const NVSDK_NGX_FeatureCommonInfo* InFeatureInfo)
+{
+    IlionXmxProbe::Scope probe {};
+    return Nvngx_DllProxy::D3D12_Init_Ext(InApplicationId, InApplicationDataPath, InDevice, InSDKVersion, InFeatureInfo);
+}
+
+NVSDK_NGX_Result Nvngx_XeMfgXmx::D3D12_EvaluateFeature(ID3D12GraphicsCommandList* InCmdList,
+                                                       const NVSDK_NGX_Handle* InFeatureHandle,
+                                                       NVSDK_NGX_Parameter* InParameters,
+                                                       PFN_NVSDK_NGX_ProgressCallback InCallback)
+{
+    // realdody makes its XeFG context here (FrameGenerator::CreateContext), on the first evaluation or after a change
+    IlionXmxProbe::Scope probe {};
+    return Nvngx_DllProxy::D3D12_EvaluateFeature(InCmdList, InFeatureHandle, InParameters, InCallback);
+}
+
+NVSDK_NGX_Result Nvngx_XeMfgXmx::D3D12_ReleaseFeature(NVSDK_NGX_Handle* InHandle)
+{
+    IlionXmxProbe::Scope probe {};
+    return Nvngx_DllProxy::D3D12_ReleaseFeature(InHandle);
 }
 
 Nvngx_XeMfgXmx::NetworkPath Nvngx_XeMfgXmx::SavedNetworkPath()
@@ -168,6 +205,7 @@ bool Nvngx_XeMfgXmx::PluginApiAccepted()
 NVSDK_NGX_Result Nvngx_XeMfgXmx::D3D12_CreateFeature(ID3D12GraphicsCommandList* InCmdList, NVSDK_NGX_Feature InFeatureID,
                                                      NVSDK_NGX_Parameter* InParameters, NVSDK_NGX_Handle** OutHandle)
 {
+    IlionXmxProbe::Scope probe {};
     const auto result = Nvngx_DllProxy::D3D12_CreateFeature(InCmdList, InFeatureID, InParameters, OutHandle);
     if (result != NVSDK_NGX_Result_Success)
         LOG_ERROR("XeMFG XMX: CreateFeature failed ({:X}); its log: dlssg_to_xefg_intel_is_better.log", (UINT) result);

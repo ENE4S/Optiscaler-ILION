@@ -27,6 +27,18 @@ class Nvngx_XeMfgXmx : public Nvngx_DllProxy
     NVSDK_NGX_Result D3D12_CreateFeature(ID3D12GraphicsCommandList* InCmdList, NVSDK_NGX_Feature InFeatureID,
                                          NVSDK_NGX_Parameter* InParameters, NVSDK_NGX_Handle** OutHandle) override;
 
+    // exp5: the other calls only open IlionXmxProbe's scope (what XeFG asks D3D12 for inside them is logged)
+    NVSDK_NGX_Result D3D12_Init(unsigned long long InApplicationId, const wchar_t* InApplicationDataPath,
+                                ID3D12Device* InDevice, const NVSDK_NGX_FeatureCommonInfo* InFeatureInfo,
+                                NVSDK_NGX_Version InSDKVersion) override;
+    NVSDK_NGX_Result D3D12_Init_Ext(unsigned long long InApplicationId, const wchar_t* InApplicationDataPath,
+                                    ID3D12Device* InDevice, NVSDK_NGX_Version InSDKVersion,
+                                    const NVSDK_NGX_FeatureCommonInfo* InFeatureInfo) override;
+    NVSDK_NGX_Result D3D12_EvaluateFeature(ID3D12GraphicsCommandList* InCmdList, const NVSDK_NGX_Handle* InFeatureHandle,
+                                           NVSDK_NGX_Parameter* InParameters,
+                                           PFN_NVSDK_NGX_ProgressCallback InCallback) override;
+    NVSDK_NGX_Result D3D12_ReleaseFeature(NVSDK_NGX_Handle* InHandle) override;
+
     // Its plugin API name, as OptiScaler v10 names a custom replacement (its folder): its settings are in
     // [Plugin.XeMFG XMX] of OptiScaler.ini, the same section OptiScaler v10 uses
     static constexpr const char* PluginName = "XeMFG XMX";

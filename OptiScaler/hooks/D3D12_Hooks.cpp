@@ -20,6 +20,7 @@
 
 #include <dxgi1_6.h>
 #include <misc/IdentifyGpu.h>
+#include <misc/IlionXmxProbe.h>
 
 #include "Hook_Utils.h"
 
@@ -56,6 +57,15 @@ static PFN_CreateCommittedResource o_CreateCommittedResource = nullptr;
 static PFN_CreatePlacedResource o_CreatePlacedResource = nullptr;
 static PFN_SetResidencyPriority o_SetResidencyPriority = nullptr;
 static PFN_GetResourceAllocationInfo o_GetResourceAllocationInfo = nullptr;
+
+// ILION v1.4.0 fase 2 exp5: XeMFG XMX's D3D12 probe (misc/IlionXmxProbe), vtable 28 / 14 / ID3D12Device4 54
+using PFN_CreateHeap = rewrite_signature<decltype(&ID3D12Device::CreateHeap)>::type;
+using PFN_CreateHeap1 = rewrite_signature<decltype(&ID3D12Device4::CreateHeap1)>::type;
+using PFN_CreateDescriptorHeap = rewrite_signature<decltype(&ID3D12Device::CreateDescriptorHeap)>::type;
+static PFN_CreateHeap o_CreateHeap = nullptr;
+static PFN_CreateHeap1 o_CreateHeap1 = nullptr;
+static PFN_CreateDescriptorHeap o_CreateDescriptorHeap = nullptr;
+static bool xmxProbeAllocationInfo = false; // GetResourceAllocationInfo attached for the probe (not for UE's spoofing)
 static PFN_CreateRootSignature o_CreateRootSignature = nullptr;
 static PFN_D3D12GetInterface o_D3D12GetInterface = nullptr;
 static PFN_CreateDevice o_CreateDevice = nullptr;
@@ -1983,7 +1993,62 @@ hkGetResourceAllocationInfo(ID3D12Device* device, D3D12_RESOURCE_ALLOCATION_INFO
     pResult->Alignment = 0;
     pResult->SizeInBytes = 0;
     o_GetResourceAllocationInfo(device, pResult, visibleMask, numResourceDescs, pResourceDescs);
+
+    if (IlionXmxProbe::Active())
+        IlionXmxProbe::OnAllocationInfo(visibleMask, numResourceDescs, pResourceDescs, *pResult);
+
     return pResult;
+}
+
+// ILION v1.4.0 fase 2 exp5: the heaps XeFG makes inside XeMFG XMX. Outside of it they pass untouched
+VALIDATE_HOOK(hkCreateHeap, PFN_CreateHeap)
+static HRESULT hkCreateHeap(ID3D12Device* device, const D3D12_HEAP_DESC* pDesc, REFIID riid, void** ppvHeap)
+{
+    HRESULT hr = o_CreateHeap(device, pDesc, riid, ppvHeap);
+    if (pDesc == nullptr || !IlionXmxProbe::Active())
+        return hr;
+
+    IlionXmxProbe::OnCreateHeap("CreateHeap", *pDesc, hr);
+
+    D3D12_HEAP_DESC retry {};
+    if (FAILED(hr) && IlionXmxProbe::RetryDesc(*pDesc, retry))
+    {
+        hr = o_CreateHeap(device, &retry, riid, ppvHeap);
+        IlionXmxProbe::OnHeapRetry("CreateHeap", retry, hr);
+    }
+
+    return hr;
+}
+
+VALIDATE_HOOK(hkCreateHeap1, PFN_CreateHeap1)
+static HRESULT hkCreateHeap1(ID3D12Device4* device, const D3D12_HEAP_DESC* pDesc,
+                             ID3D12ProtectedResourceSession* pProtectedSession, REFIID riid, void** ppvHeap)
+{
+    HRESULT hr = o_CreateHeap1(device, pDesc, pProtectedSession, riid, ppvHeap);
+    if (pDesc == nullptr || !IlionXmxProbe::Active())
+        return hr;
+
+    IlionXmxProbe::OnCreateHeap(pProtectedSession != nullptr ? "CreateHeap1 (protected session)" : "CreateHeap1", *pDesc,
+                                hr);
+
+    D3D12_HEAP_DESC retry {};
+    if (FAILED(hr) && IlionXmxProbe::RetryDesc(*pDesc, retry))
+    {
+        hr = o_CreateHeap1(device, &retry, pProtectedSession, riid, ppvHeap);
+        IlionXmxProbe::OnHeapRetry("CreateHeap1", retry, hr);
+    }
+
+    return hr;
+}
+
+VALIDATE_HOOK(hkCreateDescriptorHeap, PFN_CreateDescriptorHeap)
+static HRESULT hkCreateDescriptorHeap(ID3D12Device* device, const D3D12_DESCRIPTOR_HEAP_DESC* pDesc, REFIID riid,
+                                      void** ppvHeap)
+{
+    const HRESULT hr = o_CreateDescriptorHeap(device, pDesc, riid, ppvHeap);
+    if (pDesc != nullptr && IlionXmxProbe::Active())
+        IlionXmxProbe::OnCreateDescriptorHeap(*pDesc, hr);
+    return hr;
 }
 
 VALIDATE_HOOK(hkCreateSampler, PFN_CreateSampler)
@@ -2265,6 +2330,27 @@ static void HookToDevice(ID3D12Device* InDevice)
         device12_1->Release();
     }
 
+    // ILION v1.4.0 fase 2 exp5: XeMFG XMX's D3D12 probe, only with it as the DLSSG replacement
+    bool xmxProbe = Config::Instance()->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::XeMfgXmx &&
+                          o_CreateHeap == nullptr;
+    if (xmxProbe)
+    {
+        o_CreateHeap = (PFN_CreateHeap) pVTable[28];
+        o_CreateDescriptorHeap = (PFN_CreateDescriptorHeap) pVTable[14];
+
+        ID3D12Device4* device12_4 = nullptr;
+        if (realDevice)
+            realDevice->QueryInterface(IID_PPV_ARGS(&device12_4));
+        else
+            InDevice->QueryInterface(IID_PPV_ARGS(&device12_4));
+
+        if (device12_4 != nullptr)
+        {
+            o_CreateHeap1 = (PFN_CreateHeap1) (*(PVOID**) device12_4)[54];
+            device12_4->Release();
+        }
+    }
+
     // Apply the detour
     if (o_CreateSampler != nullptr)
     {
@@ -2302,6 +2388,23 @@ static void HookToDevice(ID3D12Device* InDevice)
                 DetourAttach(&(PVOID&) o_GetResourceAllocationInfo, hkGetResourceAllocationInfo);
         }
 
+        if (xmxProbe)
+        {
+            LOG_INFO("XeMFG XMX: D3D12 probe on (CreateHeap, CreateHeap1, CreateDescriptorHeap, GetResourceAllocationInfo)");
+
+            if (o_CreateHeap != nullptr)
+                DetourAttach(&(PVOID&) o_CreateHeap, hkCreateHeap);
+            if (o_CreateHeap1 != nullptr)
+                DetourAttach(&(PVOID&) o_CreateHeap1, hkCreateHeap1);
+            if (o_CreateDescriptorHeap != nullptr)
+                DetourAttach(&(PVOID&) o_CreateDescriptorHeap, hkCreateDescriptorHeap);
+            if (!Config::Instance()->UESpoofIntelAtomics64.value_or_default() && o_GetResourceAllocationInfo != nullptr)
+            {
+                DetourAttach(&(PVOID&) o_GetResourceAllocationInfo, hkGetResourceAllocationInfo);
+                xmxProbeAllocationInfo = true;
+            }
+        }
+
         auto detourResult = DetourTransactionCommit();
         if (detourResult != NO_ERROR)
         {
@@ -2313,7 +2416,13 @@ static void HookToDevice(ID3D12Device* InDevice)
             o_CreatePlacedResource = nullptr;
             o_D3D12DeviceRelease = nullptr;
             o_GetResourceAllocationInfo = nullptr;
+            o_CreateHeap = nullptr;
+            o_CreateHeap1 = nullptr;
+            o_CreateDescriptorHeap = nullptr;
+            xmxProbe = false;
         }
+
+        IlionXmxProbe::SetInstalled(xmxProbe);
     }
 
     HookToCommandList(InDevice);
@@ -2360,6 +2469,16 @@ static void UnhookDevice()
     if (o_GetResourceAllocationInfo != nullptr)
         DetourDetach(&(PVOID&) o_GetResourceAllocationInfo, hkGetResourceAllocationInfo);
 
+    // ILION v1.4.0 fase 2 exp5: XeMFG XMX's D3D12 probe
+    if (o_CreateHeap != nullptr)
+        DetourDetach(&(PVOID&) o_CreateHeap, hkCreateHeap);
+
+    if (o_CreateHeap1 != nullptr)
+        DetourDetach(&(PVOID&) o_CreateHeap1, hkCreateHeap1);
+
+    if (o_CreateDescriptorHeap != nullptr)
+        DetourDetach(&(PVOID&) o_CreateDescriptorHeap, hkCreateDescriptorHeap);
+
     auto detourResult = DetourTransactionCommit();
     if (detourResult != NO_ERROR)
     {
@@ -2371,6 +2490,10 @@ static void UnhookDevice()
         o_CheckFeatureSupport = nullptr;
         o_CreateCommittedResource = nullptr;
         o_CreatePlacedResource = nullptr;
+        o_CreateHeap = nullptr;
+        o_CreateHeap1 = nullptr;
+        o_CreateDescriptorHeap = nullptr;
+        IlionXmxProbe::SetInstalled(false);
         o_D3D12DeviceRelease = nullptr;
         o_GetResourceAllocationInfo = nullptr;
     }
@@ -2443,6 +2566,16 @@ void D3D12Hooks::Unhook()
     if (o_GetResourceAllocationInfo != nullptr)
         DetourDetach(&(PVOID&) o_GetResourceAllocationInfo, hkGetResourceAllocationInfo);
 
+    // ILION v1.4.0 fase 2 exp5: XeMFG XMX's D3D12 probe
+    if (o_CreateHeap != nullptr)
+        DetourDetach(&(PVOID&) o_CreateHeap, hkCreateHeap);
+
+    if (o_CreateHeap1 != nullptr)
+        DetourDetach(&(PVOID&) o_CreateHeap1, hkCreateHeap1);
+
+    if (o_CreateDescriptorHeap != nullptr)
+        DetourDetach(&(PVOID&) o_CreateDescriptorHeap, hkCreateDescriptorHeap);
+
     if (o_D3D12DeviceRelease != nullptr)
         DetourDetach(&(PVOID&) o_D3D12DeviceRelease, hkD3D12DeviceRelease);
 
@@ -2457,6 +2590,10 @@ void D3D12Hooks::Unhook()
         o_CheckFeatureSupport = nullptr;
         o_CreateCommittedResource = nullptr;
         o_CreatePlacedResource = nullptr;
+        o_CreateHeap = nullptr;
+        o_CreateHeap1 = nullptr;
+        o_CreateDescriptorHeap = nullptr;
+        IlionXmxProbe::SetInstalled(false);
         o_D3D12DeviceRelease = nullptr;
         o_GetResourceAllocationInfo = nullptr;
     }

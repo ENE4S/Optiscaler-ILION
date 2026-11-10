@@ -41,6 +41,7 @@
 #include <framegen/nvngx/Nvngx_HelixSR.h>
 #include <framegen/nvngx/Nvngx_XeMfgXmx.h>
 #include <plugins/PluginApi.h>
+#include <misc/IlionXmxProbe.h>
 #include <framegen/reprojection/Reprojection_Dx12.h>
 
 #include <nvapi/fakenvapi.h>
@@ -1787,6 +1788,26 @@ static void DrawXeMfgXmxState()
                               "presents counted are Streamline's. It retries when the resolution or the path changes"),
                            backend.contextError.c_str(), backend.lastError.c_str())
                         .c_str());
+
+        // exp5: what D3D12 answered XeFG (ILION's probe), the cause behind "Failed to create heap"
+        if (const auto probe = IlionXmxProbe::Get(); probe.installed)
+        {
+            if (probe.invalidAllocations > 0)
+                WrappedText(IlionTheme::LampRed,
+                            StrFmt(Tr("D3D12 called a resource XeFG asked for invalid (%d time(s)): %s"),
+                                   probe.invalidAllocations, probe.lastInvalid.c_str())
+                                .c_str());
+            if (probe.heapFailures > 0)
+                WrappedText(IlionTheme::LampRed,
+                            StrFmt(Tr("D3D12 refused %d heap(s) XeFG asked for (ILION's retry made %d): %s"),
+                                   probe.heapFailures, probe.retriesOk, probe.lastFailure.c_str())
+                                .c_str());
+            if (probe.invalidAllocations == 0 && probe.heapFailures == 0)
+                WrappedText(warn, StrFmt(Tr("D3D12 refused none of XeFG's %d heap request(s): the failure is inside XeFG"),
+                                         probe.heaps)
+                                      .c_str());
+            WrappedText(ImGui::GetStyle().Colors[ImGuiCol_TextDisabled], Tr("Details: ilion_xemfg_d3d12.log next to its DLL"));
+        }
 
         // The ported model 16 is what fails here: XeFG's DP4a model 18 is the other path realdody offers on non Intel GPUs
         if (backend.contextModel != 18)

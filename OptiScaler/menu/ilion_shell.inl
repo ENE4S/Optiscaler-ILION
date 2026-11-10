@@ -3033,10 +3033,73 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         Text(fBrand, 26.f, ImVec2(a.x + 58, a.y + 9), pal::Green, sec.caps[li]);
         const float subX = a.x + 58 + Measure(fBrand, 26.f, sec.caps[li]).x + 22;
         dl->AddLine(P(subX - 11, a.y + 15), P(subX - 11, a.y + 35), Col(pal::Line), 1.f);
-        dl->PushClipRect(P(subX, a.y), P(b.x - 12, b.y), true);
+
+        // ILION v1.4.0: on every tab, against the band's right edge, what doesn't change between tabs: the GPU (in its
+        // maker's colour) and the resolution (the internal one plain, the final one cyan, as Home shows them). The
+        // section's subtitle keeps the room left of it
+        const auto& gpuInfo = IdentifyGpu::getPrimaryGpu();
+        std::string gpuName = gpuInfo.name;
+        for (const char* prefix : { "AMD ", "Radeon ", "NVIDIA ", "GeForce ", "Intel(R) ", "Intel " })
+        {
+            if (gpuName.rfind(prefix, 0) == 0)
+                gpuName.erase(0, strlen(prefix));
+        }
+        const ImVec4 gpuColour = gpuInfo.vendorId == VendorId::AMD      ? pal::Red
+                                 : gpuInfo.vendorId == VendorId::Nvidia ? ImVec4(0.46f, 0.73f, 0.0f, 1.f)
+                                 : gpuInfo.vendorId == VendorId::Intel  ? IlionTheme::InfoBlue
+                                                                        : pal::Text;
+
+        std::string renderRes, finalRes;
+        if (feature != nullptr && feature->IsInited() && !feature->IsFrozen() && feature->RenderWidth() > 0)
+        {
+            renderRes = StrFmt("%ux%u", feature->RenderWidth(), feature->RenderHeight());
+            finalRes = StrFmt("%ux%u", feature->TargetWidth(), feature->TargetHeight());
+        }
+        else if (state.currentSwapchainDesc.BufferDesc.Width > 0)
+        {
+            finalRes = StrFmt("%ux%u", state.currentSwapchainDesc.BufferDesc.Width, state.currentSwapchainDesc.BufferDesc.Height);
+        }
+
+        const float infoSize = 17.f, infoY = a.y + 15, gap = 22.f;
+        const char* arrow = " -> ";
+        const float gpuWidth = gpuName.empty() ? 0.f : Measure(fUi, infoSize, "GPU ").x + Measure(fUi, infoSize, gpuName.c_str()).x;
+        const float resWidth = (renderRes.empty() ? 0.f : Measure(fUi, infoSize, renderRes.c_str()).x + Measure(fUi, infoSize, arrow).x) +
+                               (finalRes.empty() ? 0.f : Measure(fUi, infoSize, finalRes.c_str()).x);
+        const float infoWidth = gpuWidth + (gpuWidth > 0.f && resWidth > 0.f ? gap : 0.f) + resWidth;
+        // Only when the subtitle keeps a useful width beside it (narrow windows show the subtitle alone)
+        const bool showInfo = infoWidth > 0.f && (b.x - 18) - infoWidth - gap > subX + 160.f;
+        const float infoX = showInfo ? (b.x - 18) - infoWidth : b.x;
+
+        dl->PushClipRect(P(subX, a.y), P(showInfo ? infoX - gap : b.x - 12, b.y), true);
         Text(fUi, 17.f, ImVec2(subX, a.y + 15), pal::Text2, sec.sub[li]);
         dl->PopClipRect();
 
+        if (showInfo)
+        {
+            float ix = infoX;
+            if (gpuWidth > 0.f)
+            {
+                Text(fUi, infoSize, ImVec2(ix, infoY), pal::Text2, "GPU ");
+                ix += Measure(fUi, infoSize, "GPU ").x;
+                Text(fUi, infoSize, ImVec2(ix, infoY), gpuColour, gpuName.c_str());
+                ix += Measure(fUi, infoSize, gpuName.c_str()).x;
+                if (resWidth > 0.f)
+                {
+                    // The same thin separator as the one after the section's name
+                    dl->AddLine(P(ix + gap * 0.5f, a.y + 15), P(ix + gap * 0.5f, a.y + 35), Col(pal::Line), 1.f);
+                    ix += gap;
+                }
+            }
+            if (!renderRes.empty())
+            {
+                Text(fUi, infoSize, ImVec2(ix, infoY), pal::Text, renderRes.c_str());
+                ix += Measure(fUi, infoSize, renderRes.c_str()).x;
+                Text(fUi, infoSize, ImVec2(ix, infoY), pal::Text2, arrow);
+                ix += Measure(fUi, infoSize, arrow).x;
+            }
+            if (!finalRes.empty())
+                Text(fUi, infoSize, ImVec2(ix, infoY), IlionTheme::InfoCyan, finalRes.c_str());
+        }
     }
 
     const ImVec2 a(x0, 316), b(x1, H - 16);

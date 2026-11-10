@@ -7555,6 +7555,29 @@ struct OverlayPart
     const ImVec4* color = nullptr;
 };
 
+// ILION v1.4.0: the Frame Gen value of the overlay in pieces: the technology in the colour of its maker (Intel blue for
+// XeFG / XeMFG, AMD red for the FidelityFX ones, NVIDIA green for DLSSG and FG Lite), the multiplier in the overlay's
+// figure yellow, how it is known in the plain colour
+static std::vector<OverlayPart> FgOverlayParts(const std::string& tech, const std::string& mult, const std::string& note,
+                                               const ImVec4* multColour)
+{
+    static ImVec4 intel, amd, nvidia;
+    intel = toneMapColor(IlionTheme::InfoBlue);
+    amd = toneMapColor(IlionTheme::ShellPal::Red);
+    nvidia = toneMapColor(ImVec4(0.46f, 0.73f, 0.0f, 1.0f));
+
+    const ImVec4* techColour = tech.find("Xe") != std::string::npos                                ? &intel
+                               : tech == "DLSSG" || tech == "FG Lite"                              ? &nvidia
+                               : tech == "Enabler" || tech == "Nukems" || tech == "FFX" || tech == "Combo" ? &amd
+                                                                                                    : nullptr;
+    std::vector<OverlayPart> parts { { tech, techColour } };
+    if (!mult.empty())
+        parts.push_back({ " " + mult, multColour });
+    if (!note.empty())
+        parts.push_back({ " " + note, nullptr });
+    return parts;
+}
+
 static void OverlayRowParts(const char* label, const std::vector<OverlayPart>& parts, float width)
 {
     float valueWidth = 0.0f;
@@ -8704,24 +8727,50 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
             const bool externalConfirmed = externalApplied >= 2 &&
                                            externalSource == IlionDynamicMfg::AppliedSource::Measured;
 
+            // ILION v1.4.0: the Frame Gen value in pieces, in the language of the menu: the technology (in the colour of
+            // its maker), the multiplier and how it is known. The line of text is the same pieces joined
+            std::string fgTech, fgMult, fgNote;
+            const auto joinFg = [&]()
+            {
+                std::string text = " (" + fgTech;
+                if (!fgMult.empty())
+                    text += " " + fgMult;
+                if (!fgNote.empty())
+                    text += " " + fgNote;
+                return text + ")";
+            };
             auto formatFg = [&](std::string_view name, int maxFakeFrames)
             {
+                fgTech = name;
+                fgMult.clear();
+                fgNote.clear();
+
                 if (fakeFramesCount > maxFakeFrames)
-                    return std::format(" ({} Doesn't support more than {}x)", name, maxFakeFrames);
-
+                    fgNote = StrFmt(ShellText("doesn't support more than %dx", "no admite más de %dx", "não suporta mais de %dx",
+                                              "не поддерживает больше %dx"),
+                                    maxFakeFrames);
                 else if (fakeFramesCount == 0)
-                    return std::format(" ({} off)", name);
-
-                if (activeNvngxFg != FGNvngxReplacement::None)
+                    fgNote = ShellText("off", "apagado", "desligado", "выкл.");
+                else if (activeNvngxFg != FGNvngxReplacement::None && !externalConfirmed)
                 {
-                    if (!externalConfirmed)
-                        return std::format(" ({} x{} asked, not measured)", name, fakeFramesCount + 1);
-                    if (externalApplied != fakeFramesCount + 1)
-                        return std::format(" ({} x{} measured, asked x{})", name, externalApplied, fakeFramesCount + 1);
-                    return std::format(" ({} x{} measured)", name, externalApplied);
+                    fgMult = StrFmt("x%d", fakeFramesCount + 1);
+                    fgNote = ShellText("asked, not measured", "pedido, sin medir", "pedido, sem medir", "запрошено, не измерено");
                 }
+                else if (activeNvngxFg != FGNvngxReplacement::None && externalApplied != fakeFramesCount + 1)
+                {
+                    fgMult = StrFmt("x%d", externalApplied);
+                    fgNote = StrFmt(ShellText("measured, asked x%d", "medido, pedido x%d", "medido, pedido x%d", "измерено, запрошено x%d"),
+                                    fakeFramesCount + 1);
+                }
+                else if (activeNvngxFg != FGNvngxReplacement::None)
+                {
+                    fgMult = StrFmt("x%d", externalApplied);
+                    fgNote = ShellText("measured", "medido", "medido", "измерено");
+                }
+                else
+                    fgMult = StrFmt("x%d", fakeFramesCount + 1);
 
-                return std::format(" ({} x{})", name, fakeFramesCount + 1);
+                return joinFg();
             };
 
             if (activeNvngxFg == FGNvngxReplacement::Arturs)
@@ -8749,7 +8798,12 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                 // ILION v1.4.0: the same wording as the other DLSSG replacements; when its XeFG context failed the
                 // presents counted are Streamline's, so no multiplier is shown (IlionDynamicMfg's backendError)
                 if (IlionDynamicMfg::Get().backendError)
-                    fgText = " (XeMFG XMX error, not generating)";
+                {
+                    fgTech = "XeMFG XMX";
+                    fgMult.clear();
+                    fgNote = ShellText("error, not generating", "error, no genera", "erro, não gera", "ошибка, не генерирует");
+                    fgText = joinFg();
+                }
                 else
                     fgText = formatFg("XeMFG XMX", Nvngx_FG::getMaxFakeFramesCount());
             }
@@ -8987,7 +9041,9 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                                     rowWidth);
                 }
 
-                if (!fgValue.empty())
+                if (!fgTech.empty())
+                    OverlayRowParts("Frame Gen", FgOverlayParts(fgTech, fgMult, fgNote, &mainFigureYellow), rowWidth);
+                else if (!fgValue.empty())
                     OverlayRow("Frame Gen", fgValue, rowWidth);
 
                 if (showUpscalerTime)
@@ -9064,7 +9120,9 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                                   { currentFeature->IsWithDx12() ? " w/Dx12" : "", nullptr } });
                 }
 
-                if (!fgValue.empty())
+                if (!fgTech.empty())
+                    OverlayCell("Frame Gen", FgOverlayParts(fgTech, fgMult, fgNote, &mainFigureYellow));
+                else if (!fgValue.empty())
                     OverlayCell("Frame Gen", fgValue);
 
                 if (showUpscalerTime)
@@ -9089,12 +9147,36 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
             {
             // Draw the overlay. ILION: the FPS number in radioactive orange, the rest of the line as it was
             {
+                // ILION v1.4.0: the Frame Gen value in its colours, as in the Industrial blocks (FgOverlayParts)
+                const auto drawRun = [&](std::string_view run)
+                {
+                    const size_t fgAt = fgTech.empty() ? std::string_view::npos : run.find(fgText);
+                    if (fgAt == std::string_view::npos)
+                    {
+                        ImGui::TextUnformatted(run.data(), run.data() + run.size());
+                        return;
+                    }
+
+                    ImGui::TextUnformatted(run.data(), run.data() + fgAt + 2); // up to " ("
+                    for (const auto& part : FgOverlayParts(fgTech, fgMult, fgNote, &mainFigureYellow))
+                    {
+                        ImGui::SameLine(0.0f, 0.0f);
+                        if (part.color != nullptr)
+                            ImGui::TextColored(*part.color, "%s", part.text.c_str());
+                        else
+                            ImGui::TextUnformatted(part.text.c_str());
+                    }
+                    ImGui::SameLine(0.0f, 0.0f);
+                    const std::string_view rest = run.substr(fgAt + fgText.size() - 1); // from ")"
+                    ImGui::TextUnformatted(rest.data(), rest.data() + rest.size());
+                };
+
                 const std::string fpsNumber = StrFmt("%6.1f", frameRate);
                 const size_t at = firstLine.find(fpsNumber);
 
                 if (at == std::string::npos)
                 {
-                    ImGui::TextUnformatted(firstLine.c_str());
+                    drawRun(firstLine);
                 }
                 else
                 {
@@ -9109,7 +9191,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                     if (at + fpsNumber.size() < firstLine.size())
                     {
                         ImGui::SameLine(0.0f, 0.0f);
-                        ImGui::TextUnformatted(firstLine.c_str() + at + fpsNumber.size());
+                        drawRun(std::string_view(firstLine).substr(at + fpsNumber.size()));
                     }
                 }
             }

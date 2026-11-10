@@ -41,6 +41,7 @@
 #include <hooks/Crypt32_Hooks.h>
 #include <hooks/Advapi32_Hooks.h>
 #include <hooks/Streamline_Hooks.h>
+#include <plugins/PluginApi.h>
 
 #include <nvapi/NvApiHooks.h>
 
@@ -232,7 +233,15 @@ void LoadAsiPlugins()
     std::vector<std::filesystem::directory_entry> variantEntries;
     std::vector<std::wstring> variantNames;
 
-    if (const auto variant = Config::Instance()->XeMfgVariant.value_or(L""); !variant.empty())
+    // ILION v1.4.0 fase 2 exp4: XeMFG XMX (realdody) as the DLSSG replacement is another implementation of the same
+    // technique (its XeFG port comes from MFG-Unlocker): no XeMFG variant with it, never two in one process. The choice
+    // stays in the config
+    const bool xmxReplacement = Config::Instance()->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::XeMfgXmx;
+    if (const auto variant = Config::Instance()->XeMfgVariant.value_or(L""); !variant.empty() && xmxReplacement)
+    {
+        LOG_INFO(L"XeMFG XMX selected: XeMFG variant {} not loaded", variant);
+    }
+    else if (const auto variant = Config::Instance()->XeMfgVariant.value_or(L""); !variant.empty())
     {
         const auto variantFolder = pluginPath / L"XeMFG" / variant;
         std::error_code ec;
@@ -308,6 +317,11 @@ void LoadAsiPlugins()
                 if (init != nullptr)
                     init();
 
+                // ILION v1.4.0 fase 2 exp4: OptiScaler v10's plugin API, right after InitializeASI
+                PluginApi::InitPlugin(
+                    hMod, (PFN_OptiPluginInit) KernelBaseProxy::GetProcAddress_()(hMod, OPTI_PLUGIN_INIT_NAME),
+                    entry.path());
+
                 if (patchResult != nullptr)
                 {
                     auto pr = patchResult();
@@ -372,6 +386,11 @@ void LoadAsiPlugins()
 
                                     if (init != nullptr)
                                         init();
+
+                                    PluginApi::InitPlugin(hMod,
+                                                          (PFN_OptiPluginInit) KernelBaseProxy::GetProcAddress_()(
+                                                              hMod, OPTI_PLUGIN_INIT_NAME),
+                                                          entry.path());
 
                                     if (patchResult != nullptr)
                                     {
@@ -1493,15 +1512,9 @@ void CheckMemoryForProxies()
 
     XeSSProxy::InitXeSS();
     XeSSProxy::InitXeSSDx11();
-    // ILION v1.4.0 fase 2: not with XeMFG XMX as the DLSSG replacement (it loads its own libxess_fg.dll; one already in
-    // the process can make its XeFG Init fail, "Failed to create heap"), unless ILION's XeFG output is chosen. ILION's
-    // XeFG still loads on demand (XeFG_Dx12, FG_Hooks)
-    if (const auto cfg = Config::Instance();
-        cfg->FGNvngxReplacement.value_or_default() != FGNvngxReplacement::XeMfgXmx ||
-        cfg->FGOutput.value_or_default() == FGOutput::XeFG)
-        XeFGProxy::InitXeFG();
-    else
-        LOG_INFO("XeMFG XMX selected: ILION's libxess_fg.dll isn't preloaded");
+    // ILION v1.4.0 fase 2 exp4: always, as OptiScaler v10 does with XeMFG XMX too. realdody's release ships no
+    // libxess_fg.dll: it then uses this one (OptiScaler\libxess_fg.dll, three folders above it), a single module
+    XeFGProxy::InitXeFG();
     XeLLProxy::InitXeLL();
 
     XellHooks::Hook();

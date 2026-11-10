@@ -860,6 +860,13 @@ class Config
     bool SaveUpscalerChoice();
     bool SaveXeMfgVariant();
 
+    // ILION v1.4.0 fase 2 exp4: values of the ini as they are, for the plugin API ([Plugin.<name>] sections, OptiScaler
+    // v10). SaveRawValues writes only those sections to the file, the rest of it stays as it is
+    std::optional<std::string> GetRawValue(const char* section, const char* key);
+    void SetRawValue(const char* section, const char* key, const char* value);
+    void DeleteRawValue(const char* section, const char* key);
+    bool SaveRawValues();
+
     void CheckUpscalerFiles();
 
     // FG on/off and interpolation count, following the game's DLSSG state when FGEnabled is unset

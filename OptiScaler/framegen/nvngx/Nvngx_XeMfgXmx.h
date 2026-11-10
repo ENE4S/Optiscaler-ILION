@@ -22,19 +22,31 @@ class Nvngx_XeMfgXmx : public Nvngx_DllProxy
     int getMaxFakeFramesCount() override { return 5; }
     FGNvngxReplacement getType() override { return FGNvngxReplacement::XeMfgXmx; }
 
-    // XeFG creates its heaps and checks the adapter inside these calls: as for ILION's own XeFG, without the vendor
-    // spoofing and the heap capture
-    NVSDK_NGX_Result D3D12_Init(unsigned long long InApplicationId, const wchar_t* InApplicationDataPath,
-                                ID3D12Device* InDevice, const NVSDK_NGX_FeatureCommonInfo* InFeatureInfo,
-                                NVSDK_NGX_Version InSDKVersion) override;
-    NVSDK_NGX_Result D3D12_Init_Ext(unsigned long long InApplicationId, const wchar_t* InApplicationDataPath,
-                                    ID3D12Device* InDevice, NVSDK_NGX_Version InSDKVersion,
-                                    const NVSDK_NGX_FeatureCommonInfo* InFeatureInfo) override;
+    // ILION v1.4.0 fase 2 exp4: called as OptiScaler v10 calls a custom DLSSG replacement (Nvngx_DllProxy, with the
+    // spoofing and the heap capture as they are): only CreateFeature is wrapped, for its error in ILION's log
     NVSDK_NGX_Result D3D12_CreateFeature(ID3D12GraphicsCommandList* InCmdList, NVSDK_NGX_Feature InFeatureID,
                                          NVSDK_NGX_Parameter* InParameters, NVSDK_NGX_Handle** OutHandle) override;
-    NVSDK_NGX_Result D3D12_EvaluateFeature(ID3D12GraphicsCommandList* InCmdList, const NVSDK_NGX_Handle* InFeatureHandle,
-                                           NVSDK_NGX_Parameter* InParameters,
-                                           PFN_NVSDK_NGX_ProgressCallback InCallback) override;
+
+    // Its plugin API name, as OptiScaler v10 names a custom replacement (its folder): its settings are in
+    // [Plugin.XeMFG XMX] of OptiScaler.ini, the same section OptiScaler v10 uses
+    static constexpr const char* PluginName = "XeMFG XMX";
+
+    // realdody's network paths (its Plugin::Path, [Plugin.XeMFG XMX] NetworkPath). XmxNative is its default: on a GPU
+    // without Intel's XMX it runs the ported model 16 (DXIL, or CUDA on an RTX); Fallback is XeFG's DP4a model 18
+    enum class NetworkPath : int32_t
+    {
+        XmxPort = 0,
+        Cuda = 1,
+        Fallback = 2,
+        XmxNative = 3,
+    };
+    // The saved one (its default when none): what it reads at its OptiPluginInit, at the next start
+    static NetworkPath SavedNetworkPath();
+    // Saved to the ini at once; applied at the next start (its own tab switches it live)
+    static void SaveNetworkPath(NetworkPath path);
+    static const char* NetworkPathName(NetworkPath path);
+    // OptiPluginInit was called and it accepted the API (its tab is in the menu)
+    static bool PluginApiAccepted();
 
     // What is installed, read from the files only (nothing is loaded by it)
     struct Install
@@ -60,7 +72,10 @@ class Nvngx_XeMfgXmx : public Nvngx_DllProxy
         std::string contextError;    // the first [error] after the last context creation (its cause), empty when none
         std::string lastError;       // the last [error] after it ("XeFG Init error: -1000"), empty when none
         std::string otherLibxessFg;  // another libxess_fg.dll loaded in the game (not its own), empty when none
+        bool pluginApi = false;      // "OptiScaler plugin API version N": it got the plugin API (exp4)
         bool ContextFailed() const { return logThisSession && contextModel >= 0 && !lastError.empty(); }
+        // A context made without an error after it: XeFG generates with it (model 16 XMX port, 18 DP4a, 17 Intel XMX)
+        bool ContextOk() const { return logThisSession && contextModel >= 0 && lastError.empty(); }
         bool XmxConfirmed() const { return logThisSession && xmxModel && contextModel == 16 && lastError.empty(); }
     };
     // Re-read at most every two seconds, and only when the file changed. Thread safe: a copy

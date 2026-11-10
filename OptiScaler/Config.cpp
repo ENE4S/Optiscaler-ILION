@@ -2034,6 +2034,65 @@ bool Config::SaveXeMfgVariant()
     return file.SaveFile(absoluteFileName.wstring().c_str()) >= 0;
 }
 
+// ILION v1.4.0 fase 2 exp4: the plugin API's settings (OptiScaler v10, Config::GetRawValue...). Plugins call them from
+// the menu and from the game's threads: one lock for these
+static std::recursive_mutex rawIniMutex;
+
+std::optional<std::string> Config::GetRawValue(const char* section, const char* key)
+{
+    std::lock_guard<std::recursive_mutex> lock(rawIniMutex);
+
+    const char* value = ini.GetValue(section, key, nullptr);
+    if (value == nullptr)
+        return std::nullopt;
+
+    return std::string(value);
+}
+
+void Config::SetRawValue(const char* section, const char* key, const char* value)
+{
+    std::lock_guard<std::recursive_mutex> lock(rawIniMutex);
+    ini.SetValue(section, key, value);
+}
+
+void Config::DeleteRawValue(const char* section, const char* key)
+{
+    std::lock_guard<std::recursive_mutex> lock(rawIniMutex);
+    ini.Delete(section, key, true);
+}
+
+bool Config::SaveRawValues()
+{
+    std::lock_guard<std::recursive_mutex> lock(rawIniMutex);
+
+    // Like SaveXeMfgVariant: the file as it is on disk, with the [Plugin.*] sections replaced by the ones in memory
+    CSimpleIniA file;
+    file.LoadFile(absoluteFileName.c_str());
+
+    CSimpleIniA::TNamesDepend sections;
+    file.GetAllSections(sections);
+    for (const auto& section : sections)
+    {
+        if (std::string_view(section.pItem).starts_with("Plugin."))
+            file.Delete(section.pItem, nullptr, true);
+    }
+
+    ini.GetAllSections(sections);
+    for (const auto& section : sections)
+    {
+        if (!std::string_view(section.pItem).starts_with("Plugin."))
+            continue;
+
+        CSimpleIniA::TNamesDepend keys;
+        ini.GetAllKeys(section.pItem, keys);
+        for (const auto& key : keys)
+            file.SetValue(section.pItem, key.pItem, ini.GetValue(section.pItem, key.pItem, ""));
+    }
+
+    LOG_INFO("Saving plugin settings to: {}", wstring_to_string(absoluteFileName.wstring()));
+    return file.SaveFile(absoluteFileName.wstring().c_str()) >= 0;
+}
+
 bool Config::SaveUpscalerChoice()
 {
     const auto config = Instance();

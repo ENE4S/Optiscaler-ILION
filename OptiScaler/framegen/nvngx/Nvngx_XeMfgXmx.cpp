@@ -2,6 +2,8 @@
 #include "Nvngx_XeMfgXmx.h"
 
 #include <proxies/Ntdll_Proxy.h>
+#include <proxies/XeFG_Proxy.h>
+#include <plugins/PluginApi.h>
 
 #include <fstream>
 #include <mutex>
@@ -107,44 +109,69 @@ void Nvngx_XeMfgXmx::LoadLibraries()
 
     LOG_INFO("XeMFG XMX: loaded {} (programs: {}, libxess_fg.dll next to it: {})",
              wstring_to_string(install.dll.wstring()), install.programs, install.libxessFg);
+
+    // ILION v1.4.0 fase 2 exp4: as OptiScaler v10's CustomProviders::LoadDll, right after the load: its OptiPluginInit
+    // reads [Plugin.XeMFG XMX] (NetworkPath, HudlessUi) and registers its tab. Without it realdody stays on its default
+    // path (XmxNative: the ported model 16 on AMD) and can't be switched
+    const auto init = (PFN_OptiPluginInit) GetProcAddress(dll, OPTI_PLUGIN_INIT_NAME);
+    if (init == nullptr)
+        LOG_WARN("XeMFG XMX: this build has no OptiPluginInit (older than build-10): no network path choice");
+    PluginApi::InitPlugin(dll, init, std::string(PluginName));
 }
 
-NVSDK_NGX_Result Nvngx_XeMfgXmx::D3D12_Init(unsigned long long InApplicationId, const wchar_t* InApplicationDataPath,
-                                            ID3D12Device* InDevice, const NVSDK_NGX_FeatureCommonInfo* InFeatureInfo,
-                                            NVSDK_NGX_Version InSDKVersion)
+Nvngx_XeMfgXmx::NetworkPath Nvngx_XeMfgXmx::SavedNetworkPath()
 {
-    ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
-    ScopedSkipHeapCapture skipHeapCapture {};
-    return Nvngx_DllProxy::D3D12_Init(InApplicationId, InApplicationDataPath, InDevice, InFeatureInfo, InSDKVersion);
+    const std::string section = std::string("Plugin.") + PluginName;
+    const auto value = Config::Instance()->GetRawValue(section.c_str(), "NetworkPath");
+    if (value.has_value() && !value->empty() && isdigit((unsigned char) (*value)[0]))
+    {
+        const int path = atoi(value->c_str());
+        if (path >= (int) NetworkPath::XmxPort && path <= (int) NetworkPath::XmxNative)
+            return (NetworkPath) path;
+    }
+    return NetworkPath::XmxNative;
 }
 
-NVSDK_NGX_Result Nvngx_XeMfgXmx::D3D12_Init_Ext(unsigned long long InApplicationId, const wchar_t* InApplicationDataPath,
-                                                ID3D12Device* InDevice, NVSDK_NGX_Version InSDKVersion,
-                                                const NVSDK_NGX_FeatureCommonInfo* InFeatureInfo)
+void Nvngx_XeMfgXmx::SaveNetworkPath(NetworkPath path)
 {
-    ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
-    ScopedSkipHeapCapture skipHeapCapture {};
-    return Nvngx_DllProxy::D3D12_Init_Ext(InApplicationId, InApplicationDataPath, InDevice, InSDKVersion, InFeatureInfo);
+    const std::string section = std::string("Plugin.") + PluginName;
+    Config::Instance()->SetRawValue(section.c_str(), "NetworkPath", std::to_string((int) path).c_str());
+    Config::Instance()->SaveRawValues();
+    LOG_INFO("XeMFG XMX: network path {} saved, applied at the next start", NetworkPathName(path));
+}
+
+const char* Nvngx_XeMfgXmx::NetworkPathName(NetworkPath path)
+{
+    switch (path)
+    {
+    case NetworkPath::XmxPort:
+        return "XMX Port";
+    case NetworkPath::Cuda:
+        return "CUDA";
+    case NetworkPath::Fallback:
+        return "Fallback (DP4a)";
+    default:
+        return "XMX (native)";
+    }
+}
+
+bool Nvngx_XeMfgXmx::PluginApiAccepted()
+{
+    for (const auto& tab : PluginApi::GetTabs())
+    {
+        if (tab.plugin == PluginName)
+            return true;
+    }
+    return false;
 }
 
 NVSDK_NGX_Result Nvngx_XeMfgXmx::D3D12_CreateFeature(ID3D12GraphicsCommandList* InCmdList, NVSDK_NGX_Feature InFeatureID,
                                                      NVSDK_NGX_Parameter* InParameters, NVSDK_NGX_Handle** OutHandle)
 {
-    ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
-    ScopedSkipHeapCapture skipHeapCapture {};
     const auto result = Nvngx_DllProxy::D3D12_CreateFeature(InCmdList, InFeatureID, InParameters, OutHandle);
     if (result != NVSDK_NGX_Result_Success)
         LOG_ERROR("XeMFG XMX: CreateFeature failed ({:X}); its log: dlssg_to_xefg_intel_is_better.log", (UINT) result);
     return result;
-}
-
-NVSDK_NGX_Result Nvngx_XeMfgXmx::D3D12_EvaluateFeature(ID3D12GraphicsCommandList* InCmdList,
-                                                       const NVSDK_NGX_Handle* InFeatureHandle,
-                                                       NVSDK_NGX_Parameter* InParameters,
-                                                       PFN_NVSDK_NGX_ProgressCallback InCallback)
-{
-    ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
-    return Nvngx_DllProxy::D3D12_EvaluateFeature(InCmdList, InFeatureHandle, InParameters, InCallback);
 }
 
 // ---- Its log: which XeFG path runs ------------------------------------------------------------------------------------
@@ -170,6 +197,9 @@ static std::string OtherLibxessFg(const fs::path& ownFolder)
             continue;
         const fs::path path(entry.szExePath);
         if (!ownFolder.empty() && Util::IsSubpath(path, ownFolder))
+            continue;
+        // ILION's own (OptiScaler\libxess_fg.dll, preloaded as OptiScaler v10 does): the one realdody's release uses
+        if (entry.hModule != nullptr && entry.hModule == XeFGProxy::Module())
             continue;
         found = wstring_to_string(path.wstring());
         break;
@@ -249,6 +279,8 @@ Nvngx_XeMfgXmx::Backend Nvngx_XeMfgXmx::ReadBackend()
             b.libxessFg = t;
         else if (auto n = after("Network path: "); !n.empty())
             b.networkPath = n;
+        else if (line.find("OptiScaler plugin API version") != std::string::npos)
+            b.pluginApi = true;
         else if (line.find("Ported XMX MFG model installed") != std::string::npos)
             b.xmxModel = true;
         else if (line.find("Creating XeFG context:") != std::string::npos)

@@ -40,6 +40,7 @@
 #include <framegen/nvngx/Nvngx_FG.h>
 #include <framegen/nvngx/Nvngx_HelixSR.h>
 #include <framegen/nvngx/Nvngx_XeMfgXmx.h>
+#include <plugins/PluginApi.h>
 #include <framegen/reprojection/Reprojection_Dx12.h>
 
 #include <nvapi/fakenvapi.h>
@@ -1754,6 +1755,21 @@ static void DrawXeMfgXmxState()
         WrappedText(warn, Tr("No xefg_mfg_programs folder next to it: the XMX model can't be ported"));
 
     const auto backend = Nvngx_XeMfgXmx::ReadBackend();
+    const auto savedPath = Nvngx_XeMfgXmx::SavedNetworkPath();
+    const bool pluginApi = Nvngx_XeMfgXmx::PluginApiAccepted();
+    // ILION v1.4.0 fase 2 exp4: OptiScaler v10's plugin API, so its network path can be chosen as in OptiScaler v10
+    WrappedText(ImGui::GetStyle().Colors[ImGuiCol_TextDisabled],
+                StrFmt(Tr("Network path: %s. Plugin API: %s"), Nvngx_XeMfgXmx::NetworkPathName(savedPath),
+                       pluginApi ? Tr("active (its tab is below)")
+                                 : Tr("not active (it loads at the next start with XeMFG XMX, build-10 or newer)"))
+                    .c_str());
+
+    // With Default ILION asks for nothing: the game's own DLSSG setting decides, and it may ask for no generation
+    if (!Config::Instance()->FGDLSSGOverrideInterpolationCount.has_value() &&
+        State::Instance().dlssgLastSetMode == sl::DLSSGMode::eOff)
+        WrappedText(warn, Tr("With Default the game isn't asking for frame generation: pick a multiplier (x2 to x6) or turn "
+                             "DLSS Frame Generation on in the game"));
+
     if (!backend.otherLibxessFg.empty())
         WrappedText(warn, StrFmt(Tr("Another libxess_fg.dll is loaded in the game: %s. realdody: it can make XeFG's Init fail "
                                     "(\"Failed to create heap\")"),
@@ -1765,18 +1781,60 @@ static void DrawXeMfgXmxState()
         return;
     }
     if (backend.ContextFailed())
+    {
         WrappedText(IlionTheme::LampRed,
                     StrFmt(Tr("The last XeFG context failed (%s; %s). Without a context XeMFG XMX generates nothing: the "
                               "presents counted are Streamline's. It retries when the resolution or the path changes"),
                            backend.contextError.c_str(), backend.lastError.c_str())
                         .c_str());
+
+        // The ported model 16 is what fails here: XeFG's DP4a model 18 is the other path realdody offers on non Intel GPUs
+        if (backend.contextModel != 18)
+        {
+            if (pluginApi)
+                WrappedText(warn, Tr("Try another network path live in the engine's tab below (Fallback (DP4a)), or save it "
+                                     "for the next start"));
+            if (savedPath != Nvngx_XeMfgXmx::NetworkPath::Fallback &&
+                IlionTheme::Button(TrL("Use Fallback (DP4a) at the next start##xmxDp4a")))
+                Nvngx_XeMfgXmx::SaveNetworkPath(Nvngx_XeMfgXmx::NetworkPath::Fallback);
+        }
+    }
     else if (!backend.lastError.empty())
         WrappedText(warn, StrFmt(Tr("XeMFG XMX error: %s"), backend.lastError.c_str()).c_str());
     else if (backend.XmxConfirmed())
         WrappedText(IlionTheme::LampGreen,
                     StrFmt(Tr("XMX path confirmed by its log: model 16, XeFG %s"), backend.xefgVersion.c_str()).c_str());
+    else if (backend.ContextOk())
+        WrappedText(IlionTheme::LampGreen,
+                    StrFmt(Tr("XeFG context created by its log: model %d (%s), XeFG %s"), backend.contextModel,
+                           backend.contextModel == 18   ? "DP4a"
+                           : backend.contextModel == 17 ? "Intel XMX"
+                                                        : "XMX",
+                           backend.xefgVersion.c_str())
+                        .c_str());
     else if (!backend.networkPath.empty())
         WrappedText(warn, StrFmt(Tr("Path: %s (not confirmed yet)"), backend.networkPath.c_str()).c_str());
+}
+
+// ILION v1.4.0 fase 2 exp4: the tabs plugins registered through OptiScaler v10's plugin API, folded: XeMFG XMX's (its
+// status, network path and settings) or the others
+static void DrawPluginTabs(bool xmx)
+{
+    const auto tabs = PluginApi::GetTabs();
+    for (size_t i = 0; i < tabs.size(); i++)
+    {
+        if ((tabs[i].plugin == Nvngx_XeMfgXmx::PluginName) != xmx)
+            continue;
+
+        const std::string label = StrFmt("%s: %s##pluginTab%d", xmx ? Tr("Engine") : Tr("Plugin"), tabs[i].name.c_str(), (int) i);
+        if (ImGui::TreeNode(label.c_str()))
+        {
+            if (!tabs[i].description.empty())
+                ImGui::TextDisabled("%s", tabs[i].description.c_str());
+            PluginApi::DrawTab(i, ImGui::GetFontSize() / 13.0f);
+            ImGui::TreePop();
+        }
+    }
 }
 
 // generatedFrames: frames generated per rendered one in the last DLSSG evaluation, 0 when there is none
@@ -12289,6 +12347,11 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
         // the route XeMFG uses (another generator hides it, the choice stays in the config)
         if (config->FGOutput.value_or_default() == FGOutput::XeFG)
             RenderXeMfgVariantSelector(config);
+
+        // ILION v1.4.0 fase 2 exp4: what plugins registered through OptiScaler v10's plugin API
+        if (config->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::XeMfgXmx)
+            DrawPluginTabs(true);
+        DrawPluginTabs(false);
 
         // ILION dev.78: Compact's two columns: the switch and the multiplier under the selectors, the states at the right
         if (compactColumns)

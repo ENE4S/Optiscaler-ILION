@@ -154,6 +154,145 @@ static ImVec2 Measure(ImFont* f, float size, const char* t)
     return ImVec2(px.x / S, px.y / S);
 }
 
+// ILION v1.4.1: the driver of the primary GPU as its maker numbers it, read once from its display class key (read only):
+// AMD's Adrenalin version (RadeonSoftwareVersion), NVIDIA's from DriverVersion (32.0.15.8157 -> 581.57), Intel's
+// DriverVersion as it is. Empty when it can't be read
+static std::string ReadDriverVersion(const GpuInformation& gpu)
+{
+    std::string result;
+    HKEY classKey = nullptr;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}", 0,
+                      KEY_READ, &classKey) != ERROR_SUCCESS)
+        return result;
+
+    wchar_t wanted[32] {};
+    swprintf_s(wanted, L"ven_%04x&dev_%04x", (unsigned) gpu.vendorId, (unsigned) gpu.deviceId);
+
+    const auto readText = [](HKEY key, const wchar_t* name) -> std::wstring
+    {
+        wchar_t value[256] {};
+        DWORD size = sizeof(value);
+        if (RegGetValueW(key, nullptr, name, RRF_RT_REG_SZ, nullptr, value, &size) != ERROR_SUCCESS)
+            return {};
+        return value;
+    };
+
+    for (DWORD i = 0; result.empty() && i < 64; i++)
+    {
+        wchar_t sub[16] {};
+        DWORD subLength = ARRAYSIZE(sub);
+        if (RegEnumKeyExW(classKey, i, sub, &subLength, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS)
+            break;
+
+        HKEY device = nullptr;
+        if (RegOpenKeyExW(classKey, sub, 0, KEY_READ, &device) != ERROR_SUCCESS)
+            continue;
+
+        std::wstring match = readText(device, L"MatchingDeviceId");
+        std::transform(match.begin(), match.end(), match.begin(), ::towlower);
+        if (match.find(wanted) != std::wstring::npos)
+        {
+            const std::wstring radeon = gpu.vendorId == VendorId::AMD ? readText(device, L"RadeonSoftwareVersion") : std::wstring();
+            const std::wstring version = readText(device, L"DriverVersion");
+            if (!radeon.empty())
+                result = wstring_to_string(radeon);
+            else if (gpu.vendorId == VendorId::Nvidia && !version.empty())
+            {
+                std::wstring digits;
+                for (const wchar_t c : version)
+                {
+                    if (iswdigit(c))
+                        digits += c;
+                }
+                if (digits.size() >= 5)
+                {
+                    const std::wstring last = digits.substr(digits.size() - 5);
+                    result = wstring_to_string(last.substr(0, 3) + L"." + last.substr(3));
+                }
+            }
+            else
+                result = wstring_to_string(version);
+        }
+        RegCloseKey(device);
+    }
+
+    RegCloseKey(classKey);
+    return result;
+}
+
+// The GPU as the headers show it: its short name ("RX 7900 XTX"), its maker's colour and its driver. Read once
+struct HeaderGpuInfo
+{
+    std::string name;
+    ImVec4 colour;
+    std::string driver;
+};
+
+static const HeaderGpuInfo& HeaderGpu()
+{
+    static HeaderGpuInfo info;
+    static bool read = false;
+    if (read)
+        return info;
+    read = true;
+
+    const auto& gpu = IdentifyGpu::getPrimaryGpu();
+    info.name = gpu.name;
+    for (const char* prefix : { "AMD ", "Radeon ", "NVIDIA ", "GeForce ", "Intel(R) ", "Intel " })
+    {
+        if (info.name.rfind(prefix, 0) == 0)
+            info.name.erase(0, strlen(prefix));
+    }
+    info.colour = gpu.vendorId == VendorId::AMD      ? IlionTheme::ShellPal::Red
+                  : gpu.vendorId == VendorId::Nvidia ? ImVec4(0.46f, 0.73f, 0.0f, 1.f)
+                  : gpu.vendorId == VendorId::Intel  ? IlionTheme::InfoBlue
+                                                     : IlionTheme::ShellPal::Text;
+    info.driver = ReadDriverVersion(gpu);
+    return info;
+}
+
+// A run of header facts against rightX: groups of coloured pieces, a thin separator between groups. Returns the left
+// edge it starts at; nothing is drawn when draw is false (to measure first)
+using HeaderPiece = std::pair<std::string, ImVec4>;
+static float HeaderFacts(ImFont* f, float size, float rightX, float y, float sepTop, float sepBottom,
+                         const std::vector<std::vector<HeaderPiece>>& groups, bool draw)
+{
+    constexpr float gap = 22.f;
+    float width = 0.f;
+    int shown = 0;
+    for (const auto& group : groups)
+    {
+        if (group.empty())
+            continue;
+        width += shown++ > 0 ? gap : 0.f;
+        for (const auto& piece : group)
+            width += Measure(f, size, piece.first.c_str()).x;
+    }
+
+    const float left = rightX - width;
+    if (!draw)
+        return left;
+
+    float x = left;
+    shown = 0;
+    for (const auto& group : groups)
+    {
+        if (group.empty())
+            continue;
+        if (shown++ > 0)
+        {
+            ImGui::GetWindowDrawList()->AddLine(P(x + gap * 0.5f, sepTop), P(x + gap * 0.5f, sepBottom), Col(pal::Line), 1.f);
+            x += gap;
+        }
+        for (const auto& piece : group)
+        {
+            Text(f, size, ImVec2(x, y), piece.second, piece.first.c_str());
+            x += Measure(f, size, piece.first.c_str()).x;
+        }
+    }
+    return left;
+}
+
 static void PanelRect(ImVec2 a, ImVec2 b, bool hi = false, const ImVec4* accent = nullptr)
 {
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -2135,6 +2274,20 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         {
             const char* toFull = Lx("Full view", "Vista completa", "Vista completa", "Полный вид");
             const float fw = Measure(fUi, 15.f, toFull).x + 30;
+
+            // ILION v1.4.1: the GPU (in its maker's colour) and its driver, as in the Full header, left of the button;
+            // only when they don't reach the version
+            const auto& gpuHeader = HeaderGpu();
+            std::vector<std::vector<HeaderPiece>> facts;
+            if (!gpuHeader.name.empty())
+                facts.push_back({ { "GPU ", pal::Text2 }, { gpuHeader.name, gpuHeader.colour } });
+            if (!gpuHeader.driver.empty())
+                facts.push_back({ { std::string(Lx("Driver ", "Driver ", "Driver ", "Драйвер ")), pal::Text2 }, { gpuHeader.driver, pal::Text } });
+            const float factsRight = CW - 16 - fw - 20;
+            const float versionEnd = 16 + brandW + 10 + Measure(fUi, 13.f, (std::string("v") + BuildInfo::IlionVersion()).c_str()).x;
+            if (!facts.empty() && HeaderFacts(fUi, 15.f, factsRight, 20, 19, 39, facts, false) > versionEnd + 20)
+                HeaderFacts(fUi, 15.f, factsRight, 20, 19, 39, facts, true);
+
             At(CW - 16 - fw, 9);
             if (Button("##CompactToFull", toFull, ImVec2(fw, 40), false, pal::Green, 15.f))
             {
@@ -3034,72 +3187,35 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         const float subX = a.x + 58 + Measure(fBrand, 26.f, sec.caps[li]).x + 22;
         dl->AddLine(P(subX - 11, a.y + 15), P(subX - 11, a.y + 35), Col(pal::Line), 1.f);
 
-        // ILION v1.4.0: on every tab, against the band's right edge, what doesn't change between tabs: the GPU (in its
-        // maker's colour) and the resolution (the internal one plain, the final one cyan, as Home shows them). The
-        // section's subtitle keeps the room left of it
-        const auto& gpuInfo = IdentifyGpu::getPrimaryGpu();
-        std::string gpuName = gpuInfo.name;
-        for (const char* prefix : { "AMD ", "Radeon ", "NVIDIA ", "GeForce ", "Intel(R) ", "Intel " })
-        {
-            if (gpuName.rfind(prefix, 0) == 0)
-                gpuName.erase(0, strlen(prefix));
-        }
-        const ImVec4 gpuColour = gpuInfo.vendorId == VendorId::AMD      ? pal::Red
-                                 : gpuInfo.vendorId == VendorId::Nvidia ? ImVec4(0.46f, 0.73f, 0.0f, 1.f)
-                                 : gpuInfo.vendorId == VendorId::Intel  ? IlionTheme::InfoBlue
-                                                                        : pal::Text;
+        // ILION v1.4.1: on every tab, against the band's right edge, what doesn't change between tabs: the GPU (in its
+        // maker's colour), the resolution (the internal one plain, the final one cyan, as Home shows them) and the
+        // driver. The section's subtitle keeps the room left of it; a narrow window shows the subtitle alone
+        const auto& gpuHeader = HeaderGpu();
+        std::vector<std::vector<HeaderPiece>> facts;
+        if (!gpuHeader.name.empty())
+            facts.push_back({ { "GPU ", pal::Text2 }, { gpuHeader.name, gpuHeader.colour } });
 
-        std::string renderRes, finalRes;
         if (feature != nullptr && feature->IsInited() && !feature->IsFrozen() && feature->RenderWidth() > 0)
-        {
-            renderRes = StrFmt("%ux%u", feature->RenderWidth(), feature->RenderHeight());
-            finalRes = StrFmt("%ux%u", feature->TargetWidth(), feature->TargetHeight());
-        }
+            facts.push_back({ { StrFmt("%ux%u", feature->RenderWidth(), feature->RenderHeight()), pal::Text },
+                              { " -> ", pal::Text2 },
+                              { StrFmt("%ux%u", feature->TargetWidth(), feature->TargetHeight()), IlionTheme::InfoCyan } });
         else if (state.currentSwapchainDesc.BufferDesc.Width > 0)
-        {
-            finalRes = StrFmt("%ux%u", state.currentSwapchainDesc.BufferDesc.Width, state.currentSwapchainDesc.BufferDesc.Height);
-        }
+            facts.push_back({ { StrFmt("%ux%u", state.currentSwapchainDesc.BufferDesc.Width, state.currentSwapchainDesc.BufferDesc.Height),
+                                IlionTheme::InfoCyan } });
 
-        const float infoSize = 17.f, infoY = a.y + 15, gap = 22.f;
-        const char* arrow = " -> ";
-        const float gpuWidth = gpuName.empty() ? 0.f : Measure(fUi, infoSize, "GPU ").x + Measure(fUi, infoSize, gpuName.c_str()).x;
-        const float resWidth = (renderRes.empty() ? 0.f : Measure(fUi, infoSize, renderRes.c_str()).x + Measure(fUi, infoSize, arrow).x) +
-                               (finalRes.empty() ? 0.f : Measure(fUi, infoSize, finalRes.c_str()).x);
-        const float infoWidth = gpuWidth + (gpuWidth > 0.f && resWidth > 0.f ? gap : 0.f) + resWidth;
-        // Only when the subtitle keeps a useful width beside it (narrow windows show the subtitle alone)
-        const bool showInfo = infoWidth > 0.f && (b.x - 18) - infoWidth - gap > subX + 160.f;
-        const float infoX = showInfo ? (b.x - 18) - infoWidth : b.x;
+        if (!gpuHeader.driver.empty())
+            facts.push_back({ { std::string(Lx("Driver ", "Driver ", "Driver ", "Драйвер ")), pal::Text2 }, { gpuHeader.driver, pal::Text } });
 
-        dl->PushClipRect(P(subX, a.y), P(showInfo ? infoX - gap : b.x - 12, b.y), true);
+        const float factsRight = b.x - 18;
+        const float factsLeft = HeaderFacts(fUi, 17.f, factsRight, a.y + 15, a.y + 15, a.y + 35, facts, false);
+        const bool showFacts = !facts.empty() && factsLeft - 22.f > subX + 160.f;
+
+        dl->PushClipRect(P(subX, a.y), P(showFacts ? factsLeft - 22.f : b.x - 12, b.y), true);
         Text(fUi, 17.f, ImVec2(subX, a.y + 15), pal::Text2, sec.sub[li]);
         dl->PopClipRect();
 
-        if (showInfo)
-        {
-            float ix = infoX;
-            if (gpuWidth > 0.f)
-            {
-                Text(fUi, infoSize, ImVec2(ix, infoY), pal::Text2, "GPU ");
-                ix += Measure(fUi, infoSize, "GPU ").x;
-                Text(fUi, infoSize, ImVec2(ix, infoY), gpuColour, gpuName.c_str());
-                ix += Measure(fUi, infoSize, gpuName.c_str()).x;
-                if (resWidth > 0.f)
-                {
-                    // The same thin separator as the one after the section's name
-                    dl->AddLine(P(ix + gap * 0.5f, a.y + 15), P(ix + gap * 0.5f, a.y + 35), Col(pal::Line), 1.f);
-                    ix += gap;
-                }
-            }
-            if (!renderRes.empty())
-            {
-                Text(fUi, infoSize, ImVec2(ix, infoY), pal::Text, renderRes.c_str());
-                ix += Measure(fUi, infoSize, renderRes.c_str()).x;
-                Text(fUi, infoSize, ImVec2(ix, infoY), pal::Text2, arrow);
-                ix += Measure(fUi, infoSize, arrow).x;
-            }
-            if (!finalRes.empty())
-                Text(fUi, infoSize, ImVec2(ix, infoY), IlionTheme::InfoCyan, finalRes.c_str());
-        }
+        if (showFacts)
+            HeaderFacts(fUi, 17.f, factsRight, a.y + 15, a.y + 15, a.y + 35, facts, true);
     }
 
     const ImVec2 a(x0, 316), b(x1, H - 16);

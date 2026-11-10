@@ -9544,16 +9544,32 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
 
                 if (industrialVertical)
                 {
-                    // As wide as its title and its longest row, like the other blocks
+                    // ILION v1.4.1: as wide as the blocks above it. Only its title and a row with a figure can widen the
+                    // overlay; a note without a figure (FG, why it waits) wraps inside the width instead of pushing the
+                    // right edge out and leaving the blocks above it off centre
                     const float gap = ImGui::CalcTextSize("  ").x;
                     rowWidth = std::max(rowWidth, ImGui::CalcTextSize(title).x);
                     for (const auto& [label, value] : rows)
-                        rowWidth = std::max(rowWidth, ImGui::CalcTextSize(label.c_str()).x + gap + ImGui::CalcTextSize(value.c_str()).x);
+                    {
+                        if (!value.empty())
+                            rowWidth = std::max(rowWidth, ImGui::CalcTextSize(label.c_str()).x + gap + ImGui::CalcTextSize(value.c_str()).x);
+                    }
 
                     OverlayBlockTitle(title, rowWidth, false);
 
                     for (size_t i = 0; i < rows.size(); i++)
+                    {
+                        if (rows[i].second.empty() && ImGui::CalcTextSize(rows[i].first.c_str()).x > rowWidth)
+                        {
+                            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + rowWidth);
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                            ImGui::TextWrapped("%s", rows[i].first.c_str());
+                            ImGui::PopStyleColor();
+                            ImGui::PopTextWrapPos();
+                            continue;
+                        }
                         OverlayRow(rows[i].first.c_str(), rows[i].second, rowWidth, i == 0 && measured ? &latencyYellow : nullptr);
+                    }
                 }
                 else if (industrialHorizontal)
                 {

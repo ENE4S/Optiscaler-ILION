@@ -41,7 +41,6 @@
 #include <framegen/nvngx/Nvngx_HelixSR.h>
 #include <framegen/nvngx/Nvngx_XeMfgXmx.h>
 #include <plugins/PluginApi.h>
-#include <misc/IlionXmxProbe.h>
 #include <framegen/reprojection/Reprojection_Dx12.h>
 
 #include <nvapi/fakenvapi.h>
@@ -1740,20 +1739,11 @@ static void DrawFgLiteState()
         WrappedText(warn, Tr("This GPU's driver has no shader model 6.6: HelixSR frame generation can't run on it"));
 }
 
-// ILION v1.4.0 fase 2: under the selector while XeMFG XMX is chosen: what is installed and what its own log says about
-// this session (the XMX path is confirmed only by "model: 16" with the ported model and no error after it)
+// ILION v1.4.0: under the selector while XeMFG XMX is chosen: what is installed and what its own log says about this
+// session (the XMX path is confirmed only by "model: 16" with the ported model and no error after it)
 static void DrawXeMfgXmxState()
 {
     const ImVec4 warn = IlionTheme::LampAmber;
-
-    // ILION v1.4.0 candidate: NVIDIA and Intel only; on AMD the route that works is named, nothing is loaded
-    if (Nvngx_XeMfgXmx::BlockedOnAmd())
-    {
-        WrappedText(warn, Tr("XeMFG XMX is disabled on AMD GPUs: it can't start its frame generation on them."));
-        WrappedText(ImGui::GetStyle().Colors[ImGuiCol_Text],
-                    Tr("For multi frame generation on AMD: FG input DLSSG, FG output XeFG and the XeMFG variant dashdogy."));
-        return;
-    }
 
     const auto install = Nvngx_XeMfgXmx::FindInstall();
     if (install.dll.empty())
@@ -1768,7 +1758,7 @@ static void DrawXeMfgXmxState()
     const auto backend = Nvngx_XeMfgXmx::ReadBackend();
     const auto savedPath = Nvngx_XeMfgXmx::SavedNetworkPath();
     const bool pluginApi = Nvngx_XeMfgXmx::PluginApiAccepted();
-    // ILION v1.4.0 fase 2 exp4: OptiScaler v10's plugin API, so its network path can be chosen as in OptiScaler v10
+    // OptiScaler v10's plugin API, so its network path can be chosen as in OptiScaler v10
     WrappedText(ImGui::GetStyle().Colors[ImGuiCol_TextDisabled],
                 StrFmt(Tr("Network path: %s. Plugin API: %s"), Nvngx_XeMfgXmx::NetworkPathName(savedPath),
                        pluginApi ? Tr("active (its tab is below)")
@@ -1782,7 +1772,7 @@ static void DrawXeMfgXmxState()
                              "DLSS Frame Generation on in the game"));
 
     if (!backend.otherLibxessFg.empty())
-        WrappedText(warn, StrFmt(Tr("Another libxess_fg.dll is loaded in the game: %s. realdody: it can make XeFG's Init fail "
+        WrappedText(warn, StrFmt(Tr("Another libxess_fg.dll version is loaded in the game: %s. It can make XeFG's Init fail "
                                     "(\"Failed to create heap\")"),
                                  backend.otherLibxessFg.c_str())
                               .c_str());
@@ -1799,25 +1789,10 @@ static void DrawXeMfgXmxState()
                            backend.contextError.c_str(), backend.lastError.c_str())
                         .c_str());
 
-        // exp5: what D3D12 answered XeFG (ILION's probe), the cause behind "Failed to create heap"
-        if (const auto probe = IlionXmxProbe::Get(); probe.installed)
-        {
-            if (probe.invalidAllocations > 0)
-                WrappedText(IlionTheme::LampRed,
-                            StrFmt(Tr("D3D12 called a resource XeFG asked for invalid (%d time(s)): %s"),
-                                   probe.invalidAllocations, probe.lastInvalid.c_str())
-                                .c_str());
-            if (probe.heapFailures > 0)
-                WrappedText(IlionTheme::LampRed,
-                            StrFmt(Tr("D3D12 refused %d heap(s) XeFG asked for (ILION's retry made %d): %s"),
-                                   probe.heapFailures, probe.retriesOk, probe.lastFailure.c_str())
-                                .c_str());
-            if (probe.invalidAllocations == 0 && probe.heapFailures == 0)
-                WrappedText(warn, StrFmt(Tr("D3D12 refused none of XeFG's %d heap request(s): the failure is inside XeFG"),
-                                         probe.heaps)
-                                      .c_str());
-            WrappedText(ImGui::GetStyle().Colors[ImGuiCol_TextDisabled], Tr("Details: ilion_xemfg_d3d12.log next to its DLL"));
-        }
+        // The cause found on AMD (RX 7900 XTX, Cyberpunk): XeFG 1.3.1 fails there, 1.3.4 works
+        if (backend.OldXefg())
+            WrappedText(warn, Tr("XeFG 1.3.1 is in use: on AMD GPUs XeMFG XMX needs libxess_fg.dll 1.3.4 (ILION's, in the "
+                                 "OptiScaler folder)"));
 
         // The ported model 16 is what fails here: XeFG's DP4a model 18 is the other path realdody offers on non Intel GPUs
         if (backend.contextModel != 18)
@@ -1847,8 +1822,8 @@ static void DrawXeMfgXmxState()
         WrappedText(warn, StrFmt(Tr("Path: %s (not confirmed yet)"), backend.networkPath.c_str()).c_str());
 }
 
-// ILION v1.4.0 fase 2 exp4: the tabs plugins registered through OptiScaler v10's plugin API, folded: XeMFG XMX's (its
-// status, network path and settings) or the others
+// ILION v1.4.0: the tabs plugins registered through OptiScaler v10's plugin API, folded: XeMFG XMX's (its status,
+// network path and settings) or the others
 static void DrawPluginTabs(bool xmx)
 {
     const auto tabs = PluginApi::GetTabs();
@@ -1861,7 +1836,7 @@ static void DrawPluginTabs(bool xmx)
         if (ImGui::TreeNode(label.c_str()))
         {
             if (!tabs[i].description.empty())
-                ImGui::TextDisabled("%s", tabs[i].description.c_str());
+                WrappedText(ImGui::GetStyle().Colors[ImGuiCol_TextDisabled], tabs[i].description.c_str());
             PluginApi::DrawTab(i, ImGui::GetFontSize() / 13.0f);
             ImGui::TreePop();
         }
@@ -8771,16 +8746,12 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
             }
             else if (activeNvngxFg == FGNvngxReplacement::XeMfgXmx)
             {
-                // ILION v1.4.0 fase 2: compact, from the same status as FRAME GEN and INICIO (IlionDynamicMfg); how sure
-                // it is stays in FRAME GEN. Not confirmed: "?"; its context failed: "error"
-                const auto xmx = IlionDynamicMfg::Get();
-                if (xmx.backendError)
-                    fgText = " (XeMFG XMX: error)";
-                else if (xmx.multiplier > 0)
-                    fgText = std::format(" (XeMFG XMX \xC3\x97{}{})", xmx.multiplier,
-                                         xmx.gen == IlionDynamicMfg::Gen::Confirmed ? "" : "?");
+                // ILION v1.4.0: the same wording as the other DLSSG replacements; when its XeFG context failed the
+                // presents counted are Streamline's, so no multiplier is shown (IlionDynamicMfg's backendError)
+                if (IlionDynamicMfg::Get().backendError)
+                    fgText = " (XeMFG XMX error, not generating)";
                 else
-                    fgText = " (XeMFG XMX)";
+                    fgText = formatFg("XeMFG XMX", Nvngx_FG::getMaxFakeFramesCount());
             }
             else if (state.activeFgOutput == FGOutput::DLSSG && fg)
             {
@@ -10881,7 +10852,7 @@ static FgCrtData GatherFgCrt(State& state)
         return d;
     }
 
-    // ILION v1.4.0 fase 2: XeMFG XMX. The multiplier is IlionDynamicMfg's for the game's DLSSG (measured at the
+    // ILION v1.4.0: XeMFG XMX. The multiplier is IlionDynamicMfg's for the game's DLSSG (measured at the
     // presents, else the one asked for, marked as such), the same figure the overlay and INICIO show
     if (nvngxOutput && nvngx == FGNvngxReplacement::XeMfgXmx)
     {
@@ -12178,8 +12149,8 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
         { FGNvngxReplacement::XeMfgXmx, "XeMFG XMX (experimental)",
           "Intel XeSS frame generation with the ported XMX multi frame model, up to 6X\n"
           "(realdody's dlssg-to-xefg-xmx, GPL-3.0)\n\n"
-          "NVIDIA and Intel GPUs, DirectX 12 games. Disabled on AMD: there use the XeFG output with the dashdogy variant\n\n"
-          "Extract its release into OptiScaler\\custom\\XeMFG XMX yourself: ILION includes none of it" },
+          "NVIDIA, Intel and AMD GPUs, DirectX 12 games. It uses ILION's libxess_fg.dll 1.3.4\n\n"
+          "Extract its release into OptiScaler\\custom\\XeMFG XMX yourself: ILION doesn't include it" },
     };
 
     // clang-format on
@@ -12231,7 +12202,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                                                  "Missing HelixSR-fsrfg\\amd_fidelityfx_dx12.dll (HelixSR 2.0.0)");
     nvngxOptions[fgNvngxHelixIndex].accent = "FG Lite";
 
-    // ILION v1.4.0 fase 2: XeMFG XMX needs realdody's DLL and DirectX 12
+    // ILION v1.4.0: XeMFG XMX needs realdody's DLL and DirectX 12
     auto constexpr fgNvngxXmxIndex = (uint32_t) FGNvngxReplacement::XeMfgXmx;
     nvngxOptions[fgNvngxXmxIndex].set_disabled(state.swapchainApi == API::Vulkan, "Unsupported API");
     nvngxOptions[fgNvngxXmxIndex].set_disabled(Nvngx_XeMfgXmx::FindInstall().dll.empty(),
@@ -12379,7 +12350,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
         if (config->FGOutput.value_or_default() == FGOutput::XeFG)
             RenderXeMfgVariantSelector(config);
 
-        // ILION v1.4.0 fase 2 exp4: what plugins registered through OptiScaler v10's plugin API
+        // ILION v1.4.0: what plugins registered through OptiScaler v10's plugin API
         if (config->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::XeMfgXmx)
             DrawPluginTabs(true);
         DrawPluginTabs(false);

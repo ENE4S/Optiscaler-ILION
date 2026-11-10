@@ -582,7 +582,7 @@ int main()
             inSql = inSql && text.find(std::string("'") + i.id + "'") != std::string::npos;
         CHECK(inSql, "la migración v2 admite exactamente los identificadores del cliente");
 
-        // ILION v1.4.0 fase 2: XeMFG XMX, su propio identificador (no XeFG, Enabler ni Nukem), hasta 6X, la misma ruta que los
+        // ILION v1.4.0: XeMFG XMX, su propio identificador (no XeFG, Enabler ni Nukem), hasta 6X, la misma ruta que los
         // demás reemplazos de DLSSG; se guarda y se lee exacto; no se publica hasta que el servidor lo admita
         const auto* xmx = C::FgImplOf("nvngx_xemfg_xmx");
         CHECK(xmx != nullptr && std::string(xmx->nvngx) == "XeMfgXmx" && std::string(xmx->output) == "DLSSG" &&

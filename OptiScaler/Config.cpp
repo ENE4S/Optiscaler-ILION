@@ -2034,7 +2034,7 @@ bool Config::SaveXeMfgVariant()
     return file.SaveFile(absoluteFileName.wstring().c_str()) >= 0;
 }
 
-// ILION v1.4.0 fase 2 exp4: the plugin API's settings (OptiScaler v10, Config::GetRawValue...). Plugins call them from
+// ILION v1.4.0: the plugin API's settings (OptiScaler v10, Config::GetRawValue...). Plugins call them from
 // the menu and from the game's threads: one lock for these
 static std::recursive_mutex rawIniMutex;
 

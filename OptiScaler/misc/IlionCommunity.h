@@ -1617,7 +1617,7 @@ inline std::pair<bool, std::string> Publish(const ServiceConfig& c, Session& s, 
         return { false, "Solo puedes publicar perfiles creados por ti en este equipo (este es descargado o importado)" };
     if (!p.authorId.empty() && p.authorId != s.userId)
         return { false, "Este perfil lo publicó otra cuenta" };
-    // ILION v1.4.0 fase 2: the server's catalogue doesn't list XeMFG XMX yet (ilion_community_v4_xemfg_xmx.sql)
+    // ILION v1.4.0: the server's catalogue doesn't list XeMFG XMX yet (ilion_community_v4_xemfg_xmx.sql)
     if (p.fg == "nvngx_xemfg_xmx" && !kServerHasXeMfgXmx)
         return { false, "Los perfiles con XeMFG XMX se guardan y se aplican en este equipo; publicarlos requiere actualizar "
                         "el servidor de COMUNIDAD (pendiente)" };

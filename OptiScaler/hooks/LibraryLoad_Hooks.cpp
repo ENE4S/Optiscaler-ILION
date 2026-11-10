@@ -74,7 +74,7 @@ HMODULE LibraryLoadHooks::LoadLibraryCheckW(std::wstring libName, LPCWSTR lpLibF
         return nullptr;
     }
 
-    // ILION v1.4.0 fase 2: XeMFG XMX loads its own libxess_fg.dll from its folder: loaded as it is
+    // ILION v1.4.0: XeMFG XMX loads its own libxess_fg.dll from its folder: loaded as it is
     if (const auto xmxFolder = Nvngx_XeMfgXmx::LoadedFolder();
         !xmxFolder.empty() && Util::IsSubpath(std::filesystem::path(libName), xmxFolder))
     {

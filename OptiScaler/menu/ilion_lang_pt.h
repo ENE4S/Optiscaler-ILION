@@ -164,8 +164,18 @@ inline constexpr Translation kPortuguese[] = {
       "O registro dele ainda não foi escrito nesta sessão" },
     { "XeMFG XMX error: %s",
       "Erro do XeMFG XMX: %s" },
-    { "Another libxess_fg.dll is loaded in the game: %s. realdody: it can make XeFG's Init fail (\"Failed to create heap\")",
-      "Há outra libxess_fg.dll carregada no jogo: %s. Segundo realdody, ela pode fazer o Init do XeFG falhar (\"Failed to create heap\")" },
+    { "Another libxess_fg.dll version is loaded in the game: %s. It can make XeFG\'s Init fail (\"Failed to create heap\")",
+      "Há outra versão de libxess_fg.dll carregada no jogo: %s. Ela pode fazer o Init do XeFG falhar (\"Failed to create heap\")" },
+    { "XeFG 1.3.1 is in use: on AMD GPUs XeMFG XMX needs libxess_fg.dll 1.3.4 (ILION\'s, in the OptiScaler folder)",
+      "O XeFG 1.3.1 está em uso: em GPUs AMD, o XeMFG XMX precisa da libxess_fg.dll 1.3.4 (a do ILION, na pasta OptiScaler)" },
+    { "Intel XeSS frame generation with the ported XMX multi frame model, up to 6X\n"
+      "(realdody\'s dlssg-to-xefg-xmx, GPL-3.0)\n\n"
+      "NVIDIA, Intel and AMD GPUs, DirectX 12 games. It uses ILION\'s libxess_fg.dll 1.3.4\n\n"
+      "Extract its release into OptiScaler\\custom\\XeMFG XMX yourself: ILION doesn\'t include it",
+      "Geração de quadros Intel XeSS com o modelo multiquadro XMX portado, até 6X\n"
+      "(dlssg-to-xefg-xmx de realdody, GPL-3.0)\n\n"
+      "GPUs NVIDIA, Intel e AMD, jogos DirectX 12. Usa a libxess_fg.dll 1.3.4 do ILION\n\n"
+      "Extraia você mesmo a versão dele em OptiScaler\\custom\\XeMFG XMX: o ILION não a inclui" },
     { "The last XeFG context failed (%s; %s). Without a context XeMFG XMX generates nothing: the presents counted are Streamline's. It retries when the resolution or the path changes",
       "O último contexto XeFG falhou (%s; %s). Sem contexto, o XeMFG XMX não gera quadros: as apresentações contadas são do Streamline. Ele tenta de novo ao mudar a resolução ou a rota" },
     { "XMX path confirmed by its log: model 16, XeFG %s",
@@ -186,22 +196,8 @@ inline constexpr Translation kPortuguese[] = {
       "Usar DP4a ao reiniciar" },
     { "XeFG context created by its log: model %d (%s), XeFG %s",
       "Contexto XeFG criado segundo o registro: modelo %d (%s), XeFG %s" },
-    { "D3D12 called a resource XeFG asked for invalid (%d time(s)): %s",
-      "O D3D12 declarou inválido um recurso pedido pelo XeFG (%d vez(es)): %s" },
-    { "D3D12 refused %d heap(s) XeFG asked for (ILION's retry made %d): %s",
-      "O D3D12 recusou %d heap(s) pedidos pelo XeFG (a nova tentativa do ILION criou %d): %s" },
-    { "D3D12 refused none of XeFG's %d heap request(s): the failure is inside XeFG",
-      "O D3D12 não recusou nenhum dos %d pedidos de heap do XeFG: a falha está dentro do XeFG" },
-    { "Details: ilion_xemfg_d3d12.log next to its DLL",
-      "Detalhes: ilion_xemfg_d3d12.log junto à DLL dele" },
     { "backend error: not generating",
       "erro do backend: não gera" },
-    { "XeMFG XMX is disabled on AMD GPUs: it can't start its frame generation on them.",
-      "O XeMFG XMX está desativado em GPUs AMD: ele não consegue iniciar a geração de quadros nelas." },
-    { "For multi frame generation on AMD: FG input DLSSG, FG output XeFG and the XeMFG variant dashdogy.",
-      "Para geração multiquadro em AMD: entrada de FG DLSSG, saída de FG XeFG e a variante de XeMFG dashdogy." },
-    { "Intel XeSS frame generation with the ported XMX multi frame model, up to 6X\n(realdody's dlssg-to-xefg-xmx, GPL-3.0)\n\nNVIDIA and Intel GPUs, DirectX 12 games. Disabled on AMD: there use the XeFG output with the dashdogy variant\n\nExtract its release into OptiScaler\\custom\\XeMFG XMX yourself: ILION includes none of it",
-      "Geração de quadros Intel XeSS com o modelo multiquadro XMX portado, até 6X\n(dlssg-to-xefg-xmx de realdody, GPL-3.0)\n\nGPUs NVIDIA e Intel, jogos DirectX 12. Desativado em AMD: lá use a saída XeFG com a variante dashdogy\n\nExtraia você mesmo a versão dele em OptiScaler\\custom\\XeMFG XMX: o ILION não inclui nada disso" },
     { "Engine", "Motor" },
     { "File", "Arquivo" },
     { "Plugins folder as it is", "Pasta plugins como está" },

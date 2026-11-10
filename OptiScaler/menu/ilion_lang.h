@@ -659,8 +659,18 @@ inline constexpr Translation kSpanish[] = {
       "No hay carpeta xefg_mfg_programs junto a él: el modelo XMX no se puede portar" },
     { "Its log hasn't been written in this session yet", "Su registro aún no se ha escrito en esta sesión" },
     { "XeMFG XMX error: %s", "Error de XeMFG XMX: %s" },
-    { "Another libxess_fg.dll is loaded in the game: %s. realdody: it can make XeFG's Init fail (\"Failed to create heap\")",
-      "Hay otra libxess_fg.dll cargada en el juego: %s. Según realdody, puede hacer fallar el Init de XeFG («Failed to create heap»)" },
+    { "Another libxess_fg.dll version is loaded in the game: %s. It can make XeFG\'s Init fail (\"Failed to create heap\")",
+      "Hay otra versión de libxess_fg.dll cargada en el juego: %s. Puede hacer fallar el Init de XeFG (\"Failed to create heap\")" },
+    { "XeFG 1.3.1 is in use: on AMD GPUs XeMFG XMX needs libxess_fg.dll 1.3.4 (ILION\'s, in the OptiScaler folder)",
+      "Se está usando XeFG 1.3.1: en GPU AMD, XeMFG XMX necesita libxess_fg.dll 1.3.4 (la de ILION, en la carpeta OptiScaler)" },
+    { "Intel XeSS frame generation with the ported XMX multi frame model, up to 6X\n"
+      "(realdody\'s dlssg-to-xefg-xmx, GPL-3.0)\n\n"
+      "NVIDIA, Intel and AMD GPUs, DirectX 12 games. It uses ILION\'s libxess_fg.dll 1.3.4\n\n"
+      "Extract its release into OptiScaler\\custom\\XeMFG XMX yourself: ILION doesn\'t include it",
+      "Generación de fotogramas Intel XeSS con el modelo multifotograma XMX portado, hasta 6X\n"
+      "(dlssg-to-xefg-xmx de realdody, GPL-3.0)\n\n"
+      "GPU NVIDIA, Intel y AMD, juegos DirectX 12. Usa la libxess_fg.dll 1.3.4 de ILION\n\n"
+      "Extrae tú mismo su versión en OptiScaler\\custom\\XeMFG XMX: ILION no la incluye" },
     { "The last XeFG context failed (%s; %s). Without a context XeMFG XMX generates nothing: the presents counted are Streamline's. It retries when the resolution or the path changes",
       "El último contexto XeFG falló (%s; %s). Sin contexto, XeMFG XMX no genera fotogramas: las presentaciones contadas son de Streamline. Lo reintenta al cambiar la resolución o la ruta" },
     { "XMX path confirmed by its log: model 16, XeFG %s", "Ruta XMX confirmada por su registro: modelo 16, XeFG %s" },
@@ -675,22 +685,6 @@ inline constexpr Translation kSpanish[] = {
       "Prueba otra ruta de red en vivo en la pestaña del motor de abajo («Fallback (DP4a)») o guárdala para el próximo arranque" },
     { "Use DP4a at the next start##xmxDp4a", "Usar DP4a al reiniciar" },
     { "XeFG context created by its log: model %d (%s), XeFG %s", "Contexto XeFG creado según su registro: modelo %d (%s), XeFG %s" },
-    { "D3D12 called a resource XeFG asked for invalid (%d time(s)): %s",
-      "D3D12 declaró inválido un recurso que pidió XeFG (%d vez/veces): %s" },
-    { "D3D12 refused %d heap(s) XeFG asked for (ILION's retry made %d): %s",
-      "D3D12 rechazó %d heap(s) que pidió XeFG (el reintento de ILION creó %d): %s" },
-    { "D3D12 refused none of XeFG's %d heap request(s): the failure is inside XeFG",
-      "D3D12 no rechazó ninguna de las %d peticiones de heap de XeFG: el fallo está dentro de XeFG" },
-    { "Details: ilion_xemfg_d3d12.log next to its DLL", "Detalles: ilion_xemfg_d3d12.log junto a su DLL" },
-    { "XeMFG XMX is disabled on AMD GPUs: it can't start its frame generation on them.",
-      "XeMFG XMX está desactivado en GPU AMD: no puede iniciar su generación de fotogramas en ellas." },
-    { "For multi frame generation on AMD: FG input DLSSG, FG output XeFG and the XeMFG variant dashdogy.",
-      "Para generación multifotograma en AMD: entrada de FG DLSSG, salida de FG XeFG y la variante de XeMFG dashdogy." },
-    { "Intel XeSS frame generation with the ported XMX multi frame model, up to 6X\n(realdody's dlssg-to-xefg-xmx, GPL-3.0)\n\nNVIDIA and Intel GPUs, DirectX 12 games. Disabled on AMD: there use the XeFG output with the dashdogy variant\n\nExtract its release into OptiScaler\\custom\\XeMFG XMX yourself: ILION includes none of it",
-      "Generación de fotogramas Intel XeSS con el modelo multifotograma XMX portado, hasta 6X\n"
-      "(dlssg-to-xefg-xmx de realdody, GPL-3.0)\n\n"
-      "GPU NVIDIA e Intel, juegos DirectX 12. Desactivado en AMD: allí usa la salida XeFG con la variante dashdogy\n\n"
-      "Extrae tú mismo su versión en OptiScaler\\custom\\XeMFG XMX: ILION no incluye nada de ello" },
     { "Provider:", "Proveedor:" },
     { "reported by the backend", "informado por el backend" },
     { "not confirmed", "sin confirmar" },

@@ -1558,10 +1558,43 @@ inline void ShellComboLimit(const char* label)
     ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0.0f), ImVec2(ImMax(width, fs * 26.0f), ImMax(fs * 4.0f, height)));
 }
 
+// ILION v1.4.0: a value longer than its field ends in "..." inside the field instead of being cut through a letter at
+// its edge (narrow columns, long names, any language). UTF-8 safe; the full name stays in the list
+inline std::string FitText(const char* text, float maxWidth)
+{
+    if (text == nullptr || maxWidth <= 0.0f || ImGui::CalcTextSize(text).x <= maxWidth)
+        return text != nullptr ? text : "";
+
+    const float dots = ImGui::CalcTextSize("...").x;
+    std::string fitted(text);
+    while (!fitted.empty())
+    {
+        // Drop one whole UTF-8 character (and the spaces before it)
+        size_t cut = fitted.size() - 1;
+        while (cut > 0 && (static_cast<unsigned char>(fitted[cut]) & 0xC0) == 0x80)
+            cut--;
+        fitted.resize(cut);
+        while (!fitted.empty() && fitted.back() == ' ')
+            fitted.pop_back();
+        if (ImGui::CalcTextSize(fitted.c_str()).x + dots <= maxWidth)
+            break;
+    }
+    return fitted + "...";
+}
+
 inline bool BeginCombo(const char* label, const char* preview, ImGuiComboFlags flags = 0, const ImVec4* previewColour = nullptr,
                        const char* accent = nullptr, const ImVec4* accentColour = nullptr)
 {
     ShellComboLimit(label);
+
+    // The value inside its field: the field minus the arrow key and the padding on both sides
+    std::string fittedPreview;
+    if (preview != nullptr && (flags & (ImGuiComboFlags_NoPreview | ImGuiComboFlags_CustomPreview)) == 0)
+    {
+        const ImGuiStyle& fitStyle = ImGui::GetStyle();
+        fittedPreview = FitText(preview, ImGui::CalcItemWidth() - ImGui::GetFrameHeight() - fitStyle.FramePadding.x * 2.0f);
+        preview = fittedPreview.c_str();
+    }
 
     const bool accented = accent != nullptr && accentColour != nullptr && preview != nullptr && std::strstr(preview, accent);
 

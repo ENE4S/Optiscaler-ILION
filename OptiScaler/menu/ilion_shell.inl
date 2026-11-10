@@ -1086,7 +1086,7 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
         // frames to generate, unknown while a replacement is loaded and nothing tells
         if (fgStatus.backendError)
         {
-            // ILION v1.4.0 fase 2: the replacement can't generate (XeMFG XMX: its XeFG context failed)
+            // ILION v1.4.0: the replacement can't generate (XeMFG XMX: its XeFG context failed)
             active = StrFmt("%s: %s", fgStatus.name, Lx("error, not generating", "error, no genera", "erro, não gera", "ошибка, не генерирует"));
             activeLed = Led::Red;
         }

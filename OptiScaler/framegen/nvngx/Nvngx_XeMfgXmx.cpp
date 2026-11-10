@@ -4,8 +4,6 @@
 #include <proxies/Ntdll_Proxy.h>
 #include <proxies/XeFG_Proxy.h>
 #include <plugins/PluginApi.h>
-#include <misc/IlionXmxProbe.h>
-#include <misc/IdentifyGpu.h>
 
 #include <fstream>
 #include <mutex>
@@ -76,7 +74,6 @@ void Nvngx_XeMfgXmx::LoadLibraries()
         std::scoped_lock lock(folderLock);
         loadedFolder = install.dll.parent_path();
     }
-    IlionXmxProbe::SetFolder(install.dll.parent_path());
 
     // The loader's own LoadLibrary, as for HelixSR: the DLL is a DLSSG replacement, not a name OptiScaler handles
     HMODULE module = NtdllProxy::LoadLibraryExW_Ldr(install.dll.c_str(), NULL, 0);
@@ -113,48 +110,12 @@ void Nvngx_XeMfgXmx::LoadLibraries()
     LOG_INFO("XeMFG XMX: loaded {} (programs: {}, libxess_fg.dll next to it: {})",
              wstring_to_string(install.dll.wstring()), install.programs, install.libxessFg);
 
-    // ILION v1.4.0 fase 2 exp4: as OptiScaler v10's CustomProviders::LoadDll, right after the load: its OptiPluginInit
-    // reads [Plugin.XeMFG XMX] (NetworkPath, HudlessUi) and registers its tab. Without it realdody stays on its default
-    // path (XmxNative: the ported model 16 on AMD) and can't be switched
+    // As OptiScaler v10's CustomProviders::LoadDll, right after the load: its OptiPluginInit reads [Plugin.XeMFG XMX]
+    // (NetworkPath, HudlessUi) and registers its tab. Without it realdody stays on its default path and can't be switched
     const auto init = (PFN_OptiPluginInit) GetProcAddress(dll, OPTI_PLUGIN_INIT_NAME);
     if (init == nullptr)
         LOG_WARN("XeMFG XMX: this build has no OptiPluginInit (older than build-10): no network path choice");
-    {
-        IlionXmxProbe::Scope probe {};
-        PluginApi::InitPlugin(dll, init, std::string(PluginName));
-    }
-}
-
-NVSDK_NGX_Result Nvngx_XeMfgXmx::D3D12_Init(unsigned long long InApplicationId, const wchar_t* InApplicationDataPath,
-                                            ID3D12Device* InDevice, const NVSDK_NGX_FeatureCommonInfo* InFeatureInfo,
-                                            NVSDK_NGX_Version InSDKVersion)
-{
-    IlionXmxProbe::Scope probe {};
-    return Nvngx_DllProxy::D3D12_Init(InApplicationId, InApplicationDataPath, InDevice, InFeatureInfo, InSDKVersion);
-}
-
-NVSDK_NGX_Result Nvngx_XeMfgXmx::D3D12_Init_Ext(unsigned long long InApplicationId, const wchar_t* InApplicationDataPath,
-                                                ID3D12Device* InDevice, NVSDK_NGX_Version InSDKVersion,
-                                                const NVSDK_NGX_FeatureCommonInfo* InFeatureInfo)
-{
-    IlionXmxProbe::Scope probe {};
-    return Nvngx_DllProxy::D3D12_Init_Ext(InApplicationId, InApplicationDataPath, InDevice, InSDKVersion, InFeatureInfo);
-}
-
-NVSDK_NGX_Result Nvngx_XeMfgXmx::D3D12_EvaluateFeature(ID3D12GraphicsCommandList* InCmdList,
-                                                       const NVSDK_NGX_Handle* InFeatureHandle,
-                                                       NVSDK_NGX_Parameter* InParameters,
-                                                       PFN_NVSDK_NGX_ProgressCallback InCallback)
-{
-    // realdody makes its XeFG context here (FrameGenerator::CreateContext), on the first evaluation or after a change
-    IlionXmxProbe::Scope probe {};
-    return Nvngx_DllProxy::D3D12_EvaluateFeature(InCmdList, InFeatureHandle, InParameters, InCallback);
-}
-
-NVSDK_NGX_Result Nvngx_XeMfgXmx::D3D12_ReleaseFeature(NVSDK_NGX_Handle* InHandle)
-{
-    IlionXmxProbe::Scope probe {};
-    return Nvngx_DllProxy::D3D12_ReleaseFeature(InHandle);
+    PluginApi::InitPlugin(dll, init, std::string(PluginName));
 }
 
 Nvngx_XeMfgXmx::NetworkPath Nvngx_XeMfgXmx::SavedNetworkPath()
@@ -193,12 +154,6 @@ const char* Nvngx_XeMfgXmx::NetworkPathName(NetworkPath path)
     }
 }
 
-bool Nvngx_XeMfgXmx::BlockedOnAmd()
-{
-    static const bool amd = IdentifyGpu::getPrimaryGpu().vendorId == VendorId::AMD;
-    return amd;
-}
-
 bool Nvngx_XeMfgXmx::PluginApiAccepted()
 {
     for (const auto& tab : PluginApi::GetTabs())
@@ -212,7 +167,6 @@ bool Nvngx_XeMfgXmx::PluginApiAccepted()
 NVSDK_NGX_Result Nvngx_XeMfgXmx::D3D12_CreateFeature(ID3D12GraphicsCommandList* InCmdList, NVSDK_NGX_Feature InFeatureID,
                                                      NVSDK_NGX_Parameter* InParameters, NVSDK_NGX_Handle** OutHandle)
 {
-    IlionXmxProbe::Scope probe {};
     const auto result = Nvngx_DllProxy::D3D12_CreateFeature(InCmdList, InFeatureID, InParameters, OutHandle);
     if (result != NVSDK_NGX_Result_Success)
         LOG_ERROR("XeMFG XMX: CreateFeature failed ({:X}); its log: dlssg_to_xefg_intel_is_better.log", (UINT) result);
@@ -227,10 +181,27 @@ static FILETIME ProcessStartTime()
     return created;
 }
 
-// Another libxess_fg.dll in the game's process: realdody documents that one already loaded can make XeFG's Init fail
-// with "Failed to create heap". Its own copy (under its folder) doesn't count
+static std::string VersionText(const fs::path& path)
+{
+    version_t version {};
+    if (!Util::GetFileVersion(path.wstring(), &version))
+        return {};
+    return std::format("{}.{}.{}", version.major, version.minor, version.patch);
+}
+
+// Another libxess_fg.dll in the game's process, of another version than ILION's (OptiScaler\libxess_fg.dll, the one
+// realdody uses): realdody documents that a different loaded copy can make XeFG's Init fail ("Failed to create heap").
+// Its own copy (under its folder) and copies of the same version don't count
 static std::string OtherLibxessFg(const fs::path& ownFolder)
 {
+    std::string ownVersion;
+    if (const HMODULE own = XeFGProxy::Module(); own != nullptr)
+    {
+        wchar_t path[MAX_PATH] {};
+        if (GetModuleFileNameW(own, path, MAX_PATH) > 0)
+            ownVersion = VersionText(path);
+    }
+
     std::string found;
     const HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, GetCurrentProcessId());
     if (snap == INVALID_HANDLE_VALUE)
@@ -243,10 +214,12 @@ static std::string OtherLibxessFg(const fs::path& ownFolder)
         const fs::path path(entry.szExePath);
         if (!ownFolder.empty() && Util::IsSubpath(path, ownFolder))
             continue;
-        // ILION's own (OptiScaler\libxess_fg.dll, preloaded as OptiScaler v10 does): the one realdody's release uses
         if (entry.hModule != nullptr && entry.hModule == XeFGProxy::Module())
             continue;
-        found = wstring_to_string(path.wstring());
+        const std::string version = VersionText(path);
+        if (!ownVersion.empty() && version == ownVersion)
+            continue;
+        found = std::format("{} ({})", wstring_to_string(path.wstring()), version.empty() ? "?" : version);
         break;
     }
     CloseHandle(snap);

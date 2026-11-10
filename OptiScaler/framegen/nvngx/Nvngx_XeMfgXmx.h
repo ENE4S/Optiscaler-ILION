@@ -4,11 +4,13 @@
 #include <filesystem>
 #include <string>
 
-// ILION v1.4.0 fase 2: XeMFG XMX ([FrameGen] FGNvngxReplacement = XeMFG XMX). realdody's dlssg-to-xefg-xmx
+// ILION v1.4.0: XeMFG XMX ([FrameGen] FGNvngxReplacement = XeMFG XMX). realdody's dlssg-to-xefg-xmx
 // (github.com/realdody/dlssg-to-xefg-xmx, GPL-3.0; its MFG-Unlocker port is MIT): a DLSSG replacement with the same
-// NVSDK_NGX_D3D12_* exports as Nukem's, that runs Intel XeSS frame generation (libxess_fg.dll 1.3.1 / 1.3.4) with the
-// ported XMX multi frame model, up to 6X. DirectX 12 only. ILION ships none of it: the user extracts its release into
-// OptiScaler\custom\XeMFG XMX (dlssg\dlssg_to_xefg_intel_is_better.dll, its xefg_mfg_programs folder, libxess_fg.dll).
+// NVSDK_NGX_D3D12_* exports as Nukem's, that runs Intel XeSS frame generation with the ported XMX multi frame model,
+// up to 6X. DirectX 12 only, NVIDIA, Intel and AMD GPUs. ILION ships libxess_fg.dll 1.3.4 (OptiScaler\libxess_fg.dll),
+// the build realdody's direct XeFG context needs on AMD (with 1.3.1 its Init fails there: "Failed to create heap");
+// realdody's release itself is not included: the user extracts it into OptiScaler\custom\XeMFG XMX
+// (dlssg\dlssg_to_xefg_intel_is_better.dll and its xefg_mfg_programs folder).
 // It is loaded and called through the same DLSSG replacement path as Nukem's / DLSS Enabler; its metrics are ILION's
 // own for the game's DLSSG (IlionDynamicMfg), nothing parallel. Its log is read only to tell which XeFG path runs.
 class Nvngx_XeMfgXmx : public Nvngx_DllProxy
@@ -22,22 +24,10 @@ class Nvngx_XeMfgXmx : public Nvngx_DllProxy
     int getMaxFakeFramesCount() override { return 5; }
     FGNvngxReplacement getType() override { return FGNvngxReplacement::XeMfgXmx; }
 
-    // ILION v1.4.0 fase 2 exp4: called as OptiScaler v10 calls a custom DLSSG replacement (Nvngx_DllProxy, with the
-    // spoofing and the heap capture as they are): only CreateFeature is wrapped, for its error in ILION's log
+    // Called as OptiScaler v10 calls a custom DLSSG replacement (Nvngx_DllProxy): only CreateFeature is wrapped, for its
+    // error in ILION's log
     NVSDK_NGX_Result D3D12_CreateFeature(ID3D12GraphicsCommandList* InCmdList, NVSDK_NGX_Feature InFeatureID,
                                          NVSDK_NGX_Parameter* InParameters, NVSDK_NGX_Handle** OutHandle) override;
-
-    // exp5: the other calls only open IlionXmxProbe's scope (what XeFG asks D3D12 for inside them is logged)
-    NVSDK_NGX_Result D3D12_Init(unsigned long long InApplicationId, const wchar_t* InApplicationDataPath,
-                                ID3D12Device* InDevice, const NVSDK_NGX_FeatureCommonInfo* InFeatureInfo,
-                                NVSDK_NGX_Version InSDKVersion) override;
-    NVSDK_NGX_Result D3D12_Init_Ext(unsigned long long InApplicationId, const wchar_t* InApplicationDataPath,
-                                    ID3D12Device* InDevice, NVSDK_NGX_Version InSDKVersion,
-                                    const NVSDK_NGX_FeatureCommonInfo* InFeatureInfo) override;
-    NVSDK_NGX_Result D3D12_EvaluateFeature(ID3D12GraphicsCommandList* InCmdList, const NVSDK_NGX_Handle* InFeatureHandle,
-                                           NVSDK_NGX_Parameter* InParameters,
-                                           PFN_NVSDK_NGX_ProgressCallback InCallback) override;
-    NVSDK_NGX_Result D3D12_ReleaseFeature(NVSDK_NGX_Handle* InHandle) override;
 
     // Its plugin API name, as OptiScaler v10 names a custom replacement (its folder): its settings are in
     // [Plugin.XeMFG XMX] of OptiScaler.ini, the same section OptiScaler v10 uses
@@ -59,11 +49,6 @@ class Nvngx_XeMfgXmx : public Nvngx_DllProxy
     static const char* NetworkPathName(NetworkPath path);
     // OptiPluginInit was called and it accepted the API (its tab is in the menu)
     static bool PluginApiAccepted();
-
-    // ILION v1.4.0 candidate: XeMFG XMX is for NVIDIA and Intel GPUs. On AMD realdody's direct XeFG context fails
-    // (XeFG Init: "Failed to create heap", -1000, every network path, RX 7900 XTX); multi frame generation on AMD is
-    // ILION's XeFG output with the dashdogy XeMFG variant (XeFG's swap chain API, dashdogy's amd_dxil route)
-    static bool BlockedOnAmd();
 
     // What is installed, read from the files only (nothing is loaded by it)
     struct Install
@@ -88,8 +73,12 @@ class Nvngx_XeMfgXmx : public Nvngx_DllProxy
         bool xmxModel = false;       // "Ported XMX MFG model installed"
         std::string contextError;    // the first [error] after the last context creation (its cause), empty when none
         std::string lastError;       // the last [error] after it ("XeFG Init error: -1000"), empty when none
-        std::string otherLibxessFg;  // another libxess_fg.dll loaded in the game (not its own), empty when none
-        bool pluginApi = false;      // "OptiScaler plugin API version N": it got the plugin API (exp4)
+        // Another libxess_fg.dll loaded in the game, of another version than the one ILION uses ("path (1.1.0)"), empty
+        // when none. A copy of the same version (a game folder updated by hand) is no conflict
+        std::string otherLibxessFg;
+        // XeFG 1.3.1 in use: on AMD realdody's context fails with it (1.3.4 needed)
+        bool OldXefg() const { return xefgVersion.starts_with("1.3.1"); }
+        bool pluginApi = false;      // "OptiScaler plugin API version N": it got the plugin API
         bool ContextFailed() const { return logThisSession && contextModel >= 0 && !lastError.empty(); }
         // A context made without an error after it: XeFG generates with it (model 16 XMX port, 18 DP4a, 17 Intel XMX)
         bool ContextOk() const { return logThisSession && contextModel >= 0 && lastError.empty(); }

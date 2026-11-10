@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-// ILION v1.4.0 fase 2 exp4: OptiScaler v10's plugin API (plugin_sdk/optiscaler_plugin.h, MIT), the host side taken from
+// ILION v1.4.0: OptiScaler v10's plugin API (plugin_sdk/optiscaler_plugin.h, MIT), the host side taken from
 // OptiScaler's plugins/PluginApi (GPL-3.0) for ILION's menu and config. A plugin (an .asi of the plugins folder or a
 // custom DLSSG replacement such as realdody's XeMFG XMX) exports OptiPluginInit, keeps its settings in
 // [Plugin.<name>] of OptiScaler.ini and can draw a tab in ILION's menu

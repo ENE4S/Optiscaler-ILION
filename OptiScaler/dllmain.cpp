@@ -42,7 +42,6 @@
 #include <hooks/Advapi32_Hooks.h>
 #include <hooks/Streamline_Hooks.h>
 #include <plugins/PluginApi.h>
-#include <framegen/nvngx/Nvngx_XeMfgXmx.h>
 
 #include <nvapi/NvApiHooks.h>
 
@@ -234,11 +233,10 @@ void LoadAsiPlugins()
     std::vector<std::filesystem::directory_entry> variantEntries;
     std::vector<std::wstring> variantNames;
 
-    // ILION v1.4.0 fase 2 exp4: XeMFG XMX (realdody) as the DLSSG replacement is another implementation of the same
-    // technique (its XeFG port comes from MFG-Unlocker): no XeMFG variant with it, never two in one process. The choice
-    // stays in the config
-    const bool xmxReplacement = Config::Instance()->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::XeMfgXmx &&
-                                !Nvngx_XeMfgXmx::BlockedOnAmd();
+    // ILION v1.4.0: XeMFG XMX (realdody) as the DLSSG replacement is another implementation of the same technique (its
+    // XeFG port comes from MFG-Unlocker): no XeMFG variant with it, never two in one process. The choice stays in the
+    // config
+    const bool xmxReplacement = Config::Instance()->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::XeMfgXmx;
     if (const auto variant = Config::Instance()->XeMfgVariant.value_or(L""); !variant.empty() && xmxReplacement)
     {
         LOG_INFO(L"XeMFG XMX selected: XeMFG variant {} not loaded", variant);
@@ -319,7 +317,7 @@ void LoadAsiPlugins()
                 if (init != nullptr)
                     init();
 
-                // ILION v1.4.0 fase 2 exp4: OptiScaler v10's plugin API, right after InitializeASI
+                // ILION v1.4.0: OptiScaler v10's plugin API, right after InitializeASI
                 PluginApi::InitPlugin(
                     hMod, (PFN_OptiPluginInit) KernelBaseProxy::GetProcAddress_()(hMod, OPTI_PLUGIN_INIT_NAME),
                     entry.path());
@@ -1514,7 +1512,7 @@ void CheckMemoryForProxies()
 
     XeSSProxy::InitXeSS();
     XeSSProxy::InitXeSSDx11();
-    // ILION v1.4.0 fase 2 exp4: always, as OptiScaler v10 does with XeMFG XMX too. realdody's release ships no
+    // ILION v1.4.0: always, as OptiScaler v10 does with XeMFG XMX too. realdody's release ships no
     // libxess_fg.dll: it then uses this one (OptiScaler\libxess_fg.dll, three folders above it), a single module
     XeFGProxy::InitXeFG();
     XeLLProxy::InitXeLL();

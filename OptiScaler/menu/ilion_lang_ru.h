@@ -166,9 +166,6 @@ inline constexpr Translation kRussian[] = {
       "Ошибка XeMFG XMX: %s" },
     { "Another libxess_fg.dll version is loaded in the game: %s. It can make XeFG\'s Init fail (\"Failed to create heap\")",
       "В игре загружена другая версия libxess_fg.dll: %s. Она может вызвать сбой Init XeFG (\"Failed to create heap\")" },
-    { "ON %dx measured, asked %dx", "ON %dx измерено, %dx запрошено" },
-    { "Only %dX of the %dX asked reach the screen. A frame cap (RivaTuner, the driver or the game) lowers the base frame rate and drops the rest: remove it or ask for less",
-      "До экрана доходит только %dX из %dX запрошенных. Ограничение FPS (RivaTuner, драйвер или игра) снижает базовую частоту кадров и отбрасывает остальное: уберите его или запросите меньше" },
     { "XeFG 1.3.1 is in use: on AMD GPUs XeMFG XMX needs libxess_fg.dll 1.3.4 (ILION\'s, in the OptiScaler folder)",
       "Используется XeFG 1.3.1: на GPU AMD XeMFG XMX нужна libxess_fg.dll 1.3.4 (из ILION, в папке OptiScaler)" },
     { "Intel XeSS frame generation with the ported XMX multi frame model, up to 6X\n"

@@ -1657,34 +1657,6 @@ struct ExternalFgStatus
     std::string text;
 };
 
-// ILION v1.4.0: "Current DLSSG state" as the overlay says it. count: the generated frames the game's DLSSG asks for
-// (DLSSG.MultiFrameCount). With a DLSSG replacement whose presents were measured (IlionDynamicMfg) and that shows a
-// different multiplier (frames dropped by a frame cap, or by the backend), both figures, labelled, in amber
-static void DrawDlssgState(int count)
-{
-    if (count <= 0)
-    {
-        ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), "%s", Tr("OFF"));
-        return;
-    }
-
-    const int asked = count + 1;
-    if (State::Instance().activeFgNvngx != FGNvngxReplacement::None)
-    {
-        IlionDynamicMfg::AppliedSource source = IlionDynamicMfg::AppliedSource::None;
-        const int applied = IlionDynamicMfg::ExternalApplied(nullptr, &source);
-        if (source == IlionDynamicMfg::AppliedSource::Measured && applied >= 2 && applied != asked)
-        {
-            ImGui::TextColored(toneMapColor(IlionTheme::LampAmber), "%s",
-                               StrFmt(Tr("ON %dx measured, asked %dx"), applied, asked).c_str());
-            return;
-        }
-    }
-
-    ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.f, 1.f, 0.25f, 1.f), IlionTheme::Role::Good)), "%s",
-                       std::format("ON {}x", asked).c_str());
-}
-
 static const char* NvngxFgName(FGNvngxReplacement provider)
 {
     switch (provider)
@@ -1804,21 +1776,6 @@ static void DrawXeMfgXmxState()
                                     "(\"Failed to create heap\")"),
                                  backend.otherLibxessFg.c_str())
                               .c_str());
-    // Fewer frames on screen than asked for (measured at the presents): a frame cap (RivaTuner, the driver, the game) or
-    // the backend drops the rest; the same figures as the overlay and "Current DLSSG state"
-    if (State::Instance().dlssgDetectedInterpolationCount > 0)
-    {
-        IlionDynamicMfg::AppliedSource source = IlionDynamicMfg::AppliedSource::None;
-        const int applied = IlionDynamicMfg::ExternalApplied(nullptr, &source);
-        const int asked = State::Instance().dlssgDetectedInterpolationCount + 1;
-        if (source == IlionDynamicMfg::AppliedSource::Measured && applied >= 2 && applied < asked)
-            WrappedText(warn, StrFmt(Tr("Only %dX of the %dX asked reach the screen. A frame cap (RivaTuner, the driver or "
-                                        "the game) lowers the base frame rate and drops the rest: remove it or ask for "
-                                        "less"),
-                                     applied, asked)
-                                  .c_str());
-    }
-
     if (!backend.logThisSession)
     {
         WrappedText(ImGui::GetStyle().Colors[ImGuiCol_TextDisabled], Tr("Its log hasn't been written in this session yet"));
@@ -13690,7 +13647,14 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
         ImGui::Text(Tr("Current DLSSG state:"));
         ImGui::SameLine();
-        DrawDlssgState(state.dlssgDetectedInterpolationCount);
+        if (auto count = state.dlssgDetectedInterpolationCount; count > 0)
+        {
+            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.f, 1.f, 0.25f, 1.f), IlionTheme::Role::Good)), std::format("ON {}x", count + 1).c_str());
+        }
+        else
+        {
+            ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), Tr("OFF"));
+        }
 
         if (IlionTheme::shell)
             FgModeValue(&config->FGDLSSGInterpolationCount);
@@ -14119,7 +14083,15 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             {
                 ImGui::Text(Tr("Current DLSSG state:"));
                 ImGui::SameLine();
-                DrawDlssgState(state.dlssgDetectedInterpolationCount);
+                if (auto count = state.dlssgDetectedInterpolationCount; count > 0)
+                {
+                    ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.f, 1.f, 0.25f, 1.f), IlionTheme::Role::Good)),
+                                       std::format("ON {}x", count + 1).c_str());
+                }
+                else
+                {
+                    ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.f, 0.f, 1.f), IlionTheme::Role::Bad)), Tr("OFF"));
+                }
 
                 // Issue mostly shows up on AMD on Windows on pre-RDNA3 in some non-UE games
                 // Hide to reduce confusion, config is still read

@@ -1513,10 +1513,19 @@ void CheckMemoryForProxies()
 
     XeSSProxy::InitXeSS();
     XeSSProxy::InitXeSSDx11();
-    // ILION v1.4.1: OptiScaler\libxess_fg.dll (1.3.1.78) for ILION's XeFG output and its XeMFG variants. Not with
-    // XeMFG XMX in use: realdody loads its own 1.3.4 from its folder, one libxess_fg in the process
-    if (!Nvngx_XeMfgXmx::InUse())
+    // ILION v1.4.1: OptiScaler\libxess_fg.dll (1.3.1.78) for ILION's XeFG output and its XeMFG variants. With XeMFG XMX
+    // in use, the 1.3.4 of its own folder instead, preloaded here the same way: realdody then finds that module (its
+    // folder is the first place it looks), one libxess_fg in the process. Its XeFG context failed on AMD when realdody
+    // loaded the library itself later
+    if (Nvngx_XeMfgXmx::InUse())
+    {
+        if (const auto xmx = Nvngx_XeMfgXmx::FindInstall(); !xmx.dll.empty() && xmx.libxessFg)
+            XeFGProxy::InitXeFG(xmx.dll.parent_path().wstring());
+    }
+    else
+    {
         XeFGProxy::InitXeFG();
+    }
     XeLLProxy::InitXeLL();
 
     XellHooks::Hook();

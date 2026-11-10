@@ -120,7 +120,9 @@ class XeFGProxy
     static HMODULE Module() { return _dll; }
     static std::wstring Module_Path() { return _dllPath; }
 
-    static bool InitXeFG()
+    // ILION v1.4.1: folder, when given, is where libxess_fg.dll is loaded from first (XeMFG XMX: its own 1.3.4); else the
+    // [XeFG] library override and then OptiScaler's folder, as before
+    static bool InitXeFG(const std::wstring& folder = L"")
     {
         if (_dll != nullptr)
             return true;
@@ -135,7 +137,7 @@ class XeFGProxy
         {
             LOG_DEBUG("Trying to load {}", wstring_to_string(dllNames[i]));
 
-            auto overridePath = Config::Instance()->XeFGLibrary.value_or(L"");
+            auto overridePath = !folder.empty() ? folder : Config::Instance()->XeFGLibrary.value_or(L"");
 
             HMODULE memModule = nullptr;
             Util::LoadProxyLibrary(dllNames[i], optiPath, overridePath, &memModule, &mainModule);

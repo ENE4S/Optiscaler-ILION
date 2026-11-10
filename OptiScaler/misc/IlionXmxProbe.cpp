@@ -16,7 +16,7 @@ std::filesystem::path folder;
 std::ofstream file;
 bool fileOpened = false;
 int lines = 0;
-constexpr int maxLines = 800;
+constexpr int maxLines = 4000;
 IlionXmxProbe::Summary summary;
 
 void Write(const std::string& text)
@@ -142,7 +142,7 @@ void OnAllocationInfo(UINT visibleMask, UINT count, const D3D12_RESOURCE_DESC* d
         Write(std::format("    [{}] {}", i, Describe(descs[i])));
 }
 
-void OnCreateHeap(const char* api, const D3D12_HEAP_DESC& desc, HRESULT hr)
+void OnCreateHeap(const char* api, const D3D12_HEAP_DESC& desc, HRESULT hr, const void* heap)
 {
     std::scoped_lock guard(lock);
     summary.heaps++;
@@ -151,7 +151,37 @@ void OnCreateHeap(const char* api, const D3D12_HEAP_DESC& desc, HRESULT hr)
         summary.heapFailures++;
         summary.lastFailure = std::format("{}: 0x{:08X}, {}", api, (UINT) hr, Describe(desc));
     }
-    Write(std::format("{}: {} -> 0x{:08X}{}", api, Describe(desc), (UINT) hr, FAILED(hr) ? "  ** REFUSED **" : ""));
+    Write(std::format("{}: {} -> 0x{:08X} heap {}{}", api, Describe(desc), (UINT) hr, heap,
+                      FAILED(hr) ? "  ** REFUSED **" : ""));
+}
+
+void OnFeature(D3D12_FEATURE feature, const void* data, UINT size, HRESULT hr)
+{
+    std::string bytes;
+    const auto* b = (const unsigned char*) data;
+    for (UINT i = 0; b != nullptr && SUCCEEDED(hr) && i < size && i < 24; i++)
+        bytes += std::format("{:02X}", b[i]);
+
+    std::scoped_lock guard(lock);
+    Write(std::format("CheckFeatureSupport: feature {} size {} -> 0x{:08X} data {}", (int) feature, size, (UINT) hr, bytes));
+}
+
+void OnResource(const char* api, const std::string& where, const std::string& desc, HRESULT hr, const void* resource)
+{
+    std::scoped_lock guard(lock);
+    if (FAILED(hr))
+    {
+        summary.heapFailures++;
+        summary.lastFailure = std::format("{}: 0x{:08X}, {} {}", api, (UINT) hr, where, desc);
+    }
+    Write(std::format("{}: {} {} -> 0x{:08X} resource {}{}", api, where, desc, (UINT) hr, resource,
+                      FAILED(hr) ? "  ** REFUSED **" : ""));
+}
+
+void OnOther(const std::string& text)
+{
+    std::scoped_lock guard(lock);
+    Write(text);
 }
 
 void OnHeapRetry(const char* api, const D3D12_HEAP_DESC& desc, HRESULT hr)

@@ -32,7 +32,11 @@ void SetFolder(const std::filesystem::path& folder);
 
 void OnAllocationInfo(UINT visibleMask, UINT count, const D3D12_RESOURCE_DESC* descs,
                       const D3D12_RESOURCE_ALLOCATION_INFO& result);
-void OnCreateHeap(const char* api, const D3D12_HEAP_DESC& desc, HRESULT hr);
+void OnCreateHeap(const char* api, const D3D12_HEAP_DESC& desc, HRESULT hr, const void* heap = nullptr);
+// exp6: what XeFG does with those heaps and what it checks
+void OnFeature(D3D12_FEATURE feature, const void* data, UINT size, HRESULT hr);
+void OnResource(const char* api, const std::string& where, const std::string& desc, HRESULT hr, const void* resource);
+void OnOther(const std::string& text);
 void OnHeapRetry(const char* api, const D3D12_HEAP_DESC& desc, HRESULT hr);
 void OnCreateDescriptorHeap(const D3D12_DESCRIPTOR_HEAP_DESC& desc, HRESULT hr);
 

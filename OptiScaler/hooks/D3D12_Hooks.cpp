@@ -2467,7 +2467,7 @@ static void HookToDevice(ID3D12Device* InDevice)
 
     // ILION v1.4.0 fase 2 exp5: XeMFG XMX's D3D12 probe, only with it as the DLSSG replacement
     bool xmxProbe = Config::Instance()->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::XeMfgXmx &&
-                          o_CreateHeap == nullptr;
+                    o_CreateHeap == nullptr && IlionXmxProbe::Enabled();
     if (xmxProbe)
     {
         o_CreateHeap = (PFN_CreateHeap) pVTable[28];

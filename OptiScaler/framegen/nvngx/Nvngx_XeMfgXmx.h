@@ -60,6 +60,11 @@ class Nvngx_XeMfgXmx : public Nvngx_DllProxy
     // OptiPluginInit was called and it accepted the API (its tab is in the menu)
     static bool PluginApiAccepted();
 
+    // ILION v1.4.0 candidate: XeMFG XMX is for NVIDIA and Intel GPUs. On AMD realdody's direct XeFG context fails
+    // (XeFG Init: "Failed to create heap", -1000, every network path, RX 7900 XTX); multi frame generation on AMD is
+    // ILION's XeFG output with the dashdogy XeMFG variant (XeFG's swap chain API, dashdogy's amd_dxil route)
+    static bool BlockedOnAmd();
+
     // What is installed, read from the files only (nothing is loaded by it)
     struct Install
     {

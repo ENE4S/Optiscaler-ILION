@@ -42,6 +42,7 @@
 #include <hooks/Advapi32_Hooks.h>
 #include <hooks/Streamline_Hooks.h>
 #include <plugins/PluginApi.h>
+#include <framegen/nvngx/Nvngx_XeMfgXmx.h>
 
 #include <nvapi/NvApiHooks.h>
 
@@ -236,7 +237,8 @@ void LoadAsiPlugins()
     // ILION v1.4.0 fase 2 exp4: XeMFG XMX (realdody) as the DLSSG replacement is another implementation of the same
     // technique (its XeFG port comes from MFG-Unlocker): no XeMFG variant with it, never two in one process. The choice
     // stays in the config
-    const bool xmxReplacement = Config::Instance()->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::XeMfgXmx;
+    const bool xmxReplacement = Config::Instance()->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::XeMfgXmx &&
+                                !Nvngx_XeMfgXmx::BlockedOnAmd();
     if (const auto variant = Config::Instance()->XeMfgVariant.value_or(L""); !variant.empty() && xmxReplacement)
     {
         LOG_INFO(L"XeMFG XMX selected: XeMFG variant {} not loaded", variant);

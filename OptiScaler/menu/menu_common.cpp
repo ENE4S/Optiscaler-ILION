@@ -1744,8 +1744,18 @@ static void DrawFgLiteState()
 // this session (the XMX path is confirmed only by "model: 16" with the ported model and no error after it)
 static void DrawXeMfgXmxState()
 {
-    const auto install = Nvngx_XeMfgXmx::FindInstall();
     const ImVec4 warn = IlionTheme::LampAmber;
+
+    // ILION v1.4.0 candidate: NVIDIA and Intel only; on AMD the route that works is named, nothing is loaded
+    if (Nvngx_XeMfgXmx::BlockedOnAmd())
+    {
+        WrappedText(warn, Tr("XeMFG XMX is disabled on AMD GPUs: it can't start its frame generation on them."));
+        WrappedText(ImGui::GetStyle().Colors[ImGuiCol_Text],
+                    Tr("For multi frame generation on AMD: FG input DLSSG, FG output XeFG and the XeMFG variant dashdogy."));
+        return;
+    }
+
+    const auto install = Nvngx_XeMfgXmx::FindInstall();
     if (install.dll.empty())
     {
         WrappedText(warn, Tr("XeMFG XMX not found. Extract realdody's dlssg-to-xefg-xmx release into OptiScaler\\custom\\XeMFG "
@@ -1816,7 +1826,7 @@ static void DrawXeMfgXmxState()
                 WrappedText(warn, Tr("Try another network path live in the engine's tab below (Fallback (DP4a)), or save it "
                                      "for the next start"));
             if (savedPath != Nvngx_XeMfgXmx::NetworkPath::Fallback &&
-                IlionTheme::Button(TrL("Use Fallback (DP4a) at the next start##xmxDp4a")))
+                IlionTheme::Button(TrL("Use DP4a at the next start##xmxDp4a")))
                 Nvngx_XeMfgXmx::SaveNetworkPath(Nvngx_XeMfgXmx::NetworkPath::Fallback);
         }
     }
@@ -12168,8 +12178,8 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
         { FGNvngxReplacement::XeMfgXmx, "XeMFG XMX (experimental)",
           "Intel XeSS frame generation with the ported XMX multi frame model, up to 6X\n"
           "(realdody's dlssg-to-xefg-xmx, GPL-3.0)\n\n"
-          "Extract its release into OptiScaler\\custom\\XeMFG XMX yourself: ILION includes none of it\n"
-          "DirectX 12 games. Its log confirms the XMX path (model 16)" },
+          "NVIDIA and Intel GPUs, DirectX 12 games. Disabled on AMD: there use the XeFG output with the dashdogy variant\n\n"
+          "Extract its release into OptiScaler\\custom\\XeMFG XMX yourself: ILION includes none of it" },
     };
 
     // clang-format on

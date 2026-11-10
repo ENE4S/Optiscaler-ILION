@@ -23,6 +23,8 @@ class Scope
     Scope& operator=(const Scope&) = delete;
 };
 
+// Off unless [Plugin.XeMFG XMX] IlionD3D12Probe = true (a diagnosis tool, not for every player)
+bool Enabled();
 // The hooks are installed (XeMFG XMX was the replacement when the device was made)
 void SetInstalled(bool installed);
 // Inside a call into XeMFG XMX on this thread

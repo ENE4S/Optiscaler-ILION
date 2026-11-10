@@ -93,6 +93,12 @@ namespace IlionXmxProbe
 Scope::Scope() { depth++; }
 Scope::~Scope() { depth--; }
 
+bool Enabled()
+{
+    const auto value = Config::Instance()->GetRawValue("Plugin.XeMFG XMX", "IlionD3D12Probe");
+    return value.has_value() && (_stricmp(value->c_str(), "true") == 0 || *value == "1");
+}
+
 void SetInstalled(bool value)
 {
     installed = value;

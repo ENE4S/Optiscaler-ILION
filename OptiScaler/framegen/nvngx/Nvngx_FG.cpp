@@ -46,6 +46,15 @@ IFGNvngx* Nvngx_FG::getProvider()
         break;
 
     case FGNvngxReplacement::XeMfgXmx:
+        // ILION v1.4.0 candidate: not on AMD (its XeFG context can't start there), nothing is loaded; the menu says
+        // that AMD's multi frame generation is the XeFG output with the dashdogy XeMFG variant
+        if (Nvngx_XeMfgXmx::BlockedOnAmd())
+        {
+            LOG_WARN("XeMFG XMX is disabled on AMD GPUs: use the XeFG output with the dashdogy XeMFG variant");
+            Config::Instance()->FGNvngxReplacement.set_volatile_value(FGNvngxReplacement::None);
+            State::Instance().activeFgNvngx = FGNvngxReplacement::None;
+            return nullptr;
+        }
         _provider = std::make_unique<Nvngx_XeMfgXmx>();
         break;
 

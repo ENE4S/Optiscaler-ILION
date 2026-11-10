@@ -742,7 +742,7 @@ static bool FgAvailable(const std::string& id)
     if (id == "nvngx_fglite")
         return !vulkan && !FgLiteInstall().dll.empty();
     if (id == "nvngx_xemfg_xmx") // ILION v1.4.0 fase 2: realdody's XeMFG XMX, its DLL in OptiScaler\custom\XeMFG XMX
-        return !vulkan && !Nvngx_XeMfgXmx::FindInstall().dll.empty();
+        return !vulkan && !Nvngx_XeMfgXmx::BlockedOnAmd() && !Nvngx_XeMfgXmx::FindInstall().dll.empty();
     return false;
 }
 

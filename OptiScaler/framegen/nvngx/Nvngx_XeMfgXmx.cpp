@@ -5,6 +5,7 @@
 #include <proxies/XeFG_Proxy.h>
 #include <plugins/PluginApi.h>
 #include <misc/IlionXmxProbe.h>
+#include <misc/IdentifyGpu.h>
 
 #include <fstream>
 #include <mutex>
@@ -190,6 +191,12 @@ const char* Nvngx_XeMfgXmx::NetworkPathName(NetworkPath path)
     default:
         return "XMX (native)";
     }
+}
+
+bool Nvngx_XeMfgXmx::BlockedOnAmd()
+{
+    static const bool amd = IdentifyGpu::getPrimaryGpu().vendorId == VendorId::AMD;
+    return amd;
 }
 
 bool Nvngx_XeMfgXmx::PluginApiAccepted()

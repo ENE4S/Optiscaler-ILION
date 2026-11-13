@@ -8616,7 +8616,40 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
         const bool ilionOverlay = UiThemeIndex(config) != 2;
         if (ilionOverlay)
             IlionTheme::SetShellTheme(UiThemeIndex(config)); // dev.70: its palette also before the menu is first opened
-        ImFont* overlayFont = ilionOverlay ? IlionTheme::modernFont : nullptr;
+        // ILION v1.4.1.1 SPUTNIK: with SPUTNIK as the presentation, the ILION overlay takes its colours and typeface
+        // (the palette is restored when the overlay ends; Industrial, Clean Olive and Compact keep their own)
+        struct SputnikOverlayLook
+        {
+            bool on;
+            ImVec4 bg, text, text2, line, green;
+            explicit SputnikOverlayLook(bool sputnik)
+                : on(sputnik), bg(IlionTheme::ShellPal::Bg), text(IlionTheme::ShellPal::Text), text2(IlionTheme::ShellPal::Text2),
+                  line(IlionTheme::ShellPal::Line), green(IlionTheme::ShellPal::Green)
+            {
+                if (!on)
+                    return;
+                IlionTheme::ShellPal::Bg = ImVec4(0.07f, 0.075f, 0.07f, 1.f);
+                IlionTheme::ShellPal::Text = ImVec4(0.92f, 0.87f, 0.74f, 1.f);
+                IlionTheme::ShellPal::Text2 = ImVec4(0.62f, 0.60f, 0.50f, 1.f);
+                IlionTheme::ShellPal::Line = ImVec4(0.55f, 0.16f, 0.12f, 1.f);
+                IlionTheme::ShellPal::Green = ImVec4(0.75f, 0.24f, 0.17f, 1.f); // titles and graphs in SPUTNIK red
+            }
+            ~SputnikOverlayLook()
+            {
+                if (!on)
+                    return;
+                IlionTheme::ShellPal::Bg = bg;
+                IlionTheme::ShellPal::Text = text;
+                IlionTheme::ShellPal::Text2 = text2;
+                IlionTheme::ShellPal::Line = line;
+                IlionTheme::ShellPal::Green = green;
+            }
+        };
+        const bool sputnikOverlay = ilionOverlay && UiSputnik(config);
+        SputnikOverlayLook sputnikLook(sputnikOverlay);
+        ImFont* overlayFont = ilionOverlay ? (sputnikOverlay && IlionTheme::crtTitleFont != nullptr ? IlionTheme::crtTitleFont
+                                                                                                     : IlionTheme::modernFont)
+                                           : nullptr;
 
         ImGui::PushStyleColor(ImGuiCol_Border, ilionOverlay ? ImGui::GetColorU32(IlionTheme::Alpha(IlionTheme::ShellPal::Line, 0.95f))
                                                : industrialOverlay

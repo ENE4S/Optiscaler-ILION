@@ -356,7 +356,7 @@ static void PopComboStyle()
 
 static void Label(const char* t, const ImVec4& c = pal::Text2, float size = 17.f)
 {
-    ImGui::PushFont(fUi, U(size));
+    ImGui::PushFont(sputnikDrawing ? fBrand : fUi, U(size));
     ImGui::TextColored(Tone(c), "%s", t);
     ImGui::PopFont();
 }
@@ -364,7 +364,7 @@ static void Label(const char* t, const ImVec4& c = pal::Text2, float size = 17.f
 // ILION: one line of parts, each in its own colour (a reading's values apart from its words), as Label: no wrapping
 static void LabelParts(std::initializer_list<std::pair<std::string, ImVec4>> parts, float size = 17.f)
 {
-    ImGui::PushFont(fUi, U(size));
+    ImGui::PushFont(sputnikDrawing ? fBrand : fUi, U(size));
     bool first = true;
     for (const auto& [text, colour] : parts)
     {
@@ -2339,10 +2339,69 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                     dl->AddLine(P(x, a.y + 12), P(x, b.y - 12), Col(frame), 2.f);
                 Text(fUi, 17.f, ImVec2(x + 16, a.y + 10), sand, cells[i][0].c_str());
                 dl->PushClipRect(P(x + 8, a.y), P(x + w - 6, b.y), true);
-                Text(fBrand, 26.f, ImVec2(x + 16, a.y + 38), i == 2 ? gpuHeader.colour : sand, cells[i][1].c_str());
+                Text(fBrand, 26.f, ImVec2(x + 16, a.y + 38),
+                     i == 2 ? gpuHeader.colour : i == 3 ? ImVec4(1.00f, 0.84f, 0.10f, 1.f) : sand, cells[i][1].c_str());
                 dl->PopClipRect();
                 x += w;
             }
+        }
+
+        // SPUTNIK's controls: ImGui's rectangular widgets (the Industrial skin off), its colours and typeface; restored after
+        const ImVec4 sandDim(0.62f, 0.60f, 0.50f, 1.f), well(0.06f, 0.06f, 0.055f, 1.f), wellLit(0.13f, 0.13f, 0.11f, 1.f);
+        const std::pair<ImGuiCol, ImVec4> sputnikColours[] = {
+            { ImGuiCol_Text, sand },          { ImGuiCol_TextDisabled, sandDim }, { ImGuiCol_FrameBg, well },
+            { ImGuiCol_FrameBgHovered, wellLit }, { ImGuiCol_FrameBgActive, wellLit }, { ImGuiCol_Border, sandPlate },
+            { ImGuiCol_Button, well },        { ImGuiCol_ButtonHovered, rust },  { ImGuiCol_ButtonActive, rustLit },
+            { ImGuiCol_Header, rust },        { ImGuiCol_HeaderHovered, rustLit }, { ImGuiCol_HeaderActive, rust },
+            { ImGuiCol_CheckMark, rustLit },  { ImGuiCol_SliderGrab, rust },     { ImGuiCol_SliderGrabActive, rustLit },
+            { ImGuiCol_PopupBg, graphite },   { ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0) },
+        };
+        bool industrialBefore = IlionTheme::industrial;
+        const auto pushSputnikStyle = [&](float fontSize)
+        {
+            industrialBefore = IlionTheme::industrial;
+            IlionTheme::industrial = false;
+            for (const auto& [slot, colour] : sputnikColours)
+                ImGui::PushStyleColor(slot, Tone(colour));
+            ImGui::PushFont(fBrand, U(fontSize));
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, Sz(10.f, 8.f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, Sz(10.f, 6.f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, U(1.5f));
+            ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 0.f);
+            ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, U(1.5f));
+            ImGui::PushStyleVar(ImGuiStyleVar_GrabRounding, 0.f);
+        };
+        const auto popSputnikStyle = [&]()
+        {
+            ImGui::PopStyleVar(7);
+            ImGui::PopFont();
+            ImGui::PopStyleColor((int) std::size(sputnikColours));
+            IlionTheme::industrial = industrialBefore;
+        };
+        // A label centred in its rectangle (the state, INDUSTRIAL, METRICS)
+        const auto centredText = [&](ImVec2 a, ImVec2 b, float size, const ImVec4& colour, const char* text)
+        {
+            const ImVec2 t = Measure(fBrand, size, text);
+            Text(fBrand, size, ImVec2((a.x + b.x - t.x) * 0.5f, (a.y + b.y - t.y) * 0.5f), colour, text);
+        };
+
+        // The language selector in the title bar, left of the close key (Lx and Tr follow it)
+        {
+            pushSputnikStyle(15.f);
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, Tone(Mix(rust, ImVec4(0, 0, 0, 1), 0.25f)));
+            ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, Tone(rustLit));
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, Sz(10.f, 5.f));
+            ImGui::SetCursorScreenPos(P(SW - 72 - 190, 13));
+            if (ImGui::BeginChild("##SputnikLanguage", Sz(190, 36), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
+            {
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                RenderLanguageSelector(config);
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor(2);
+            popSputnikStyle();
         }
 
         // The three blocks: an olive plate with the section's name and its real state, the Home controls beside it
@@ -2372,30 +2431,10 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                 dl->AddRectFilled(P(sa), P(sb), Col(rust));
             else
                 dl->AddRect(P(sa), P(sb), Col(sandPlate), 0.f, 0, 1.f);
-            Text(fBrand, 15.f, ImVec2(sa.x + 10, sa.y + 4), sand, stateText);
+            centredText(sa, sb, 15.f, sand, stateText);
 
             PushContentStyle();
-            const bool industrialBefore = IlionTheme::industrial;
-            IlionTheme::industrial = false; // the theme's wells, keys and switches give way to SPUTNIK's rectangles
-            const ImVec4 sandDim(0.62f, 0.60f, 0.50f, 1.f), well(0.06f, 0.06f, 0.055f, 1.f), wellLit(0.13f, 0.13f, 0.11f, 1.f);
-            const std::pair<ImGuiCol, ImVec4> colours[] = {
-                { ImGuiCol_Text, sand },          { ImGuiCol_TextDisabled, sandDim }, { ImGuiCol_FrameBg, well },
-                { ImGuiCol_FrameBgHovered, wellLit }, { ImGuiCol_FrameBgActive, wellLit }, { ImGuiCol_Border, sandPlate },
-                { ImGuiCol_Button, well },        { ImGuiCol_ButtonHovered, rust },  { ImGuiCol_ButtonActive, rustLit },
-                { ImGuiCol_Header, rust },        { ImGuiCol_HeaderHovered, rustLit }, { ImGuiCol_HeaderActive, rust },
-                { ImGuiCol_CheckMark, rustLit },  { ImGuiCol_SliderGrab, rust },     { ImGuiCol_SliderGrabActive, rustLit },
-                { ImGuiCol_PopupBg, graphite },   { ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0) },
-            };
-            for (const auto& [slot, colour] : colours)
-                ImGui::PushStyleColor(slot, Tone(colour));
-            ImGui::PushFont(fBrand, U(17.f));
-            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, Sz(10.f, 8.f));
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, Sz(10.f, 6.f));
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.f);
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, U(1.5f));
-            ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 0.f);
-            ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, U(1.5f));
-            ImGui::PushStyleVar(ImGuiStyleVar_GrabRounding, 0.f);
+            pushSputnikStyle(17.f);
             // SPUTNIK's red for the pilots and accents the reused controls draw in green / yellow (restored after)
             const ImVec4 greenBefore = IlionTheme::ShellPal::Green, yellowBefore = IlionTheme::ShellPal::Yellow,
                          lampBefore = IlionTheme::LampGreen;
@@ -2415,10 +2454,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
             IlionTheme::ShellPal::Green = greenBefore;
             IlionTheme::ShellPal::Yellow = yellowBefore;
             IlionTheme::LampGreen = lampBefore;
-            ImGui::PopStyleVar(7);
-            ImGui::PopFont();
-            ImGui::PopStyleColor((int) std::size(colours));
-            IlionTheme::industrial = industrialBefore;
+            popSputnikStyle();
             PopContentStyle();
         };
 
@@ -2429,7 +2465,12 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         const bool latActive = fakenvapi::isUsingAsMainNvapi() && fakenvapi::isLowLatencyActive();
         const auto blockHeight = [&](int i) { return (std::max)(118.f, std::ceil(sputnikContent[i]) + 28.f); };
         float by = 166;
-        block(0, "##SputnikUp", Lx("UPSCALING", "ESCALADO", "ESCALA", "МАСШТАБ"), by, by + blockHeight(0), upActive, homeUpscaling);
+        const auto sputnikUpscaling = [&]()
+        {
+            homeUpscaling();
+            RenderFsr4ModelControls(feature != nullptr ? feature->GetUpscalerType() : Upscaler::Reset, feature, 1.0f);
+        };
+        block(0, "##SputnikUp", Lx("UPSCALING", "ESCALADO", "ESCALA", "МАСШТАБ"), by, by + blockHeight(0), upActive, sputnikUpscaling);
         by += blockHeight(0) + 12;
         block(1, "##SputnikFg", "FRAME\nGENERATION", by, by + blockHeight(1), fgActive, homeFrameGen);
         by += blockHeight(1) + 12;
@@ -2463,12 +2504,29 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
             At(SW - 24 - bw, iy);
             const bool pressed = ImGui::InvisibleButton("##SputnikIndustrial", Sz(bw, 28));
             dl->AddRectFilled(P(SW - 24 - bw, iy), P(SW - 24, iy + 28), Col(ImGui::IsItemHovered() ? Mix(sandPlate, ImVec4(1, 1, 1, 1), 0.1f) : sandPlate));
-            Text(fBrand, 15.f, ImVec2(SW - 24 - bw + 12, iy + 3), dark, back);
+            centredText(ImVec2(SW - 24 - bw, iy), ImVec2(SW - 24, iy + 28), 15.f, dark, back);
             if (pressed)
             {
                 config->MenuUiPresentation = std::string("full");
                 config->SaveMenuPreferences();
             }
+        }
+
+        {
+            // The performance overlay on / off (the same setting as Home's switch): red when it is on
+            const char* metrics = Lx("METRICS", "MÉTRICAS", "MÉTRICAS", "МЕТРИКИ");
+            const bool on = config->ShowFps.value_or_default();
+            const float mw = Measure(fBrand, 15.f, metrics).x + 24;
+            const ImVec2 ma(24, footer + 33), mb(24 + mw, footer + 61);
+            At(ma.x, ma.y);
+            if (ImGui::InvisibleButton("##SputnikMetrics", Sz(mw, 28)))
+                config->ShowFps = !on;
+            const bool hov = ImGui::IsItemHovered();
+            if (on)
+                dl->AddRectFilled(P(ma), P(mb), Col(hov ? rustLit : rust));
+            else
+                dl->AddRect(P(ma), P(mb), Col(hov ? sand : sandPlate), 0.f, 0, 1.5f);
+            centredText(ma, mb, 15.f, sand, metrics);
         }
 
         // A frame generation change needs a restart: said here, as the Full presentation says it

@@ -17,7 +17,6 @@ constexpr float kCompactH = 960.0f;
 constexpr float kSputnikW = 1120.0f; // ILION v1.4.1.1: SPUTNIK, one screen
 constexpr float kSputnikH = 760.0f;
 static bool sputnikDrawing = false; // the Home controls drawn for SPUTNIK: no Dynamic MFG, latency essentials only
-static std::string sputnikReturn = "full"; // the presentation SPUTNIK goes back to
 
 static float S = 1.0f;
 static ImVec2 O;
@@ -2285,7 +2284,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         dl->AddRectFilled(P(0, 0), P(SW, SH), Col(graphite), U(6.0f));
         // Title bar: rust, OPTISCALERION, back to the previous presentation and close
         dl->AddRectFilled(P(0, 0), P(SW, 58), Col(rust), U(6.0f), ImDrawFlags_RoundCornersTop);
-        Text(fBrand, 34.f, ImVec2(22, 9), sand, "OPTISCALERION");
+        Text(fBrand, 34.f, ImVec2(22, 9), sand, "ILION - SPUTNIK");
         const auto barKey = [&](const char* id, const char* glyph, float x, const char* tip) -> bool
         {
             At(x, 9);
@@ -2298,11 +2297,6 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
             Text(fBrand, 30.f, ImVec2(x + 20 - Measure(fBrand, 30.f, glyph).x * 0.5f, 10), sand, glyph);
             return pressed;
         };
-        if (barKey("##SputnikBack", "-", SW - 104, Lx("Previous interface", "Interfaz anterior", "Interface anterior", "Прежний интерфейс")))
-        {
-            config->MenuUiPresentation = sputnikReturn;
-            config->SaveMenuPreferences();
-        }
         if (barKey("##SputnikClose", "X", SW - 56, Tr("Close")))
             CloseMainMenu(io);
 
@@ -2378,18 +2372,38 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
             Text(fBrand, 15.f, ImVec2(sa.x + 10, sa.y + 4), sand, stateText);
 
             PushContentStyle();
-            ImGui::PushFont(fUi, U(16.f));
-            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, Sz(8.f, 4.f));
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, Sz(8.f, 4.f));
-            if (BeginArea(id, ImVec2(260, y0 + 8), ImVec2(SW - 28, y1 - 8)))
+            const bool industrialBefore = IlionTheme::industrial;
+            IlionTheme::industrial = false; // the theme's wells, keys and switches give way to SPUTNIK's rectangles
+            const ImVec4 sandDim(0.62f, 0.60f, 0.50f, 1.f), well(0.06f, 0.06f, 0.055f, 1.f), wellLit(0.13f, 0.13f, 0.11f, 1.f);
+            const std::pair<ImGuiCol, ImVec4> colours[] = {
+                { ImGuiCol_Text, sand },          { ImGuiCol_TextDisabled, sandDim }, { ImGuiCol_FrameBg, well },
+                { ImGuiCol_FrameBgHovered, wellLit }, { ImGuiCol_FrameBgActive, wellLit }, { ImGuiCol_Border, sandPlate },
+                { ImGuiCol_Button, well },        { ImGuiCol_ButtonHovered, rust },  { ImGuiCol_ButtonActive, rustLit },
+                { ImGuiCol_Header, rust },        { ImGuiCol_HeaderHovered, rustLit }, { ImGuiCol_HeaderActive, rust },
+                { ImGuiCol_CheckMark, rustLit },  { ImGuiCol_SliderGrab, rust },     { ImGuiCol_SliderGrabActive, rustLit },
+                { ImGuiCol_PopupBg, graphite },   { ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0) },
+            };
+            for (const auto& [slot, colour] : colours)
+                ImGui::PushStyleColor(slot, Tone(colour));
+            ImGui::PushFont(fBrand, U(17.f));
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, Sz(10.f, 8.f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, Sz(10.f, 6.f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, U(1.5f));
+            ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 0.f);
+            ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, U(1.5f));
+            ImGui::PushStyleVar(ImGuiStyleVar_GrabRounding, 0.f);
+            if (BeginArea(id, ImVec2(262, y0 + 14), ImVec2(SW - 30, y1 - 10)))
             {
                 ImGui::PushItemWidth((std::min)(ImGui::GetContentRegionAvail().x * 0.55f, U(300.f)));
                 content();
                 ImGui::PopItemWidth();
             }
             ImGui::EndChild();
-            ImGui::PopStyleVar(2);
+            ImGui::PopStyleVar(7);
             ImGui::PopFont();
+            ImGui::PopStyleColor((int) std::size(colours));
+            IlionTheme::industrial = industrialBefore;
             PopContentStyle();
         };
 
@@ -2415,10 +2429,23 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
             return pressed;
         };
         dl->AddLine(P(0, 664), P(SW, 664), Col(frame), 1.f);
-        if (bigKey("##SputnikApply", Lx("APPLY", "APLICAR", "APLICAR", "ПРИМЕНИТЬ"), ImVec2(120, 680), ImVec2(540, 742), rust, sand))
+        if (bigKey("##SputnikSave", Lx("SAVE", "GUARDAR", "SALVAR", "СОХРАНИТЬ"), ImVec2(SW * 0.5f - 260, 680), ImVec2(SW * 0.5f + 260, 742),
+                   rust, sand))
             config->SaveIni();
-        if (bigKey("##SputnikReset", Lx("RESET", "RESTABLECER", "REDEFINIR", "СБРОС"), ImVec2(580, 680), ImVec2(1000, 742), sandPlate, dark))
-            ImGui::OpenPopup("##SputnikResetAsk");
+        {
+            // Back to the Industrial presentation, settings kept: small, in the bottom right corner
+            const char* back = "INDUSTRIAL";
+            const float bw = Measure(fBrand, 15.f, back).x + 24;
+            At(SW - 24 - bw, SH - 46);
+            const bool pressed = ImGui::InvisibleButton("##SputnikIndustrial", Sz(bw, 28));
+            dl->AddRectFilled(P(SW - 24 - bw, SH - 46), P(SW - 24, SH - 18), Col(ImGui::IsItemHovered() ? Mix(sandPlate, ImVec4(1, 1, 1, 1), 0.1f) : sandPlate));
+            Text(fBrand, 15.f, ImVec2(SW - 24 - bw + 12, SH - 43), dark, back);
+            if (pressed)
+            {
+                config->MenuUiPresentation = std::string("full");
+                config->SaveMenuPreferences();
+            }
+        }
 
         // A frame generation change needs a restart: said here, as the Full presentation says it
         if (state.fgSettingsChanged)
@@ -2427,36 +2454,6 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                     "Aplique e reinicie o jogo para usar a nova geração de quadros", "Примените и перезапустите игру для новой генерации кадров"));
         ApplyState(ImVec2(SW - 420, 646), 400);
 
-        // Reset: only the settings SPUTNIK edits (upscaler choice, FG route and multiplier, XeLL forcing), after a yes
-        if (ImGui::BeginPopupModal("##SputnikResetAsk", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
-        {
-            ImGui::TextUnformatted(Lx("Reset upscaling, frame generation and latency choices to their defaults?",
-                                      "¿Restablecer las elecciones de escalado, generación de fotogramas y latencia a sus valores predeterminados?",
-                                      "Redefinir as escolhas de escala, geração de quadros e latência para os padrões?",
-                                      "Сбросить выбор масштабирования, генерации кадров и задержки к значениям по умолчанию?"));
-            ImGui::TextDisabled("%s", Lx("Profiles and the other settings are kept. Apply and restart the game afterwards.",
-                                         "Los perfiles y los demás ajustes se conservan. Después aplica y reinicia el juego.",
-                                         "Os perfis e os demais ajustes são mantidos. Depois aplique e reinicie o jogo.",
-                                         "Профили и прочие настройки сохраняются. Затем примените и перезапустите игру."));
-            if (IlionTheme::Button(Lx("Yes, reset", "Sí, restablecer", "Sim, redefinir", "Да, сбросить")))
-            {
-                config->Dx11Upscaler.reset();
-                config->Dx12Upscaler.reset();
-                config->VulkanUpscaler.reset();
-                config->FGInput.reset();
-                config->FGOutput.reset();
-                config->FGNvngxReplacement.reset();
-                config->FGDLSSGOverrideInterpolationCount.reset();
-                config->FGXeFGInterpolationCount.reset();
-                config->FGDLSSGInterpolationCount.reset();
-                config->ForceXeLL.reset();
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::SameLine();
-            if (IlionTheme::Button(Lx("Cancel", "Cancelar", "Cancelar", "Отмена")))
-                ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
-        }
 
         ImGui::End();
         ImGui::PopStyleColor(2);
@@ -3223,17 +3220,17 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         Text(fUi, 14.f, ImVec2(24 + side, 54), pal::Text2, "C O N T R O L   S Y S T E M");
         Text(fUi, 16.f, ImVec2(20 + side + brandW + 22, 14), pal::Dim, (std::string("v") + BuildInfo::IlionVersion()).c_str());
         {
-            // ILION v1.4.1.1: SPUTNIK, a small rust key under the version; it changes the presentation only
-            const float vx = 20 + side + brandW + 22;
-            const ImVec2 ka(vx, 33), kb(vx + Measure(fBrand, 13.f, "SPUTNIK").x + 18, 51);
+            // ILION v1.4.1.1: SPUTNIK, a small rust key left of the language selector (16 apart); it changes the
+            // presentation only
+            const float kw = Measure(fBrand, 13.f, "SPUTNIK").x + 18;
+            const ImVec2 ka(x1 - 240 - 16 - kw, 20), kb(x1 - 240 - 16, 42);
             At(ka.x, ka.y);
             const bool pressed = ImGui::InvisibleButton("##ToSputnik", Sz(kb.x - ka.x, kb.y - ka.y));
             const bool hov = ImGui::IsItemHovered();
             dl->AddRectFilled(P(ka), P(kb), Col(hov ? ImVec4(0.66f, 0.21f, 0.15f, 1.f) : ImVec4(0.55f, 0.16f, 0.12f, 1.f)), U(2.f));
-            Text(fBrand, 13.f, ImVec2(ka.x + 9, ka.y + 1), ImVec4(0.92f, 0.87f, 0.74f, 1.f), "SPUTNIK");
+            Text(fBrand, 13.f, ImVec2(ka.x + 9, ka.y + 2), ImVec4(0.92f, 0.87f, 0.74f, 1.f), "SPUTNIK");
             if (pressed)
             {
-                sputnikReturn = config->MenuUiPresentation.value_or_default() == "compact" ? "compact" : "full";
                 config->MenuUiPresentation = std::string("sputnik");
                 config->SaveMenuPreferences();
             }

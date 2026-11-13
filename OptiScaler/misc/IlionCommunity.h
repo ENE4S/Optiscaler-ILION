@@ -92,6 +92,7 @@ inline const Item kFgs[] = { { "ninguno", "Sin FG" },
                              { "nvngx_combo", "FFX + Enabler" },
                              { "nvngx_fglite", "NVIDIA FG Lite (HelixSR)" },
                              { "nvngx_xemfg_xmx", "XeMFG XMX (realdody)" },
+                             { "nvngx_anr", "ANR FG (Apex)" },
                              { "dlssg_salida", "Salida DLSSG (perfil v1, reemplazo sin indicar)" } };
 // La entrada de datos del FG (FGInput de ILION)
 inline const Item kRoutes[] = { { "ninguno", "Sin FG" },
@@ -264,6 +265,8 @@ inline const FgImpl kFgImpls[] = {
     { "nvngx_fglite", "NVIDIA FG Lite", "HelixSR 2.0.0", "DLSSG", "HelixSR", "nvngx,streamline,optifg,fsr31,fsr30", "", true, false },
     { "nvngx_xemfg_xmx", "XeMFG XMX", "realdody (dlssg-to-xefg-xmx)", "DLSSG", "XeMfgXmx", "nvngx,streamline,optifg,fsr31,fsr30", "",
       true, false },
+    { "nvngx_anr", "ANR FG", "Apex Neural Rendering FG", "DLSSG", "ApexFg", "nvngx,streamline,optifg,fsr31,fsr30", "",
+      true, false },
     { "dlssg_salida", "DLSSG", "Salida DLSSG (v1)", "DLSSG", "", "auto,optifg,streamline,fsr31,fsr30", "", true, false },
 };
 
@@ -325,6 +328,8 @@ inline Evidence FgEvidence(const std::string& fg, const std::string& arch)
         return IsNvidiaArch(arch) ? Evidence::None : amd ? Evidence::Experimental : Evidence::Unknown;
     if (fg == "nvngx_xemfg_xmx") // XeSS FG through realdody's DLSSG replacement: tried on RDNA 3 (Cyberpunk, 2X-6X)
         return rtx || amd || IsIntelArch(arch) ? Evidence::Experimental : Evidence::Unknown;
+    if (fg == "nvngx_anr") // ANR FG (Apex): not tried with ILION yet
+        return Evidence::Unknown;
     if (fg == "dlssg_salida")
         return Evidence::Unknown;
     return Evidence::None;
@@ -342,7 +347,7 @@ inline int FgMaxMultiplier(const std::string& fg, const std::string& arch)
         return arch == "rtx50" ? 4 : 2;
     if (fg == "dlssg_juego")
         return arch == "rtx40" ? 2 : 4;
-    if (fg == "nvngx_enabler" || fg == "nvngx_combo" || fg == "nvngx_xemfg_xmx")
+    if (fg == "nvngx_enabler" || fg == "nvngx_combo" || fg == "nvngx_xemfg_xmx" || fg == "nvngx_anr")
         return 6;
     return 4; // xefg, dlssg_salida
 }
@@ -1618,6 +1623,9 @@ inline std::pair<bool, std::string> Publish(const ServiceConfig& c, Session& s, 
     if (!p.authorId.empty() && p.authorId != s.userId)
         return { false, "Este perfil lo publicó otra cuenta" };
     // ILION v1.4.0: the server's catalogue doesn't list XeMFG XMX yet (ilion_community_v4_xemfg_xmx.sql)
+    if (p.fg == "nvngx_anr")
+        return { false, "Los perfiles con ANR FG se guardan y se aplican en este equipo; publicarlos requiere actualizar "
+                        "el servidor de COMUNIDAD (pendiente)" };
     if (p.fg == "nvngx_xemfg_xmx" && !kServerHasXeMfgXmx)
         return { false, "Los perfiles con XeMFG XMX se guardan y se aplican en este equipo; publicarlos requiere actualizar "
                         "el servidor de COMUNIDAD (pendiente)" };

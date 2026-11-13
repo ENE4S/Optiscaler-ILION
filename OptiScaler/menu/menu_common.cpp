@@ -40,6 +40,7 @@
 #include <framegen/nvngx/Nvngx_FG.h>
 #include <framegen/nvngx/Nvngx_HelixSR.h>
 #include <framegen/nvngx/Nvngx_XeMfgXmx.h>
+#include <framegen/nvngx/Nvngx_ApexFg.h>
 #include <plugins/PluginApi.h>
 #include <framegen/reprojection/Reprojection_Dx12.h>
 
@@ -1673,6 +1674,8 @@ static const char* NvngxFgName(FGNvngxReplacement provider)
         return "FG Lite";
     case FGNvngxReplacement::XeMfgXmx:
         return "XeMFG XMX";
+    case FGNvngxReplacement::ApexFg:
+        return "ANR FG";
     default:
         return nullptr;
     }
@@ -8806,6 +8809,10 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                 else
                     fgText = formatFg("XeMFG XMX", Nvngx_FG::getMaxFakeFramesCount());
             }
+            else if (activeNvngxFg == FGNvngxReplacement::ApexFg)
+            {
+                fgText = formatFg("ANR FG", Nvngx_FG::getMaxFakeFramesCount());
+            }
             else if (state.activeFgOutput == FGOutput::DLSSG && fg)
             {
                 fgText = formatFg("DLSSG", fg->GetMaxInterpolationCount());
@@ -10976,6 +10983,15 @@ static FgCrtData GatherFgCrt(State& state)
         return d;
     }
 
+    // ILION v1.4.1.1: ANR FG, its own DLL; the multiplier as for the other DLSSG replacements (above)
+    if (nvngxOutput && nvngx == FGNvngxReplacement::ApexFg)
+    {
+        d.engine = "ANR FG";
+        if (const auto dll = Nvngx_ApexFg::FindDll(); !dll.empty())
+            d.file = wstring_to_string(dll.filename().wstring());
+        return d;
+    }
+
     if (nvngxOutput)
     {
         // DLSS Enabler and the other DLSSG replacements: their own dll and the version they report, never an .asi
@@ -12248,6 +12264,11 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
           "(realdody's dlssg-to-xefg-xmx, GPL-3.0)\n\n"
           "NVIDIA, Intel and AMD GPUs, DirectX 12 games. It needs libxess_fg.dll 1.3.4 in its folder\n\n"
           "Extract its release into OptiScaler\\custom\\XeMFG XMX yourself: ILION doesn't include it" },
+        { FGNvngxReplacement::ApexFg, "ANR FG (experimental)",
+          "Apex Neural Rendering frame generation, up to 6X\n"
+          "(apex-compute/ANR, its OptiScaler add-on)\n\n"
+          "NVIDIA, AMD and Intel GPUs, DirectX 12 games\n\n"
+          "Extract its add-on into OptiScaler\\custom\\Apex Neural Rendering FG yourself: ILION doesn't include it" },
     };
 
     // clang-format on
@@ -12304,6 +12325,12 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
     nvngxOptions[fgNvngxXmxIndex].set_disabled(state.swapchainApi == API::Vulkan, "Unsupported API");
     nvngxOptions[fgNvngxXmxIndex].set_disabled(Nvngx_XeMfgXmx::FindInstall().dll.empty(),
                                                "Missing OptiScaler\\custom\\XeMFG XMX\\dlssg\\dlssg_to_xefg_intel_is_better.dll");
+
+    // ILION v1.4.1.1: ANR FG needs its add-on and DirectX 12
+    auto constexpr fgNvngxAnrIndex = (uint32_t) FGNvngxReplacement::ApexFg;
+    nvngxOptions[fgNvngxAnrIndex].set_disabled(state.swapchainApi == API::Vulkan, "Unsupported API");
+    nvngxOptions[fgNvngxAnrIndex].set_disabled(Nvngx_ApexFg::FindDll().empty(),
+                                               "Missing OptiScaler\\custom\\Apex Neural Rendering FG\\dlssg\\nvngx_dlssg.dll");
 
     // TODO: Automatically switch to any other option
 

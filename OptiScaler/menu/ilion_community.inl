@@ -315,6 +315,8 @@ static void FgNow(std::string& fg, std::string& route)
             return "nvngx_fglite";
         case FGNvngxReplacement::XeMfgXmx:
             return "nvngx_xemfg_xmx";
+        case FGNvngxReplacement::ApexFg:
+            return "nvngx_anr";
         default:
             return "dlssg_nativo";
         }

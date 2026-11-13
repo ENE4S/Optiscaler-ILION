@@ -71,6 +71,8 @@ const char* ExternalName(FGNvngxReplacement replacement)
         return "NVIDIA FG Lite";
     case FGNvngxReplacement::XeMfgXmx:
         return "XeMFG XMX";
+    case FGNvngxReplacement::ApexFg:
+        return "ANR FG";
     default:
         return "DLSSG";
     }

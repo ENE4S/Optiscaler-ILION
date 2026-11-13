@@ -11,6 +11,7 @@
 #include "Nvngx_Arturs.h"
 #include "Nvngx_HelixSR.h"
 #include "Nvngx_XeMfgXmx.h"
+#include "Nvngx_ApexFg.h"
 #include "Nvngx_FFX.h"
 #include "Nvngx_Combo.h"
 #include <imgui/ImGuiNotify.hpp>
@@ -49,6 +50,10 @@ IFGNvngx* Nvngx_FG::getProvider()
         _provider = std::make_unique<Nvngx_XeMfgXmx>();
         break;
 
+    case FGNvngxReplacement::ApexFg:
+        _provider = std::make_unique<Nvngx_ApexFg>();
+        break;
+
     case FGNvngxReplacement::None:
     default:
         return nullptr;
@@ -74,6 +79,18 @@ IFGNvngx* Nvngx_FG::getProvider()
         LOG_ERROR("XeMFG XMX is not available (dlssg_to_xefg_intel_is_better.dll not found or not loadable): no fallback");
         ImGui::InsertNotification({ ImGuiToastType::Error, 20000,
                                     "XeMFG XMX is not available.\nOptiScaler\\custom\\XeMFG XMX\\dlssg not found." });
+        Config::Instance()->FGNvngxReplacement.set_volatile_value(FGNvngxReplacement::None);
+        State::Instance().activeFgNvngx = FGNvngxReplacement::None;
+        _provider.reset();
+        return nullptr;
+    }
+
+    // ILION v1.4.1.1: ANR FG either loads or stays off, as XeMFG XMX
+    if (selectedProvider == FGNvngxReplacement::ApexFg && !_provider->isDx12Available())
+    {
+        LOG_ERROR("ANR FG is not available (nvngx_dlssg.dll of Apex Neural Rendering FG not found or not loadable): no fallback");
+        ImGui::InsertNotification({ ImGuiToastType::Error, 20000,
+                                    "ANR FG is not available.\nOptiScaler\\custom\\Apex Neural Rendering FG\\dlssg not found." });
         Config::Instance()->FGNvngxReplacement.set_volatile_value(FGNvngxReplacement::None);
         State::Instance().activeFgNvngx = FGNvngxReplacement::None;
         _provider.reset();

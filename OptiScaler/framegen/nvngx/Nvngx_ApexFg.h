@@ -25,4 +25,13 @@ class Nvngx_ApexFg : public Nvngx_DllProxy
 
     // Its nvngx_dlssg.dll, read from the files only (nothing is loaded); empty when it isn't installed
     static std::filesystem::path FindDll();
+
+    // What its newest log (nr_fg-*.log next to its DLL, written this session) says ran: the model size and the
+    // convolution path order. Re-read at most every two seconds. Empty fields when it doesn't say
+    struct Run
+    {
+        std::string model; // "large"
+        std::string path;  // "portable"
+    };
+    static Run ReadLog();
 };

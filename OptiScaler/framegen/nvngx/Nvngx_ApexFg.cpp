@@ -3,6 +3,9 @@
 
 #include <proxies/Ntdll_Proxy.h>
 
+#include <fstream>
+#include <mutex>
+
 namespace fs = std::filesystem;
 
 // Where its add-on puts it: OptiScaler\custom\Apex Neural Rendering FG\dlssg (OptiScaler's folder is next to the game's
@@ -22,6 +25,68 @@ fs::path Nvngx_ApexFg::FindDll()
             return path.lexically_normal();
     }
     return {};
+}
+
+Nvngx_ApexFg::Run Nvngx_ApexFg::ReadLog()
+{
+    static std::mutex lock;
+    static Run run;
+    static ULONGLONG checked = 0;
+
+    std::scoped_lock guard(lock);
+    if (checked != 0 && GetTickCount64() - checked < 2000)
+        return run;
+    checked = GetTickCount64();
+
+    const auto dll = FindDll();
+    if (dll.empty())
+        return run = {};
+
+    // The newest log of this process (written after it started)
+    FILETIME created {}, unused {};
+    GetProcessTimes(GetCurrentProcess(), &created, &unused, &unused, &unused);
+    fs::path newest;
+    FILETIME newestTime {};
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator(dll.parent_path(), ec))
+    {
+        const auto name = entry.path().filename().wstring();
+        if (!name.starts_with(L"nr_fg-") || entry.path().extension() != L".log")
+            continue;
+        WIN32_FILE_ATTRIBUTE_DATA data {};
+        if (!GetFileAttributesExW(entry.path().c_str(), GetFileExInfoStandard, &data) ||
+            CompareFileTime(&data.ftLastWriteTime, &created) < 0 || CompareFileTime(&data.ftLastWriteTime, &newestTime) <= 0)
+            continue;
+        newest = entry.path();
+        newestTime = data.ftLastWriteTime;
+    }
+    if (newest.empty())
+        return run = {};
+
+    // Its lines: "... model size large: ..." and "... GPU path table: ..., order portable"
+    Run found;
+    std::ifstream file(newest, std::ios::binary);
+    const auto size = fs::file_size(newest, ec);
+    if (!ec && size > 65536)
+        file.seekg((std::streamoff) (size - 65536));
+    std::string line;
+    const auto word = [&line](const char* key) -> std::string
+    {
+        const auto at = line.find(key);
+        if (at == std::string::npos)
+            return {};
+        std::string value = line.substr(at + strlen(key));
+        const auto end = value.find_first_of(" :,\r\n");
+        return value.substr(0, end);
+    };
+    while (std::getline(file, line))
+    {
+        if (auto m = word("] model size "); !m.empty())
+            found.model = m;
+        else if (auto p = word(", order "); !p.empty())
+            found.path = p;
+    }
+    return run = found;
 }
 
 void Nvngx_ApexFg::LoadLibraries()

@@ -10989,6 +10989,9 @@ static FgCrtData GatherFgCrt(State& state)
         d.engine = "ANR FG";
         if (const auto dll = Nvngx_ApexFg::FindDll(); !dll.empty())
             d.file = wstring_to_string(dll.filename().wstring());
+        // VAR: the model and the convolution path its log reports for this session ("large / portable"), "-" until then
+        if (const auto run = Nvngx_ApexFg::ReadLog(); !run.model.empty() || !run.path.empty())
+            d.variant = run.model.empty() ? run.path : run.path.empty() ? run.model : run.model + " / " + run.path;
         return d;
     }
 
@@ -17739,8 +17742,17 @@ void MenuCommon::RenderStatusSummary(RenderMenuContext& ctx)
     row("Upscaler", upscaling ? UpscalerLabel(currentFeature) : std::string(Tr("None")));
 
     auto fg = state.currentFG;
+    // ILION v1.4.1.1: also the game's DLSSG through a replacement (DLSS Enabler, XeMFG XMX, ANR FG...): its multiplier as
+    // IlionDynamicMfg has it (measured at the presents, else the one asked for), the same figure as FRAME GEN
+    const auto fgSummary = IlionDynamicMfg::Get();
     if (fg != nullptr && fg->IsActive() && !fg->IsPaused())
         row("Frame Gen", StrFmt("%s %ux", fg->Name(), fg->GetInterpolatedFrameCount() + 1));
+    else if (!fgSummary.own && !fgSummary.backendError && fgSummary.multiplier > 0 &&
+             (fgSummary.gen == IlionDynamicMfg::Gen::Confirmed || fgSummary.gen == IlionDynamicMfg::Gen::Detected))
+        row("Frame Gen", StrFmt("%s %dx (%s)", fgSummary.name, fgSummary.multiplier,
+                                fgSummary.appliedSource == IlionDynamicMfg::AppliedSource::Measured
+                                    ? ShellText("measured", "medido", "medido", "измерено")
+                                    : ShellText("asked", "pedido", "pedido", "запрошено")));
     else
         row("Frame Gen", Tr("Off"));
 
@@ -21664,9 +21676,17 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
             ImGui::Text("%s: %s / %s", ShellText("Chosen", "Elegido", "Escolhido", "Выбрано"),
                         std::string(magic_enum::enum_name(cfg.FGInput.value_or_default())).c_str(),
                         std::string(magic_enum::enum_name(cfg.FGOutput.value_or_default())).c_str());
-            ImGui::Text("%s: %s / %s", ShellText("Loaded", "Cargado", "Carregado", "Загружено"),
-                        std::string(magic_enum::enum_name(state.activeFgInput)).c_str(),
-                        std::string(magic_enum::enum_name(state.activeFgOutput)).c_str());
+            // ILION v1.4.1.1: with a DLSSG replacement loaded there is no output of ILION ("NoFG"): its name, as FRAME GEN
+            const bool replacementLoaded = state.activeFgNvngx != FGNvngxReplacement::None &&
+                                           (state.activeFgInput == FGInput::NvngxFG || state.activeFgOutput == FGOutput::DLSSG);
+            if (replacementLoaded)
+                ImGui::Text("%s: %s / %s (%s)", ShellText("Loaded", "Cargado", "Carregado", "Загружено"),
+                            std::string(magic_enum::enum_name(state.activeFgInput)).c_str(), IlionDynamicMfg::Get().name,
+                            ShellText("external", "externa", "externa", "внешняя"));
+            else
+                ImGui::Text("%s: %s / %s", ShellText("Loaded", "Cargado", "Carregado", "Загружено"),
+                            std::string(magic_enum::enum_name(state.activeFgInput)).c_str(),
+                            std::string(magic_enum::enum_name(state.activeFgOutput)).c_str());
             if (fg != nullptr)
                 ImGui::Text("%s: %s  ·  %s %ux", ShellText("Implementation", "Implementación", "Implementação", "Реализация"), fg->Name(),
                             ShellText("generated frames", "fotogramas generados", "quadros gerados", "сгенерировано кадров"),

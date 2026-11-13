@@ -33,6 +33,12 @@ void Nvngx_ApexFg::LoadLibraries()
         return;
     }
 
+    // ANR FG runs its model on a Vulkan instance of its own, also in D3D12 games. ReShade's global Vulkan layer
+    // (VK_LAYER_reshade) would join that instance while ReShade already runs in the game, and its vkCreateInstance
+    // fails (ANR's log: "native D3D12 ... vkCreateInstance"). The variable ReShade's layer manifest names for it keeps
+    // the layer out; the game's own ReShade is untouched. ANR FG is DirectX 12 only in ILION: no Vulkan game is affected
+    SetEnvironmentVariableW(L"DISABLE_VK_LAYER_reshade_1", L"1");
+
     // The loader's own LoadLibrary, as for XeMFG XMX: its file name is the one of NVIDIA's DLSSG, not one to redirect
     HMODULE module = NtdllProxy::LoadLibraryExW_Ldr(path.c_str(), NULL, 0);
     if (module == nullptr)

@@ -14,6 +14,10 @@ constexpr float H = 1000.0f;
 // ILION dev.73: the Compact presentation's window, in the same design units (so the same scale and fonts)
 constexpr float kCompactW = 720.0f;
 constexpr float kCompactH = 960.0f;
+constexpr float kSputnikW = 1120.0f; // ILION v1.4.1.1: SPUTNIK, one screen
+constexpr float kSputnikH = 760.0f;
+static bool sputnikDrawing = false; // the Home controls drawn for SPUTNIK: no Dynamic MFG, latency essentials only
+static std::string sputnikReturn = "full"; // the presentation SPUTNIK goes back to
 
 static float S = 1.0f;
 static ImVec2 O;
@@ -1431,6 +1435,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
     S = ScaleFor(io, config);
     const bool olive = UiThemeIndex(config) == 1;
     const bool compact = UiCompact(config); // ILION dev.73: the Compact presentation (Full is the default)
+    const bool sputnik = UiSputnik(config); // ILION v1.4.1.1: the SPUTNIK presentation
     IlionTheme::SetShellTheme(olive ? 1 : 0); // ILION dev.70: Industrial or Clean Olive
 
     // The controls of the menu take the look of the new interface while it draws, in its single mode
@@ -1582,9 +1587,10 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
     // Window -------------------------------------------------------------------------------------------------------
     // ILION dev.73: the Compact presentation has its own size; the window is centred again when the presentation changes
     static int lastCompact = -1;
-    const bool presentationChanged = lastCompact != -1 && lastCompact != (int) compact;
-    lastCompact = (int) compact;
-    const ImVec2 size = compact ? Sz(kCompactW, kCompactH) : Sz(W, H);
+    const int presentation = sputnik ? 2 : compact ? 1 : 0;
+    const bool presentationChanged = lastCompact != -1 && lastCompact != presentation;
+    lastCompact = presentation;
+    const ImVec2 size = sputnik ? Sz(kSputnikW, kSputnikH) : compact ? Sz(kCompactW, kCompactH) : Sz(W, H);
     ImGui::SetNextWindowSize(size, ImGuiCond_Always);
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), presentationChanged ? ImGuiCond_Always : ImGuiCond_Appearing,
                             ImVec2(0.5f, 0.5f));
@@ -2193,7 +2199,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
 
                  // ILION: Dynamic MFG from Home (switch, final FPS target, maximum while Dynamic is on): the very settings
                  // of the Dynamic MFG card, no copy of its own (IlionDynamicMfg)
-                 if (IlionDynamicMfg::Current() != IlionDynamicMfg::Provider::None)
+                 if (!sputnikDrawing && IlionDynamicMfg::Current() != IlionDynamicMfg::Provider::None)
                  {
                      ImGui::Spacing();
                      if (compact)
@@ -2205,6 +2211,24 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
 
     const auto homeLatency = [&]()
              {
+                 // SPUTNIK: the latency reducer only (its selector, on/off and state), as Home's first column draws it
+                 if (sputnikDrawing)
+                 {
+                     ImGui::BeginDisabled(IlionLatency::Current() != IlionLatency::Manual);
+#ifdef LOW_LATENCY_INPUTS
+                     RenderLowLatencySettings(ctx);
+#else
+                     RenderFakenvapiSettings(ctx);
+#endif
+                     ImGui::EndDisabled();
+                     if (IlionLatency::Current() != IlionLatency::Manual)
+                         TextWrappedColored(Tone(pal::Text2), "%s",
+                                            Lx("Intelligent activation chooses these: set it to Manual in Latency & FPS to change them.",
+                                               "La activación inteligente los elige: ponla en Manual en Latencia y FPS para cambiarlos.",
+                                               "A ativação inteligente os escolhe: coloque em Manual em Latência e FPS para alterá-los.",
+                                               "Их выбирает умная активация: переключите её в Ручной режим в «Задержка и FPS»."));
+                     return;
+                 }
                  if (ImGui::BeginTable("##HomeLatCols", 3, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings))
                  {
                      ImGui::TableNextColumn();
@@ -2247,6 +2271,197 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                  }
              };
 
+
+    // ILION v1.4.1.1 SPUTNIK: one screen with the Home controls of the same engine (the upscaler catalogue, the FG
+    // selectors and quick controls, the latency reducer), no tabs, no Dynamic MFG. Nothing here changes a setting by
+    // itself; Apply saves through SaveIni, Reset asks first and resets only these settings
+    if (sputnik)
+    {
+        constexpr float SW = kSputnikW, SH = kSputnikH;
+        const ImVec4 rust(0.55f, 0.16f, 0.12f, 1.f), rustLit(0.66f, 0.21f, 0.15f, 1.f), sand(0.92f, 0.87f, 0.74f, 1.f),
+            sandPlate(0.66f, 0.64f, 0.50f, 1.f), olive(0.24f, 0.26f, 0.18f, 1.f), graphite(0.07f, 0.075f, 0.07f, 1.f),
+            frame(0.30f, 0.31f, 0.26f, 1.f), dark(0.09f, 0.09f, 0.08f, 1.f);
+
+        dl->AddRectFilled(P(0, 0), P(SW, SH), Col(graphite), U(6.0f));
+        // Title bar: rust, OPTISCALERION, back to the previous presentation and close
+        dl->AddRectFilled(P(0, 0), P(SW, 58), Col(rust), U(6.0f), ImDrawFlags_RoundCornersTop);
+        Text(fBrand, 34.f, ImVec2(22, 9), sand, "OPTISCALERION");
+        const auto barKey = [&](const char* id, const char* glyph, float x, const char* tip) -> bool
+        {
+            At(x, 9);
+            const bool pressed = ImGui::InvisibleButton(id, Sz(40, 40));
+            if (ImGui::IsItemHovered())
+            {
+                dl->AddRectFilled(P(x, 9), P(x + 40, 49), Col(rustLit), U(2.f));
+                ImGui::SetTooltip("%s", tip);
+            }
+            Text(fBrand, 30.f, ImVec2(x + 20 - Measure(fBrand, 30.f, glyph).x * 0.5f, 10), sand, glyph);
+            return pressed;
+        };
+        if (barKey("##SputnikBack", "-", SW - 104, Lx("Previous interface", "Interfaz anterior", "Interface anterior", "Прежний интерфейс")))
+        {
+            config->MenuUiPresentation = sputnikReturn;
+            config->SaveMenuPreferences();
+        }
+        if (barKey("##SputnikClose", "X", SW - 56, Tr("Close")))
+            CloseMainMenu(io);
+
+        // Performance bar: only what ILION measures; "--" when there is no measurement
+        {
+            const ImVec2 a(16, 72), b(SW - 16, 152);
+            dl->AddRectFilled(P(a), P(b), Col(olive));
+            const auto fgNow = IlionDynamicMfg::Get();
+            const auto& gpuHeader = HeaderGpu();
+            const bool upscaling = feature != nullptr && feature->IsInited() && !feature->IsFrozen() && feature->RenderWidth() > 0;
+            const unsigned outW = upscaling ? feature->TargetWidth() : state.currentSwapchainDesc.BufferDesc.Width;
+            const unsigned outH = upscaling ? feature->TargetHeight() : state.currentSwapchainDesc.BufferDesc.Height;
+            const bool generating = fgNow.multiplier > 1 && (fgNow.gen == IlionDynamicMfg::Gen::Confirmed || fgNow.gen == IlionDynamicMfg::Gen::Detected) &&
+                                    !fgNow.backendError;
+            const double finalFps = ctx.frameTime > 0.0 ? 1000.0 / ctx.frameTime : 0.0; // presents measured by ILION
+            const std::string cells[6][2] = {
+                { Lx("Resolution", "Resolución", "Resolução", "Разрешение"), outW > 0 ? StrFmt("%ux%u", outW, outH) : std::string("--") },
+                { Lx("Internal", "Interna", "Interna", "Внутреннее"),
+                  upscaling ? StrFmt("%ux%u (%.0f%%)", feature->RenderWidth(), feature->RenderHeight(),
+                                     100.0 * feature->RenderWidth() / (std::max)(1u, feature->TargetWidth()))
+                            : std::string("--") },
+                { "GPU", gpuHeader.name.empty() ? std::string("--") : gpuHeader.name },
+                { Lx("FPS base", "FPS base", "FPS base", "FPS база"),
+                  generating ? (fgNow.baseMeasured ? StrFmt("%.0f", fgNow.baseFps) : std::string("--"))
+                  : finalFps > 0.0 ? StrFmt("%.0f", finalFps) : std::string("--") },
+                { Lx("FPS final", "FPS final", "FPS final", "FPS итог"), finalFps > 0.0 ? StrFmt("%.0f", finalFps) : std::string("--") },
+                { Lx("Multiplier", "Multiplicador", "Multiplicador", "Множитель"),
+                  generating ? StrFmt("%dx%s", fgNow.multiplier, fgNow.appliedSource == IlionDynamicMfg::AppliedSource::Measured ? "" : "?")
+                             : std::string(Lx("Off", "Apagado", "Desligado", "Выкл.")) },
+            };
+            const float widths[6] = { 0.15f, 0.20f, 0.25f, 0.13f, 0.13f, 0.14f };
+            float x = a.x;
+            for (int i = 0; i < 6; i++)
+            {
+                const float w = (b.x - a.x) * widths[i];
+                if (i > 0)
+                    dl->AddLine(P(x, a.y + 12), P(x, b.y - 12), Col(frame), 2.f);
+                Text(fUi, 17.f, ImVec2(x + 16, a.y + 10), sand, cells[i][0].c_str());
+                dl->PushClipRect(P(x + 8, a.y), P(x + w - 6, b.y), true);
+                Text(fBrand, 26.f, ImVec2(x + 16, a.y + 38), i == 2 ? gpuHeader.colour : sand, cells[i][1].c_str());
+                dl->PopClipRect();
+                x += w;
+            }
+        }
+
+        // The three blocks: an olive plate with the section's name and its real state, the Home controls beside it
+        const auto block = [&](const char* id, const char* title, float y0, float y1, bool active, const auto& content)
+        {
+            dl->AddRect(P(16, y0), P(SW - 16, y1), Col(frame), 0.f, 0, 1.5f);
+            dl->AddRectFilled(P(24, y0 + 8), P(244, y1 - 8), Col(olive));
+            float ty = y0 + 16;
+            std::string line;
+            for (const char* c = title;; c++)
+            {
+                if (*c == '\n' || *c == 0)
+                {
+                    Text(fBrand, 24.f, ImVec2(36, ty), sand, line.c_str());
+                    ty += 30;
+                    line.clear();
+                    if (*c == 0)
+                        break;
+                }
+                else
+                    line += *c;
+            }
+            // The state: on when it really runs (not only selected)
+            const char* stateText = active ? Lx("ACTIVE", "ACTIVO", "ATIVO", "АКТИВНО") : Lx("INACTIVE", "INACTIVO", "INATIVO", "НЕАКТИВНО");
+            const ImVec2 sa(36, y1 - 44), sb(36 + Measure(fBrand, 15.f, stateText).x + 20, y1 - 18);
+            if (active)
+                dl->AddRectFilled(P(sa), P(sb), Col(rust));
+            else
+                dl->AddRect(P(sa), P(sb), Col(sandPlate), 0.f, 0, 1.f);
+            Text(fBrand, 15.f, ImVec2(sa.x + 10, sa.y + 4), sand, stateText);
+
+            PushContentStyle();
+            ImGui::PushFont(fUi, U(16.f));
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, Sz(8.f, 4.f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, Sz(8.f, 4.f));
+            if (BeginArea(id, ImVec2(260, y0 + 8), ImVec2(SW - 28, y1 - 8)))
+            {
+                ImGui::PushItemWidth((std::min)(ImGui::GetContentRegionAvail().x * 0.55f, U(300.f)));
+                content();
+                ImGui::PopItemWidth();
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleVar(2);
+            ImGui::PopFont();
+            PopContentStyle();
+        };
+
+        sputnikDrawing = true;
+        const auto fgNow = IlionDynamicMfg::Get();
+        const bool upActive = feature != nullptr && feature->IsInited() && !feature->IsFrozen();
+        const bool fgActive = !fgNow.backendError && (fgNow.gen == IlionDynamicMfg::Gen::Confirmed || fgNow.gen == IlionDynamicMfg::Gen::Detected);
+        const bool latActive = fakenvapi::isUsingAsMainNvapi() && fakenvapi::isLowLatencyActive();
+        block("##SputnikUp", Lx("UPSCALING", "ESCALADO", "ESCALA", "МАСШТАБ"), 166, 300, upActive, homeUpscaling);
+        block("##SputnikFg", "FRAME\nGENERATION", 310, 520, fgActive, homeFrameGen);
+        block("##SputnikLat", Lx("LATENCY", "LATENCIA", "LATÊNCIA", "ЗАДЕРЖКА"), 530, 650, latActive, homeLatency);
+        sputnikDrawing = false;
+
+        // Apply and Reset: large, as the reference
+        const auto bigKey = [&](const char* id, const char* label, ImVec2 a, ImVec2 b, const ImVec4& bg, const ImVec4& fg) -> bool
+        {
+            At(a.x, a.y);
+            const bool pressed = ImGui::InvisibleButton(id, Sz(b.x - a.x, b.y - a.y));
+            const ImVec4 fill = ImGui::IsItemHovered() ? Mix(bg, ImVec4(1, 1, 1, 1), 0.10f) : bg;
+            dl->AddRectFilled(P(a), P(b), Col(fill));
+            const ImVec2 t = Measure(fBrand, 30.f, label);
+            Text(fBrand, 30.f, ImVec2((a.x + b.x - t.x) * 0.5f, (a.y + b.y - t.y) * 0.5f), fg, label);
+            return pressed;
+        };
+        dl->AddLine(P(0, 664), P(SW, 664), Col(frame), 1.f);
+        if (bigKey("##SputnikApply", Lx("APPLY", "APLICAR", "APLICAR", "ПРИМЕНИТЬ"), ImVec2(120, 680), ImVec2(540, 742), rust, sand))
+            config->SaveIni();
+        if (bigKey("##SputnikReset", Lx("RESET", "RESTABLECER", "REDEFINIR", "СБРОС"), ImVec2(580, 680), ImVec2(1000, 742), sandPlate, dark))
+            ImGui::OpenPopup("##SputnikResetAsk");
+
+        // A frame generation change needs a restart: said here, as the Full presentation says it
+        if (state.fgSettingsChanged)
+            Text(fUi, 15.f, ImVec2(24, 646), pal::Red,
+                 Lx("Apply and restart the game to use the new frame generation", "Aplica y reinicia el juego para usar la nueva generación de fotogramas",
+                    "Aplique e reinicie o jogo para usar a nova geração de quadros", "Примените и перезапустите игру для новой генерации кадров"));
+        ApplyState(ImVec2(SW - 420, 646), 400);
+
+        // Reset: only the settings SPUTNIK edits (upscaler choice, FG route and multiplier, XeLL forcing), after a yes
+        if (ImGui::BeginPopupModal("##SputnikResetAsk", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
+        {
+            ImGui::TextUnformatted(Lx("Reset upscaling, frame generation and latency choices to their defaults?",
+                                      "¿Restablecer las elecciones de escalado, generación de fotogramas y latencia a sus valores predeterminados?",
+                                      "Redefinir as escolhas de escala, geração de quadros e latência para os padrões?",
+                                      "Сбросить выбор масштабирования, генерации кадров и задержки к значениям по умолчанию?"));
+            ImGui::TextDisabled("%s", Lx("Profiles and the other settings are kept. Apply and restart the game afterwards.",
+                                         "Los perfiles y los demás ajustes se conservan. Después aplica y reinicia el juego.",
+                                         "Os perfis e os demais ajustes são mantidos. Depois aplique e reinicie o jogo.",
+                                         "Профили и прочие настройки сохраняются. Затем примените и перезапустите игру."));
+            if (IlionTheme::Button(Lx("Yes, reset", "Sí, restablecer", "Sim, redefinir", "Да, сбросить")))
+            {
+                config->Dx11Upscaler.reset();
+                config->Dx12Upscaler.reset();
+                config->VulkanUpscaler.reset();
+                config->FGInput.reset();
+                config->FGOutput.reset();
+                config->FGNvngxReplacement.reset();
+                config->FGDLSSGOverrideInterpolationCount.reset();
+                config->FGXeFGInterpolationCount.reset();
+                config->FGDLSSGInterpolationCount.reset();
+                config->ForceXeLL.reset();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (IlionTheme::Button(Lx("Cancel", "Cancelar", "Cancelar", "Отмена")))
+                ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+
+        ImGui::End();
+        ImGui::PopStyleColor(2);
+        return;
+    }
 
     // ILION dev.73: the Compact presentation. A window of its own size with tabs above; every control is the one the
     // Full presentation draws (the functions above, the module tabs, the cards), only arranged in one column. The
@@ -3007,6 +3222,22 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         const float brandW = Measure(fBrand, 46.f, "ILION").x;
         Text(fUi, 14.f, ImVec2(24 + side, 54), pal::Text2, "C O N T R O L   S Y S T E M");
         Text(fUi, 16.f, ImVec2(20 + side + brandW + 22, 14), pal::Dim, (std::string("v") + BuildInfo::IlionVersion()).c_str());
+        {
+            // ILION v1.4.1.1: SPUTNIK, a small rust key under the version; it changes the presentation only
+            const float vx = 20 + side + brandW + 22;
+            const ImVec2 ka(vx, 33), kb(vx + Measure(fBrand, 13.f, "SPUTNIK").x + 18, 51);
+            At(ka.x, ka.y);
+            const bool pressed = ImGui::InvisibleButton("##ToSputnik", Sz(kb.x - ka.x, kb.y - ka.y));
+            const bool hov = ImGui::IsItemHovered();
+            dl->AddRectFilled(P(ka), P(kb), Col(hov ? ImVec4(0.66f, 0.21f, 0.15f, 1.f) : ImVec4(0.55f, 0.16f, 0.12f, 1.f)), U(2.f));
+            Text(fBrand, 13.f, ImVec2(ka.x + 9, ka.y + 1), ImVec4(0.92f, 0.87f, 0.74f, 1.f), "SPUTNIK");
+            if (pressed)
+            {
+                sputnikReturn = config->MenuUiPresentation.value_or_default() == "compact" ? "compact" : "full";
+                config->MenuUiPresentation = std::string("sputnik");
+                config->SaveMenuPreferences();
+            }
+        }
 
         // Update and config notices of the classic header, in the free part of the strip
         PushContentStyle();

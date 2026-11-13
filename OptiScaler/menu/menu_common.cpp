@@ -289,6 +289,12 @@ static bool UiCompact(Config* config)
     return UiThemeIndex(config) != 2 && config->MenuUiPresentation.value_or_default() == "compact";
 }
 
+// ILION v1.4.1.1 SPUTNIK: a third presentation of the same engine (one screen: upscaling, frame generation, latency)
+static bool UiSputnik(Config* config)
+{
+    return UiThemeIndex(config) != 2 && config->MenuUiPresentation.value_or_default() == "sputnik";
+}
+
 static void DedupeSrVariants(std::vector<FfxApiProxy::SrVariant>& list);
 
 // The FSR upscaler dlls that can be selected. One list and one way of selecting for the Upscaling tab and for

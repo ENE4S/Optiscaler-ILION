@@ -16,6 +16,8 @@ constexpr float kCompactW = 720.0f;
 constexpr float kCompactH = 960.0f;
 constexpr float kSputnikW = 1120.0f; // ILION v1.4.1.1: SPUTNIK, one screen
 constexpr float kSputnikH = 760.0f;
+static float sputnikH = kSputnikH;             // the window's height, from the blocks measured last frame
+static float sputnikContent[3] = { 96.f, 180.f, 90.f }; // each block's controls, measured (units)
 static bool sputnikDrawing = false; // the Home controls drawn for SPUTNIK: no Dynamic MFG, latency essentials only
 
 static float S = 1.0f;
@@ -1589,7 +1591,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
     const int presentation = sputnik ? 2 : compact ? 1 : 0;
     const bool presentationChanged = lastCompact != -1 && lastCompact != presentation;
     lastCompact = presentation;
-    const ImVec2 size = sputnik ? Sz(kSputnikW, kSputnikH) : compact ? Sz(kCompactW, kCompactH) : Sz(W, H);
+    const ImVec2 size = sputnik ? Sz(kSputnikW, sputnikH) : compact ? Sz(kCompactW, kCompactH) : Sz(W, H);
     ImGui::SetNextWindowSize(size, ImGuiCond_Always);
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), presentationChanged ? ImGuiCond_Always : ImGuiCond_Appearing,
                             ImVec2(0.5f, 0.5f));
@@ -2276,7 +2278,8 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
     // itself; Apply saves through SaveIni, Reset asks first and resets only these settings
     if (sputnik)
     {
-        constexpr float SW = kSputnikW, SH = kSputnikH;
+        constexpr float SW = kSputnikW;
+        const float SH = sputnikH;
         const ImVec4 rust(0.55f, 0.16f, 0.12f, 1.f), rustLit(0.66f, 0.21f, 0.15f, 1.f), sand(0.92f, 0.87f, 0.74f, 1.f),
             sandPlate(0.66f, 0.64f, 0.50f, 1.f), olive(0.24f, 0.26f, 0.18f, 1.f), graphite(0.07f, 0.075f, 0.07f, 1.f),
             frame(0.30f, 0.31f, 0.26f, 1.f), dark(0.09f, 0.09f, 0.08f, 1.f);
@@ -2343,7 +2346,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         }
 
         // The three blocks: an olive plate with the section's name and its real state, the Home controls beside it
-        const auto block = [&](const char* id, const char* title, float y0, float y1, bool active, const auto& content)
+        const auto block = [&](int index, const char* id, const char* title, float y0, float y1, bool active, const auto& content)
         {
             dl->AddRect(P(16, y0), P(SW - 16, y1), Col(frame), 0.f, 0, 1.5f);
             dl->AddRectFilled(P(24, y0 + 8), P(244, y1 - 8), Col(olive));
@@ -2393,13 +2396,25 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
             ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 0.f);
             ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, U(1.5f));
             ImGui::PushStyleVar(ImGuiStyleVar_GrabRounding, 0.f);
-            if (BeginArea(id, ImVec2(262, y0 + 14), ImVec2(SW - 30, y1 - 10)))
+            // SPUTNIK's red for the pilots and accents the reused controls draw in green / yellow (restored after)
+            const ImVec4 greenBefore = IlionTheme::ShellPal::Green, yellowBefore = IlionTheme::ShellPal::Yellow,
+                         lampBefore = IlionTheme::LampGreen;
+            IlionTheme::ShellPal::Green = rustLit;
+            IlionTheme::LampGreen = rustLit;
+            IlionTheme::ShellPal::Yellow = sand;
+            ImGui::SetCursorScreenPos(P(262, y0 + 14));
+            if (ImGui::BeginChild(id, Sz(SW - 30 - 262, y1 - 10 - (y0 + 14)),
+                                  ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
             {
                 ImGui::PushItemWidth((std::min)(ImGui::GetContentRegionAvail().x * 0.55f, U(300.f)));
                 content();
                 ImGui::PopItemWidth();
+                sputnikContent[index] = ImGui::GetCursorPosY() / S; // its controls' height, for the next frame
             }
             ImGui::EndChild();
+            IlionTheme::ShellPal::Green = greenBefore;
+            IlionTheme::ShellPal::Yellow = yellowBefore;
+            IlionTheme::LampGreen = lampBefore;
             ImGui::PopStyleVar(7);
             ImGui::PopFont();
             ImGui::PopStyleColor((int) std::size(colours));
@@ -2412,9 +2427,16 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         const bool upActive = feature != nullptr && feature->IsInited() && !feature->IsFrozen();
         const bool fgActive = !fgNow.backendError && (fgNow.gen == IlionDynamicMfg::Gen::Confirmed || fgNow.gen == IlionDynamicMfg::Gen::Detected);
         const bool latActive = fakenvapi::isUsingAsMainNvapi() && fakenvapi::isLowLatencyActive();
-        block("##SputnikUp", Lx("UPSCALING", "ESCALADO", "ESCALA", "МАСШТАБ"), 166, 300, upActive, homeUpscaling);
-        block("##SputnikFg", "FRAME\nGENERATION", 310, 520, fgActive, homeFrameGen);
-        block("##SputnikLat", Lx("LATENCY", "LATENCIA", "LATÊNCIA", "ЗАДЕРЖКА"), 530, 650, latActive, homeLatency);
+        const auto blockHeight = [&](int i) { return (std::max)(118.f, std::ceil(sputnikContent[i]) + 28.f); };
+        float by = 166;
+        block(0, "##SputnikUp", Lx("UPSCALING", "ESCALADO", "ESCALA", "МАСШТАБ"), by, by + blockHeight(0), upActive, homeUpscaling);
+        by += blockHeight(0) + 12;
+        block(1, "##SputnikFg", "FRAME\nGENERATION", by, by + blockHeight(1), fgActive, homeFrameGen);
+        by += blockHeight(1) + 12;
+        block(2, "##SputnikLat", Lx("LATENCY", "LATENCIA", "LATÊNCIA", "ЗАДЕРЖКА"), by, by + blockHeight(2), latActive, homeLatency);
+        by += blockHeight(2);
+        // the window's height for the next frame: blocks, the notice line, the footer
+        sputnikH = std::ceil(by + 30 + 16 + 62 + 22);
         sputnikDrawing = false;
 
         // Apply and Reset: large, as the reference
@@ -2428,18 +2450,20 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
             Text(fBrand, 30.f, ImVec2((a.x + b.x - t.x) * 0.5f, (a.y + b.y - t.y) * 0.5f), fg, label);
             return pressed;
         };
-        dl->AddLine(P(0, 664), P(SW, 664), Col(frame), 1.f);
-        if (bigKey("##SputnikSave", Lx("SAVE", "GUARDAR", "SALVAR", "СОХРАНИТЬ"), ImVec2(SW * 0.5f - 260, 680), ImVec2(SW * 0.5f + 260, 742),
+        const float footer = by + 30;
+        dl->AddLine(P(0, footer), P(SW, footer), Col(frame), 1.f);
+        if (bigKey("##SputnikSave", Lx("SAVE", "GUARDAR", "SALVAR", "СОХРАНИТЬ"), ImVec2(SW * 0.5f - 260, footer + 16), ImVec2(SW * 0.5f + 260, footer + 78),
                    rust, sand))
             config->SaveIni();
         {
             // Back to the Industrial presentation, settings kept: small, in the bottom right corner
             const char* back = "INDUSTRIAL";
             const float bw = Measure(fBrand, 15.f, back).x + 24;
-            At(SW - 24 - bw, SH - 46);
+            const float iy = footer + 33;
+            At(SW - 24 - bw, iy);
             const bool pressed = ImGui::InvisibleButton("##SputnikIndustrial", Sz(bw, 28));
-            dl->AddRectFilled(P(SW - 24 - bw, SH - 46), P(SW - 24, SH - 18), Col(ImGui::IsItemHovered() ? Mix(sandPlate, ImVec4(1, 1, 1, 1), 0.1f) : sandPlate));
-            Text(fBrand, 15.f, ImVec2(SW - 24 - bw + 12, SH - 43), dark, back);
+            dl->AddRectFilled(P(SW - 24 - bw, iy), P(SW - 24, iy + 28), Col(ImGui::IsItemHovered() ? Mix(sandPlate, ImVec4(1, 1, 1, 1), 0.1f) : sandPlate));
+            Text(fBrand, 15.f, ImVec2(SW - 24 - bw + 12, iy + 3), dark, back);
             if (pressed)
             {
                 config->MenuUiPresentation = std::string("full");
@@ -2449,10 +2473,10 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
 
         // A frame generation change needs a restart: said here, as the Full presentation says it
         if (state.fgSettingsChanged)
-            Text(fUi, 15.f, ImVec2(24, 646), pal::Red,
+            Text(fBrand, 15.f, ImVec2(24, by + 7), rustLit,
                  Lx("Apply and restart the game to use the new frame generation", "Aplica y reinicia el juego para usar la nueva generación de fotogramas",
                     "Aplique e reinicie o jogo para usar a nova geração de quadros", "Примените и перезапустите игру для новой генерации кадров"));
-        ApplyState(ImVec2(SW - 420, 646), 400);
+        ApplyState(ImVec2(SW - 420, by + 7), 400);
 
 
         ImGui::End();
@@ -3224,9 +3248,10 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
             // presentation only
             const float kw = Measure(fBrand, 13.f, "SPUTNIK").x + 18;
             const ImVec2 ka(x1 - 240 - 16 - kw, 20), kb(x1 - 240 - 16, 42);
-            At(ka.x, ka.y);
-            const bool pressed = ImGui::InvisibleButton("##ToSputnik", Sz(kb.x - ka.x, kb.y - ka.y));
-            const bool hov = ImGui::IsItemHovered();
+            // The header's notices area is drawn over this place later: the key reads the mouse over its own rectangle
+            const bool hov = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+                             ImGui::IsMouseHoveringRect(P(ka), P(kb), false) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
+            const bool pressed = hov && ImGui::IsMouseReleased(ImGuiMouseButton_Left);
             dl->AddRectFilled(P(ka), P(kb), Col(hov ? ImVec4(0.66f, 0.21f, 0.15f, 1.f) : ImVec4(0.55f, 0.16f, 0.12f, 1.f)), U(2.f));
             Text(fBrand, 13.f, ImVec2(ka.x + 9, ka.y + 2), ImVec4(0.92f, 0.87f, 0.74f, 1.f), "SPUTNIK");
             if (pressed)

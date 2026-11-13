@@ -12255,16 +12255,16 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                                                       "FFX used for the middle fake frame, Enabler for the rest\n\n"
                                                       "2x - FFX\n3x - Enabler\n4x - FFX + Enabler\n5x - Enabler\n6x - FFX + Enabler\n\n"
                                                       "Due to pacing, only odd number of fake frames are able to use FFX"},
-        { FGNvngxReplacement::HelixSR, "NVIDIA FG Lite (experimental)",
+        { FGNvngxReplacement::HelixSR, "NVIDIA FG Lite",
           "NVIDIA's DLSS frame generation, light mode (310.9.16), run by HelixSR 2.0.0 on GPUs that are not NVIDIA's\n\n"
           "Install HelixSR 2.0.0 with frame generation yourself: its setup builds NVIDIA's parts on your PC\n"
           "ILION includes none of it. DirectX 12 games with DLSS frame generation. One generated frame" },
-        { FGNvngxReplacement::XeMfgXmx, "XeMFG XMX (experimental)",
+        { FGNvngxReplacement::XeMfgXmx, "XeMFG XMX",
           "Intel XeSS frame generation with the ported XMX multi frame model, up to 6X\n"
           "(realdody's dlssg-to-xefg-xmx, GPL-3.0)\n\n"
           "NVIDIA, Intel and AMD GPUs, DirectX 12 games. It needs libxess_fg.dll 1.3.4 in its folder\n\n"
           "Extract its release into OptiScaler\\custom\\XeMFG XMX yourself: ILION doesn't include it" },
-        { FGNvngxReplacement::ApexFg, "ANR FG (experimental)",
+        { FGNvngxReplacement::ApexFg, "ANR FG",
           "Apex Neural Rendering frame generation, up to 6X\n"
           "(apex-compute/ANR, its OptiScaler add-on)\n\n"
           "NVIDIA, AMD and Intel GPUs, DirectX 12 games\n\n"

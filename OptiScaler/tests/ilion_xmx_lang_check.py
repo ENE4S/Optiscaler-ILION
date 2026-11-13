@@ -47,7 +47,7 @@ label_end = MENU.index(",", MENU.index('"', option))
 keys.add(literal_after(MENU, MENU.index('"', option)))
 keys.add(literal_after(MENU, label_end + 1))
 keys.add("backend error: not generating")
-keys.discard("XeMFG XMX (experimental)")  # a product name, the same in every language
+keys.discard("XeMFG XMX")  # a product name, the same in every language
 
 
 def table(path):

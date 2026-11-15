@@ -12,6 +12,7 @@
 #include "Nvngx_HelixSR.h"
 #include "Nvngx_XeMfgXmx.h"
 #include "Nvngx_ApexFg.h"
+#include "Nvngx_FakeMichau.h"
 #include "Nvngx_FFX.h"
 #include "Nvngx_Combo.h"
 #include <imgui/ImGuiNotify.hpp>
@@ -53,6 +54,17 @@ IFGNvngx* Nvngx_FG::getProvider()
     case FGNvngxReplacement::ApexFg:
         _provider = std::make_unique<Nvngx_ApexFg>();
         break;
+
+    case FGNvngxReplacement::FakeMichauXeFG:
+        _provider = std::make_unique<Nvngx_FakeMichau>();
+        if (!_provider->isDx12Available())
+        {
+            ImGui::InsertNotification({ ImGuiToastType::Error, 20000,
+                                        "DLSSG-XeFG unavailable. See the OptiScaler log." });
+            State::Instance().activeFgNvngx = FGNvngxReplacement::None;
+            _provider.reset();
+        }
+        return _provider.get();
 
     case FGNvngxReplacement::None:
     default:

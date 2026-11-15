@@ -41,6 +41,7 @@
 #include <framegen/nvngx/Nvngx_HelixSR.h>
 #include <framegen/nvngx/Nvngx_XeMfgXmx.h>
 #include <framegen/nvngx/Nvngx_ApexFg.h>
+#include <framegen/nvngx/Nvngx_FakeMichau.h>
 #include <plugins/PluginApi.h>
 #include <framegen/reprojection/Reprojection_Dx12.h>
 
@@ -1682,6 +1683,8 @@ static const char* NvngxFgName(FGNvngxReplacement provider)
         return "XeMFG XMX";
     case FGNvngxReplacement::ApexFg:
         return "ANR FG";
+    case FGNvngxReplacement::FakeMichauXeFG:
+        return "DLSSG-XeFG";
     default:
         return nullptr;
     }
@@ -8855,6 +8858,10 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
             {
                 fgText = formatFg("ANR FG", Nvngx_FG::getMaxFakeFramesCount());
             }
+            else if (activeNvngxFg == FGNvngxReplacement::FakeMichauXeFG)
+            {
+                fgText = formatFg("DLSSG-XeFG", Nvngx_FG::getMaxFakeFramesCount());
+            }
             else if (state.activeFgOutput == FGOutput::DLSSG && fg)
             {
                 fgText = formatFg("DLSSG", fg->GetMaxInterpolationCount());
@@ -12314,6 +12321,8 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
           "(apex-compute/ANR, its OptiScaler add-on)\n\n"
           "NVIDIA, AMD and Intel GPUs, DirectX 12 games\n\n"
           "Extract its add-on into OptiScaler\\custom\\Apex Neural Rendering FG yourself: ILION doesn't include it" },
+        { FGNvngxReplacement::FakeMichauXeFG, "DLSSG-XeFG (FakeMichau)",
+          "Experimental DirectX 12 DLSSG replacement. Requires FakeMichau's DLL and compatible libxess_fg.dll." },
     };
 
     // clang-format on
@@ -12376,6 +12385,11 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
     nvngxOptions[fgNvngxAnrIndex].set_disabled(state.swapchainApi == API::Vulkan, "Unsupported API");
     nvngxOptions[fgNvngxAnrIndex].set_disabled(Nvngx_ApexFg::FindDll().empty(),
                                                "Missing OptiScaler\\custom\\Apex Neural Rendering FG\\dlssg\\nvngx_dlssg.dll");
+
+    constexpr auto fakeMichauIndex = (uint32_t) FGNvngxReplacement::FakeMichauXeFG;
+    nvngxOptions[fakeMichauIndex].set_disabled(state.swapchainApi == API::Vulkan, "Unsupported API");
+    nvngxOptions[fakeMichauIndex].set_disabled(Nvngx_FakeMichau::FindDll().empty(),
+        "Missing OptiScaler\\custom\\DLSSG-XeFG\\dlssg\\dlssg_to_xefg_intel_is_better.dll");
 
     // TODO: Automatically switch to any other option
 

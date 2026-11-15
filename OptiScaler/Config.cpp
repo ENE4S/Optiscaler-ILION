@@ -184,6 +184,8 @@ LmxxfFullNetwork.set_from_config(readBool("DlssNr", "LmxxfFullNetwork"));
                 else if (lstrcmpiA(FGNvngxReplacementString.value().c_str(), "Apex Neural Rendering FG") == 0 ||
                          lstrcmpiA(FGNvngxReplacementString.value().c_str(), "anrfg") == 0)
                     FGNvngxReplacement.set_from_config(FGNvngxReplacement::ApexFg);
+                else if (lstrcmpiA(FGNvngxReplacementString.value().c_str(), "DLSSG-XeFG") == 0)
+                    FGNvngxReplacement.set_from_config(FGNvngxReplacement::FakeMichauXeFG);
             }
 
             if (auto forceXell = readBool("fakenvapi", "ForceXeLL"); forceXell.has_value() && forceXell.value())
@@ -1117,6 +1119,8 @@ bool Config::SaveIni()
                 FGNvngxReplacementString = "XeMFG XMX";
             else if (FGNvngxReplacementHeld.value() == FGNvngxReplacement::ApexFg)
                 FGNvngxReplacementString = "Apex Neural Rendering FG";
+            else if (FGNvngxReplacementHeld.value() == FGNvngxReplacement::FakeMichauXeFG)
+                FGNvngxReplacementString = "DLSSG-XeFG";
         }
         ini.SetValue("FrameGen", "FGNvngxReplacement", FGNvngxReplacementString.c_str());
 

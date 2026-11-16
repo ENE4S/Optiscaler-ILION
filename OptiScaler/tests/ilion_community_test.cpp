@@ -591,6 +591,27 @@ int main()
         CHECK(C::FgMaxMultiplier("nvngx_xemfg_xmx", "rdna3") == 6 && C::FgMaxMultiplier("xefg", "rdna3") == 4 &&
                   C::FgEvidence("nvngx_xemfg_xmx", "rdna3") == C::Evidence::Experimental,
               "XeMFG XMX hasta 6X, distinto de XeFG");
+        // ILION v1.4.1.2: DLSSG-XeFG (FakeMichau), su propio identificador: nunca «DLSSG nativo» ni XeMFG XMX
+        const auto* fmx = C::FgImplOf("nvngx_fakemichau");
+        CHECK(fmx != nullptr && std::string(fmx->nvngx) == "FakeMichauXeFG" && std::string(fmx->output) == "DLSSG" && fmx->dx12Only &&
+                  std::string(C::NameOf(C::kFgs, "nvngx_fakemichau")) == "DLSSG-XeFG (FakeMichau)" &&
+                  C::FgMaxMultiplier("nvngx_fakemichau", "rdna3") == 6 && C::FgEvidence("nvngx_fakemichau", "rdna3") == C::Evidence::Experimental,
+              "DLSSG-XeFG (FakeMichau) en el catálogo con su reemplazo, hasta 6X");
+        {
+            C::Profile f = Sample();
+            f.arch = "rdna3";
+            f.gpu = "AMD Radeon RX 7900 XTX";
+            f.fg = "nvngx_fakemichau";
+            f.fgRoute = "nvngx";
+            f.multiplier = 4;
+            C::Profile back;
+            std::string e;
+            CHECK(C::Validate(f, &e) && C::ParseProfileText(C::ToJson(f).dump(), back, &e) && back.fg == "nvngx_fakemichau" && back.multiplier == 4,
+                  "un perfil DLSSG-XeFG se guarda y se lee exacto");
+            C::Profile g = f;
+            g.fg = "nvngx_xemfg_xmx";
+            CHECK(C::ContentHash(f) != C::ContentHash(g), "DLSSG-XeFG no se confunde con XeMFG XMX");
+        }
         {
             C::Profile x = Sample();
             x.arch = "rdna3";

@@ -727,21 +727,26 @@ static const Section kSections[] = {
         "Perfis compartilhados por usuários do ILION: ranking, explorar e suas contribuições",
         "Профили пользователей ILION: рейтинг, обзор и ваши публикации" },
       { "Community" } },
+    { { "GPU TUNING", "AJUSTE GPU", "AJUSTE GPU", "НАСТРОЙКА GPU" },
+      { "GPU Tuning", "AJUSTE GPU", "AJUSTE GPU", "Настройка GPU" },
+      { "AMD GPU tuning", "Ajustes de GPU AMD", "Ajustes de GPU AMD", "Настройки AMD GPU" },
+      {} },
 };
 // clang-format on
 
 constexpr int kSectionCount = (int) std::size(kSections);
 constexpr int kProfilesSection = 8;
 constexpr int kCommunitySection = 9; // Full presentation only
+constexpr int kGpuTuningSection = 10;
 // The order of the modules in the sidebar and in Compact's tabs (Compact skips the community)
 static const int kNavOrder[] = { 0, kProfilesSection, kCommunitySection, 1, 2, 3, 4, 5, 6, 7 };
-static_assert(std::size(kNavOrder) == kSectionCount);
+static_assert(std::size(kNavOrder) + 1 == kSectionCount);
 // Full presentation sidebar: the core technologies first, then PERFILES and COMUNIDAD as complementary tools (Compact keeps kNavOrder)
-static const int kFullNavOrder[] = { 0, 1, 2, 3, 4, kProfilesSection, kCommunitySection, 5, 6, 7 };
+static const int kFullNavOrder[] = { 0, 1, 2, 3, 4, kProfilesSection, kCommunitySection, 5, 6, 7, kGpuTuningSection };
 static_assert(std::size(kFullNavOrder) == kSectionCount);
 
 // The icon of a section (Profiles draws its own, kind 11)
-static int IconOf(int sectionIndex) { return sectionIndex == kProfilesSection ? 11 : sectionIndex == kCommunitySection ? 12 : sectionIndex; }
+static int IconOf(int sectionIndex) { return sectionIndex == kProfilesSection ? 11 : sectionIndex == kCommunitySection ? 12 : sectionIndex == kGpuTuningSection ? 10 : sectionIndex; }
 
 static int LangIndex()
 {
@@ -1059,6 +1064,7 @@ static IlionAdvisor::Facts advFacts;
 } // namespace IlionShell
 
 // ILION AL DÍA + ILION TERMINAL: the box of Home that ILION Advisor used
+#include "ilion_gpu_tuning.inl"
 #include "ilion_home_panel.inl"
 
 // ILION dev.60: FG on/off, the multiplier of the loaded output and what is chosen, loaded and active. The same in Home
@@ -1575,7 +1581,12 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
 
     // ILION dev.71: Clean Olive has no Status & compatibility module (Industrial and Traditional keep it)
     constexpr int kStatusSection = 7;
-    const auto sectionShown = [&](int i) { return !(olive && i == kStatusSection) && !(compact && i == kCommunitySection); };
+    const bool gpuTuningShown = UiThemeIndex(config) == 0 && !compact && !sputnik;
+    const auto sectionShown = [&](int i)
+    {
+        return !(olive && i == kStatusSection) && !(compact && i == kCommunitySection) &&
+               (i != kGpuTuningSection || gpuTuningShown);
+    };
     // PERFILES → COMPARTIR → COMUNIDAD y COMUNIDAD → DESCARGAR → PERFILES
     if (IlionCommunityUi::requestedSection >= 0)
     {
@@ -1680,6 +1691,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         Led::Off,
         Led::Off,
         Led::Off, // community
+        Led::Off, // GPU tuning
     };
 
     // ILION dev.72: ILION Advisor's parts as functions of the shell, so another presentation can show them. Each one is
@@ -2593,12 +2605,11 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         // Tabs: the modules, and Diagnostics last
         {
             const float gap = 4.f;
-            constexpr int compactTabs = kSectionCount - 1; // the community is not part of Compact
+            constexpr int compactTabs = static_cast<int>(std::size(kNavOrder)) - 1; // the community is not part of Compact
             const float tabW = std::floor((CW - 24 - gap * (compactTabs - 1)) / compactTabs);
             int slot = 0;
-            for (int n = 0; n < kSectionCount; n++)
+            for (const int i : kNavOrder)
             {
-                const int i = kNavOrder[n];
                 if (i == kCommunitySection)
                     continue;
                 const int at = slot++;
@@ -3197,6 +3208,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
     }
 
     // Sidebar ------------------------------------------------------------------------------------------------------
+    static int beforeGpuTuning = 0;
     const bool wide = config->MenuSidebarWide.value_or_default();
     const float side = wide ? 260.f : 112.f;
     {
@@ -3209,9 +3221,8 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         const float step = (std::min)(104.f, std::floor((H - 84.f - 70.f + 8.f) / (float) (std::max)(navShown, 1)));
         const float itemH = step - 8.f;
 
-        for (int n = 0; n < kSectionCount; n++)
+        for (const int i : kFullNavOrder)
         {
-            const int i = compact ? kNavOrder[n] : kFullNavOrder[n];
             if (!sectionShown(i))
                 continue; // the next one takes its place: no gap
 
@@ -3219,7 +3230,11 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
             At(p.x, p.y);
             ImGui::PushID(i);
             if (ImGui::InvisibleButton("nav", Sz(q.x - p.x, q.y - p.y)))
+            {
+                if (gpuTuningShown && i == kGpuTuningSection && section != i)
+                    beforeGpuTuning = section;
                 section = i;
+            }
             const bool hov = ImGui::IsItemHovered();
             if (hov && !wide)
             {
@@ -3603,7 +3618,24 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
     };
 
     // Sections ------------------------------------------------------------------------------------------------------
-    if (section == 0)
+    if (gpuTuningShown && section == kGpuTuningSection)
+    {
+        PanelRect(a, b);
+        PushContentStyle();
+        ImGui::PushFont(fUi, U(17.f));
+        if (BeginArea("##IlionGpuTuningBody", ImVec2(a.x + 12, a.y + 12), ImVec2(b.x - 12, b.y - 12)))
+        {
+            const auto access = DrawAmdGpuWarning();
+            if (access == AmdGpuAccess::Allowed)
+                DrawGpuTuning();
+            else if (access == AmdGpuAccess::Cancelled)
+                section = beforeGpuTuning;
+        }
+        ImGui::EndChild();
+        ImGui::PopFont();
+        PopContentStyle();
+    }
+    else if (section == 0)
     {
         // Home: Upscaling and Frame Generation on top, latency and FPS under them; the same functions as the modules
         const float rowSplit = a.y + 300, rowBottom = b.y - 100;

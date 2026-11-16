@@ -1840,6 +1840,9 @@ static void DrawPluginTabs(bool xmx)
         if ((tabs[i].plugin == Nvngx_XeMfgXmx::PluginName) != xmx)
             continue;
 
+        if (!xmx && (_stricmp(tabs[i].name.c_str(), "dlssg-to-xefg") == 0 ||
+                     _stricmp(tabs[i].plugin.c_str(), "dlssg-to-xefg") == 0))
+            continue;
         const std::string label = StrFmt("%s: %s##pluginTab%d", xmx ? Tr("Engine") : Tr("Plugin"), tabs[i].name.c_str(), (int) i);
         if (ImGui::TreeNode(label.c_str()))
         {

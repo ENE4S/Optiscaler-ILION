@@ -745,6 +745,8 @@ static bool FgAvailable(const std::string& id)
         return !vulkan && !Nvngx_XeMfgXmx::FindInstall().dll.empty();
     if (id == "nvngx_anr") // ILION v1.4.1.1: ANR FG, its DLL in OptiScaler\custom\Apex Neural Rendering FG
         return !vulkan && !Nvngx_ApexFg::FindDll().empty();
+    if (id == "nvngx_fakemichau") // ILION v1.4.1.2: FakeMichau's DLSSG-XeFG, its DLL in OptiScaler\custom\DLSSG-XeFG
+        return !vulkan && !Nvngx_FakeMichau::FindDll().empty();
     return false;
 }
 
@@ -771,6 +773,8 @@ static std::string CurrentFgId()
             return "nvngx_xemfg_xmx";
         case FGNvngxReplacement::ApexFg:
             return "nvngx_anr";
+        case FGNvngxReplacement::FakeMichauXeFG:
+            return "nvngx_fakemichau";
         default:
             return "dlssg_nativo";
         }
@@ -1444,6 +1448,8 @@ static FgBackend FgBackendNow()
             return { "XeMFG XMX (realdody)", true, b.route };
         case FGNvngxReplacement::ApexFg:
             return { "ANR FG (Apex)", true, b.route };
+        case FGNvngxReplacement::FakeMichauXeFG:
+            return { "DLSSG-XeFG (FakeMichau)", true, b.route };
         default:
             // Sin reemplazo: el DLSSG oficial solo en una GPU NVIDIA; en otra, no se sabe quién genera
             if (IdentifyGpu::getPrimaryGpu().vendorId == VendorId::Nvidia)

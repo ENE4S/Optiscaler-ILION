@@ -93,6 +93,7 @@ inline const Item kFgs[] = { { "ninguno", "Sin FG" },
                              { "nvngx_fglite", "NVIDIA FG Lite (HelixSR)" },
                              { "nvngx_xemfg_xmx", "XeMFG XMX (realdody)" },
                              { "nvngx_anr", "ANR FG (Apex)" },
+                             { "nvngx_fakemichau", "DLSSG-XeFG (FakeMichau)" },
                              { "dlssg_salida", "Salida DLSSG (perfil v1, reemplazo sin indicar)" } };
 // La entrada de datos del FG (FGInput de ILION)
 inline const Item kRoutes[] = { { "ninguno", "Sin FG" },
@@ -267,6 +268,8 @@ inline const FgImpl kFgImpls[] = {
       true, false },
     { "nvngx_anr", "ANR FG", "Apex Neural Rendering FG", "DLSSG", "ApexFg", "nvngx,streamline,optifg,fsr31,fsr30", "",
       true, false },
+    { "nvngx_fakemichau", "XeFG / XeMFG", "FakeMichau (dlssg-to-xefg)", "DLSSG", "FakeMichauXeFG", "nvngx,streamline,optifg,fsr31,fsr30", "",
+      true, false },
     { "dlssg_salida", "DLSSG", "Salida DLSSG (v1)", "DLSSG", "", "auto,optifg,streamline,fsr31,fsr30", "", true, false },
 };
 
@@ -330,6 +333,8 @@ inline Evidence FgEvidence(const std::string& fg, const std::string& arch)
         return rtx || amd || IsIntelArch(arch) ? Evidence::Experimental : Evidence::Unknown;
     if (fg == "nvngx_anr") // ANR FG (Apex): not tried with ILION yet
         return Evidence::Unknown;
+    if (fg == "nvngx_fakemichau") // FakeMichau's DLSSG-XeFG: XeSS FG on any DX12 GPU; tried with ILION in Cyberpunk (RDNA 3)
+        return rtx || amd || IsIntelArch(arch) ? Evidence::Experimental : Evidence::Unknown;
     if (fg == "dlssg_salida")
         return Evidence::Unknown;
     return Evidence::None;
@@ -347,7 +352,7 @@ inline int FgMaxMultiplier(const std::string& fg, const std::string& arch)
         return arch == "rtx50" ? 4 : 2;
     if (fg == "dlssg_juego")
         return arch == "rtx40" ? 2 : 4;
-    if (fg == "nvngx_enabler" || fg == "nvngx_combo" || fg == "nvngx_xemfg_xmx" || fg == "nvngx_anr")
+    if (fg == "nvngx_enabler" || fg == "nvngx_combo" || fg == "nvngx_xemfg_xmx" || fg == "nvngx_anr" || fg == "nvngx_fakemichau")
         return 6;
     return 4; // xefg, dlssg_salida
 }
@@ -1626,6 +1631,9 @@ inline std::pair<bool, std::string> Publish(const ServiceConfig& c, Session& s, 
     if (p.fg == "nvngx_anr")
         return { false, "Los perfiles con ANR FG se guardan y se aplican en este equipo; publicarlos requiere actualizar "
                         "el servidor de COMUNIDAD (pendiente)" };
+    if (p.fg == "nvngx_fakemichau")
+        return { false, "Los perfiles con DLSSG-XeFG (FakeMichau) se guardan y se aplican en este equipo; publicarlos requiere "
+                        "actualizar el servidor de COMUNIDAD (pendiente)" };
     if (p.fg == "nvngx_xemfg_xmx" && !kServerHasXeMfgXmx)
         return { false, "Los perfiles con XeMFG XMX se guardan y se aplican en este equipo; publicarlos requiere actualizar "
                         "el servidor de COMUNIDAD (pendiente)" };

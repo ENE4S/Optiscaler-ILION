@@ -1843,8 +1843,13 @@ static void DrawPluginTabs(bool xmx)
         if ((tabs[i].plugin == Nvngx_XeMfgXmx::PluginName) != xmx)
             continue;
 
-        if (!xmx && (_stricmp(tabs[i].name.c_str(), "dlssg-to-xefg") == 0 ||
-                     _stricmp(tabs[i].plugin.c_str(), "dlssg-to-xefg") == 0))
+        // ILION v1.4.1.2: the tab of FakeMichau's DLSSG-XeFG is shown while it is the generator in use (registered under
+        // its provider name); any other copy of dlssg-to-xefg stays hidden as before
+        const bool fakeMichauTab = _stricmp(tabs[i].plugin.c_str(), "DLSSG-XeFG") == 0;
+        if (fakeMichauTab && State::Instance().activeFgNvngx != FGNvngxReplacement::FakeMichauXeFG)
+            continue;
+        if (!xmx && !fakeMichauTab && (_stricmp(tabs[i].name.c_str(), "dlssg-to-xefg") == 0 ||
+                                       _stricmp(tabs[i].plugin.c_str(), "dlssg-to-xefg") == 0))
             continue;
         const std::string label = StrFmt("%s: %s##pluginTab%d", xmx ? Tr("Engine") : Tr("Plugin"), tabs[i].name.c_str(), (int) i);
         if (ImGui::TreeNode(label.c_str()))
@@ -11044,6 +11049,23 @@ static FgCrtData GatherFgCrt(State& state)
         return d;
     }
 
+    // ILION v1.4.1.2: DLSSG-XeFG (FakeMichau), its own DLL; the multiplier as for XeMFG XMX (the game's DLSSG, measured)
+    if (nvngxOutput && nvngx == FGNvngxReplacement::FakeMichauXeFG)
+    {
+        d.engine = "DLSSG-XeFG";
+        if (const auto dll = Nvngx_FakeMichau::FindDll(); !dll.empty())
+        {
+            d.file = wstring_to_string(dll.filename().wstring());
+            d.version = FileVersionText(dll.wstring());
+        }
+        const auto status = IlionDynamicMfg::Get();
+        if (status.provider == IlionDynamicMfg::Provider::DlssgGame && status.multiplier > 0)
+            d.multiplier = StrFmt("%dx%s", status.multiplier, status.gen == IlionDynamicMfg::Gen::Confirmed ? "" : "?");
+        else
+            d.multiplier = "-";
+        return d;
+    }
+
     if (nvngxOutput)
     {
         // DLSS Enabler and the other DLSSG replacements: their own dll and the version they report, never an .asi
@@ -12386,10 +12408,11 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
     nvngxOptions[fgNvngxAnrIndex].set_disabled(Nvngx_ApexFg::FindDll().empty(),
                                                "Missing OptiScaler\\custom\\Apex Neural Rendering FG\\dlssg\\nvngx_dlssg.dll");
 
-    constexpr auto fakeMichauIndex = (uint32_t) FGNvngxReplacement::FakeMichauXeFG;
-    nvngxOptions[fakeMichauIndex].set_disabled(state.swapchainApi == API::Vulkan, "Unsupported API");
-    nvngxOptions[fakeMichauIndex].set_disabled(Nvngx_FakeMichau::FindDll().empty(),
-        "Missing OptiScaler\\custom\\DLSSG-XeFG\\dlssg\\dlssg_to_xefg_intel_is_better.dll");
+    // ILION v1.4.1.2: DLSSG-XeFG (FakeMichau) needs its DLL and DirectX 12 (ILION binds only its D3D12 entry points)
+    auto constexpr fgNvngxFakeMichauIndex = (uint32_t) FGNvngxReplacement::FakeMichauXeFG;
+    nvngxOptions[fgNvngxFakeMichauIndex].set_disabled(state.swapchainApi == API::Vulkan, "Unsupported API");
+    nvngxOptions[fgNvngxFakeMichauIndex].set_disabled(Nvngx_FakeMichau::FindDll().empty(),
+                                                      "Missing OptiScaler\\custom\\DLSSG-XeFG\\dlssg\\dlssg_to_xefg_intel_is_better.dll");
 
     // TODO: Automatically switch to any other option
 

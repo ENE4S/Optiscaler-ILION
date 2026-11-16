@@ -57,14 +57,7 @@ IFGNvngx* Nvngx_FG::getProvider()
 
     case FGNvngxReplacement::FakeMichauXeFG:
         _provider = std::make_unique<Nvngx_FakeMichau>();
-        if (!_provider->isDx12Available())
-        {
-            ImGui::InsertNotification({ ImGuiToastType::Error, 20000,
-                                        "DLSSG-XeFG unavailable. See the OptiScaler log." });
-            State::Instance().activeFgNvngx = FGNvngxReplacement::None;
-            _provider.reset();
-        }
-        return _provider.get();
+        break;
 
     case FGNvngxReplacement::None:
     default:
@@ -103,6 +96,20 @@ IFGNvngx* Nvngx_FG::getProvider()
         LOG_ERROR("ANR FG is not available (nvngx_dlssg.dll of Apex Neural Rendering FG not found or not loadable): no fallback");
         ImGui::InsertNotification({ ImGuiToastType::Error, 20000,
                                     "ANR FG is not available.\nOptiScaler\\custom\\Apex Neural Rendering FG\\dlssg not found." });
+        Config::Instance()->FGNvngxReplacement.set_volatile_value(FGNvngxReplacement::None);
+        State::Instance().activeFgNvngx = FGNvngxReplacement::None;
+        _provider.reset();
+        return nullptr;
+    }
+
+    // ILION v1.4.1.2: DLSSG-XeFG (FakeMichau) either loads or stays off, as XeMFG XMX: another generator in its place
+    // would show as DLSSG-XeFG
+    if (selectedProvider == FGNvngxReplacement::FakeMichauXeFG && !_provider->isDx12Available())
+    {
+        LOG_ERROR("DLSSG-XeFG is not available (dlssg_to_xefg_intel_is_better.dll not found, not loadable or without "
+                  "a usable libxess_fg.dll): no fallback");
+        ImGui::InsertNotification({ ImGuiToastType::Error, 20000,
+                                    "DLSSG-XeFG is not available.\nOptiScaler\\custom\\DLSSG-XeFG\\dlssg not found or not usable." });
         Config::Instance()->FGNvngxReplacement.set_volatile_value(FGNvngxReplacement::None);
         State::Instance().activeFgNvngx = FGNvngxReplacement::None;
         _provider.reset();

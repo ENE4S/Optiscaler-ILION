@@ -86,7 +86,7 @@ enum class FGNvngxReplacement : uint32_t
     HelixSR, // ILION dev.51-exp2: NVIDIA FG Lite, HelixSR 2.0.0's frame generation (framegen/nvngx/Nvngx_HelixSR.h)
     XeMfgXmx, // ILION v1.4.0: realdody's XeMFG XMX, XeSS frame generation up to 6X (Nvngx_XeMfgXmx.h)
     ApexFg,   // ILION v1.4.1.1: Apex Neural Rendering FG (ANR FG), neural frame generation up to 6X (Nvngx_ApexFg.h)
-    FakeMichauXeFG,
+    FakeMichauXeFG, // ILION v1.4.1.2: FakeMichau's DLSSG-XeFG, XeSS frame generation up to 6X (Nvngx_FakeMichau.h)
 };
 
 enum class WorkingMode : uint32_t

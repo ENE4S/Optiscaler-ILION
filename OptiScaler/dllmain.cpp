@@ -43,6 +43,7 @@
 #include <hooks/Streamline_Hooks.h>
 #include <plugins/PluginApi.h>
 #include <framegen/nvngx/Nvngx_XeMfgXmx.h>
+#include <framegen/nvngx/Nvngx_FakeMichau.h>
 
 #include <nvapi/NvApiHooks.h>
 
@@ -237,10 +238,17 @@ void LoadAsiPlugins()
     // ILION v1.4.0: XeMFG XMX (realdody) as the DLSSG replacement is another implementation of the same technique (its
     // XeFG port comes from MFG-Unlocker): no XeMFG variant with it, never two in one process. The choice stays in the
     // config
+    // ILION v1.4.1.2: FakeMichau's DLSSG-XeFG is the same technique (XeSS FG past 2X/4X through a DLSSG replacement):
+    // the same rule. The XeMFG variants serve ILION's XeFG output, which is never active with a DLSSG replacement
     const bool xmxReplacement = Nvngx_XeMfgXmx::InUse();
+    const bool fakeMichauReplacement = Nvngx_FakeMichau::InUse();
     if (const auto variant = Config::Instance()->XeMfgVariant.value_or(L""); !variant.empty() && xmxReplacement)
     {
         LOG_INFO(L"XeMFG XMX selected: XeMFG variant {} not loaded", variant);
+    }
+    else if (const auto variant = Config::Instance()->XeMfgVariant.value_or(L""); !variant.empty() && fakeMichauReplacement)
+    {
+        LOG_INFO(L"DLSSG-XeFG selected: XeMFG variant {} not loaded", variant);
     }
     else if (const auto variant = Config::Instance()->XeMfgVariant.value_or(L""); !variant.empty())
     {
@@ -1521,6 +1529,14 @@ void CheckMemoryForProxies()
     {
         if (const auto xmx = Nvngx_XeMfgXmx::FindInstall(); !xmx.dll.empty() && xmx.libxessFg)
             XeFGProxy::InitXeFG(xmx.dll.parent_path().wstring());
+    }
+    // ILION v1.4.1.2: DLSSG-XeFG uses first the libxess_fg.dll next to its own DLL, loaded by full path. When that copy
+    // exists it is the one preloaded here, so the process holds a single libxess_fg (the cause of XeMFG XMX's
+    // "Failed to create heap"); without it, OptiScaler's own copy as before, which DLSSG-XeFG then finds
+    else if (const auto fakeMichau = Nvngx_FakeMichau::InUse() ? Nvngx_FakeMichau::FindDll() : std::filesystem::path {};
+             !fakeMichau.empty() && std::filesystem::is_regular_file(fakeMichau.parent_path() / L"libxess_fg.dll"))
+    {
+        XeFGProxy::InitXeFG(fakeMichau.parent_path().wstring());
     }
     else
     {

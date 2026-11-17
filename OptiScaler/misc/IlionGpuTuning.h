@@ -71,6 +71,17 @@ struct Result
     ProfileKind loadedKind = ProfileKind::Complete;
 };
 const char* ValidateDraft(const Snapshot& before, const Values& draft);
+// ILION v1.4.1.2: does the value read back stand for the one written? Exact, or (when the driver rounds) less than one
+// step of that setting away and inside its range. Only for the check after APPLY; the draft itself must still be valid
+inline bool SameSetting(const Range& range, const std::optional<int>& wanted, const std::optional<int>& read)
+{
+    if (wanted == read)
+        return true;
+    if (!wanted || !read || range.step <= 0 || *read < range.min || *read > range.max)
+        return false;
+    const long long gap = static_cast<long long>(*wanted) - *read;
+    return (gap < 0 ? -gap : gap) < range.step;
+}
 std::optional<std::array<Field, FieldCount>> WriteOrder(const Values& current, const Values& desired);
 bool Start(Request request);
 std::shared_ptr<const Result> Latest();

@@ -344,6 +344,20 @@ std::string Differences(const Values& a, const Values& b)
 
 
 
+// What APPLY checks after writing: the fields within one step of the driver (SameSetting), the curve and Zero RPM exact
+std::string AppliedDifferences(const Snapshot& before, const Values& wanted, const Values& read)
+{
+    std::string names;
+    for (int i = 0; i < FieldCount; ++i)
+        if (!SameSetting(before.ranges[i], wanted.fields[i], read.fields[i]))
+            names += std::string(" ") + fieldKeys[i];
+    if (wanted.curve != read.curve)
+        names += " Curva";
+    if (wanted.zero != read.zero)
+        names += " Zero RPM";
+    return names;
+}
+
 template<class DeviceTuning>
 std::string RestorePrevious(const DeviceTuning& tuning, const Snapshot& before, const Values* requested = nullptr)
 {
@@ -435,11 +449,11 @@ std::string Apply(const DeviceTuning& tuning, const Snapshot& before, const Valu
             return tuning.WriteZero(*draft.zero);
         });
 
-    auto differences = Differences(draft, tuning.Read().live);
+    auto differences = AppliedDifferences(before, draft, tuning.Read().live);
     for (int retry = 0; retry < 2 && ADLX_SUCCEEDED(status) && !differences.empty(); ++retry)
     {
         Sleep(100);
-        differences = Differences(draft, tuning.Read().live);
+        differences = AppliedDifferences(before, draft, tuning.Read().live);
     }
     if (ADLX_SUCCEEDED(status) && differences.empty())
     {

@@ -1,6 +1,9 @@
 #include "pch.h"
 #include "Nvngx_DllProxy.h"
 
+// ILION v1.4.1.2: a DLSSG replacement is selectable with Init, CreateFeature and EvaluateFeature (the ones XeMFG XMX
+// and ANR FG require when they load). The other D3D12 entry points may be missing in a replacement: each call checks its
+// own pointer and answers Fail instead of calling a null function
 NVSDK_NGX_Result Nvngx_DllProxy::D3D12_Init(unsigned long long InApplicationId, const wchar_t* InApplicationDataPath,
                                             ID3D12Device* InDevice, const NVSDK_NGX_FeatureCommonInfo* InFeatureInfo,
                                             NVSDK_NGX_Version InSDKVersion)
@@ -15,21 +18,21 @@ NVSDK_NGX_Result Nvngx_DllProxy::D3D12_Init_Ext(unsigned long long InApplication
                                                 NVSDK_NGX_Version InSDKVersion,
                                                 const NVSDK_NGX_FeatureCommonInfo* InFeatureInfo)
 {
-    if (isDx12Available())
+    if (isDx12Available() && _DLSSG_D3D12_Init_Ext != nullptr)
         return _DLSSG_D3D12_Init_Ext(InApplicationId, InApplicationDataPath, InDevice, InSDKVersion, InFeatureInfo);
     return NVSDK_NGX_Result_Fail;
 }
 
 NVSDK_NGX_Result Nvngx_DllProxy::D3D12_Shutdown()
 {
-    if (isDx12Available())
+    if (isDx12Available() && _DLSSG_D3D12_Shutdown != nullptr)
         return _DLSSG_D3D12_Shutdown();
     return NVSDK_NGX_Result_Fail;
 }
 
 NVSDK_NGX_Result Nvngx_DllProxy::D3D12_Shutdown1(ID3D12Device* InDevice)
 {
-    if (isDx12Available())
+    if (isDx12Available() && _DLSSG_D3D12_Shutdown1 != nullptr)
         return _DLSSG_D3D12_Shutdown1(InDevice);
     return NVSDK_NGX_Result_Fail;
 }
@@ -38,7 +41,7 @@ NVSDK_NGX_Result Nvngx_DllProxy::D3D12_GetScratchBufferSize(NVSDK_NGX_Feature In
                                                             const NVSDK_NGX_Parameter* InParameters,
                                                             size_t* OutSizeInBytes)
 {
-    if (isDx12Available())
+    if (isDx12Available() && _DLSSG_D3D12_GetScratchBufferSize != nullptr)
         return _DLSSG_D3D12_GetScratchBufferSize(InFeatureId, InParameters, OutSizeInBytes);
     return NVSDK_NGX_Result_Fail;
 }
@@ -56,7 +59,7 @@ NVSDK_NGX_Result Nvngx_DllProxy::D3D12_CreateFeature(ID3D12GraphicsCommandList* 
 
 NVSDK_NGX_Result Nvngx_DllProxy::D3D12_ReleaseFeature(NVSDK_NGX_Handle* InHandle)
 {
-    if (isDx12Available())
+    if (isDx12Available() && _DLSSG_D3D12_ReleaseFeature != nullptr)
     {
         return _DLSSG_D3D12_ReleaseFeature(InHandle);
     }
@@ -68,7 +71,7 @@ Nvngx_DllProxy::D3D12_GetFeatureRequirements(IDXGIAdapter* Adapter,
                                              const NVSDK_NGX_FeatureDiscoveryInfo* FeatureDiscoveryInfo,
                                              NVSDK_NGX_FeatureRequirement* OutSupported)
 {
-    if (isDx12Available())
+    if (isDx12Available() && _DLSSG_D3D12_GetFeatureRequirements != nullptr)
         return _DLSSG_D3D12_GetFeatureRequirements(Adapter, FeatureDiscoveryInfo, OutSupported);
     return NVSDK_NGX_Result_Fail;
 }
@@ -191,7 +194,7 @@ NVSDK_NGX_Result Nvngx_DllProxy::D3D12_EvaluateFeature(ID3D12GraphicsCommandList
 
 NVSDK_NGX_Result Nvngx_DllProxy::D3D12_PopulateParameters_Impl(NVSDK_NGX_Parameter* InParameters)
 {
-    if (isDx12Available())
+    if (isDx12Available() && _DLSSG_D3D12_PopulateParameters_Impl != nullptr)
         return _DLSSG_D3D12_PopulateParameters_Impl(InParameters);
     return NVSDK_NGX_Result_Fail;
 }

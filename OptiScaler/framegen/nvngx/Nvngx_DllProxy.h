@@ -5,7 +5,9 @@
 class Nvngx_DllProxy : public IFGNvngx
 {
   private:
-    ID3D12Resource* depthCopy[2];
+    // ILION v1.4.1.2: zero-initialised. The derived providers (Nukem, Enabler, HelixSR, XeMFG XMX, ANR FG) don't
+    // value-initialise this base, so without it the destructor and CreateBufferResource could use garbage pointers
+    ID3D12Resource* depthCopy[2] {};
 
   protected:
     HMODULE dll = nullptr;

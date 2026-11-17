@@ -33,6 +33,13 @@ std::filesystem::path Nvngx_FakeMichau::FindDll()
     return {};
 }
 
+bool Nvngx_FakeMichau::InUse()
+{
+    const auto config = Config::Instance();
+    return config->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::FakeMichauXeFG &&
+           (config->FGInput.value_or_default() == FGInput::NvngxFG || config->FGOutput.value_or_default() == FGOutput::DLSSG);
+}
+
 void Nvngx_FakeMichau::LoadLibraries()
 {
     const auto path = FindDll();

@@ -135,5 +135,21 @@ void Nvngx_ApexFg::LoadLibraries()
         return;
     }
 
+    // ILION v1.4.1.2: the optional entry points it lacks (each call checks its own pointer, Nvngx_DllProxy)
+    std::string missing;
+    for (const auto& [function, name] : { std::pair { (void*) _DLSSG_D3D12_Init_Ext, "Init_Ext" },
+                                          { (void*) _DLSSG_D3D12_Shutdown, "Shutdown" },
+                                          { (void*) _DLSSG_D3D12_Shutdown1, "Shutdown1" },
+                                          { (void*) _DLSSG_D3D12_GetScratchBufferSize, "GetScratchBufferSize" },
+                                          { (void*) _DLSSG_D3D12_ReleaseFeature, "ReleaseFeature" },
+                                          { (void*) _DLSSG_D3D12_GetFeatureRequirements, "GetFeatureRequirements" },
+                                          { (void*) _DLSSG_D3D12_PopulateParameters_Impl, "PopulateParameters_Impl" } })
+    {
+        if (function == nullptr)
+            missing += missing.empty() ? name : std::string(", ") + name;
+    }
+    if (!missing.empty())
+        LOG_WARN("ANR FG: optional NVSDK_NGX_D3D12 entry points not exported: {}", missing);
+
     LOG_INFO("ANR FG: loaded {}", wstring_to_string(path.wstring()));
 }

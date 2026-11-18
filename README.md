@@ -1,5 +1,10 @@
 # OptiScaler - ILION V1.1
 
+> **Versión actual / Current version: ILION 1.4.1.2 beta** — [descarga / download](https://github.com/ENE4S/Optiscaler-ILION/releases/latest)
+> **Instalación recomendada / Recommended install: [ILION SETUP](https://github.com/ENE4S/ILION-Setup)** — instala ILION, su base de OptiScaler, las variantes y los mods compatibles con tu GPU, verificados y restaurables / installs ILION, its OptiScaler base, variants and GPU-compatible mods, verified and restorable.
+> Código de la 1.4.1.2 / 1.4.1.2 source: rama / branch [`ilion-1.4.1.2-beta`](https://github.com/ENE4S/Optiscaler-ILION/tree/ilion-1.4.1.2-beta). Este README describe la V1.1 / This README describes V1.1.
+
+
 **[Español](#español) · [English](#english)**
 
 ILION is a modified version of [OptiScaler](https://github.com/optiscaler/OptiScaler). It is not an official

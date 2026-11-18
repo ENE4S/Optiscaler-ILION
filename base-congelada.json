@@ -1,0 +1,439 @@
+{
+ "formato": 1,
+ "nombre": "Base congelada de OptiScaler para ILION 1.4.1.2",
+ "fecha": "2026-11-20",
+ "motor": {
+  "nombre": "OptiScaler ILION",
+  "version": "1.4.1.2 beta",
+  "destino": "dxgi.dll",
+  "sha256": "2a262a39853f1d7e3fd486ee3e449a8b8e55f1a8a02f28f487b480ae90478da4",
+  "codigo": "rama ilion-1.4.1.2-beta-correcciones, commit b441a1d",
+  "base": "OptiScaler f6f75ddf0118ac45f447e2babbe18dbda3451edd + cambios de ILION",
+  "nota": "Fuente oficial: publicación ilion-v1.4.1.2-beta de ENE4S/Optiscaler-ILION (grupo «motor»). Un paquete o DLL local sigue siendo opción avanzada."
+ },
+ "paquetes": [
+  {
+   "id": "optiscaler-nightly-20261009",
+   "tipo": "archivo-7z",
+   "url": "https://github.com/optiscaler/OptiScaler-nightly/releases/download/nightly-20261009/OptiScaler_v10.0.0-pre1_20261009.7z",
+   "sha256": "664dae1a774fb7672e7ce1991f8afe460ff806b7b36265c6a1e466b5ce438147",
+   "nota": "Compilación oficial de OptiScaler en el commit f6f75ddf (último cambio de esa nightly; la del 10/10 no tuvo cambios). Es la base del código de ILION (commit de importación 0986dc8)."
+  },
+  {
+   "id": "streamline-sdk-2.14.1",
+   "tipo": "archivo-zip",
+   "url": "https://github.com/NVIDIA-RTX/Streamline/releases/download/v2.14.1/streamline-sdk-v2.14.1.zip",
+   "sha256": "92c4d954631a1710da86ca3fa8d5034f2b9503838c95fc4ae977ae149319781b",
+   "nota": "SDK oficial de NVIDIA (lo que descarga Streamlined_fetcher_windows.bat de OptiScaler). Verificado archivo a archivo por CRC32 del índice y SHA-256 del paquete de referencia."
+  },
+  {
+   "id": "ilion-v1.4.1.2-beta",
+   "tipo": "archivo-zip",
+   "url": "https://github.com/ENE4S/Optiscaler-ILION/releases/download/ilion-v1.4.1.2-beta/OptiScaler-ILION-1.4.1.2-beta.zip",
+   "sha256": "e81a3d1ecc861cbf1d1b5485cf34a1448a18793523e6dc7823fcdb2d1eedcf6a",
+   "nota": "Publicación oficial de ILION 1.4.1.2 beta (ENE4S/Optiscaler-ILION): dxgi.dll y OptiScaler.ini. Código: rama ilion-1.4.1.2-beta (b441a1d), GPL-3.0."
+  },
+  {
+   "id": "ilion-variantes-1",
+   "tipo": "archivo-zip",
+   "url": "https://github.com/ENE4S/Optiscaler-ILION/releases/download/ilion-componentes-1/ILION-variantes-1.zip",
+   "sha256": "0b6f615d61bbbcac1d895ae8a4bc61a638eb8dd2a7a2d49d6f60fe52796fd5e0",
+   "nota": "Componentes sin otra fuente pública: FSR 4.1.1B de la comunidad de OptiScaler y variantes XeMFG Clásica y WMMA."
+  },
+  {
+   "id": "ilion-lmxxf-nr-runtime-1",
+   "tipo": "archivo-zip",
+   "url": "https://github.com/ENE4S/Optiscaler-ILION/releases/download/ilion-componentes-1/ILION-lmxxf-nr-runtime-1.zip",
+   "sha256": "83da70366eda89d70ab7b8d407dca5333041937c6931c3d4bd70567c7819a400",
+   "nota": "Runtime NR compilado por ILION desde lmxxf/dlss5-on-amd-9070xt-porting (MIT). Solo AMD RDNA 3 / RDNA 4."
+  },
+  {
+   "id": "ilion-extras-1",
+   "tipo": "archivo-zip",
+   "url": "https://github.com/ENE4S/Optiscaler-ILION/releases/download/ilion-componentes-1/ILION-extras-1.zip",
+   "sha256": "9b240643d5d6ab466b66ec321cc7fc5a9d182e3ea93647cbe93e20e7955fe7c2",
+   "nota": "Instalar_ReShade.bat de ILION (ReShade 6.8.0 oficial) y DLSS Enabler 4.10.0.18 de Artur (MIT)."
+  },
+  {
+   "id": "fsr4-overrides-2026-10-22",
+   "tipo": "archivo-7z",
+   "url": "https://github.com/zgauthier2000/fsr4-shader-performance-overrides/releases/download/dll-2026-10-22/fsr4.1.1-cyboman-rx7000-2026-10-22.7z",
+   "sha256": "e6e507288c003d8063c3c12a70cb94b692499d894a9c2703c816450176155c43",
+   "nota": "FSR 4.1.1 Exact, Lossy y Lossy2 de zgauthier2000 (GPL-2.0), publicación dll-2026-10-22: idénticas a las del paquete de ILION."
+  }
+ ],
+ "archivos": [
+  {
+   "destino": "OptiScaler\\libxess.dll",
+   "origen": "optiscaler-nightly-20261009",
+   "entrada": "OptiScaler/libxess.dll",
+   "sha256": "251659dd84a3e84de67c886a4186e01f3eca49b00641906fe38bb6b807e5d5b7",
+   "tamano": 77795704,
+   "firmante": "Intel Corporation"
+  },
+  {
+   "destino": "OptiScaler\\libxess_dx11.dll",
+   "origen": "optiscaler-nightly-20261009",
+   "entrada": "OptiScaler/libxess_dx11.dll",
+   "sha256": "c7cfe86f0c9d94e4fb3696d3cd5035e2bbb6a8b1b0572f8b7395a4cdfd0c625e",
+   "tamano": 156016,
+   "firmante": "Intel Corporation"
+  },
+  {
+   "destino": "OptiScaler\\libxess_fg.dll",
+   "origen": "optiscaler-nightly-20261009",
+   "entrada": "OptiScaler/libxess_fg.dll",
+   "sha256": "ec5e0c65e075570c6ede72618bb666d0be0c2e10b2ea9762c0fe8cb8e375ab27",
+   "tamano": 22957432,
+   "firmante": "Intel Corporation"
+  },
+  {
+   "destino": "OptiScaler\\libxell.dll",
+   "origen": "optiscaler-nightly-20261009",
+   "entrada": "OptiScaler/libxell.dll",
+   "sha256": "d2030dcd694fda8f2ec7e044b13e6db8f0b56d4ba9113a5efad334e3f3ded8c7",
+   "tamano": 415368,
+   "firmante": "Intel Corporation"
+  },
+  {
+   "destino": "OptiScaler\\amd_fidelityfx_vk.dll",
+   "origen": "optiscaler-nightly-20261009",
+   "entrada": "OptiScaler/amd_fidelityfx_vk.dll",
+   "sha256": "a1624cc4238fef046f30c4d80ce3f47be63fc5f5373f49e3ee9edb9960f54c78",
+   "tamano": 9332432,
+   "firmante": "Advanced Micro Devices"
+  },
+  {
+   "destino": "OptiScaler\\dlssg_to_fsr3_amd_is_better.dll",
+   "origen": "optiscaler-nightly-20261009",
+   "entrada": "OptiScaler/dlssg_to_fsr3_amd_is_better.dll",
+   "sha256": "14e83096f4e7648b89a724208c6219508b44563ce8c44967c60a5fa46a9221e2",
+   "tamano": 3041792
+  },
+  {
+   "destino": "OptiScaler\\Streamlined_fetcher_windows.bat",
+   "origen": "optiscaler-nightly-20261009",
+   "entrada": "OptiScaler/Streamlined_fetcher_windows.bat",
+   "sha256": "4052e172f464235c9b33bcefd63965250a592f11129d0dee032942db3453cae3",
+   "tamano": 3330
+  },
+  {
+   "destino": "Licenses\\XeSS_LICENSE.txt",
+   "origen": "optiscaler-nightly-20261009",
+   "entrada": "Licenses/XeSS_LICENSE.txt",
+   "sha256": "784be42c39a4a4d03cf85d88e15e59d75828fca773ce45b8dbfffbd7eaf208df",
+   "tamano": 4194
+  },
+  {
+   "destino": "Licenses\\FidelityFX_v2_LICENSE.md",
+   "origen": "optiscaler-nightly-20261009",
+   "entrada": "Licenses/FidelityFX_v2_LICENSE.md",
+   "sha256": "f0da09d71ad5c82759a179e774535d4a829e5c96c49294167c1152402b2cb400",
+   "tamano": 61784
+  },
+  {
+   "destino": "Licenses\\DirectX_LICENSE.txt",
+   "origen": "optiscaler-nightly-20261009",
+   "entrada": "Licenses/DirectX_LICENSE.txt",
+   "sha256": "5239850894610071566f7ecee0b751fde43c862032d92b99d7d0f596b3433ebd",
+   "tamano": 13147
+  },
+  {
+   "destino": "OptiScaler.ini",
+   "origen": "optiscaler-nightly-20261009",
+   "entrada": "OptiScaler.ini",
+   "sha256": "6c2e116129d51bd7d90333d176a2000bf33ae77194119a64f06397bb80992c86",
+   "tamano": 52936,
+   "opcional": true
+  },
+  {
+   "destino": "OptiScaler\\D3D12_OptiScaler\\D3D12Core.dll",
+   "origen": "optiscaler-nightly-20261009",
+   "entrada": "OptiScaler/D3D12_OptiScaler/D3D12Core.dll",
+   "sha256": "07d286c306f8117321422affd9e6388c12d0fb4be1c7fc689d9e899324feeb24",
+   "tamano": 3351064,
+   "firmante": "Microsoft Corporation",
+   "opcional": true
+  },
+  {
+   "destino": "OptiScaler\\amd_fidelityfx_loader_dx12.dll",
+   "origen": "url",
+   "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v2.4.0/Kits/FidelityFX/signedbin/amd_fidelityfx_loader_dx12.dll",
+   "sha256": "e2191d3c0828be45eb8affd4e3ec0378f2293adc345b772a7170edcf3b021ecb",
+   "tamano": 39184,
+   "firmante": "Advanced Micro Devices"
+  },
+  {
+   "destino": "OptiScaler\\amd_fidelityfx_upscaler_dx12.dll",
+   "origen": "url",
+   "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v2.4.0/Kits/FidelityFX/signedbin/amd_fidelityfx_upscaler_dx12.dll",
+   "sha256": "aad4fccccb29084a655f9a4f9f613bd22c8c03fb4a0f8840148cc6543b4ccace",
+   "tamano": 57664272,
+   "firmante": "Advanced Micro Devices"
+  },
+  {
+   "destino": "OptiScaler\\amd_fidelityfx_framegeneration_dx12.dll",
+   "origen": "url",
+   "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v2.4.0/Kits/FidelityFX/signedbin/amd_fidelityfx_framegeneration_dx12.dll",
+   "sha256": "e6843252f58b0341a0d80f6a20bc0d840643ee95bc48c22cac08745344577bb6",
+   "tamano": 29679376,
+   "firmante": "Advanced Micro Devices"
+  },
+  {
+   "destino": "OptiScaler\\streamline\\NvLowLatencyVk.dll",
+   "origen": "streamline-sdk-2.14.1",
+   "entrada": "bin/x64/NvLowLatencyVk.dll",
+   "sha256": "2a77dc3e1c724b7eea5755be0ae7423752e79a2459fae72181a9f00e3507e5d6",
+   "tamano": 57840,
+   "firmante": "NVIDIA Corporation"
+  },
+  {
+   "destino": "OptiScaler\\streamline\\nvngx_deepdvc.dll",
+   "origen": "streamline-sdk-2.14.1",
+   "entrada": "bin/x64/nvngx_deepdvc.dll",
+   "sha256": "dc9562c67594fa06b763fe5d78f4aa53452c5344f8b43e6e2b81264320588500",
+   "tamano": 3104880,
+   "firmante": "NVIDIA Corporation"
+  },
+  {
+   "destino": "OptiScaler\\streamline\\nvngx_dlss.dll",
+   "origen": "streamline-sdk-2.14.1",
+   "entrada": "bin/x64/nvngx_dlss.dll",
+   "sha256": "3975567b8943c53acce397f2b72380092f84f162d00b0d2c7d08a1025c563983",
+   "tamano": 58956912,
+   "firmante": "NVIDIA Corporation"
+  },
+  {
+   "destino": "OptiScaler\\streamline\\nvngx_dlssd.dll",
+   "origen": "streamline-sdk-2.14.1",
+   "entrada": "bin/x64/nvngx_dlssd.dll",
+   "sha256": "4bc7ea5fcb2f32cf86bc2cb072e8d2860914a0be511cbdcb2fc206c1d9d83b80",
+   "tamano": 48343664,
+   "firmante": "NVIDIA Corporation"
+  },
+  {
+   "destino": "OptiScaler\\streamline\\nvngx_dlssg.dll",
+   "origen": "streamline-sdk-2.14.1",
+   "entrada": "bin/x64/nvngx_dlssg.dll",
+   "sha256": "ff6e90eb78b827927dff5b4ecc6b1c870c2e9bca29ed9f48c7d348cc9e170b82",
+   "tamano": 7460976,
+   "firmante": "NVIDIA Corporation"
+  },
+  {
+   "destino": "OptiScaler\\streamline\\sl.common.dll",
+   "origen": "streamline-sdk-2.14.1",
+   "entrada": "bin/x64/sl.common.dll",
+   "sha256": "82924a8954dd671e09351c5de0eb87ad0eb25b944cc9f9ab955ca1d9950de15d",
+   "tamano": 843392,
+   "firmante": "NVIDIA Corporation"
+  },
+  {
+   "destino": "OptiScaler\\streamline\\sl.deepdvc.dll",
+   "origen": "streamline-sdk-2.14.1",
+   "entrada": "bin/x64/sl.deepdvc.dll",
+   "sha256": "e4b7e83c9e67eab7023222af13de239241e8a09bdb63faf26f803e9fd0f3e9c9",
+   "tamano": 376448,
+   "firmante": "NVIDIA Corporation"
+  },
+  {
+   "destino": "OptiScaler\\streamline\\sl.directsr.dll",
+   "origen": "streamline-sdk-2.14.1",
+   "entrada": "bin/x64/sl.directsr.dll",
+   "sha256": "4b2c0c90195c3a9991b4e0b59004113511a90802c85d81fc7faa7c7c75f53927",
+   "tamano": 369792,
+   "firmante": "NVIDIA Corporation"
+  },
+  {
+   "destino": "OptiScaler\\streamline\\sl.dlss.dll",
+   "origen": "streamline-sdk-2.14.1",
+   "entrada": "bin/x64/sl.dlss.dll",
+   "sha256": "73bf52c0cfaa5900a8f3f4a91306e4625e7cca696dfb305aae44c9f97b582e1f",
+   "tamano": 422016,
+   "firmante": "NVIDIA Corporation"
+  },
+  {
+   "destino": "OptiScaler\\streamline\\sl.dlss_d.dll",
+   "origen": "streamline-sdk-2.14.1",
+   "entrada": "bin/x64/sl.dlss_d.dll",
+   "sha256": "026b9f4f9ea848f2f5aa0e2024fc6b1c885f57eea5d41078124dba14f873b86b",
+   "tamano": 437376,
+   "firmante": "NVIDIA Corporation"
+  },
+  {
+   "destino": "OptiScaler\\streamline\\sl.dlss_g.dll",
+   "origen": "streamline-sdk-2.14.1",
+   "entrada": "_artifacts/sl.dlss_g/Production_x64/sl.dlss_g.dll",
+   "sha256": "f4a6b2b14dcc0b1485989e430d3b4e3a44ac1800b92ba1ad74f476e64fb2b09c",
+   "tamano": 636032,
+   "firmante": "NVIDIA Corporation"
+  },
+  {
+   "destino": "OptiScaler\\streamline\\sl.interposer.dll",
+   "origen": "streamline-sdk-2.14.1",
+   "entrada": "bin/x64/sl.interposer.dll",
+   "sha256": "8c87c9499461da561edd529aa9bf7831d67d7b94ebb1c1a5ed54ef4934e1ea4c",
+   "tamano": 652928,
+   "firmante": "NVIDIA Corporation"
+  },
+  {
+   "destino": "OptiScaler\\streamline\\sl.nis.dll",
+   "origen": "streamline-sdk-2.14.1",
+   "entrada": "bin/x64/sl.nis.dll",
+   "sha256": "556870e456d268601188919927b3b122f76b25f9b221cc4b15d3ef649f0ad27b",
+   "tamano": 1155712,
+   "firmante": "NVIDIA Corporation"
+  },
+  {
+   "destino": "OptiScaler\\streamline\\sl.nvperf.dll",
+   "origen": "streamline-sdk-2.14.1",
+   "entrada": "bin/x64/sl.nvperf.dll",
+   "sha256": "b4ca8f8eeba653446f27d20e8b394cdaae5d518c1292b440a4b97652e0f0376b",
+   "tamano": 761472,
+   "firmante": "NVIDIA Corporation"
+  },
+  {
+   "destino": "OptiScaler\\streamline\\sl.pcl.dll",
+   "origen": "streamline-sdk-2.14.1",
+   "entrada": "bin/x64/sl.pcl.dll",
+   "sha256": "f13d51cfa05f4cd514df2026049e2db8adf359221713170ad386fd499915b582",
+   "tamano": 360064,
+   "firmante": "NVIDIA Corporation"
+  },
+  {
+   "destino": "OptiScaler\\streamline\\sl.reflex.dll",
+   "origen": "streamline-sdk-2.14.1",
+   "entrada": "bin/x64/sl.reflex.dll",
+   "sha256": "0ce9725e3e03ea9e7f81d008b57f33ee365973d2e349131c8b1c3e3378fe2db0",
+   "tamano": 388736,
+   "firmante": "NVIDIA Corporation"
+  },
+  {
+   "destino": "dxgi.dll",
+   "origen": "ilion-v1.4.1.2-beta",
+   "entrada": "dxgi.dll",
+   "sha256": "2a262a39853f1d7e3fd486ee3e449a8b8e55f1a8a02f28f487b480ae90478da4",
+   "tamano": 29869056,
+   "firmante": null,
+   "grupo": "motor"
+  },
+  {
+   "destino": "OptiScaler.ini",
+   "origen": "ilion-v1.4.1.2-beta",
+   "entrada": "OptiScaler.ini",
+   "sha256": "e84c4da9daf2cd7c7957aedc5126b434b8069339c5e4f908a52739b5a6b329aa",
+   "tamano": 59299,
+   "firmante": null,
+   "grupo": "motor"
+  },
+  {
+   "destino": "ILION\\Escaladores\\FSR4\\Oficial\\amd_fidelityfx_upscaler_dx12.dll",
+   "origen": "url",
+   "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v2.3.0/Kits/FidelityFX/signedbin/amd_fidelityfx_upscaler_dx12.dll",
+   "sha256": "d0dcccc74a43c44ba435b7a369b456e0970d8a4464e4bd683119b374f2c9fb46",
+   "tamano": 28761864,
+   "firmante": "Advanced Micro Devices",
+   "grupo": "variantes"
+  },
+  {
+   "destino": "ILION\\Escaladores\\FSR4\\Exact\\amd_fidelityfx_upscaler_dx12.dll",
+   "origen": "fsr4-overrides-2026-10-22",
+   "entrada": "exact/amd_fidelityfx_upscaler_dx12.dll",
+   "sha256": "6e42d8b6b67d28fafeebf2e495c1b51b85389bcdf35a5a0f1e760b9a3760abd5",
+   "tamano": 38354944,
+   "firmante": null,
+   "grupo": "variantes"
+  },
+  {
+   "destino": "ILION\\Escaladores\\FSR4\\Lossy\\amd_fidelityfx_upscaler_dx12.dll",
+   "origen": "fsr4-overrides-2026-10-22",
+   "entrada": "lossy/amd_fidelityfx_upscaler_dx12.dll",
+   "sha256": "1f4d68b8875ad2f1631eb2232d755b9282a6eb80787891e74d77d1573d42b302",
+   "tamano": 51553792,
+   "firmante": null,
+   "grupo": "variantes"
+  },
+  {
+   "destino": "ILION\\Escaladores\\FSR4\\Lossy2\\amd_fidelityfx_upscaler_dx12.dll",
+   "origen": "fsr4-overrides-2026-10-22",
+   "entrada": "lossy2/amd_fidelityfx_upscaler_dx12.dll",
+   "sha256": "d3388bdd60c5a04c18019d47bcb7eb73e4a8a1ab2bb5b9fca9ff0508ae4317ce",
+   "tamano": 50586112,
+   "firmante": null,
+   "grupo": "variantes"
+  },
+  {
+   "destino": "ILION\\Escaladores\\FSR4\\Community_4.1.1B\\amd_fidelityfx_upscaler_dx12.dll",
+   "origen": "ilion-variantes-1",
+   "entrada": "ILION/Escaladores/FSR4/Community_4.1.1B/amd_fidelityfx_upscaler_dx12.dll",
+   "sha256": "0dd77d9c78d1ef9bc330cf4697ab3ffe24bc1aa7850e4130263dc922107fbd75",
+   "tamano": 34013696,
+   "firmante": null,
+   "grupo": "variantes"
+  },
+  {
+   "destino": "OptiScaler\\plugins\\XeMFG\\Clasica\\XeFGUnlock.asi",
+   "origen": "ilion-variantes-1",
+   "entrada": "OptiScaler/plugins/XeMFG/Clasica/XeFGUnlock.asi",
+   "sha256": "614c517fe3b498b2262236f2472325c768975526dbcdbe9bf04f1f7161686e50",
+   "tamano": 38912,
+   "firmante": null,
+   "grupo": "variantes"
+  },
+  {
+   "destino": "OptiScaler\\plugins\\XeMFG\\WMMA\\MFGUnlocker.asi",
+   "origen": "ilion-variantes-1",
+   "entrada": "OptiScaler/plugins/XeMFG/WMMA/MFGUnlocker.asi",
+   "sha256": "23774892052f4575c0b4c8481ccebf81c2f3c85d3bbba18471e095b89748f04f",
+   "tamano": 12125696,
+   "firmante": null,
+   "grupo": "variantes"
+  },
+  {
+   "destino": "OptiScaler\\plugins\\OptiPatcher.asi",
+   "origen": "url",
+   "url": "https://github.com/optiscaler/OptiPatcher/releases/download/v0.42/OptiPatcher_v0.42.asi",
+   "sha256": "2a6e033aeda72d63281889480b2380da830530cf6e1e448e2056d451ade75f1b",
+   "tamano": 107520,
+   "firmante": null,
+   "grupo": "variantes"
+  },
+  {
+   "destino": "Instalar_ReShade.bat",
+   "origen": "ilion-extras-1",
+   "entrada": "Instalar_ReShade.bat",
+   "sha256": "8ccd16a4688cf257355356eb1817f92b13e6d49c81da7b742157f85c505db2d7",
+   "tamano": 39213,
+   "firmante": null,
+   "grupo": "variantes"
+  },
+  {
+   "destino": "LmxxfNrRuntime.dll",
+   "origen": "ilion-lmxxf-nr-runtime-1",
+   "entrada": "LmxxfNrRuntime.dll",
+   "sha256": "1e6dce7ef7226f722ad7990315e72c794420990a932ae782661a38cabf4c6c4c",
+   "tamano": 1530880,
+   "firmante": null,
+   "grupo": "lmxxf"
+  },
+  {
+   "destino": "LmxxfNrRuntime.pak",
+   "origen": "ilion-lmxxf-nr-runtime-1",
+   "entrada": "LmxxfNrRuntime.pak",
+   "sha256": "9d92106e6e6e5204a2e2c181847ba74bd49c7bf54e88466946fb2fee19cbb542",
+   "tamano": 759906475,
+   "firmante": null,
+   "grupo": "lmxxf"
+  }
+ ],
+ "justificacion": [
+  "El commit de importación de ILION (0986dc8) tiene los mismos blobs que OptiScaler f6f75ddf (Config.h, dllmain.cpp, Nvngx_FG.cpp, FSR31Feature.cpp comprobados con la API de GitHub).",
+  "nightly-20261009 es la compilación oficial de f6f75ddf: XeSS 2.0.2, XeFG 1.3.1.78, XeLL 1.3.2, amd_fidelityfx_vk 1.0.1, Nukem 0.130 y el fetcher son idénticos byte a byte al paquete de referencia del usuario.",
+  "FidelityFX DX12 (loader 2.3.0, upscaler 4.1.2, FG 4.0.2, build 4555): el paquete de referencia los subió desde FSR 4.1.1; son idénticos a FidelityFX-SDK v2.4.0 signedbin (blob de Git) y a los de OptiScaler 0.9.5 oficial.",
+  "streamline\\: 16 archivos idénticos a Streamline SDK v2.14.1 (CRC32 y tamaño del índice oficial).",
+  "amd_fidelityfx_vk.dll se mantiene en 1.0.1: la implementación Vulkan de ILION elige el FSR 4 del driver por su posición en la lista de esa DLL.",
+  "OptiScaler.ini oficial de f6f75ddf: solo cuando se instala una DLL suelta sin el paquete de ILION (ILION completa sus claves al guardar).",
+  "Las licencias (Licenses\\) van como documentación de Setup; el instalador de OptiScaler no copia .txt ni .md al juego.",
+  "D3D12Core.dll (Agility SDK) viene en la compilación oficial pero no en el paquete probado: opcional, solo para [FSR] FsrAgilitySDKUpgrade.",
+  "Variantes: FSR 4.1.1 oficial = FidelityFX SDK v2.3.0 (blob idéntico); Exact/Lossy/Lossy2 = zgauthier2000 dll-2026-10-22 (idénticas); 4.1.1B, XeMFG Clásica/WMMA y runtime de lmxxf en ilion-componentes-1."
+ ]
+}

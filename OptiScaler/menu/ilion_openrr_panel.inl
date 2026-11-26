@@ -291,6 +291,31 @@ void MenuCommon::RenderRayReconstructionTab(RenderMenuContext& ctx)
                                   "A rota RR própria do ILION (RRUpscaler) está configurada: concorre com o OpenRR. Remova-a no ini.",
                                   "Задан собственный путь RR в ILION (RRUpscaler): он конкурирует с OpenRR. Уберите его в ini."));
 
+        // ILION 1.5.0: tested in Cyberpunk 2077 (RX 7900 XTX, DLSS Enabler and DLSSG-XeFG): a game started with Ray
+        // Reconstruction already on never shows the generated frames for that whole session (the game's DLSSG runs, its
+        // frames don't reach the screen; turning RR off doesn't bring them back). Turned on during play, both work
+        // ILION 1.5.0: OptiFG takes its inputs from ILION's upscaler, which doesn't run while OpenRR denoises and upscales
+        if (cfg.FGInput.value_or_default() == FGInput::Upscaler)
+            WrappedText(IlionTheme::LampAmber,
+                        ShellText("OptiFG (Upscaler input) generates nothing with Ray Reconstruction on: RR replaces the upscaler it takes its data "
+                                  "from. Use the game's DLSSG input (via Nvngx or Streamline).",
+                                  "OptiFG (entrada Upscaler) no genera con Ray Reconstruction activo: RR sustituye al escalador del que toma "
+                                  "sus datos. Usa la entrada DLSSG del juego (vía Nvngx o Streamline).",
+                                  "O OptiFG (entrada Upscaler) não gera com o Ray Reconstruction ativo: o RR substitui o escalador de onde "
+                                  "tira os dados. Use a entrada DLSSG do jogo (via Nvngx ou Streamline).",
+                                  "OptiFG (вход Upscaler) не генерирует при включённом Ray Reconstruction: RR заменяет масштабировщик, из "
+                                  "которого он берёт данные. Используйте вход DLSSG игры (через Nvngx или Streamline)."));
+        if (IlionOpenRr::GameDlssgFgConfigured() && IlionOpenRr::GetUserBackend() == "d3d12")
+            WrappedText(IlionTheme::LampAmber,
+                        ShellText("D3D12 Direct forced with frame generation: if the game starts with Ray Reconstruction on, its generated "
+                                  "frames won't show. Auto uses the Vulkan bridge for that.",
+                                  "D3D12 Direct forzado con generación de fotogramas: si el juego arranca con Ray Reconstruction activo, "
+                                  "sus fotogramas generados no se verán. Auto usa el puente Vulkan para eso.",
+                                  "D3D12 Direct forçado com geração de quadros: se o jogo iniciar com o Ray Reconstruction ativo, os "
+                                  "quadros gerados não aparecerão. Auto usa a ponte Vulkan para isso.",
+                                  "D3D12 Direct принудительно при генерации кадров: если игра запущена с включённым Ray Reconstruction, "
+                                  "сгенерированные кадры не появятся. Авто использует мост Vulkan."));
+
         const char* backNow = ShellText("To go back to the game's own denoisers now, turn Ray Reconstruction off in the game's graphics menu.",
                                         "Para volver ahora a los denoisers del juego, apaga Ray Reconstruction en el menú gráfico del juego.",
                                         "Para voltar agora aos denoisers do jogo, desligue o Ray Reconstruction no menu gráfico do jogo.",
@@ -350,18 +375,36 @@ void MenuCommon::RenderRayReconstructionTab(RenderMenuContext& ctx)
             ImGui::TableNextColumn();
             RrName("Backend", RrApply::Recreate);
             {
+                // ILION 1.5.0: ILION's choice (IlionBackend); OpenRR's Backend follows it at every start (misc/IlionOpenRr.h)
                 const char* values[] = { "auto", "d3d12", "vulkan" };
                 const char* previews[] = { "Auto", "D3D12 Direct", ShellText("Vulkan bridge", "Puente Vulkan", "Ponte Vulkan", "Мост Vulkan") };
-                const char* items[] = { ShellText("Auto (D3D12 Direct, Vulkan bridge when it can't)", "Auto (D3D12 Direct; puente Vulkan si no puede)",
-                                                  "Auto (D3D12 Direct; ponte Vulkan se não puder)", "Авто (D3D12 Direct, иначе мост Vulkan)"),
-                                        ShellText("D3D12 Direct: in the game's command list", "D3D12 Direct: en la lista de comandos del juego",
-                                                  "D3D12 Direct: na lista de comandos do jogo", "D3D12 Direct: в списке команд игры"),
+                const char* items[] = { ShellText("Auto: Vulkan bridge with the game's frame generation, D3D12 Direct without it (recommended)",
+                                                  "Auto: puente Vulkan con la generación de fotogramas del juego, D3D12 Direct sin ella (recomendado)",
+                                                  "Auto: ponte Vulkan com a geração de quadros do jogo, D3D12 Direct sem ela (recomendado)",
+                                                  "Авто: мост Vulkan с генерацией кадров игры, D3D12 Direct без неё (рекомендуется)"),
+                                        ShellText("D3D12 Direct: in the game's command list (fastest)", "D3D12 Direct: en la lista de comandos del juego (más rápido)",
+                                                  "D3D12 Direct: na lista de comandos do jogo (mais rápido)", "D3D12 Direct: в списке команд игры (быстрее)"),
                                         ShellText("Vulkan bridge: shared resources", "Puente Vulkan: recursos compartidos", "Ponte Vulkan: recursos compartilhados",
                                                   "Мост Vulkan: общие ресурсы") };
-                const std::string current = IlionOpenRr::Lower(IlionOpenRr::GetValue("Backend", "auto"));
+                const std::string current = IlionOpenRr::GetUserBackend();
                 int index = current == "d3d12" ? 1 : current == "vulkan" ? 2 : 0;
                 if (RrCombo("##RrBackend", previews, items, 3, index))
-                    IlionOpenRr::SetValue("Backend", values[index]);
+                    IlionOpenRr::SetUserBackend(values[index]);
+                if (ImGui::IsItemHovered())
+                {
+                    const auto why = IlionOpenRr::backendReason.load();
+                    const char* now = why == IlionOpenRr::BackendReason::AutoForFg
+                                          ? ShellText("This start: Vulkan bridge, because the game's frame generation is set (with D3D12 Direct at start its generated frames don't show). About 0.5 ms more.",
+                                                      "En este arranque: puente Vulkan, porque está configurada la generación de fotogramas del juego (con D3D12 Direct al arrancar sus fotogramas generados no se ven). Unos 0,5 ms más.",
+                                                      "Neste início: ponte Vulkan, porque a geração de quadros do jogo está configurada (com D3D12 Direct ao iniciar os quadros gerados não aparecem). Cerca de 0,5 ms a mais.",
+                                                      "В этом запуске: мост Vulkan, так как настроена генерация кадров игры (с D3D12 Direct при запуске её кадры не видны). Около 0,5 мс больше.")
+                                      : why == IlionOpenRr::BackendReason::AutoNoFg
+                                          ? ShellText("This start: D3D12 Direct (no frame generation of the game).", "En este arranque: D3D12 Direct (sin generación de fotogramas del juego).",
+                                                      "Neste início: D3D12 Direct (sem geração de quadros do jogo).", "В этом запуске: D3D12 Direct (без генерации кадров игры).")
+                                          : ShellText("This start: the backend you chose.", "En este arranque: el backend que elegiste.", "Neste início: o backend que você escolheu.",
+                                                      "В этом запуске: выбранный вами бэкенд.");
+                    WrappedTooltip("%s", now);
+                }
             }
             ImGui::EndTable();
         }

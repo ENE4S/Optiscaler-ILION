@@ -17,12 +17,14 @@
 
 #include <Util.h>
 #include <Config.h>
+#include <State.h>
 #include <Logger.h>
 #include <misc/IdentifyGpu.h>
 
 #include <windows.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -724,6 +726,83 @@ inline void ApplyFirstTakeover(Ini& ini)
         ini.SetBool("IlionManaged", true);
 }
 
+// ILION 1.5.0: OpenRR's backend at start. Found in Cyberpunk 2077 (RX 7900 XTX, DLSS Enabler and DLSSG-XeFG, the
+// FGDIAG build): when the game creates Ray Reconstruction at start with OpenRR's D3D12 Direct backend, Streamline's
+// DLSS-G presents only the real frames for the whole session (the replacement generates and returns success, its frame
+// never reaches the screen). With the Vulkan bridge, or with RR turned on later, both work. The bridge costs about
+// 0.5 ms more (9.7 against 9.2 ms p50 at 1706x960 -> 1440p). So with the game's DLSSG configured ILION starts OpenRR on
+// the bridge, and on D3D12 Direct otherwise. IlionBackend keeps the user's choice: auto (that rule), d3d12 or vulkan
+enum class BackendReason
+{
+    Unknown,
+    AutoForFg,   // auto, the game's DLSSG is configured: Vulkan bridge
+    AutoNoFg,    // auto, no frame generation of the game: D3D12 Direct (OpenRR's own auto)
+    ForcedD3d12,
+    ForcedVulkan
+};
+
+inline std::atomic<BackendReason> backendReason { BackendReason::Unknown };
+
+// The game's DLSSG through Streamline is in use: ILION reads its inputs or passes them to a replacement
+inline bool GameDlssgFgConfigured()
+{
+    const auto input = Config::Instance()->FGInput.value_or_default();
+    return input == FGInput::NvngxFG || input == FGInput::DLSSG;
+}
+
+inline std::string UserBackend(const Ini& ini)
+{
+    std::string v = Lower(ini.Get("IlionBackend", "auto"));
+    return v == "d3d12" || v == "vulkan" ? v : std::string("auto");
+}
+
+// The value of OpenRR's Backend for the choice and this configuration, and why
+inline std::string EffectiveBackend(const std::string& user, BackendReason* why)
+{
+    BackendReason r;
+    std::string value;
+    if (user == "d3d12")
+    {
+        r = BackendReason::ForcedD3d12;
+        value = "d3d12";
+    }
+    else if (user == "vulkan")
+    {
+        r = BackendReason::ForcedVulkan;
+        value = "vulkan";
+    }
+    else if (GameDlssgFgConfigured())
+    {
+        r = BackendReason::AutoForFg;
+        value = "vulkan";
+    }
+    else
+    {
+        r = BackendReason::AutoNoFg;
+        value = "auto";
+    }
+    if (why != nullptr)
+        *why = r;
+    return value;
+}
+
+inline void ApplyBackend(Ini& ini)
+{
+    if (!ini.Loaded())
+        return;
+    BackendReason why;
+    const std::string value = EffectiveBackend(UserBackend(ini), &why);
+    backendReason.store(why);
+    if (Lower(ini.Get("Backend", "auto")) != value)
+    {
+        ini.Set("Backend", value);
+        LOG_INFO("OpenRR: Backend = {} ({})", value,
+                 why == BackendReason::AutoForFg ? "auto: the game's DLSSG is configured, D3D12 Direct at start hides its generated frames"
+                 : why == BackendReason::AutoNoFg ? "auto: no frame generation of the game"
+                                                  : "chosen by the user");
+    }
+}
+
 // The interface that has the technology: Industrial presented Full (the same test as the menu's OpenRrUiAllowed)
 inline bool IndustrialFull()
 {
@@ -732,15 +811,35 @@ inline bool IndustrialFull()
     return config->MenuUiTheme.value_or_default() != "olive" && presentation != "compact" && presentation != "sputnik";
 }
 
-// At startup, right after the plugins are loaded: before any key can open OpenRR's own menu
+// At startup, right after the plugins are loaded, before the game creates any feature: the backend for this start (every
+// interface, it is a fix), and OpenRR's own menu off before any key can open it (the interface that has its settings)
 inline void EarlyTakeover()
 {
-    if (GetModuleHandleW(L"openrr-amd.asi") == nullptr || !IndustrialFull())
+    if (GetModuleHandleW(L"openrr-amd.asi") == nullptr)
         return;
     std::lock_guard<std::mutex> lock(Mutex());
     auto& ini = SharedIni();
-    if (ini.Load())
+    if (!ini.Load())
+        return;
+    ApplyBackend(ini);
+    if (IndustrialFull())
         ApplyFirstTakeover(ini);
+}
+
+// The user's backend choice from the menu: kept in IlionBackend and applied to OpenRR's Backend at once (it takes effect
+// when the game creates Ray Reconstruction again)
+inline void SetUserBackend(const std::string& choice)
+{
+    std::lock_guard<std::mutex> lock(Mutex());
+    auto& ini = SharedIni();
+    ini.Set("IlionBackend", choice);
+    ApplyBackend(ini);
+}
+
+inline std::string GetUserBackend()
+{
+    std::lock_guard<std::mutex> lock(Mutex());
+    return UserBackend(SharedIni());
 }
 
 // Refreshed at most twice a second: the install every 5 s, the ini when it changed, the log where it was left
@@ -764,7 +863,7 @@ inline Snapshot Get()
         {
             auto& ini = SharedIni();
             ini.Refresh();
-            if (!takeoverDone && snap.install.loaded && ini.Loaded())
+            if (!takeoverDone && snap.install.loaded && ini.Loaded() && IndustrialFull())
             {
                 ApplyFirstTakeover(ini);
                 takeoverDone = true;

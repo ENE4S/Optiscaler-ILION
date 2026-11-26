@@ -12323,6 +12323,20 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
     auto& menuResScale = ctx.menuResScale;
     auto& primaryGpu = *ctx.primaryGpu;
 
+    // ILION 1.5.0: OptiFG with the upscaler input while OpenRR's Ray Reconstruction runs has no inputs (RR replaces the
+    // upscaler); said where FG is chosen, in every interface
+    if (config->FGInput.value_or_default() == FGInput::Upscaler && IlionOpenRr::Loaded() &&
+        IlionOpenRr::RrRunning(IlionOpenRr::Get().telemetry))
+        WrappedText(IlionTheme::Themed(ImVec4(1.0f, 0.65f, 0.06f, 1.0f), IlionTheme::Role::Warn),
+                    ShellText("OptiFG (Upscaler input) generates nothing with Ray Reconstruction on: RR replaces the upscaler it takes its data "
+                                  "from. Use the game's DLSSG input (via Nvngx or Streamline).",
+                                  "OptiFG (entrada Upscaler) no genera con Ray Reconstruction activo: RR sustituye al escalador del que toma "
+                                  "sus datos. Usa la entrada DLSSG del juego (vía Nvngx o Streamline).",
+                                  "O OptiFG (entrada Upscaler) não gera com o Ray Reconstruction ativo: o RR substitui o escalador de onde "
+                                  "tira os dados. Use a entrada DLSSG do jogo (via Nvngx ou Streamline).",
+                                  "OptiFG (вход Upscaler) не генерирует при включённом Ray Reconstruction: RR заменяет масштабировщик, из "
+                                  "которого он берёт данные. Используйте вход DLSSG игры (через Nvngx или Streamline)."));
+
     /// FG INPUTS
 
     static std::vector<MenuOption<FGInput>> inputOptions;

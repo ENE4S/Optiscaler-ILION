@@ -1,15 +1,15 @@
 {
  "formato": 1,
- "nombre": "Base congelada de OptiScaler para ILION 1.4.1.2",
- "fecha": "2026-11-20",
+ "nombre": "Base congelada de OptiScaler para ILION 1.5.0",
+ "fecha": "2026-11-26",
  "motor": {
   "nombre": "OptiScaler ILION",
-  "version": "1.4.1.2 beta",
+  "version": "1.5.0",
   "destino": "dxgi.dll",
-  "sha256": "2a262a39853f1d7e3fd486ee3e449a8b8e55f1a8a02f28f487b480ae90478da4",
-  "codigo": "rama ilion-1.4.1.2-beta-correcciones, commit b441a1d",
-  "base": "OptiScaler f6f75ddf0118ac45f447e2babbe18dbda3451edd + cambios de ILION",
-  "nota": "Fuente oficial: publicación ilion-v1.4.1.2-beta de ENE4S/Optiscaler-ILION (grupo «motor»). Un paquete o DLL local sigue siendo opción avanzada."
+  "sha256": "3118186e16805b5bb20017a39084f3d691a7fa4113252807571eae5d019bc088",
+  "codigo": "rama ilion-1.5.0, commit 22014a2",
+  "base": "OptiScaler nightly-20261121 (1c4e484) + cambios de ILION",
+  "nota": "Fuente oficial: publicación ilion-v1.5.0 de ENE4S/Optiscaler-ILION (grupo «motor»). Un paquete o DLL local sigue siendo opción avanzada."
  },
  "paquetes": [
   {
@@ -60,6 +60,13 @@
    "url": "https://github.com/zgauthier2000/fsr4-shader-performance-overrides/releases/download/dll-2026-10-22/fsr4.1.1-cyboman-rx7000-2026-10-22.7z",
    "sha256": "e6e507288c003d8063c3c12a70cb94b692499d894a9c2703c816450176155c43",
    "nota": "FSR 4.1.1 Exact, Lossy y Lossy2 de zgauthier2000 (GPL-2.0), publicación dll-2026-10-22: idénticas a las del paquete de ILION."
+  },
+  {
+   "id": "ilion-v1.5.0",
+   "tipo": "archivo-zip",
+   "url": "https://github.com/ENE4S/Optiscaler-ILION/releases/download/ilion-v1.5.0/OptiScaler-ILION-1.5.0.zip",
+   "sha256": "8139a448a38e07199ae985aeea50d693a7b57ac586d9753205c95a7091d41f33",
+   "nota": "Publicación oficial de ILION 1.5.0 (ENE4S/Optiscaler-ILION): dxgi.dll y OptiScaler.ini. Código: rama ilion-1.5.0 (22014a2), GPL-3.0."
   }
  ],
  "archivos": [
@@ -177,6 +184,30 @@
    "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v2.4.0/Kits/FidelityFX/signedbin/amd_fidelityfx_framegeneration_dx12.dll",
    "sha256": "e6843252f58b0341a0d80f6a20bc0d840643ee95bc48c22cac08745344577bb6",
    "tamano": 29679376,
+   "firmante": "Advanced Micro Devices"
+  },
+  {
+   "destino": "OptiScaler\\amd_fidelityfx_loader_vk.dll",
+   "origen": "url",
+   "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v2.4.0/Kits/FidelityFX/signedbin/amd_fidelityfx_loader_vk.dll",
+   "sha256": "38a56a01fb3565c0757d9f5c1e4e69de4b65e5f2e5769b323b200dc1f142bab9",
+   "tamano": 39184,
+   "firmante": "Advanced Micro Devices"
+  },
+  {
+   "destino": "OptiScaler\\amd_fidelityfx_upscaler_vk.dll",
+   "origen": "url",
+   "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v2.4.0/Kits/FidelityFX/signedbin/amd_fidelityfx_upscaler_vk.dll",
+   "sha256": "4a7e895af6e0b615d40a84d59eb8c2b1054ad91cdd0c739567940270d51bdab7",
+   "tamano": 36135696,
+   "firmante": "Advanced Micro Devices"
+  },
+  {
+   "destino": "OptiScaler\\amd_fidelityfx_framegeneration_vk.dll",
+   "origen": "url",
+   "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v2.4.0/Kits/FidelityFX/signedbin/amd_fidelityfx_framegeneration_vk.dll",
+   "sha256": "d002dabff8c5e71eaa715fc99438cd4dc81230262a7897b16bc402efec3498b4",
+   "tamano": 36806928,
    "firmante": "Advanced Micro Devices"
   },
   {
@@ -309,19 +340,19 @@
   },
   {
    "destino": "dxgi.dll",
-   "origen": "ilion-v1.4.1.2-beta",
+   "origen": "ilion-v1.5.0",
    "entrada": "dxgi.dll",
-   "sha256": "2a262a39853f1d7e3fd486ee3e449a8b8e55f1a8a02f28f487b480ae90478da4",
-   "tamano": 29869056,
+   "sha256": "3118186e16805b5bb20017a39084f3d691a7fa4113252807571eae5d019bc088",
+   "tamano": 32235520,
    "firmante": null,
    "grupo": "motor"
   },
   {
    "destino": "OptiScaler.ini",
-   "origen": "ilion-v1.4.1.2-beta",
+   "origen": "ilion-v1.5.0",
    "entrada": "OptiScaler.ini",
-   "sha256": "e84c4da9daf2cd7c7957aedc5126b434b8069339c5e4f908a52739b5a6b329aa",
-   "tamano": 59299,
+   "sha256": "5dd746cae395a7478691091d6fff63863844314a7bd355811b0361ed0b798832",
+   "tamano": 66926,
    "firmante": null,
    "grupo": "motor"
   },
@@ -434,6 +465,8 @@
   "OptiScaler.ini oficial de f6f75ddf: solo cuando se instala una DLL suelta sin el paquete de ILION (ILION completa sus claves al guardar).",
   "Las licencias (Licenses\\) van como documentación de Setup; el instalador de OptiScaler no copia .txt ni .md al juego.",
   "D3D12Core.dll (Agility SDK) viene en la compilación oficial pero no en el paquete probado: opcional, solo para [FSR] FsrAgilitySDKUpgrade.",
-  "Variantes: FSR 4.1.1 oficial = FidelityFX SDK v2.3.0 (blob idéntico); Exact/Lossy/Lossy2 = zgauthier2000 dll-2026-10-22 (idénticas); 4.1.1B, XeMFG Clásica/WMMA y runtime de lmxxf en ilion-componentes-1."
+  "Variantes: FSR 4.1.1 oficial = FidelityFX SDK v2.3.0 (blob idéntico); Exact/Lossy/Lossy2 = zgauthier2000 dll-2026-10-22 (idénticas); 4.1.1B, XeMFG Clásica/WMMA y runtime de lmxxf en ilion-componentes-1.",
+  "ILION 1.5.0: motor sobre OptiScaler nightly-20261121; probado en juego (Cyberpunk 2077, RX 7900 XTX) sobre esta misma base de 1.4.1.2 (XeSS 2.0.2, XeFG 1.3.1.78, XeLL 1.3.2, FidelityFX DX12 de v2.4.0, Streamline 2.14.1).",
+  "ILION 1.5.0: su módulo Vulkan de FSR usa el cargador de FidelityFX SDK 2.4: amd_fidelityfx_loader/upscaler/framegeneration_vk.dll de v2.4.0 signedbin (firmadas por AMD; idénticas byte a byte a las del SDK 7539ae8 con el que se compila ILION 1.5)."
  ]
 }

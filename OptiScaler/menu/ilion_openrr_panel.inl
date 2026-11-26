@@ -423,6 +423,11 @@ void MenuCommon::RenderRayReconstructionTab(RenderMenuContext& ctx)
             std::string stateValue;
             ImVec4 stateLed = yellow;
             bool stateLit = true;
+            // An RR feature still alive while ILION's upscaler runs: the game went back to its normal upscaling
+            if (t.featureAlive && IlionOpenRr::IlionUpscalerRunning())
+                stateValue = ShellText("paused: the game uses its normal upscaling now", "en pausa: el juego usa ahora el escalado normal",
+                                       "em pausa: o jogo usa agora o escalonamento normal", "на паузе: игра сейчас использует обычное масштабирование");
+            else
             switch (t.state)
             {
             case RunState::Ready:

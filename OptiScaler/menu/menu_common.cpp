@@ -9719,7 +9719,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
             {
                 const auto rrSnap = IlionOpenRr::Get();
                 const auto& rr = rrSnap.telemetry;
-                if (rr.featureAlive)
+                if (rr.featureAlive && !IlionOpenRr::IlionUpscalerRunning())
                 {
                     std::vector<std::pair<std::string, std::string>> rows;
                     bool rrMeasured = false;

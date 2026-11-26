@@ -87,6 +87,8 @@ struct Telemetry
     std::string gpuArch;         // "RDNA3", "RDNA4" as the plugin sees it
     std::string driver;          // "26.10.2"
     bool featureAlive = false;
+    std::vector<std::string> aliveHandles; // features created and not released yet (a preset change creates the new one
+                                           // before it releases the old one)
     bool vulkanFeature = false;
     unsigned renderW = 0, renderH = 0, outputW = 0, outputH = 0;
     std::string backend;         // "D3D12 Direct", "Vulkan bridge", "Vulkan host"
@@ -518,6 +520,9 @@ class LogReader
         }
         if (Has(line, "Ray Reconstruction feature created"))
         {
+            const std::string handle = Trim(After(line, "handle=", ","));
+            if (std::find(t.aliveHandles.begin(), t.aliveHandles.end(), handle) == t.aliveHandles.end())
+                t.aliveHandles.push_back(handle);
             t.featureAlive = true;
             t.vulkanFeature = Has(line, "Vulkan Ray Reconstruction");
             t.state = RunState::Building;
@@ -538,8 +543,14 @@ class LogReader
         }
         if (Has(line, "Ray Reconstruction feature released"))
         {
-            t.featureAlive = false;
-            t.state = RunState::Idle;
+            // Only the handle released goes: with another one still alive (the new one of a preset change) RR keeps running
+            const std::string handle = Trim(After(line, "handle=", ")"));
+            t.aliveHandles.erase(std::remove(t.aliveHandles.begin(), t.aliveHandles.end(), handle), t.aliveHandles.end());
+            if (t.aliveHandles.empty())
+            {
+                t.featureAlive = false;
+                t.state = RunState::Idle;
+            }
             return;
         }
         if (Has(line, "destroy after ") && Has(line, "network frames"))
@@ -653,6 +664,9 @@ class LogReader
                 t.fastModeOn = Has(line, "fast mode on");
                 t.haveModeLine = true;
                 // The first line of a feature comes before the network is ready (0.04 ms of nothing): no figure
+                // A figure of a network frame past the first one means the network runs, even if its "ready" line was missed
+                if (frame > 1 && t.featureAlive && t.state == RunState::Building)
+                    t.state = RunState::Ready;
                 t.haveStats = frame > 1 && t.state == RunState::Ready;
                 t.statTick = GetTickCount64();
             }
@@ -910,7 +924,18 @@ inline int StatAgeSeconds(const Telemetry& t)
 }
 
 // The upscaler of ILION is paused while the plugin denoises and upscales (the game asks for DLSSD instead of DLSS)
-inline bool RrRunning(const Telemetry& t) { return t.featureAlive && (t.state == RunState::Ready || t.state == RunState::Building); }
+// ILION's own upscaler running means the game uses its normal upscaling now (DLSS instead of DLSSD). Found in Cyberpunk:
+// a DLSS preset change can make the game drop Ray Reconstruction while its feature stays alive (released only at exit)
+inline bool IlionUpscalerRunning()
+{
+    IFeature* feature = State::Instance().currentFeature;
+    return feature != nullptr && feature->IsInited() && !feature->IsFrozen();
+}
+
+inline bool RrRunning(const Telemetry& t)
+{
+    return t.featureAlive && (t.state == RunState::Ready || t.state == RunState::Building) && !IlionUpscalerRunning();
+}
 
 // The switch is on but the game started while it was off: the game was told there is no Ray Reconstruction (its option
 // is grey) until it restarts. The plugin's check runs within the first seconds; 15 s leaves room for a slow start

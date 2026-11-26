@@ -83,27 +83,15 @@ void Nvngx_XeMfgXmx::LoadLibraries()
         return;
     }
 
-    dll = module;
-    _DLSSG_D3D12_Init = (PFN_D3D12_Init) GetProcAddress(dll, "NVSDK_NGX_D3D12_Init");
-    _DLSSG_D3D12_Init_Ext = (PFN_D3D12_Init_Ext) GetProcAddress(dll, "NVSDK_NGX_D3D12_Init_Ext");
-    _DLSSG_D3D12_Shutdown = (PFN_D3D12_Shutdown) GetProcAddress(dll, "NVSDK_NGX_D3D12_Shutdown");
-    _DLSSG_D3D12_Shutdown1 = (PFN_D3D12_Shutdown1) GetProcAddress(dll, "NVSDK_NGX_D3D12_Shutdown1");
-    _DLSSG_D3D12_GetScratchBufferSize =
-        (PFN_D3D12_GetScratchBufferSize) GetProcAddress(dll, "NVSDK_NGX_D3D12_GetScratchBufferSize");
-    _DLSSG_D3D12_CreateFeature = (PFN_D3D12_CreateFeature) GetProcAddress(dll, "NVSDK_NGX_D3D12_CreateFeature");
-    _DLSSG_D3D12_ReleaseFeature = (PFN_D3D12_ReleaseFeature) GetProcAddress(dll, "NVSDK_NGX_D3D12_ReleaseFeature");
-    _DLSSG_D3D12_GetFeatureRequirements =
-        (PFN_D3D12_GetFeatureRequirements) GetProcAddress(dll, "NVSDK_NGX_D3D12_GetFeatureRequirements");
-    _DLSSG_D3D12_EvaluateFeature = (PFN_D3D12_EvaluateFeature) GetProcAddress(dll, "NVSDK_NGX_D3D12_EvaluateFeature");
-    _DLSSG_D3D12_PopulateParameters_Impl =
-        (PFN_D3D12_PopulateParameters_Impl) GetProcAddress(dll, "NVSDK_NGX_D3D12_PopulateParameters_Impl");
+    ngx.dll = module;
+    LoadDx12Exports(); // ILION 1.5: shared with the other replacements (Nvngx_DllProxy)
     // DirectX 12 only: no Vulkan entry points are taken (XeFG has no Vulkan API)
 
-    if (_DLSSG_D3D12_Init == nullptr || _DLSSG_D3D12_CreateFeature == nullptr || _DLSSG_D3D12_EvaluateFeature == nullptr)
+    if (ngx.D3D12_Init == nullptr || ngx.D3D12_CreateFeature == nullptr || ngx.D3D12_EvaluateFeature == nullptr)
     {
         LOG_ERROR("XeMFG XMX: {} doesn't export the NVSDK_NGX_D3D12 entry points of a DLSSG replacement",
                   wstring_to_string(install.dll.wstring()));
-        _DLSSG_D3D12_Init = nullptr;
+        ngx.D3D12_Init = nullptr;
         return;
     }
 
@@ -112,10 +100,10 @@ void Nvngx_XeMfgXmx::LoadLibraries()
 
     // As OptiScaler v10's CustomProviders::LoadDll, right after the load: its OptiPluginInit reads [Plugin.XeMFG XMX]
     // (NetworkPath, HudlessUi) and registers its tab. Without it realdody stays on its default path and can't be switched
-    const auto init = (PFN_OptiPluginInit) GetProcAddress(dll, OPTI_PLUGIN_INIT_NAME);
+    const auto init = (PFN_OptiPluginInit) GetProcAddress(ngx.dll, OPTI_PLUGIN_INIT_NAME);
     if (init == nullptr)
         LOG_WARN("XeMFG XMX: this build has no OptiPluginInit (older than build-10): no network path choice");
-    PluginApi::InitPlugin(dll, init, std::string(PluginName));
+    PluginApi::InitPlugin(ngx.dll, init, std::string(PluginName));
 }
 
 Nvngx_XeMfgXmx::NetworkPath Nvngx_XeMfgXmx::SavedNetworkPath()

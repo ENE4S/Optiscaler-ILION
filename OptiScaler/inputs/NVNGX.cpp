@@ -1,6 +1,6 @@
 #include "pch.h"
 #include "Config.h"
-#include "proxies/NVNGX_Proxy.h"
+#include "proxies/Nvngx_Proxy.h"
 
 #pragma region Out of NVNGX Scope
 
@@ -138,3 +138,6 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_UpdateFeature(const NVSDK_NGX_Applicati
     LOG_DEBUG("FeatureId finished, returning NVSDK_NGX_Result_Success");
     return NVSDK_NGX_Result_Success;
 }
+
+// ILION: the NGX module for D3D12_Hooks (the external d4r backend)
+HMODULE IlionNgxModule() { return NVNGXProxy::NVNGXModule(); }

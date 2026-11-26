@@ -493,7 +493,7 @@ static std::string KeyOf(const UpscalerVariant& v)
     if (v.entry != nullptr)
         return "entry:" + wstring_to_string(v.entry->key);
     if (v.backend != Upscaler::Reset)
-        return "backend:" + UpscalerToCode(v.backend);
+        return "backend:" + EnumToCode(v.backend);
     if (v.vkDriver)
         return "vk:" + std::to_string(v.ffxIndex);
     if (v.ffxIndex >= 0)
@@ -978,11 +978,11 @@ static std::vector<Option> Alternatives(const UpscalerCatalog& catalog, const Ar
     }
     else
     {
-        // GPU sin FSR 4 propio: la DLL oficial de AMD solo con un modelo INT8 forzado (Fsr4ForceModel), la ruta de
+        // GPU sin FSR 4 propio: la DLL oficial de AMD solo con un modelo INT8 forzado (Fsr4GpuSupport), la ruta de
         // OptiScaler en otras GPU (el inventario ya la marca no usable sin él); las comunitarias si el inventario las da por
         // usables. Por debajo de DLSS donde lo hay
         const int full = arch.dlssSR ? 4 : 5;
-        const bool int8Forced = IsFsr4Int8(Config::Instance()->Fsr4ForceModel.value_or_default());
+        const bool int8Forced = IsFsr4Int8(Config::Instance()->Fsr4GpuSupport.value_or_default());
         for (const auto& v : catalog.variants)
             if (IsFsr4Full(v) && !IsDriver(v) && official(v) && int8Forced)
                 add(&v, Model::Any, full, false, "FSR 4 compatible (DLL de AMD con modelo INT8 forzado; sin soporte declarado por AMD en esta GPU)");

@@ -156,9 +156,34 @@ inline std::string ValidUtf8(const std::string& s)
         if (ok && n == 2 && c < 0xC2)
             ok = false; // overlong
         if (ok)
+        {
             out.append(s, i, n), i += n;
+            continue;
+        }
+
+        // ILION 1.5: a feed in Windows-1252 / ISO-8859-1 (its accented letters arrive as single bytes): the byte is
+        // read in that encoding. Only the five bytes Windows-1252 leaves undefined become U+FFFD
+        static const unsigned short cp1252[32] = { 0x20AC, 0, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+                                                   0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0, 0x017D, 0,
+                                                   0, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+                                                   0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0, 0x017E, 0x0178 };
+        const unsigned cp = c >= 0xA0 ? c : (c >= 0x80 ? cp1252[c - 0x80] : 0);
+        if (cp == 0)
+        {
+            out += "\xEF\xBF\xBD"; // U+FFFD, written as bytes so it doesn't depend on the source encoding
+        }
+        else if (cp < 0x800)
+        {
+            out += (char) (0xC0 | (cp >> 6));
+            out += (char) (0x80 | (cp & 0x3F));
+        }
         else
-            out += "\xEF\xBF\xBD", i++; // U+FFFD, written as bytes so it doesn't depend on the source encoding
+        {
+            out += (char) (0xE0 | (cp >> 12));
+            out += (char) (0x80 | ((cp >> 6) & 0x3F));
+            out += (char) (0x80 | (cp & 0x3F));
+        }
+        i++;
     }
     return out;
 }

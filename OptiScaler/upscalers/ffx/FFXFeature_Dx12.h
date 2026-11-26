@@ -4,11 +4,16 @@
 
 #include "dx12/ffx_api_dx12.h"
 #include "proxies/FfxApi_Proxy.h"
+#include <shaders/auto_exposure/AE_Dx12.h>
 
 class FFXFeatureDx12 : public FFXFeature, public IFeature_Dx12
 {
   private:
-    ID3D12Resource* smallerColor[2];
+    std::unique_ptr<AE_Dx12> _autoExposure;
+    bool _customAutoExposure = false;
+
+    // Custom upscaler dll, nullptr for the regular FFX ones
+    CustomFfxModule* _customUpscaler = nullptr;
 
     NVSDK_NGX_Parameter* SetParameters(NVSDK_NGX_Parameter* InParameters);
 
@@ -16,7 +21,7 @@ class FFXFeatureDx12 : public FFXFeature, public IFeature_Dx12
     bool InitFFX(const NVSDK_NGX_Parameter* InParameters);
 
   public:
-    FFXFeatureDx12(unsigned int InHandleId, NVSDK_NGX_Parameter* InParameters);
+    FFXFeatureDx12(unsigned int InHandleId, NVSDK_NGX_Parameter* InParameters, const std::string& customUpscaler = "");
 
     bool InitInternal(ID3D12GraphicsCommandList* InCommandList, NVSDK_NGX_Parameter* InParameters) override;
     bool EvaluateInternal(ID3D12GraphicsCommandList* InCommandList, NVSDK_NGX_Parameter* InParameters) override;
@@ -44,8 +49,5 @@ class FFXFeatureDx12 : public FFXFeature, public IFeature_Dx12
 
         if (_context != nullptr)
             FfxApiProxy::D3D12_DestroyContext(&_context, NULL);
-
-        SAFE_RELEASE(smallerColor[0]);
-        SAFE_RELEASE(smallerColor[1]);
     }
 };

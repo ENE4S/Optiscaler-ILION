@@ -58,6 +58,11 @@ class ScopedCard
     inline static void* flowTable = nullptr; // the table of the flow: a card inside another table never breaks it
     inline static bool flowBroken = false;
 
+    // ILION 1.5: a card closed while stretchTo is above its bottom grows down to it (the two columns end even);
+    // stretchAdded keeps what was added, so the natural height of a column can still be measured
+    inline static float stretchTo = 0.0f;
+    inline static float stretchAdded = 0.0f;
+
   private:
     int _flowSlot = -1;
     inline static const char* _filter = nullptr;
@@ -264,6 +269,7 @@ class MenuCommon
     static void RenderCustomTab(RenderMenuContext& ctx);
     static void RenderProfilesTab(RenderMenuContext& ctx); // ILION Perfiles (prototipo)
     static void RenderCommunityPanel(RenderMenuContext& ctx); // ILION COMMUNITY (columna derecha de PERFILES)
+    static void RenderRayReconstructionTab(RenderMenuContext& ctx); // ILION 1.5.0: Mejoras > Ray Reconstruction (OpenRR)
     static void RenderAntiGhostingTab(RenderMenuContext& ctx); // ILION: existing ghosting options, grouped
     static void RenderExternalFgTab(RenderMenuContext& ctx); // ILION: MFG SUPER MOTION engine, Advanced mode only
     static bool RenderOptiFgHudFix(RenderMenuContext& ctx);    // ILION: HUDFix of OptiFG, Anti-Ghosting tab only
@@ -284,8 +290,7 @@ class MenuCommon
     static void RenderFsrCommonSettings(RenderMenuContext& ctx);
     static void RenderFramerateSettings(RenderMenuContext& ctx);
     static void RenderVsyncSettings(RenderMenuContext& ctx);
-    static void RenderFakenvapiSettings(RenderMenuContext& ctx);
-    static void RenderLowLatencySettings(RenderMenuContext& ctx);
+    static void RenderLowLatencySettings(RenderMenuContext& ctx, bool compact = false);
     static void RenderActiveImageSettings(RenderMenuContext& ctx);
     static void RenderUpscaleRatioSettings(RenderMenuContext& ctx);
     static void RenderOutputScalingSettings(RenderMenuContext& ctx);
@@ -341,4 +346,10 @@ class MenuCommon
     static void HideMenu();
     static void Present();
     static void ApplyThemeStyle();
+
+    // ILION 1.5 (upstream): Vulkan FG outputs present the generated frames on their own, the game's presents only show
+    // the real ones. FGOutputPresent is called for each frame they present, FGOutputPresents says if the game's frames
+    // go through them.
+    static void FGOutputPresent();
+    static void FGOutputPresents(bool presents);
 };

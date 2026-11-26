@@ -29,6 +29,9 @@ inline constexpr CString FSR_ViewSpaceToMetersFactor = "FSR.viewSpaceToMetersFac
 inline constexpr CString FSR_TransparencyAndComp = "FSR.transparencyAndComposition";
 inline constexpr CString FSR_Reactive = "FSR.reactive";
 
+// D3D12_RESOURCE_STATES the depth input is in, 0 when unknown
+inline constexpr CString DepthState = "OptiScaler.DepthState";
+
 } // namespace OptiKeys
 
 template <typename T> struct EnumConfig;
@@ -70,11 +73,32 @@ enum class Upscaler
     Reset
 };
 
+template <> struct EnumConfig<Upscaler>
+{
+    static constexpr auto default_value = Upscaler::Reset;
+
+    // CodeToEnum takes the first match by code and EnumToCode the first match by value, so the aliases below are only
+    // read and DLSSD is only written
+    static constexpr std::pair<Upscaler, std::string_view> mapping[] = {
+        { Upscaler::XeSS, "xess" },         { Upscaler::XeSS_on12, "xess_12" },
+        { Upscaler::FSR21, "fsr21" },       { Upscaler::FSR21_on12, "fsr21_12" },
+        { Upscaler::FSR22, "fsr22" },       { Upscaler::FSR22_on12, "fsr22_12" },
+        { Upscaler::FFX, "ffx" },           { Upscaler::FFX_on12, "ffx_12" },
+        { Upscaler::DLSS, "dlss" },         { Upscaler::DLSS_on12, "dlss_12" },
+        { Upscaler::FSR31, "fsr31" },       // DX11 only, CodeToUpscalerFfx reads it as FFX on DX12 and Vulkan
+        { Upscaler::DLSS, "dlssd" },        // Ray reconstruction is picked by RRUpscaler
+        { Upscaler::FFX_on12, "fsr31_12" }, // From before FSR 3.1 got renamed to FFX
+        { Upscaler::DLSSD, "dlssd" },
+    };
+};
+
 enum class ApiUpscalerInput
 {
     DLSS_DX11,
     DLSS_DX12,
     DLSS_VK,
+    DLSSD_DX12,
+    DLSSD_VK,
     XeSS_DX11,
     XeSS_DX12,
     XeSS_VK,
@@ -92,17 +116,21 @@ enum class SharpenShader
 {
     RCAS,
     DepthAware,
-    LocalContrastDepthAware
+    DepthAwareDAS,
+    BabaNeural,
+    OptiSharpen
 };
 
 template <> struct EnumConfig<SharpenShader>
 {
     static constexpr auto default_value = SharpenShader::RCAS;
 
-    static constexpr std::pair<SharpenShader, std::string_view> mapping[] = { { SharpenShader::RCAS, "rcas" },
-                                                                              { SharpenShader::DepthAware, "da" },
-                                                                              { SharpenShader::LocalContrastDepthAware,
-                                                                                "lcda" } };
+    // EnumToCode returns the first match, so "das" is what gets saved; "lcda" is only read from older configs
+    static constexpr std::pair<SharpenShader, std::string_view> mapping[] = {
+        { SharpenShader::RCAS, "rcas" },         { SharpenShader::DepthAware, "da" },
+        { SharpenShader::DepthAwareDAS, "das" }, { SharpenShader::DepthAwareDAS, "lcda" },
+        { SharpenShader::BabaNeural, "baba" },   { SharpenShader::OptiSharpen, "opti" }
+    };
 };
 
 enum class FSR4Support : uint8_t
@@ -263,15 +291,12 @@ std::string UpscalerDisplayName(Upscaler upscaler, API api = API::NotSelected);
 std::string UpscalerShortName(Upscaler upscaler);
 bool IsFsr(Upscaler upscaler);
 
-// Converts enum to the string codes for config
-std::string UpscalerToCode(Upscaler upscaler);
-
-// Converts string codes into enum for config
-Upscaler CodeToUpscaler(const std::string& code);
-
-// Upscalers that use FFX got renamed from fsr31 to ffx
-// Needs this function for compatibility for now
-Upscaler CodeToUpscalerFfx(const std::string& code);
+// Native DX12 and Vulkan upscalers that can take the game's ray reconstruction in place of DLSSD
+inline bool IsRRRegularUpscaler(Upscaler upscaler)
+{
+    return upscaler == Upscaler::XeSS || upscaler == Upscaler::FSR21 || upscaler == Upscaler::FSR22 ||
+           upscaler == Upscaler::FFX || upscaler == Upscaler::DLSS;
+}
 
 // Enum to String Code
 template <typename T> std::string EnumToCode(T value)
@@ -298,4 +323,14 @@ template <typename T> T CodeToEnum(std::string_view code)
     }
 
     return EnumConfig<T>::default_value;
+}
+
+// Upscalers that use FFX got renamed from fsr31 to ffx, on DX11 fsr31 is still the native DX11 FSR 3.1
+// DX11: fsr31 -> fsr31, fsr31_12 -> ffx_12
+// DX12: fsr31 -> ffx
+// VK:   fsr31 -> ffx, fsr31_12 -> ffx_12
+inline Upscaler CodeToUpscalerFfx(std::string_view code)
+{
+    auto upscaler = CodeToEnum<Upscaler>(code);
+    return upscaler == Upscaler::FSR31 ? Upscaler::FFX : upscaler;
 }

@@ -7,8 +7,10 @@
 #include "precompile/reproject_mask_h_Shader.h"
 #include "precompile/reproject_mask_v_Shader.h"
 #include "precompile/reproject_latch_Shader.h"
+#include "precompile/reproject_cache_Shader.h"
+#include "precompile/reproject_stats_Shader.h"
 
-#include <numbers>
+#include <magic_enum.hpp>
 #include "mouseInputs/RawInputHook.h"
 
 using namespace DirectX;
@@ -89,119 +91,115 @@ inline static bool CompareResourceFormats(DXGI_FORMAT sc, DXGI_FORMAT hudless)
     return scGroup == hudlessGroup;
 }
 
-void Reproject_Dx12::FilloutStruct(const FilloutData& data, ReprojectionParams& params)
+bool Reproject_Dx12::CreateStatsResources()
 {
-    params.ScreenWidth = data.screenWidth;
-    params.ScreenHeight = data.screenHeight;
-    params.InvScreenWidth = 1.0f / data.screenWidth;
-    params.InvScreenHeight = 1.0f / data.screenHeight;
+    auto defaultHeapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+    auto outputDesc =
+        CD3DX12_RESOURCE_DESC::Buffer(StatsCount * sizeof(uint32_t), D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
 
-    params.DepthWidth = data.depthWidth;
-    params.DepthHeight = data.depthHeight;
+    auto result =
+        _device->CreateCommittedResource(&defaultHeapProps, D3D12_HEAP_FLAG_NONE, &outputDesc,
+                                         D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&_statsOutput));
 
-    params.UiDiffThreshold = data.diffThreshold;
-    params.DepthCutoff = Config::Instance()->ReprojectionDepthCutoff.value_or_default();
-    params.DitherWidthPx = data.screenHeight / 16.0f; // TODO: configurable
-    params.CutoffExpandPx = Config::Instance()->ReprojectionCutoffExpand.value_or_default();
-
-    params.InvertedDepth = data.invertedDepth;
-    params.ShowStaticElements = State::Instance().fgHudlessCompare;
-    params.FakeFrame = data.fakeFrame;
-
-    auto fillMode = Config::Instance()->ReprojectionFillMode.value_or_default();
-    if (fillMode == ReprojectionFill::Debug)
-        params.EdgeMode = 0;
-    else if (fillMode == ReprojectionFill::StrechEdge)
-        params.EdgeMode = 1;
-    else if (fillMode == ReprojectionFill::Dithering)
-        params.EdgeMode = 2;
-    else if (fillMode == ReprojectionFill::Noise)
-        params.EdgeMode = 3;
-
-    const float tanHalfFovY = std::tan(data.cameraVFov * 0.5f);
-    const float pixelAngle = 2.0f * std::atan(tanHalfFovY / data.screenHeight);
-
-    params.TanHalfFovY = tanHalfFovY;
-    params.TanHalfFovX = tanHalfFovY * data.cameraAspectRatio;
-    params.InvTanHalfFovY = 1.0f / tanHalfFovY;
-    params.InvTanHalfFovX = 1.0f / params.TanHalfFovX;
-
-    // Compute actual camera rotation deltas between frames
-    if (!_isFirstFrame && !data.fakeFrame)
+    if (result != S_OK)
     {
-        XMVECTOR prevFwd = XMVector3Normalize(XMLoadFloat3(reinterpret_cast<const XMFLOAT3*>(data.cameraPrevForward)));
-        XMVECTOR currFwd = XMVector3Normalize(XMLoadFloat3(reinterpret_cast<const XMFLOAT3*>(data.cameraForward)));
-
-        XMFLOAT3 p, c;
-        XMStoreFloat3(&p, prevFwd);
-        XMStoreFloat3(&c, currFwd);
-
-        // Yaw delta (wrapped to [-pi, pi])
-        float camYawDelta = std::atan2(c.y, c.x) - std::atan2(p.y, p.x);
-
-        if (camYawDelta > std::numbers::pi_v<float>)
-            camYawDelta -= 2.0f * std::numbers::pi_v<float>;
-
-        if (camYawDelta < -std::numbers::pi_v<float>)
-            camYawDelta += 2.0f * std::numbers::pi_v<float>;
-
-        // Pitch delta
-        const float camPitchDelta = std::asin(std::clamp(c.z, -1.0f, 1.0f)) - std::asin(std::clamp(p.z, -1.0f, 1.0f));
-
-        const float mouseX = data.mouseDeltaSimToSim.x * pixelAngle;
-        const float mouseY = data.mouseDeltaSimToSim.y * pixelAngle;
-
-        _calibration.Update(mouseX, mouseY, camYawDelta, camPitchDelta);
-    }
-    else
-    {
-        _isFirstFrame = false;
+        LOG_ERROR("[{0}] CreateCommittedResource (stats) error {1:x}", _name, (unsigned int) result);
+        return false;
     }
 
-    // Compute camera basis
-    XMVECTOR camRight = XMVector3Normalize(XMLoadFloat3(reinterpret_cast<const XMFLOAT3*>(data.cameraRight)));
-    XMVECTOR camUp = XMVector3Normalize(XMLoadFloat3(reinterpret_cast<const XMFLOAT3*>(data.cameraUp)));
-    XMVECTOR camForward = XMVector3Normalize(XMLoadFloat3(reinterpret_cast<const XMFLOAT3*>(data.cameraForward)));
+    _statsOutput->SetName(L"Reproject_Stats");
 
-    constexpr float TEST_ANGLE = 0.001f;
+    auto readbackHeapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK);
+    auto readbackDesc = CD3DX12_RESOURCE_DESC::Buffer(StatsCount * sizeof(uint32_t));
 
-    // Find which matrix rotation direction corresponds to positive camera motion.
-    XMVECTOR testPitchForward =
-        XMVector3Normalize(XMVector3TransformNormal(camForward, XMMatrixRotationAxis(camRight, TEST_ANGLE)));
+    for (uint32_t i = 0; i < StatsLatency; i++)
+    {
+        result =
+            _device->CreateCommittedResource(&readbackHeapProps, D3D12_HEAP_FLAG_NONE, &readbackDesc,
+                                             D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&_statsReadback[i]));
 
-    float pitchTest = std::asin(std::clamp(XMVectorGetZ(testPitchForward), -1.0f, 1.0f)) -
-                      std::asin(std::clamp(XMVectorGetZ(camForward), -1.0f, 1.0f));
+        if (result != S_OK)
+        {
+            LOG_ERROR("[{0}] CreateCommittedResource (stats readback) error {1:x}", _name, (unsigned int) result);
+            return false;
+        }
 
-    int pitchSign = (pitchTest >= 0.0f) ? 1 : -1;
+        _statsReadback[i]->SetName(L"Reproject_StatsReadback");
 
-    XMVECTOR testYawForward = XMVector3Normalize(
-        XMVector3TransformNormal(camForward, XMMatrixRotationAxis(XMVectorSet(0, 0, 1, 0), TEST_ANGLE)));
+        // Readback heaps can stay mapped, a slot is only read once the GPU is done with it
+        void* mapped = nullptr;
+        CD3DX12_RANGE readRange(0, StatsCount * sizeof(uint32_t));
+        if (_statsReadback[i]->Map(0, &readRange, &mapped) != S_OK)
+        {
+            LOG_ERROR("[{0}] Failed to map stats readback", _name);
+            return false;
+        }
 
-    float yawTest = std::atan2(XMVectorGetY(testYawForward), XMVectorGetX(testYawForward)) -
-                    std::atan2(XMVectorGetY(camForward), XMVectorGetX(camForward));
+        _statsMapped[i] = static_cast<const uint32_t*>(mapped);
+    }
 
-    if (yawTest > std::numbers::pi_v<float>)
-        yawTest -= 2.0f * std::numbers::pi_v<float>;
+    return true;
+}
 
-    if (yawTest < -std::numbers::pi_v<float>)
-        yawTest += 2.0f * std::numbers::pi_v<float>;
+bool Reproject_Dx12::CreateCacheResources(uint32_t size, DXGI_FORMAT colorFormat)
+{
+    if (_cacheColor[0] != nullptr)
+    {
+        auto desc = _cacheColor[0]->GetDesc();
 
-    int yawSign = (std::abs(yawTest) >= 1e-8f && yawTest >= 0.0f) ? 1 : -1;
+        if (desc.Width == size && desc.Format == colorFormat)
+            return true;
 
-    // The rotation itself is built by the latch pass on the GPU, see reproject_latch.hlsl
-    XMStoreFloat4(&params.CameraRight, camRight);
-    XMStoreFloat4(&params.CameraUp, camUp);
-    XMStoreFloat4(&params.CameraForward, camForward);
-    params.Calibration = { _calibration.yawFromX, _calibration.yawFromY, _calibration.pitchFromX,
-                           _calibration.pitchFromY };
+        LOG_WARN("[{0}] Release cache {1} ({2}), new one: {3} ({4})", _name, desc.Width, (uint32_t) desc.Format, size,
+                 (uint32_t) colorFormat);
+        ReleaseCacheResources();
+    }
 
-    params.PixelAngle = pixelAngle;
-    params.YawSign = (float) yawSign;
-    params.PitchSign = (float) pitchSign;
+    auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
 
-    params.LateLatch = data.lateLatch ? 1 : 0;
-    params.MouseDelta = data.mouseDeltaSinceSim;
-    params.SimStartMouse = data.simStartMouse;
+    for (int i = 0; i < 2; i++)
+    {
+        auto colorDesc = CD3DX12_RESOURCE_DESC::Tex2D(colorFormat, size, size, 6, 1, 1, 0,
+                                                      D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        auto geoDesc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R16G16_FLOAT, size, size, 6, 1, 1, 0,
+                                                    D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+
+        auto result = _device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &colorDesc,
+                                                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, nullptr,
+                                                       IID_PPV_ARGS(&_cacheColor[i]));
+
+        if (result == S_OK)
+        {
+            result = _device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &geoDesc,
+                                                      D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, nullptr,
+                                                      IID_PPV_ARGS(&_cacheGeo[i]));
+        }
+
+        if (result != S_OK)
+        {
+            LOG_ERROR("[{0}] CreateCommittedResource (cache) error {1:x}", _name, (unsigned int) result);
+            ReleaseCacheResources();
+            return false;
+        }
+
+        _cacheColor[i]->SetName(L"Reproject_CacheColor");
+        _cacheGeo[i]->SetName(L"Reproject_CacheGeo");
+    }
+
+    // Contents are undefined until the first update
+    _cacheValid = false;
+    return true;
+}
+
+void Reproject_Dx12::ReleaseCacheResources()
+{
+    for (int i = 0; i < 2; i++)
+    {
+        DeferredRelease::Release(_cacheColor[i]);
+        DeferredRelease::Release(_cacheGeo[i]);
+    }
+
+    _cacheValid = false;
 }
 
 void Reproject_Dx12::ResourceBarrier(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* resource,
@@ -229,8 +227,7 @@ bool Reproject_Dx12::CreateMaskResource(ID3D12Resource** resource, uint32_t widt
             return true;
 
         LOG_WARN("[{0}] Release {1}x{2}, new one: {3}x{4}", _name, desc.Width, desc.Height, width, height);
-        (*resource)->Release();
-        (*resource) = nullptr;
+        DeferredRelease::Release(*resource);
     }
 
     auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
@@ -261,15 +258,21 @@ Reproject_Dx12::Reproject_Dx12(std::string InName, ID3D12Device* InDevice) : Sha
 
     LOG_DEBUG("{0} start!", _name);
 
-    CD3DX12_STATIC_SAMPLER_DESC sampler(0);
-    sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
-    sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-    sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    CD3DX12_STATIC_SAMPLER_DESC samplers[2] = { CD3DX12_STATIC_SAMPLER_DESC(0), CD3DX12_STATIC_SAMPLER_DESC(1) };
+    samplers[0].Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+    samplers[1].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
 
-    // SRV: Hudless, PresentCopy, Depth, FakePresent, DepthMask, DepthMaskTemp
-    // UAV: Present, DepthMaskTemp, DepthMask, Latched
+    for (auto& sampler : samplers)
+    {
+        sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    }
+
+    // SRV: Hudless, PresentCopy, Depth, FakePresent, DepthMask, DepthMaskTemp,
+    //      PrevCacheColor, PrevCacheGeo, CacheColor, CacheGeo, Velocity
+    // UAV: Present, DepthMaskTemp, DepthMask, Latched, CacheColorOut, CacheGeoOut, Stats
     // CBV: Params, LiveInput
-    if (!SetupRootSignature(InDevice, 6, 4, 2, 0, 0, 1, &sampler))
+    if (!SetupRootSignature(InDevice, 11, 7, 2, 0, 0, 2, samplers))
     {
         LOG_ERROR("Failed to setup root signature");
         return;
@@ -317,6 +320,23 @@ Reproject_Dx12::Reproject_Dx12(std::string InName, ID3D12Device* InDevice) : Sha
         LOG_ERROR("[{0}] Failed to create latch compute pipeline", _name);
         return;
     }
+
+    if (!CreateComputePipeline(InDevice, &_cachePipeline, reproject_cache_cso, sizeof(reproject_cache_cso),
+                               cacheShaderCode.c_str()))
+    {
+        LOG_ERROR("[{0}] Failed to create cache compute pipeline", _name);
+        return;
+    }
+
+    if (!CreateComputePipeline(InDevice, &_statsPipeline, reproject_stats_cso, sizeof(reproject_stats_cso),
+                               statsShaderCode.c_str()))
+    {
+        LOG_ERROR("[{0}] Failed to create stats compute pipeline", _name);
+        return;
+    }
+
+    if (!CreateStatsResources())
+        return;
 
     // Live mouse input, stays mapped for the whole lifetime so the input thread can write into it at any time
     auto liveDesc = CD3DX12_RESOURCE_DESC::Buffer(D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
@@ -370,7 +390,8 @@ bool Reproject_Dx12::Dispatch(ID3D12GraphicsCommandList* cmdList, ReprojectionPa
                               ID3D12Resource* realPresent, D3D12_RESOURCE_STATES realPresentState,
                               ID3D12Resource* fakePresent, D3D12_RESOURCE_STATES fakePresentState,
                               ID3D12Resource* hudless, D3D12_RESOURCE_STATES hudlessState, ID3D12Resource* depth,
-                              D3D12_RESOURCE_STATES depthState)
+                              D3D12_RESOURCE_STATES depthState, ID3D12Resource* velocity,
+                              D3D12_RESOURCE_STATES velocityState)
 {
     if (!_init || !_device || !realPresent || !hudless || !cmdList || !depth)
         return false;
@@ -382,21 +403,18 @@ bool Reproject_Dx12::Dispatch(ID3D12GraphicsCommandList* cmdList, ReprojectionPa
     FrameDescriptorHeap& currentHeap = _frameHeaps[_counter];
     auto& currentBuffer = _buffer[_counter];
 
-    if (!currentBuffer)
+    // Recreated when the present size or format changes, kept in COPY_SOURCE between dispatches
+    auto previousBuffer = currentBuffer;
+    auto resourceFlags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS | D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS;
+
+    if (!Shader_Dx12::CreateBufferResource(_device, realPresent, D3D12_RESOURCE_STATE_COPY_SOURCE, &currentBuffer,
+                                           resourceFlags))
     {
-        LOG_DEBUG("[{0}] Start!", _name);
-
-        auto resourceFlags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS |
-                             D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS;
-
-        auto result = Shader_Dx12::CreateBufferResource(_device, realPresent, D3D12_RESOURCE_STATE_COPY_DEST,
-                                                        &currentBuffer, resourceFlags);
-
-        if (result)
-            currentBuffer->SetName(L"Reproject_Buffer");
-
-        return result;
+        return false;
     }
+
+    if (currentBuffer != previousBuffer)
+        currentBuffer->SetName(L"Reproject_Buffer");
 
     // Not every caller provides depth size
     if (params.DepthWidth == 0 || params.DepthHeight == 0)
@@ -412,6 +430,30 @@ bool Reproject_Dx12::Dispatch(ID3D12GraphicsCommandList* cmdList, ReprojectionPa
         return false;
     }
 
+    auto presentFormat = realPresent->GetDesc().Format;
+    auto hudlessFormat = hudless->GetDesc().Format;
+
+    if (presentFormat != _loggedPresentFormat || hudlessFormat != _loggedHudlessFormat)
+    {
+        LOG_INFO("[{0}] Present format: {1} ({2}), hudless format: {3} ({4})", _name,
+                 magic_enum::enum_name(presentFormat), (uint32_t) presentFormat, magic_enum::enum_name(hudlessFormat),
+                 (uint32_t) hudlessFormat);
+
+        _loggedPresentFormat = presentFormat;
+        _loggedHudlessFormat = hudlessFormat;
+    }
+
+    // R11G11B10 can't store negative values (scRGB) and loses precision every frame on the carried over texels,
+    // as they get premultiplied by a decaying confidence
+    constexpr auto cacheColorFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
+
+    bool cacheReady = params.CacheEnabled && CreateCacheResources(params.CacheSize, cacheColorFormat);
+
+    // Keyed on the option, the third person bypass toggles too often to free on it
+    if (!Config::Instance()->ReprojectionDirectionCache.value_or_default() && _cacheColor[0] != nullptr)
+        ReleaseCacheResources();
+    auto plan = PlanDispatch(params, cacheReady, velocity != nullptr);
+
     ResourceBarrier(cmdList, currentBuffer, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
     ResourceBarrier(cmdList, realPresent, realPresentState, D3D12_RESOURCE_STATE_COPY_SOURCE);
 
@@ -424,13 +466,18 @@ bool Reproject_Dx12::Dispatch(ID3D12GraphicsCommandList* cmdList, ReprojectionPa
                     D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     ResourceBarrier(cmdList, hudless, hudlessState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     ResourceBarrier(cmdList, depth, depthState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    if (plan.statsUpdate)
+        ResourceBarrier(cmdList, velocity, velocityState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     ResourceBarrier(cmdList, currentBuffer, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
     // Create views
     auto presentDesc = realPresent->GetDesc();
 
-    // Because of HudlessTransfer, the format of hudless is the same as present
-    CreateShaderResourceView(_device, hudless, currentHeap.GetSrvCPU(0), presentDesc.Format);
+    // Hudless is often a typeless version of the present format (Cyberpunk: R8G8B8A8_TYPELESS vs R8G8B8A8_UNORM),
+    // viewing it as present keeps the same encoding, anything else gets its own format as it can't be cast
+    auto hudlessViewFormat =
+        CompareResourceFormats(presentDesc.Format, hudlessFormat) ? presentDesc.Format : hudlessFormat;
+    CreateShaderResourceView(_device, hudless, currentHeap.GetSrvCPU(0), hudlessViewFormat);
     CreateShaderResourceView(_device, realPresent, currentHeap.GetSrvCPU(1));
     CreateShaderResourceView(_device, depth, currentHeap.GetSrvCPU(2));
     if (fakePresent)
@@ -441,6 +488,57 @@ bool Reproject_Dx12::Dispatch(ID3D12GraphicsCommandList* cmdList, ReprojectionPa
     CreateUnorderedAccessView(_device, currentBuffer, currentHeap.GetUavCPU(0), 0);
     CreateUnorderedAccessView(_device, _depthMaskTemp, currentHeap.GetUavCPU(1), 0);
     CreateUnorderedAccessView(_device, _depthMask, currentHeap.GetUavCPU(2), 0);
+
+    if (plan.statsUpdate)
+    {
+        CreateShaderResourceView(_device, velocity, currentHeap.GetSrvCPU(10));
+    }
+    else
+    {
+        D3D12_SHADER_RESOURCE_VIEW_DESC nullSrvDesc {};
+        nullSrvDesc.Format = DXGI_FORMAT_R16G16_FLOAT;
+        nullSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        nullSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        nullSrvDesc.Texture2D.MipLevels = 1;
+        _device->CreateShaderResourceView(nullptr, &nullSrvDesc, currentHeap.GetSrvCPU(10));
+    }
+
+    D3D12_UNORDERED_ACCESS_VIEW_DESC statsUavDesc {};
+    statsUavDesc.Format = DXGI_FORMAT_UNKNOWN;
+    statsUavDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+    statsUavDesc.Buffer.NumElements = StatsCount;
+    statsUavDesc.Buffer.StructureByteStride = sizeof(uint32_t);
+    _device->CreateUnorderedAccessView(_statsOutput, nullptr, &statsUavDesc, currentHeap.GetUavCPU(6));
+
+    // Cache views, null descriptors when there is no cache
+    auto createCubeSrv = [&](ID3D12Resource* resource, DXGI_FORMAT format, D3D12_CPU_DESCRIPTOR_HANDLE handle)
+    {
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc {};
+        srvDesc.Format = format;
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.TextureCube.MipLevels = 1;
+        _device->CreateShaderResourceView(resource, &srvDesc, handle);
+    };
+
+    auto createArrayUav = [&](ID3D12Resource* resource, DXGI_FORMAT format, D3D12_CPU_DESCRIPTOR_HANDLE handle)
+    {
+        D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc {};
+        uavDesc.Format = format;
+        uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
+        uavDesc.Texture2DArray.ArraySize = 6;
+        _device->CreateUnorderedAccessView(resource, nullptr, &uavDesc, handle);
+    };
+
+    constexpr auto cacheGeoFormat = DXGI_FORMAT_R16G16_FLOAT;
+
+    createCubeSrv(cacheReady ? _cacheColor[plan.prevCache] : nullptr, cacheColorFormat, currentHeap.GetSrvCPU(6));
+    createCubeSrv(cacheReady ? _cacheGeo[plan.prevCache] : nullptr, cacheGeoFormat, currentHeap.GetSrvCPU(7));
+    createCubeSrv(cacheReady ? _cacheColor[plan.newestCache] : nullptr, cacheColorFormat, currentHeap.GetSrvCPU(8));
+    createCubeSrv(cacheReady ? _cacheGeo[plan.newestCache] : nullptr, cacheGeoFormat, currentHeap.GetSrvCPU(9));
+    createArrayUav(plan.cacheUpdate ? _cacheColor[plan.newestCache] : nullptr, cacheColorFormat,
+                   currentHeap.GetUavCPU(4));
+    createArrayUav(plan.cacheUpdate ? _cacheGeo[plan.newestCache] : nullptr, cacheGeoFormat, currentHeap.GetUavCPU(5));
 
     D3D12_UNORDERED_ACCESS_VIEW_DESC latchedUavDesc {};
     latchedUavDesc.Format = DXGI_FORMAT_UNKNOWN;
@@ -489,6 +587,38 @@ bool Reproject_Dx12::Dispatch(ID3D12GraphicsCommandList* cmdList, ReprojectionPa
     ResourceBarrier(cmdList, _depthMask, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                     D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 
+    // Motion vector statistics, a single group
+    if (plan.statsUpdate)
+    {
+        cmdList->SetPipelineState(_statsPipeline);
+        cmdList->Dispatch(1, 1, 1);
+
+        ResourceBarrier(cmdList, _statsOutput, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        cmdList->CopyResource(_statsReadback[plan.statsSlot], _statsOutput);
+        ResourceBarrier(cmdList, _statsOutput, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
+
+    // Direction cache update, once per rendered frame
+    if (plan.cacheUpdate)
+    {
+        ResourceBarrier(cmdList, _cacheColor[plan.newestCache], D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                        D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        ResourceBarrier(cmdList, _cacheGeo[plan.newestCache], D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                        D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+        UINT cacheDispatchSize = (params.CacheSize + 7) / 8;
+
+        cmdList->SetPipelineState(_cachePipeline);
+        cmdList->Dispatch(cacheDispatchSize, cacheDispatchSize, 6);
+
+        ResourceBarrier(cmdList, _cacheColor[plan.newestCache], D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        ResourceBarrier(cmdList, _cacheGeo[plan.newestCache], D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    }
+
+    PlanRecorded(plan);
+
     // Late latch, as close as possible to the reprojection itself
     cmdList->SetPipelineState(_latchPipeline);
     cmdList->Dispatch(1, 1, 1);
@@ -508,6 +638,8 @@ bool Reproject_Dx12::Dispatch(ID3D12GraphicsCommandList* cmdList, ReprojectionPa
     ResourceBarrier(cmdList, realPresent, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, realPresentState);
     ResourceBarrier(cmdList, hudless, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, hudlessState);
     ResourceBarrier(cmdList, depth, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, depthState);
+    if (plan.statsUpdate)
+        ResourceBarrier(cmdList, velocity, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, velocityState);
     ResourceBarrier(cmdList, currentBuffer, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
     ResourceBarrier(cmdList, _depthMask, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                     D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -517,7 +649,8 @@ bool Reproject_Dx12::Dispatch(ID3D12GraphicsCommandList* cmdList, ReprojectionPa
 
 bool Reproject_Dx12::Dispatch(IDXGISwapChain3* sc, ID3D12GraphicsCommandList* cmdList, ReprojectionParams& params,
                               ID3D12Resource* hudless, D3D12_RESOURCE_STATES hudlessState, ID3D12Resource* depth,
-                              D3D12_RESOURCE_STATES depthState)
+                              D3D12_RESOURCE_STATES depthState, ID3D12Resource* velocity,
+                              D3D12_RESOURCE_STATES velocityState)
 {
     if (!_init || !sc)
         return false;
@@ -541,7 +674,7 @@ bool Reproject_Dx12::Dispatch(IDXGISwapChain3* sc, ID3D12GraphicsCommandList* cm
     auto present = scBuffer.Get();
     auto presentState = D3D12_RESOURCE_STATE_PRESENT;
     auto result = Dispatch(cmdList, params, present, presentState, nullptr, D3D12_RESOURCE_STATE_COMMON, hudless,
-                           hudlessState, depth, depthState);
+                           hudlessState, depth, depthState, velocity, velocityState);
 
     if (result)
     {
@@ -565,23 +698,37 @@ Reproject_Dx12::~Reproject_Dx12()
     // Always stop the input thread from writing into the mapped memory
     InputCollection::getInstance().unregisterLiveSink(_liveInputMapped);
 
-    if (!_init || State::Instance().isShuttingDown)
+    if (State::Instance().isShuttingDown)
         return;
 
-    SAFE_RELEASE(_rootSignature);
-    SAFE_RELEASE(_constantBuffer);
-    SAFE_RELEASE(_maskPipelineH);
-    SAFE_RELEASE(_maskPipelineV);
-    SAFE_RELEASE(_latchPipeline);
-    SAFE_RELEASE(_liveInput);
-    SAFE_RELEASE(_latchedOutput);
-    SAFE_RELEASE(_depthMaskTemp);
-    SAFE_RELEASE(_depthMask);
+    DeferredRelease::Release(_rootSignature);
+    DeferredRelease::Release(_constantBuffer);
+    DeferredRelease::Release(_maskPipelineH);
+    DeferredRelease::Release(_maskPipelineV);
+    DeferredRelease::Release(_latchPipeline);
+    DeferredRelease::Release(_cachePipeline);
+    DeferredRelease::Release(_statsPipeline);
+    DeferredRelease::Release(_statsOutput);
+
+    for (uint32_t i = 0; i < StatsLatency; i++)
+    {
+        if (_statsMapped[i])
+            _statsReadback[i]->Unmap(0, nullptr);
+
+        DeferredRelease::Release(_statsReadback[i]);
+    }
+
+    ReleaseCacheResources();
+    DeferredRelease::Release(_liveInput);
+    DeferredRelease::Release(_latchedOutput);
+    DeferredRelease::Release(_depthMaskTemp);
+    DeferredRelease::Release(_depthMask);
 
     for (int i = 0; i < Reproject_NUM_OF_HEAPS; i++)
     {
         _frameHeaps[i].ReleaseHeaps();
-        SAFE_RELEASE(_constantBuffers[i]);
+        DeferredRelease::Release(_buffer[i]);
+        DeferredRelease::Release(_constantBuffers[i]);
     }
 
     RawInputHook::getInstance().stop();

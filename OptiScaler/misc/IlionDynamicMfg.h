@@ -44,7 +44,7 @@ enum class Limiter
 {
     None,
     Reflex,
-    XeLL,
+    LowLatencyOutput, // ILION 1.5: the low latency output limits (InputCommon::active_output names it)
     OptiScaler,
 };
 

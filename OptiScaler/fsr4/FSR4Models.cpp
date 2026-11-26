@@ -45,10 +45,6 @@ struct HookedModule
     // Only filled when the module has several models to choose from
     std::vector<PatchedProvider> patchedProviders;
 
-    // ILION: the model whose support check last answered yes, the one FFX took for the context it was making; a yes
-    // kept from an older context can't stand for it when FFX checks the models in another order or stops early
-    std::optional<FSR4Model> lastSupported;
-
     bool HasModel(FSR4Model model) const { return std::ranges::find(models, model) != models.end(); }
 };
 
@@ -67,6 +63,22 @@ HookedModule* FindHookedModule(HMODULE module)
     return hooked != hookedModules.end() ? &*hooked : nullptr;
 }
 
+// The INT8 model from GPU detection, FFX's own checks can reject it (unofficial support, other asic family)
+std::optional<FSR4Model> DetectedModel()
+{
+    switch (IdentifyGpu::getPrimaryGpu().fsr4Support)
+    {
+    case FSR4Support::INT8:
+        return FSR4Model::INT8;
+    case FSR4Support::INT8_2:
+        return FSR4Model::INT8_2;
+    case FSR4Support::INT8Lite:
+        return FSR4Model::INT8Lite;
+    default:
+        return std::nullopt;
+    }
+}
+
 bool hkIsSupported(void* provider, void* device)
 {
     auto vtable = *static_cast<void***>(provider);
@@ -83,25 +95,39 @@ bool hkIsSupported(void* provider, void* device)
 
         auto model = patched->provider->model;
         auto o_IsSupported = patched->o_IsSupported;
-        // ILION: only a model chosen in the menu changes FFX's own pick; unset, FFX decides as it always did (the
-        // community builds keep their behaviour) and the hook only records what it reported
+        // Without a selected model use the detected one, as if it was selected
+        auto detected = DetectedModel();
         std::optional<FSR4Model> selected = Config::Instance()->Fsr4Model;
+        if (!selected.has_value())
+            selected = detected;
 
         auto useSelected = selected.has_value() && hooked.HasModel(*selected) && FSR4Models::CanGpuRun(*selected);
+
+        // FFX's INT8 check passes on some non AMD GPUs, there FSR 4 needs Fsr4GpuSupport
+        auto gpu = IdentifyGpu::getPrimaryGpu();
+        auto blocked = gpu.fsr4Support == FSR4Support::None && gpu.vendorId != VendorId::AMD;
         lock.unlock();
 
         auto supported = o_IsSupported(provider, device);
 
-        if (useSelected)
+        if (blocked)
+            supported = false;
+
+        else if (useSelected)
             supported = model == *selected && (supported || Provider(model).ignoreSupportCheck);
+
+        // FFX picks FP8 wherever the device reports it, emulated FP8 on Linux included
+        // When the module lacks the detected INT8 model don't let it fall to FP8, FP8 has to be selected
+        else if (model == FSR4Model::FP8 && detected.has_value())
+            supported = false;
 
         LOG_DEBUG("{}: {}", Provider(model).name, supported);
 
+        if (device == nullptr)
+            return supported;
+
         lock.lock();
         patched->lastReportedSupport = supported;
-
-        if (supported)
-            hooked.lastSupported = model;
 
         return supported;
     }
@@ -145,9 +171,7 @@ void FSR4Models::Hook(HMODULE module)
         }
     }
 
-    wchar_t modulePath[MAX_PATH] {};
-    GetModuleFileNameW(module, modulePath, MAX_PATH);
-    auto moduleName = wstring_to_string(std::filesystem::path(modulePath).filename().wstring());
+    auto moduleName = wstring_to_string(Util::ModulePath(module).filename().wstring());
     LOG_DEBUG("{} has {} FSR 4 models", moduleName, hooked.models.size());
 
     // Older modules have a single model and a different vtable layout
@@ -244,8 +268,14 @@ std::optional<FSR4Model> FSR4Models::ActiveModel(HMODULE module)
         return std::nullopt;
     }
 
-    // ILION: the last model FFX was told yes for (see lastSupported)
-    return hooked->lastSupported;
+    // FFX stops at the first supported model, the providers are in the order it checks them
+    for (auto& patched : hooked->patchedProviders)
+    {
+        if (patched.lastReportedSupport.value_or(false))
+            return patched.provider->model;
+    }
+
+    return std::nullopt;
 }
 
 const char* FSR4Models::Name(FSR4Model model) { return Provider(model).name; }

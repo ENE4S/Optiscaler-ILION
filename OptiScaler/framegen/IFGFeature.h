@@ -4,6 +4,9 @@
 #include <dxgi1_6.h>
 #include <flag-set-cpp/flag_set.hpp>
 
+class Reproject;
+struct FilloutData;
+
 enum class FG_Flags : uint64_t
 {
     Async,
@@ -68,11 +71,13 @@ class IFGFeature
     UINT _reset[BUFFER_COUNT] = {};
 
     UINT64 _frameCount = 0;
+    bool _allowLowerFrameId = false;
     UINT64 _lastDispatchedFrame = 0;
+    UINT64 _presentFrame = 0; // The frame the next present shows, from inputs that know it, 0 = unknown
     UINT64 _lastFGFrame = 0;
     bool _waitingNewFrameData = false;
     int _framesToInterpolate = -1;
-    bool _generationOff = false; // XeFG Dynamic MFG 1X only
+    bool _generationOff = false; // Dynamic MFG 1X: frame generation switched off, the count above kept
     int _maxInterpolationCount = 1;
     bool _supportsDMFG = false;
 
@@ -90,8 +95,17 @@ class IFGFeature
 
     IID streamlineRiid {};
 
+    uint64_t _timeSinceSimStart = 0;
+    bool _reprojectionActive = false;
+
     bool CheckForRealObject(std::string functionName, IUnknown* pObject, IUnknown** ppRealObject);
     int GetDispatchIndex(UINT64& willDispatchFrame);
+    UINT64 NextDispatchFrame();
+
+    // The frame's camera and the mouse input since its simulation start, for the reprojection of the presented frame
+    // Depth and motion vector sizes are left to the caller
+    void FilloutReprojectionData(FilloutData& data, int fIndex);
+
     virtual void NewFrame() = 0;
 
   public:
@@ -103,6 +117,8 @@ class IFGFeature
     virtual bool Present() = 0;
     virtual void Activate() = 0;
     virtual void Deactivate() = 0;
+    // Deactivate and drop a pending resume, for when the game turns FG off
+    void Disable();
     virtual void DestroyFGContext() = 0;
     virtual bool ReleaseSwapchain(HWND hwnd) = 0;
     virtual bool Shutdown() = 0;
@@ -125,8 +141,11 @@ class IFGFeature
     void SetExecuted(int index = -1);
     bool WaitingExecution(int index = -1);
 
+    // Also true while it waits for the game to send frame data again, like in menus
     bool IsActive();
     bool IsPaused();
+    // Generating frames right now, for showing the FG state
+    bool IsGenerating();
     bool IsDispatched();
     bool IsLowResMV();
     bool IsAsync();
@@ -136,6 +155,7 @@ class IFGFeature
     bool IsInfiniteDepth();
 
     void SetFrameCount(UINT64 frameId);
+    void SetPresentFrame(UINT64 frame);
     void SetJitter(float x, float y, int index = -1);
     void SetMVScale(float x, float y, int index = -1);
     void SetCameraValues(float nearValue, float farValue, float vFov, float aspectRatio, float meterFactor = 0.0f,
@@ -159,6 +179,11 @@ class IFGFeature
     UINT64 FrameCount();
     UINT64 TargetFrame();
     UINT64 LastDispatchedFrame();
+
+    virtual bool HasReprojection() { return false; };
+    bool IsReprojectionActive() const { return _reprojectionActive; };
+    virtual const Reproject* GetReproject() const { return nullptr; };
+    uint64_t GetLastTimeSinceSimStartNs() const { return _timeSinceSimStart; };
 
     IFGFeature() {}
 };

@@ -6,6 +6,7 @@
 #include <proxies/D3d12_Proxy.h>
 #include <misc/IdentifyGpu.h>
 #include <fsr4/FSR4DriverProviderVk.h>
+#include <hooks/Vulkan_Hooks.h>
 
 static void FfxLogCallback(uint32_t type, const wchar_t* message)
 {
@@ -21,9 +22,9 @@ double FFXFeature::GetDeltaTime()
     return deltaTime;
 }
 
-bool FFXFeature::QueryVersionsDx12(ID3D12Device* device)
+bool FFXFeature::QueryVersionsDx12(ID3D12Device* device, CustomFfxModule* custom)
 {
-    auto& versions = State::Instance().ffxUpscalerVersionsDx12;
+    auto& versions = custom != nullptr ? custom->versions : State::Instance().ffxUpscalerVersionsDx12;
 
     // Get number of versions for allocation
     ffxQueryDescGetVersions versionQuery {};
@@ -33,7 +34,16 @@ bool FFXFeature::QueryVersionsDx12(ID3D12Device* device)
     uint64_t versionCount = 0;
     versionQuery.outputCount = &versionCount;
 
-    if (FfxApiProxy::D3D12_Query(nullptr, &versionQuery.header) != FFX_API_RETURN_OK)
+    // The driver upscaler is always offered in the menu, even when the FFX SDK has a newer one
+    constexpr auto driverListing = FSR4DriverProviderDx12::Listing::Always;
+
+    auto query = [&]
+    {
+        return custom != nullptr ? custom->module.Query(nullptr, &versionQuery.header)
+                                 : FfxApiProxy::D3D12_QueryUpscalerVersions(&versionQuery, driverListing);
+    };
+
+    if (query() != FFX_API_RETURN_OK)
         return false;
 
     // Fill version ids and names arrays
@@ -42,23 +52,36 @@ bool FFXFeature::QueryVersionsDx12(ID3D12Device* device)
     versionQuery.versionIds = versions.ids.data();
     versionQuery.versionNames = versions.names.data();
 
-    return FfxApiProxy::D3D12_Query(nullptr, &versionQuery.header) == FFX_API_RETURN_OK;
+    return query() == FFX_API_RETURN_OK;
 }
 
-bool FFXFeature::QueryVersionsVulkan()
+bool FFXFeature::QueryVersionsVulkan(void* deviceContext, CustomFfxModule* custom)
 {
-    auto& versions = State::Instance().ffxUpscalerVersionsVk;
+    auto& versions = custom != nullptr ? custom->versions : State::Instance().ffxUpscalerVersionsVk;
 
     // Get number of versions for allocation
     ffxQueryDescGetVersions versionQuery {};
     versionQuery.header.type = FFX_API_QUERY_DESC_TYPE_GET_VERSIONS;
     versionQuery.createDescType = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
-    // versionQuery.device = Device; // only for DirectX 12 applications
+    versionQuery.device = deviceContext;
     uint64_t versionCount = 0;
     versionQuery.outputCount = &versionCount;
 
-    if (FfxApiProxy::VULKAN_Query()(nullptr, &versionQuery.header) != FFX_API_RETURN_OK)
+    // The driver upscaler is always offered in the menu, even when the FFX SDK has a newer one
+    constexpr auto driverListing = DriverListing::Always;
+
+    auto query = [&]
+    {
+        return custom != nullptr ? custom->module.Query(nullptr, &versionQuery.header)
+                                 : FfxApiProxy::VULKAN_QueryUpscalerVersions(&versionQuery, driverListing);
+    };
+
+    if (query() != FFX_API_RETURN_OK)
+    {
+        versions.ids.clear();
+        versions.names.clear();
         return false;
+    }
 
     // Fill version ids and names arrays
     versions.ids.resize(versionCount);
@@ -66,17 +89,7 @@ bool FFXFeature::QueryVersionsVulkan()
     versionQuery.versionIds = versions.ids.data();
     versionQuery.versionNames = versions.names.data();
 
-    const bool ok = FfxApiProxy::VULKAN_Query()(nullptr, &versionQuery.header) == FFX_API_RETURN_OK;
-
-    // ILION: the AMD Vulkan driver's FSR 4 after the SDK's own providers, so their indexes and the default stay
-    if (ok && FSR4DriverProviderVk::Init() &&
-        std::find(versions.ids.begin(), versions.ids.end(), FSR4DriverProviderVk::VersionId()) == versions.ids.end())
-    {
-        versions.ids.push_back(FSR4DriverProviderVk::VersionId());
-        versions.names.push_back(FSR4DriverProviderVk::VersionName());
-    }
-
-    return ok;
+    return query() == FFX_API_RETURN_OK;
 }
 
 void FFXFeature::EnsureVersionsDx12()
@@ -151,18 +164,30 @@ void FFXFeature::EnsureVersionsDx12()
 void FFXFeature::EnsureVersionsVulkan()
 {
     static bool queryTried = false;
+    static bool queriedWithoutDevice = false;
 
-    if (queryTried || !State::Instance().ffxUpscalerVersionsVk.names.empty())
+    // The device is used for filtering out unsupported upscalers (FSR4), a list made without one lacks them
+    ffxCreateBackendVKDesc backendDesc {};
+    backendDesc.vkDevice = VulkanHooks::GameDevice();
+    backendDesc.vkPhysicalDevice = VulkanHooks::GamePhysicalDevice();
+    backendDesc.vkDeviceProcAddr = &VulkanHooks::GetDeviceProcAddr;
+
+    const bool hasDevice = backendDesc.vkDevice != VK_NULL_HANDLE && backendDesc.vkPhysicalDevice != VK_NULL_HANDLE;
+
+    if (queryTried ? !(queriedWithoutDevice && hasDevice) : !State::Instance().ffxUpscalerVersionsVk.names.empty())
         return;
 
     queryTried = true;
+    queriedWithoutDevice = !hasDevice;
 
-    if (!FfxApiProxy::InitFfxVk())
+    // Driver provided FSR 4 doesn't need the FFX SDK
+    if (!FfxApiProxy::InitFfxVk() && !FSR4DriverProviderVk::Init())
         return;
 
     ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
 
-    if (!QueryVersionsVulkan())
+    // The fields after the header are VkDeviceContext of FFX SDK 2.x
+    if (!QueryVersionsVulkan(hasDevice ? &backendDesc.vkDevice : nullptr))
         LOG_ERROR("Querying FFX Vulkan upscaler versions failed");
 }
 
@@ -191,6 +216,10 @@ void FFXFeature::InitFlags()
 
     if (!LowResMV())
         _contextDesc.flags |= FFX_UPSCALE_ENABLE_DISPLAY_RESOLUTION_MOTION_VECTORS;
+
+    // Without it FSR 4 recreates the network every time the upscale ratio moves to another preset
+    if (DynamicResolution())
+        _contextDesc.flags |= FFX_UPSCALE_ENABLE_DYNAMIC_RESOLUTION;
 
     if (Config::Instance()->FsrDebugView.value_or_default())
     {
@@ -259,32 +288,6 @@ void FFXFeature::InitFlags()
         _contextDesc.maxRenderSize.height = TargetHeight() > DisplayHeight() ? TargetHeight() : DisplayHeight();
         _contextDesc.maxUpscaleSize.width = TargetWidth();
         _contextDesc.maxUpscaleSize.height = TargetHeight();
-    }
-
-    // Set stability values as default if not set by user
-    {
-        auto config = Config::Instance();
-        auto const scaleRatioX = (float) TargetWidth() / (float) RenderWidth();
-        auto const scaleRatioY = (float) TargetHeight() / (float) RenderHeight();
-        auto const scaleRatio = std::max(scaleRatioX, scaleRatioY);
-
-        if (scaleRatio > 0.0f && !std::isinf(scaleRatio))
-        {
-            if (config->FsrVelocity.value_for_config() == std::nullopt)
-                config->FsrVelocity.set_volatile_value(0.5f);
-
-            if (config->FsrReactiveScale.value_for_config() == std::nullopt)
-                config->FsrReactiveScale.set_volatile_value(0.25f);
-
-            if (config->FsrShadingScale.value_for_config() == std::nullopt)
-                config->FsrShadingScale.set_volatile_value(0.5f / scaleRatio);
-
-            if (config->FsrAccAddPerFrame.value_for_config() == std::nullopt)
-                config->FsrAccAddPerFrame.set_volatile_value(scaleRatio / 10.0f);
-
-            if (config->FsrMinDisOccAcc.value_for_config() == std::nullopt)
-                config->FsrMinDisOccAcc.set_volatile_value(scaleRatio / 20.0f);
-        }
     }
 }
 

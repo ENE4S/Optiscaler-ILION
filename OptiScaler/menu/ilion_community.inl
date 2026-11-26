@@ -376,7 +376,7 @@ template <typename Ctx> static C::Profile FromCurrent(Ctx& ctx)
     // El multiplicador: el que genera ahora; si no genera, el fijo configurado para esa implementación
     const auto status = IlionDynamicMfg::Get();
     const bool gen = status.gen == IlionDynamicMfg::Gen::Detected || status.gen == IlionDynamicMfg::Gen::Confirmed ||
-                     (state.currentFG != nullptr && state.currentFG->IsActive());
+                     (state.CurrentFG() != nullptr && state.CurrentFG()->IsActive());
     int count = 1;
     if (gen && status.multiplier > 1)
         count = status.multiplier - 1;

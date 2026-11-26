@@ -49,9 +49,9 @@ void Nvngx_FakeMichau::LoadLibraries()
         return;
     }
 
-    dll = KernelBaseProxy::LoadLibraryExW_()(path.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR |
+    ngx.dll = KernelBaseProxy::LoadLibraryExW_()(path.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR |
                                                                   LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
-    if (dll == nullptr)
+    if (ngx.dll == nullptr)
     {
         const auto error = GetLastError();
         LOG_ERROR("DLSSG-XeFG: could not load {} (Win32 {}); check its architecture and dependencies",
@@ -59,38 +59,37 @@ void Nvngx_FakeMichau::LoadLibraries()
         return;
     }
 
+    // ILION 1.5: the shared D3D12 loader (Nvngx_DllProxy); DLSSG-XeFG requires all ten entry points, as before
+    LoadDx12Exports();
     bool complete = true;
-    const auto bind = [this, &complete](auto& function, const char* name)
+    for (const auto& [function, name] : { std::pair { (void*) ngx.D3D12_Init, "NVSDK_NGX_D3D12_Init" },
+                                          { (void*) ngx.D3D12_Init_Ext, "NVSDK_NGX_D3D12_Init_Ext" },
+                                          { (void*) ngx.D3D12_Shutdown, "NVSDK_NGX_D3D12_Shutdown" },
+                                          { (void*) ngx.D3D12_Shutdown1, "NVSDK_NGX_D3D12_Shutdown1" },
+                                          { (void*) ngx.D3D12_GetScratchBufferSize, "NVSDK_NGX_D3D12_GetScratchBufferSize" },
+                                          { (void*) ngx.D3D12_CreateFeature, "NVSDK_NGX_D3D12_CreateFeature" },
+                                          { (void*) ngx.D3D12_ReleaseFeature, "NVSDK_NGX_D3D12_ReleaseFeature" },
+                                          { (void*) ngx.D3D12_GetFeatureRequirements, "NVSDK_NGX_D3D12_GetFeatureRequirements" },
+                                          { (void*) ngx.D3D12_EvaluateFeature, "NVSDK_NGX_D3D12_EvaluateFeature" },
+                                          { (void*) ngx.D3D12_PopulateParameters_Impl, "NVSDK_NGX_D3D12_PopulateParameters_Impl" } })
     {
-        function = reinterpret_cast<std::remove_reference_t<decltype(function)>>(KernelBaseProxy::GetProcAddress_()(dll, name));
         if (function == nullptr)
         {
             LOG_ERROR("DLSSG-XeFG: missing export {}", name);
             complete = false;
         }
-    };
-
-    bind(_DLSSG_D3D12_Init, "NVSDK_NGX_D3D12_Init");
-    bind(_DLSSG_D3D12_Init_Ext, "NVSDK_NGX_D3D12_Init_Ext");
-    bind(_DLSSG_D3D12_Shutdown, "NVSDK_NGX_D3D12_Shutdown");
-    bind(_DLSSG_D3D12_Shutdown1, "NVSDK_NGX_D3D12_Shutdown1");
-    bind(_DLSSG_D3D12_GetScratchBufferSize, "NVSDK_NGX_D3D12_GetScratchBufferSize");
-    bind(_DLSSG_D3D12_CreateFeature, "NVSDK_NGX_D3D12_CreateFeature");
-    bind(_DLSSG_D3D12_ReleaseFeature, "NVSDK_NGX_D3D12_ReleaseFeature");
-    bind(_DLSSG_D3D12_GetFeatureRequirements, "NVSDK_NGX_D3D12_GetFeatureRequirements");
-    bind(_DLSSG_D3D12_EvaluateFeature, "NVSDK_NGX_D3D12_EvaluateFeature");
-    bind(_DLSSG_D3D12_PopulateParameters_Impl, "NVSDK_NGX_D3D12_PopulateParameters_Impl");
+    }
 
     if (!complete)
     {
-        _DLSSG_D3D12_Init = nullptr;
+        ngx.D3D12_Init = nullptr;
         return;
     }
 
     NVNGX_Parameters params(API::DX12, false);
     int available = -1;
     int maxFakeFrames = 0;
-    if (_DLSSG_D3D12_PopulateParameters_Impl(&params) == NVSDK_NGX_Result_Success)
+    if (ngx.D3D12_PopulateParameters_Impl(&params) == NVSDK_NGX_Result_Success)
     {
         params.Get("FrameGeneration.Available", &available);
         if (params.Get("DLSSG.MultiFrameCountMax", &maxFakeFrames) == NVSDK_NGX_Result_Success && maxFakeFrames > 0)
@@ -99,18 +98,18 @@ void Nvngx_FakeMichau::LoadLibraries()
     if (available == 0)
     {
         LOG_ERROR("DLSSG-XeFG: provider reports FrameGeneration.Available=0; check libxess_fg.dll and the provider log");
-        _DLSSG_D3D12_Init = nullptr;
+        ngx.D3D12_Init = nullptr;
         return;
     }
 
-    const auto init = reinterpret_cast<PFN_OptiPluginInit>(KernelBaseProxy::GetProcAddress_()(dll, OPTI_PLUGIN_INIT_NAME));
+    const auto init = reinterpret_cast<PFN_OptiPluginInit>(KernelBaseProxy::GetProcAddress_()(ngx.dll, OPTI_PLUGIN_INIT_NAME));
     if (init != nullptr)
     {
         // PluginApi keeps callbacks for the process lifetime.
         HMODULE pinned = nullptr;
         if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
                                reinterpret_cast<LPCWSTR>(init), &pinned))
-            PluginApi::InitPlugin(dll, init, std::string(ProviderName));
+            PluginApi::InitPlugin(ngx.dll, init, std::string(ProviderName));
         else
             LOG_WARN("DLSSG-XeFG: could not retain its module for the plugin tab (Win32 {})", GetLastError());
     }

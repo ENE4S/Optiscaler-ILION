@@ -9,9 +9,8 @@
 
 #include <nvapi/fakenvapi.h>
 #include <misc/IdentifyGpu.h>
-#include <hooks/Reflex_Hooks.h>
-#include <menu/menu_overlay_base.h>
 #include <framegen/nvngx/Nvngx_FG.h>
+#include <upscalers/nvngx/Nvngx_RR.h>
 #include <framegen/xefg/XeFG_Dx12.h>
 #include <proxies/KernelBase_Proxy.h>
 #include <imgui/ImGuiNotify.hpp>
@@ -21,8 +20,10 @@
 #include <sl1_reflex.h>
 #include <magic_enum.hpp>
 #include "detours/detours.h"
+#include <shaders/reproject/mouseInputs/InputCollection.h>
 
 #include <intrin.h>
+#include <psapi.h>
 #pragma intrinsic(_ReturnAddress)
 
 static std::wstring GetModulePath(HMODULE module)
@@ -33,6 +34,41 @@ static std::wstring GetModulePath(HMODULE module)
     wchar_t buffer[MAX_PATH * 2] {};
     const auto len = GetModuleFileNameW(module, buffer, static_cast<DWORD>(std::size(buffer)));
     return std::wstring(buffer, len);
+}
+
+// Threads holding the loader lock wait for the plugin mutexes (LoadLibraryCheckW of a nested load), so code holding
+// one must not take the loader lock. GetModuleFileNameW and GetProcAddress can (always under Wine), these two don't.
+
+// NT path of the file mapped at address, empty if nothing is mapped there
+static std::wstring GetMappedPath(const void* address)
+{
+    wchar_t buffer[MAX_PATH * 2] {};
+    const auto len = K32GetMappedFileNameW(GetCurrentProcess(), const_cast<void*>(address), buffer,
+                                           static_cast<DWORD>(std::size(buffer)));
+    return std::wstring(buffer, len);
+}
+
+// Reads the export table directly
+static void* FindExport(HMODULE module, const char* name)
+{
+    struct Context
+    {
+        const char* name;
+        void* code;
+    } context { name, nullptr };
+
+    DetourEnumerateExports(module, &context,
+                           [](PVOID ctx, ULONG, LPCSTR exportName, PVOID code) -> BOOL
+                           {
+                               auto c = static_cast<Context*>(ctx);
+                               if (exportName == nullptr || strcmp(exportName, c->name) != 0)
+                                   return TRUE;
+
+                               c->code = code;
+                               return FALSE;
+                           });
+
+    return context.code;
 }
 
 // Plugin may fail (denylist etc.) and leave pluginJSON empty
@@ -362,19 +398,24 @@ static int OutputMaxInterpolationCount()
 {
     auto& state = State::Instance();
 
-    if (state.currentFG != nullptr && state.currentFG->GetMaxInterpolationCount() > 1)
-        return state.currentFG->GetMaxInterpolationCount();
+    if (auto fg = state.CurrentFG(); fg != nullptr && fg->GetMaxInterpolationCount() > 1)
+        return fg->GetMaxInterpolationCount();
 
     if (state.activeFgOutput == FGOutput::XeFG)
     {
         static int xefgMax = 0;
         static bool xefgQueried = false;
 
+        // Current device is set with the swapchain, before it use the latest created one
+        auto device = state.currentD3D12Device;
+        if (device == nullptr)
+            device = state.LastD3D12Device();
+
         // GetState can be called every frame, only try once
-        if (!xefgQueried && state.currentD3D12Device != nullptr)
+        if (!xefgQueried && device != nullptr)
         {
             xefgQueried = true;
-            xefgMax = XeFG_Dx12::QueryMaxInterpolationCount(state.currentD3D12Device);
+            xefgMax = XeFG_Dx12::QueryMaxInterpolationCount(device);
         }
 
         if (xefgMax > 0)
@@ -387,7 +428,7 @@ static int OutputMaxInterpolationCount()
 // Reports Opti's FG output capabilities to the game when DLSSG is used as FG Input
 static void FillDlssgInputState(sl::DLSSGState& state)
 {
-    auto fg = State::Instance().currentFG;
+    auto fg = State::Instance().CurrentFG();
 
     if (fg != nullptr && fg->IsActive() && !fg->IsPaused())
         state.numFramesActuallyPresented = fg->GetInterpolatedFrameCount() + 1;
@@ -468,10 +509,9 @@ sl::Result StreamlineHooks::hkslSetFeatureLoaded(sl::Feature feature, bool loade
 sl::Result StreamlineHooks::hkslSetTag(const sl::ViewportHandle& viewport, const sl::ResourceTag* tags,
                                        uint32_t numTags, sl::CommandBuffer* cmdBuffer)
 {
-    if (renderApi == sl::RenderAPI::eD3D11 ||
-        (renderApi == sl::RenderAPI::eVulkan && !VulkanXeFGDiagnostics::StreamlineTagsActive()))
+    if (renderApi == sl::RenderAPI::eD3D11)
     {
-        LOG_ERROR("hkslSetTag only supports DX12");
+        LOG_ERROR("hkslSetTag doesn't support DX11");
         return o_slSetTag(viewport, tags, numTags, cmdBuffer);
     }
 
@@ -518,6 +558,9 @@ sl::Result StreamlineHooks::hkslSetTag(const sl::ViewportHandle& viewport, const
     {
         const auto typeEnum = (BufferType) tags[i].type;
 
+        if (State::Instance().activeFgInput == FGInput::DLSSG)
+            State::Instance().slFGInputs.reportTagState(tags[i]);
+
         if (tags[i].resource == nullptr || tags[i].resource->native == nullptr)
         {
             LOG_TRACE("Resource of type: {} is null, continuing", magic_enum::enum_name(typeEnum));
@@ -525,7 +568,7 @@ sl::Result StreamlineHooks::hkslSetTag(const sl::ViewportHandle& viewport, const
         }
 
         // Cyberpunk hudless state fix for RDNA 2
-        if (State::Instance().gameQuirks & GameQuirk::CyberpunkHudlessState &&
+        if (State::Instance().gameQuirks & GameQuirk::CyberpunkHudlessState && renderApi != sl::RenderAPI::eVulkan &&
             tags[i].resource->state ==
                 (D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) &&
             tags[i].type == sl::kBufferTypeHUDLessColor)
@@ -543,7 +586,7 @@ sl::Result StreamlineHooks::hkslSetTag(const sl::ViewportHandle& viewport, const
             if (VkwDx12Inputs::Active())
                 State::Instance().slFGInputs.reportVulkanResource(tags[i], (VkCommandBuffer) cmdBuffer, 0);
             else
-                State::Instance().slFGInputs.reportResource(tags[i], (ID3D12GraphicsCommandList*) cmdBuffer, 0);
+                State::Instance().slFGInputs.reportResource(tags[i], cmdBuffer, 0);
         }
         else if (State::Instance().activeFgInput == FGInput::NvngxFG)
         {
@@ -559,10 +602,9 @@ sl::Result StreamlineHooks::hkslSetTagForFrame(const sl::FrameToken& frame, cons
                                                const sl::ResourceTag* resources, uint32_t numResources,
                                                sl::CommandBuffer* cmdBuffer)
 {
-    if (renderApi == sl::RenderAPI::eD3D11 ||
-        (renderApi == sl::RenderAPI::eVulkan && !VulkanXeFGDiagnostics::StreamlineTagsActive()))
+    if (renderApi == sl::RenderAPI::eD3D11)
     {
-        LOG_ERROR("hkslSetTagForFrame only supports DX12");
+        LOG_ERROR("hkslSetTagForFrame doesn't support DX11");
         return o_slSetTagForFrame(frame, viewport, resources, numResources, cmdBuffer);
     }
 
@@ -611,6 +653,9 @@ sl::Result StreamlineHooks::hkslSetTagForFrame(const sl::FrameToken& frame, cons
     {
         const auto typeEnum = (BufferType) resources[i].type;
 
+        if (State::Instance().activeFgInput == FGInput::DLSSG)
+            State::Instance().slFGInputs.reportTagState(resources[i]);
+
         if (resources[i].resource == nullptr || resources[i].resource->native == nullptr)
         {
             LOG_TRACE("Resource of type: {} is null, continuing", magic_enum::enum_name(typeEnum));
@@ -626,7 +671,7 @@ sl::Result StreamlineHooks::hkslSetTagForFrame(const sl::FrameToken& frame, cons
             if (VkwDx12Inputs::Active())
                 State::Instance().slFGInputs.reportVulkanResource(resources[i], (VkCommandBuffer) cmdBuffer, (uint32_t) frame);
             else
-                State::Instance().slFGInputs.reportResource(resources[i], (ID3D12GraphicsCommandList*) cmdBuffer, (uint32_t) frame);
+                State::Instance().slFGInputs.reportResource(resources[i], cmdBuffer, (uint32_t) frame);
         }
         else if (State::Instance().activeFgInput == FGInput::NvngxFG)
         {
@@ -649,7 +694,9 @@ sl::Result StreamlineHooks::hkslEvaluateFeature(sl::Feature feature, const sl::F
     IlionDynamicMfg::ApplyPendingExternalCount();
     applyRequestedDlssgOptions("slEvaluateFeature");
 
-    if (State::Instance().activeFgInput == FGInput::DLSSG && numInputs > 0 && inputs != nullptr)
+    // D3D11 resources aren't supported, same as the tag hooks
+    if (State::Instance().activeFgInput == FGInput::DLSSG && numInputs > 0 && inputs != nullptr &&
+        renderApi != sl::RenderAPI::eD3D11)
     {
         for (uint32_t i = 0; i < numInputs; i++)
         {
@@ -666,9 +713,9 @@ sl::Result StreamlineHooks::hkslEvaluateFeature(sl::Feature feature, const sl::F
                     tag->type == sl::kBufferTypeBidirectionalDistortionField)
                 {
                     if (VkwDx12Inputs::Active())
-                State::Instance().slFGInputs.reportVulkanResource(*tag, (VkCommandBuffer) cmdBuffer, (uint32_t) frame);
-            else
-                State::Instance().slFGInputs.reportResource(*tag, (ID3D12GraphicsCommandList*) cmdBuffer, (uint32_t) frame);
+                        State::Instance().slFGInputs.reportVulkanResource(*tag, (VkCommandBuffer) cmdBuffer, (uint32_t) frame);
+                    else
+                        State::Instance().slFGInputs.reportResource(*tag, cmdBuffer, (uint32_t) frame);
                 }
             }
         }
@@ -946,10 +993,14 @@ void StreamlineHooks::spoofArch(uint32_t currentArch, sl::Feature feature, Syste
             return setArch(maxArch, altSystemCaps);
     }
 
-    // Don't spoof DLSSD at all
+    // Only spoof DLSSD for a custom one or a regular upscaler, NVIDIA's needs turing and above
     else if (feature == sl::kFeatureDLSS_RR)
     {
-        return;
+        if (!Nvngx_RR::OfferedAny())
+            return;
+
+        if (currentArch < NV_GPU_ARCHITECTURE_TU100)
+            return setArch(maxArch, altSystemCaps);
     }
 
     // Don't change arch for DLSSG with ada and above
@@ -1020,6 +1071,61 @@ bool StreamlineHooks::hkdlss_slOnPluginLoad(sl::param::IParameters* params, cons
     }
 
     PatchSL1PluginJson(configJson);
+
+    config = configJson.dump();
+
+    *pluginJSON = config.c_str();
+
+    return result;
+}
+
+// Only hooked when Opti reports ray reconstruction, for a custom DLSSD or a regular upscaler
+bool StreamlineHooks::hkdlssd_slOnPluginLoad(sl::param::IParameters* params, const char* loaderJSON,
+                                             const char** pluginJSON)
+{
+    LOG_FUNC();
+
+    // TODO: do it better than "static" and hoping for the best
+    static std::string config;
+
+    uint32_t currentArch = 0;
+    if (Config::Instance()->StreamlineSpoofing.value_or_default())
+    {
+        hookSystemCaps(params);
+        currentArch = getSystemCapsArch();
+        spoofArch(currentArch, sl::kFeatureDLSS_RR);
+    }
+
+    auto result = o_dlssd_slOnPluginLoad != nullptr && o_dlssd_slOnPluginLoad(params, loaderJSON, pluginJSON);
+
+    if (Config::Instance()->StreamlineSpoofing.value_or_default())
+        setArch(currentArch);
+
+    if (!HasPluginJson(result, pluginJSON))
+        return result;
+
+    nlohmann::json configJson = nlohmann::json::parse(*pluginJSON, nullptr, false);
+    if (configJson.is_discarded())
+    {
+        LOG_ERROR("Failed to parse plugin JSON");
+        return result;
+    }
+
+    auto primaryGpu = IdentifyGpu::getPrimaryGpu();
+    if (primaryGpu.vendorId != VendorId::Nvidia || !primaryGpu.dlssCapable)
+    {
+        if (configJson.contains("/external/vk/instance/extensions"_json_pointer))
+            configJson["external"]["vk"]["instance"]["extensions"].clear();
+
+        if (configJson.contains("/external/vk/device/extensions"_json_pointer))
+            configJson["external"]["vk"]["device"]["extensions"].clear();
+
+        if (configJson.contains("/external/vk/device/1.2_features"_json_pointer))
+            configJson["external"]["vk"]["device"]["1.2_features"].clear();
+
+        if (configJson.contains("/external/vk/device/1.3_features"_json_pointer))
+            configJson["external"]["vk"]["device"]["1.3_features"].clear();
+    }
 
     config = configJson.dump();
 
@@ -1325,7 +1431,6 @@ sl::Result StreamlineHooks::hkslDLSSGSetOptions(const sl::ViewportHandle& viewpo
         return sl::Result::eErrorFeatureMissing;
 
     lastDlssgViewport = viewport;
-    lastDlssgOptions = options;
 
     // Avoid reading past the game's struct's size
     sl::DLSSGOptions newOptions {};
@@ -1342,7 +1447,11 @@ sl::Result StreamlineHooks::hkslDLSSGSetOptions(const sl::ViewportHandle& viewpo
 
     newOptions.structVersion = newStructVer;
 
+    // The game's options as a full struct, before our changes
+    lastDlssgOptions = newOptions;
+
     auto& state = State::Instance();
+    state.slFGInputs.reportGameMode(newOptions.mode);
 
     // Disable game's DLSSG when we are trying to create our own instance of DLSSG
     if (state.activeFgInput != FGInput::DLSSG && state.activeFgOutput == FGOutput::DLSSG)
@@ -1372,20 +1481,6 @@ sl::Result StreamlineHooks::hkslDLSSGSetOptions(const sl::ViewportHandle& viewpo
         newOptions.dynamicTargetFrameRate = Config::Instance()->FGDLSSGFramerateTargetDMFG.value();
     }
 
-    if (state.swapchainApi == API::Vulkan)
-    {
-        // Only matters for Vulkan, DX doesn't use this delay
-        if (dlssgPotentiallyActive && !MenuOverlayBase::IsVisible())
-            state.delayMenuRenderBy = 10;
-
-        if (MenuOverlayBase::IsVisible())
-        {
-            newOptions.mode = sl::DLSSGMode::eOff;
-            newOptions.flags |= sl::DLSSGFlags::eRetainResourcesWhenOff;
-            ReflexHooks::setDlssgFrameCount(0);
-        }
-    }
-
     LOG_TRACE("DLSSG Modified Mode: {}", magic_enum::enum_name(newOptions.mode));
 
     if (dlssgPotentiallyActive && state.streamlineVersion >= feature_version { 2, 7, 1 })
@@ -1395,10 +1490,11 @@ sl::Result StreamlineHooks::hkslDLSSGSetOptions(const sl::ViewportHandle& viewpo
         {
             sl::DLSSGState localState {};
             sl::DLSSGOptions localOptions {};
-            if (o_slDLSSGGetState(viewport, localState, &localOptions) == sl::Result::eOk &&
+            if (o_slDLSSGGetState != nullptr &&
+                o_slDLSSGGetState(viewport, localState, &localOptions) == sl::Result::eOk &&
                 localState.numFramesToGenerateMax > 0 && localState.numFramesToGenerateMax < 6)
             {
-                state.dlssgMfgMax = localState.numFramesToGenerateMax;
+                state.dlssgMfgMax = Nvngx_FG::limitToProvider(localState.numFramesToGenerateMax);
                 LOG_TRACE("Saving original numFramesToGenerateMax: {}", state.dlssgMfgMax.value());
 
                 if (Config::Instance()->FGDLSSGOverrideInterpolationCount.has_value() &&
@@ -1428,6 +1524,13 @@ sl::Result StreamlineHooks::hkslDLSSGSetOptions(const sl::ViewportHandle& viewpo
             newOptions.mode = sl::DLSSGMode::eOn;
             newOptions.numFramesToGenerate = IlionDynamicMfg::IlionExternalCount();
         }
+    }
+
+    // Streamline's max can be over what an nvngx provider generates
+    if (newOptions.numFramesToGenerate > 1)
+    {
+        newOptions.numFramesToGenerate =
+            (uint32_t) Nvngx_FG::limitToProvider(static_cast<int>(newOptions.numFramesToGenerate));
     }
 
     state.dlssgLastSetMode = newOptions.mode;
@@ -1487,6 +1590,10 @@ sl::Result StreamlineHooks::hkslDLSSGGetState(const sl::ViewportHandle& viewport
         Config::Instance()->FGDLSSGOverrideForceDMFG.set_volatile_value(false);
     }
 
+    // Streamline's max can be over what an nvngx provider generates
+    if (originalStructVersion >= 2)
+        state.numFramesToGenerateMax = Nvngx_FG::limitToProvider(state.numFramesToGenerateMax);
+
     auto& optiState = State::Instance();
 
     if (optiState.streamlineVersion >= feature_version { 2, 7, 1 })
@@ -1498,7 +1605,7 @@ sl::Result StreamlineHooks::hkslDLSSGGetState(const sl::ViewportHandle& viewport
             if (o_slDLSSGGetState(viewport, localState, &localOptions) == sl::Result::eOk &&
                 localState.numFramesToGenerateMax > 0 && localState.numFramesToGenerateMax < 6)
             {
-                optiState.dlssgMfgMax = localState.numFramesToGenerateMax;
+                optiState.dlssgMfgMax = Nvngx_FG::limitToProvider(localState.numFramesToGenerateMax);
                 LOG_TRACE("Saving original numFramesToGenerateMax: {}", optiState.dlssgMfgMax.value());
 
                 if (Config::Instance()->FGDLSSGOverrideInterpolationCount.has_value() &&
@@ -1587,6 +1694,7 @@ sl::Result StreamlineHooks::hkslReflexSetOptions(const sl::ReflexOptions& option
         return sl::Result::eErrorFeatureMissing;
 
     reflexGamesLastMode = options.mode;
+    reflexGamesLastOptions = options;
 
     sl::ReflexOptions newOptions = options;
 
@@ -1635,6 +1743,22 @@ void* StreamlineHooks::hkdlss_slGetPluginFunction(PFN_slGetPluginFunction origin
     return original(functionName);
 }
 
+void* StreamlineHooks::hkdlssd_slGetPluginFunction(PFN_slGetPluginFunction original, const char* functionName,
+                                                   void* caller)
+{
+    LOG_DEBUG("{}", functionName);
+
+    State::Instance().rrRequested = true;
+
+    if (strcmp(functionName, "slOnPluginLoad") == 0 && Nvngx_RR::OfferedAny())
+    {
+        o_dlssd_slOnPluginLoad = (PFN_slOnPluginLoad) original(functionName);
+        return &hkdlssd_slOnPluginLoad;
+    }
+
+    return original(functionName);
+}
+
 void* StreamlineHooks::hkdlssg_slGetPluginFunction(PFN_slGetPluginFunction original, const char* functionName,
                                                    void* caller)
 {
@@ -1650,6 +1774,9 @@ void* StreamlineHooks::hkdlssg_slGetPluginFunction(PFN_slGetPluginFunction origi
     {
         o_slDLSSGSetOptions = (decltype(&slDLSSGSetOptions)) original(functionName);
 
+        // Keep the pair from the plugin in use, the fallback below can hold a superseded one (MSFS 2020)
+        o_slDLSSGGetState = (decltype(&slDLSSGGetState)) original("slDLSSGGetState");
+
         // Give steam overlay the original as it seems to be hooking it
         auto steamOverlay = KernelBaseProxy::GetModuleHandleA_()("gameoverlayrenderer64.dll");
         if (steamOverlay != nullptr)
@@ -1664,6 +1791,7 @@ void* StreamlineHooks::hkdlssg_slGetPluginFunction(PFN_slGetPluginFunction origi
     if (strcmp(functionName, "slDLSSGGetState") == 0)
     {
         o_slDLSSGGetState = (decltype(&slDLSSGGetState)) original(functionName);
+        o_slDLSSGSetOptions = (decltype(&slDLSSGSetOptions)) original("slDLSSGSetOptions");
 
         // Give steam overlay the original as it seems to be hooking it
         auto steamOverlay = KernelBaseProxy::GetModuleHandleA_()("gameoverlayrenderer64.dll");
@@ -1783,6 +1911,13 @@ sl::Result StreamlineHooks::hkslPCLSetMarker(sl::PCLMarker marker, const sl::Fra
     // ILION: a menu change of the game's DLSSG options, from the game's simulation thread (never a present marker)
     if (marker == sl::PCLMarker::eSimulationStart)
         applyRequestedDlssgOptions("PCL simulation start");
+    // Indiana Jones sends a nullptr on startup :)
+    const void* volatile framePtr = &frame;
+    if (framePtr == nullptr)
+    {
+        LOG_WARN("Null frame token for marker {}", (uint32_t) marker);
+        return o_slPCLSetMarker(marker, frame);
+    }
 
     // if (State::Instance().activeFgOutput == FGOutput::DLSSG && StreamlineProxy::IsD3D12Inited() &&
     //     Config::Instance()->FGDLSSGUseGamesReflexMarkers.value_or_default())
@@ -1807,12 +1942,20 @@ sl::Result StreamlineHooks::hkslPCLSetMarker(sl::PCLMarker marker, const sl::Fra
             sl::FrameToken* newFramePointer {};
             auto result = o_slGetNewFrameToken(newFramePointer, &newFrameId);
 
-            LOG_WARN("Simulation start marker sent after end marker, offset: {}", correction_offset);
+            // On failure send the marker uncorrected
+            if (result == sl::Result::eOk && newFramePointer != nullptr)
+            {
+                LOG_WARN("Simulation start marker sent after end marker, offset: {}", correction_offset);
+                InputCollection::getInstance().startCollectingForFrame(newFrameId);
 
-            result = o_slPCLSetMarker(marker, *newFramePointer);
-            return result;
+                result = o_slPCLSetMarker(marker, *newFramePointer);
+                return result;
+            }
         }
     }
+
+    if (marker == sl::PCLMarker::eSimulationStart)
+        InputCollection::getInstance().startCollectingForFrame(frame);
 
     if (State::Instance().activeFgInput == FGInput::DLSSG)
     {
@@ -1967,7 +2110,9 @@ void StreamlineHooks::updateForceReflex()
     // Not needed for Streamline v1 as slSetConstants is sent every frame
     if (o_slReflexSetOptions)
     {
-        sl::ReflexOptions options;
+        // Game's chain can point to its stack
+        sl::ReflexOptions options = reflexGamesLastOptions;
+        options.next = nullptr;
 
         auto forceReflex = Config::Instance()->FN_ForceReflex.value_or_default();
 
@@ -2077,7 +2222,39 @@ void StreamlineHooks::unhookInterposer()
         o_logCallback = nullptr;
         o_logCallback_sl1 = nullptr;
         hookedInterposerModule = nullptr;
+        hookedInterposerInit = nullptr;
+        hookedInterposerPath.clear();
     }
+}
+
+// The image and its detours are gone, nothing to detach
+void StreamlineHooks::forgetInterposer()
+{
+    o_slInit = nullptr;
+    o_slInit_sl1 = nullptr;
+    o_slSetTag = nullptr;
+    o_slSetTagForFrame = nullptr;
+    o_slEvaluateFeature = nullptr;
+    o_slSetConstants = nullptr;
+    o_slSetTag_sl1 = nullptr;
+    o_slSetConstants_interposer_sl1 = nullptr;
+    o_slEvaluateFeature_sl1 = nullptr;
+    o_slGetNativeInterface = nullptr;
+    o_slSetD3DDevice = nullptr;
+    o_slGetNewFrameToken = nullptr;
+    o_slIsFeatureSupported = nullptr;
+    o_slIsFeatureLoaded = nullptr;
+    o_slGetFeatureRequirements = nullptr;
+    o_slGetFeatureVersion = nullptr;
+    o_slGetFeatureFunction = nullptr;
+    o_slSetFeatureLoaded = nullptr;
+    o_slAllocateResources = nullptr;
+    o_slFreeResources = nullptr;
+    o_logCallback = nullptr;
+    o_logCallback_sl1 = nullptr;
+    hookedInterposerModule = nullptr;
+    hookedInterposerInit = nullptr;
+    hookedInterposerPath.clear();
 }
 
 // Call it just after sl.interposer's load or if sl.interposer is already loaded
@@ -2093,7 +2270,17 @@ void StreamlineHooks::hookInterposer(HMODULE slInterposer)
 
     // Interposer needs this or it might end in an infinite loop calling itself
     if (hookedInterposerModule == slInterposer)
-        return;
+    {
+        // Same path at the same address is the same layout, so the export can be read
+        if (hookedInterposerInit == nullptr || (GetModulePath(slInterposer) == hookedInterposerPath &&
+                                                memcmp(hookedInterposerInit, hookedInterposerPatch, kPatchBytes) == 0))
+        {
+            return;
+        }
+
+        LOG_DEBUG("sl.interposer was reloaded without its unload being seen");
+        forgetInterposer();
+    }
 
     // Looks like when reading DLL version load methods are called
     // To prevent loops disabling checks for sl.interposer.dll
@@ -2288,6 +2475,15 @@ void StreamlineHooks::hookInterposer(HMODULE slInterposer)
         }
     }
 
+    if (o_slInit != nullptr || o_slInit_sl1 != nullptr)
+    {
+        hookedInterposerInit = KernelBaseProxy::GetProcAddress_()(slInterposer, "slInit");
+        hookedInterposerPath = GetModulePath(slInterposer);
+
+        if (hookedInterposerInit != nullptr)
+            memcpy(hookedInterposerPatch, hookedInterposerInit, kPatchBytes);
+    }
+
     State::EnableChecks(owner);
 }
 
@@ -2315,6 +2511,8 @@ const char* StreamlineHooks::pluginName(SlPlugin plugin)
         return "sl.pcl";
     case SlPlugin::Common:
         return "sl.common";
+    case SlPlugin::Dlssd:
+        return "sl.dlss_d";
     default:
         return "unknown";
     }
@@ -2334,6 +2532,8 @@ std::mutex& StreamlineHooks::pluginMutex(SlPlugin plugin)
         return mutexHookReflex;
     case SlPlugin::Pcl:
         return mutexHookPcl;
+    case SlPlugin::Dlssd:
+        return mutexHookDlssd;
     case SlPlugin::Common:
     default:
         return mutexHookCommon;
@@ -2354,6 +2554,8 @@ HMODULE& StreamlineHooks::activePluginModule(SlPlugin plugin)
         return hookedReflexModule;
     case SlPlugin::Pcl:
         return hookedPclModule;
+    case SlPlugin::Dlssd:
+        return hookedDlssdModule;
     case SlPlugin::Common:
     default:
         return hookedCommonModule;
@@ -2391,6 +2593,8 @@ void* StreamlineHooks::dispatchGetPluginFunction(SlPlugin plugin, PFN_slGetPlugi
         return hkpcl_slGetPluginFunction(original, functionName, caller);
     case SlPlugin::Common:
         return hkcommon_slGetPluginFunction(original, functionName, caller);
+    case SlPlugin::Dlssd:
+        return hkdlssd_slGetPluginFunction(original, functionName, caller);
     default:
         return original(functionName);
     }
@@ -2399,7 +2603,7 @@ void* StreamlineHooks::dispatchGetPluginFunction(SlPlugin plugin, PFN_slGetPlugi
 StreamlineHooks::PFN_slGetPluginFunction StreamlineHooks::slotDetour(SlPlugin plugin, size_t index)
 {
     static_assert(kMaxPluginInstances == 4, "Update the detour table below");
-    static_assert((size_t) SlPlugin::Count == 6, "Update the detour table below");
+    static_assert((size_t) SlPlugin::Count == 7, "Update the detour table below");
 
     using PFN = PFN_slGetPluginFunction;
     static const PFN table[(size_t) SlPlugin::Count][kMaxPluginInstances] = {
@@ -2415,6 +2619,8 @@ StreamlineHooks::PFN_slGetPluginFunction StreamlineHooks::slotDetour(SlPlugin pl
           &slotGetPluginFunction<SlPlugin::Pcl, 2>, &slotGetPluginFunction<SlPlugin::Pcl, 3> },
         { &slotGetPluginFunction<SlPlugin::Common, 0>, &slotGetPluginFunction<SlPlugin::Common, 1>,
           &slotGetPluginFunction<SlPlugin::Common, 2>, &slotGetPluginFunction<SlPlugin::Common, 3> },
+        { &slotGetPluginFunction<SlPlugin::Dlssd, 0>, &slotGetPluginFunction<SlPlugin::Dlssd, 1>,
+          &slotGetPluginFunction<SlPlugin::Dlssd, 2>, &slotGetPluginFunction<SlPlugin::Dlssd, 3> },
     };
 
     return table[(size_t) plugin][index];
@@ -2427,7 +2633,7 @@ bool StreamlineHooks::isSlotAlive(const PluginHookSlot& slot)
     if (slot.module == nullptr || slot.target == nullptr || slot.path.empty())
         return false;
 
-    const auto current = GetModulePath(slot.module);
+    const auto current = GetMappedPath(slot.module);
     if (current.empty() || _wcsicmp(current.c_str(), slot.path.c_str()) != 0)
         return false;
 
@@ -2453,6 +2659,8 @@ void StreamlineHooks::clearPluginPointersInRange(uintptr_t base, size_t size)
 
     clear(o_dlss_slOnPluginLoad, "o_dlss_slOnPluginLoad");
     clear(o_slDLSSGetOptimalSettings, "o_slDLSSGetOptimalSettings");
+
+    clear(o_dlssd_slOnPluginLoad, "o_dlssd_slOnPluginLoad");
 
     clear(o_dlssg_slOnPluginLoad, "o_dlssg_slOnPluginLoad");
     clear(o_dlssg_slGetPluginJSONConfig_sl1, "o_dlssg_slGetPluginJSONConfig_sl1");
@@ -2571,8 +2779,7 @@ void StreamlineHooks::hookPlugin(SlPlugin plugin, HMODULE module)
         }
     }
 
-    auto target =
-        reinterpret_cast<PFN_slGetPluginFunction>(KernelBaseProxy::GetProcAddress_()(module, "slGetPluginFunction"));
+    auto target = reinterpret_cast<PFN_slGetPluginFunction>(FindExport(module, "slGetPluginFunction"));
 
     if (target == nullptr)
     {
@@ -2628,7 +2835,7 @@ void StreamlineHooks::hookPlugin(SlPlugin plugin, HMODULE module)
     slot.target = reinterpret_cast<void*>(target);
     slot.module = module;
     slot.imageSize = imageSize;
-    slot.path = GetModulePath(module);
+    slot.path = GetMappedPath(module);
     memcpy(slot.patchBytes, slot.target, kPatchBytes);
 
     activePluginModule(plugin) = module;
@@ -2658,6 +2865,13 @@ void StreamlineHooks::onModuleFreed(PVOID module)
 {
     if (module == nullptr)
         return;
+
+    // A reload at the same address has to be hooked again
+    if ((HMODULE) module == hookedInterposerModule && GetModulePath(hookedInterposerModule).empty())
+    {
+        LOG_DEBUG("sl.interposer unloaded");
+        forgetInterposer();
+    }
 
     for (size_t p = 0; p < (size_t) SlPlugin::Count; p++)
     {
@@ -2699,6 +2913,20 @@ void StreamlineHooks::hookDlss(HMODULE slDlss)
 {
     LOG_FUNC();
     hookPlugin(SlPlugin::Dlss, slDlss);
+}
+
+// SL DLSSD
+
+void StreamlineHooks::unhookDlssd()
+{
+    LOG_FUNC();
+    unhookPlugin(SlPlugin::Dlssd);
+}
+
+void StreamlineHooks::hookDlssd(HMODULE slDlssd)
+{
+    LOG_FUNC();
+    hookPlugin(SlPlugin::Dlssd, slDlssd);
 }
 
 // SL DLSSG
@@ -2777,6 +3005,8 @@ void StreamlineHooks::hookCommon(HMODULE slCommon)
 bool StreamlineHooks::isInterposerHooked() { return o_slInit != nullptr || o_slInit_sl1 != nullptr; }
 
 bool StreamlineHooks::isDlssHooked() { return isPluginHooked(SlPlugin::Dlss); }
+
+bool StreamlineHooks::isDlssdHooked() { return isPluginHooked(SlPlugin::Dlssd); }
 
 bool StreamlineHooks::isDlssgHooked() { return isPluginHooked(SlPlugin::Dlssg); }
 

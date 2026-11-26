@@ -112,38 +112,26 @@ void Nvngx_ApexFg::LoadLibraries()
         return;
     }
 
-    dll = module;
-    _DLSSG_D3D12_Init = (PFN_D3D12_Init) GetProcAddress(dll, "NVSDK_NGX_D3D12_Init");
-    _DLSSG_D3D12_Init_Ext = (PFN_D3D12_Init_Ext) GetProcAddress(dll, "NVSDK_NGX_D3D12_Init_Ext");
-    _DLSSG_D3D12_Shutdown = (PFN_D3D12_Shutdown) GetProcAddress(dll, "NVSDK_NGX_D3D12_Shutdown");
-    _DLSSG_D3D12_Shutdown1 = (PFN_D3D12_Shutdown1) GetProcAddress(dll, "NVSDK_NGX_D3D12_Shutdown1");
-    _DLSSG_D3D12_GetScratchBufferSize =
-        (PFN_D3D12_GetScratchBufferSize) GetProcAddress(dll, "NVSDK_NGX_D3D12_GetScratchBufferSize");
-    _DLSSG_D3D12_CreateFeature = (PFN_D3D12_CreateFeature) GetProcAddress(dll, "NVSDK_NGX_D3D12_CreateFeature");
-    _DLSSG_D3D12_ReleaseFeature = (PFN_D3D12_ReleaseFeature) GetProcAddress(dll, "NVSDK_NGX_D3D12_ReleaseFeature");
-    _DLSSG_D3D12_GetFeatureRequirements =
-        (PFN_D3D12_GetFeatureRequirements) GetProcAddress(dll, "NVSDK_NGX_D3D12_GetFeatureRequirements");
-    _DLSSG_D3D12_EvaluateFeature = (PFN_D3D12_EvaluateFeature) GetProcAddress(dll, "NVSDK_NGX_D3D12_EvaluateFeature");
-    _DLSSG_D3D12_PopulateParameters_Impl =
-        (PFN_D3D12_PopulateParameters_Impl) GetProcAddress(dll, "NVSDK_NGX_D3D12_PopulateParameters_Impl");
+    ngx.dll = module;
+    LoadDx12Exports(); // ILION 1.5: shared with the other replacements (Nvngx_DllProxy)
 
-    if (_DLSSG_D3D12_Init == nullptr || _DLSSG_D3D12_CreateFeature == nullptr || _DLSSG_D3D12_EvaluateFeature == nullptr)
+    if (ngx.D3D12_Init == nullptr || ngx.D3D12_CreateFeature == nullptr || ngx.D3D12_EvaluateFeature == nullptr)
     {
         LOG_ERROR("ANR FG: {} doesn't export the NVSDK_NGX_D3D12 entry points of a DLSSG replacement",
                   wstring_to_string(path.wstring()));
-        _DLSSG_D3D12_Init = nullptr;
+        ngx.D3D12_Init = nullptr;
         return;
     }
 
     // ILION v1.4.1.2: the optional entry points it lacks (each call checks its own pointer, Nvngx_DllProxy)
     std::string missing;
-    for (const auto& [function, name] : { std::pair { (void*) _DLSSG_D3D12_Init_Ext, "Init_Ext" },
-                                          { (void*) _DLSSG_D3D12_Shutdown, "Shutdown" },
-                                          { (void*) _DLSSG_D3D12_Shutdown1, "Shutdown1" },
-                                          { (void*) _DLSSG_D3D12_GetScratchBufferSize, "GetScratchBufferSize" },
-                                          { (void*) _DLSSG_D3D12_ReleaseFeature, "ReleaseFeature" },
-                                          { (void*) _DLSSG_D3D12_GetFeatureRequirements, "GetFeatureRequirements" },
-                                          { (void*) _DLSSG_D3D12_PopulateParameters_Impl, "PopulateParameters_Impl" } })
+    for (const auto& [function, name] : { std::pair { (void*) ngx.D3D12_Init_Ext, "Init_Ext" },
+                                          { (void*) ngx.D3D12_Shutdown, "Shutdown" },
+                                          { (void*) ngx.D3D12_Shutdown1, "Shutdown1" },
+                                          { (void*) ngx.D3D12_GetScratchBufferSize, "GetScratchBufferSize" },
+                                          { (void*) ngx.D3D12_ReleaseFeature, "ReleaseFeature" },
+                                          { (void*) ngx.D3D12_GetFeatureRequirements, "GetFeatureRequirements" },
+                                          { (void*) ngx.D3D12_PopulateParameters_Impl, "PopulateParameters_Impl" } })
     {
         if (function == nullptr)
             missing += missing.empty() ? name : std::string(", ") + name;

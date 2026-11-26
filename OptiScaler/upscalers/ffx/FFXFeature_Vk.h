@@ -4,33 +4,31 @@
 
 #include "vk/ffx_api_vk.h"
 #include <proxies/FfxApi_Proxy.h>
-#include <fsr4/FSR4DriverProviderVk.h>
+#include <shaders/velocity_convert/VC_Vk.h>
 
 class FFXFeatureVk : public FFXFeature, public IFeature_Vk
 {
   private:
-    // ILION: the context belongs to the AMD Vulkan driver's provider (FSR4DriverProviderVk) instead of
-    // amd_fidelityfx_vk.dll; every call of it goes to the same provider
-    bool _driverProvider = false;
+    // FFX SDK dll, the driver provided upscaler or the custom upscaler's dll
+    FfxModule* _ffx = nullptr;
+
+    // Custom upscaler dll, nullptr for the regular FFX ones
+    CustomFfxModule* _customUpscaler = nullptr;
+
+    std::unique_ptr<VelocityConvert_Vk> _velocityConvert = nullptr;
+
+    // Last logged inputs of the driver provided FSR 4
+    std::string _lastFsr4Inputs;
 
   protected:
     bool InitFFX(const NVSDK_NGX_Parameter* InParameters);
-
-    PfnFfxConfigure ConfigureFn() const
-    {
-        return _driverProvider ? FSR4DriverProviderVk::Configure() : FfxApiProxy::VULKAN_Configure();
-    }
-    PfnFfxDispatch DispatchFn() const
-    {
-        return _driverProvider ? FSR4DriverProviderVk::Dispatch() : FfxApiProxy::VULKAN_Dispatch();
-    }
 
     // From IFeature_Vk
     bool InitInternal(VkCommandBuffer InCmdList, NVSDK_NGX_Parameter* InParameters) override;
     bool EvaluateInternal(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Parameter* InParameters) override;
 
   public:
-    FFXFeatureVk(unsigned int InHandleId, NVSDK_NGX_Parameter* InParameters);
+    FFXFeatureVk(unsigned int InHandleId, NVSDK_NGX_Parameter* InParameters, const std::string& customUpscaler = "");
 
     feature_version Version() override { return FFXFeature::Version(); }
     Upscaler GetUpscalerType() const final { return Upscaler::FFX; }
@@ -48,15 +46,7 @@ class FFXFeatureVk : public FFXFeature, public IFeature_Vk
         if (State::Instance().isShuttingDown)
             return;
 
-        if (_context != nullptr)
-        {
-            if (_driverProvider)
-            {
-                FSR4DriverProviderVk::DestroyContext()(&_context, NULL);
-                FSR4DriverProviderVk::SetInUse(false);
-            }
-            else
-                FfxApiProxy::VULKAN_DestroyContext()(&_context, NULL);
-        }
+        if (_context != nullptr && _ffx != nullptr)
+            _ffx->DestroyContext(&_context, NULL);
     }
 };

@@ -7,6 +7,7 @@
 #include <proxies/XeFG_Proxy.h>
 
 #include "shaders/depth_invert/DI_Dx12.h"
+#include "XeFG_DynamicMFG.h"
 
 #include <xell.h>
 #include <xell_d3d12.h>
@@ -25,6 +26,7 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
     bool _infiniteDepth = false;
     std::optional<bool> _haveHudless = std::nullopt;
     bool _uiComposition = false;
+
 
     std::unique_ptr<DI_Dx12> _depthInvert;
 

@@ -127,33 +127,21 @@ void Nvngx_HelixSR::LoadLibraries()
             continue;
         }
 
-        dll = module;
+        ngx.dll = module;
         loadedVersion = version();
         LOG_INFO("NVIDIA FG Lite: HelixSR frame generation from {} (NGX FG version {})",
                  wstring_to_string(path.wstring()), loadedVersion.load());
         break;
     }
 
-    if (dll == nullptr)
+    if (ngx.dll == nullptr)
     {
         LOG_WARN("NVIDIA FG Lite selected but no HelixSR 2.0.0 frame generation DLL was found");
         return;
     }
 
-    _DLSSG_D3D12_Init = (PFN_D3D12_Init) GetProcAddress(dll, "NVSDK_NGX_D3D12_Init");
-    _DLSSG_D3D12_Init_Ext = (PFN_D3D12_Init_Ext) GetProcAddress(dll, "NVSDK_NGX_D3D12_Init_Ext");
-    _DLSSG_D3D12_Shutdown = (PFN_D3D12_Shutdown) GetProcAddress(dll, "NVSDK_NGX_D3D12_Shutdown");
-    _DLSSG_D3D12_Shutdown1 = (PFN_D3D12_Shutdown1) GetProcAddress(dll, "NVSDK_NGX_D3D12_Shutdown1");
-    _DLSSG_D3D12_GetScratchBufferSize =
-        (PFN_D3D12_GetScratchBufferSize) GetProcAddress(dll, "NVSDK_NGX_D3D12_GetScratchBufferSize");
-    _DLSSG_D3D12_CreateFeature = (PFN_D3D12_CreateFeature) GetProcAddress(dll, "NVSDK_NGX_D3D12_CreateFeature");
-    _DLSSG_D3D12_ReleaseFeature = (PFN_D3D12_ReleaseFeature) GetProcAddress(dll, "NVSDK_NGX_D3D12_ReleaseFeature");
-    _DLSSG_D3D12_GetFeatureRequirements =
-        (PFN_D3D12_GetFeatureRequirements) GetProcAddress(dll, "NVSDK_NGX_D3D12_GetFeatureRequirements");
-    _DLSSG_D3D12_EvaluateFeature = (PFN_D3D12_EvaluateFeature) GetProcAddress(dll, "NVSDK_NGX_D3D12_EvaluateFeature");
-    _DLSSG_D3D12_PopulateParameters_Impl =
-        (PFN_D3D12_PopulateParameters_Impl) GetProcAddress(dll, "NVSDK_NGX_D3D12_PopulateParameters_Impl");
+    LoadDx12Exports(); // ILION 1.5: shared with the other replacements (Nvngx_DllProxy)
 
-    if (_DLSSG_D3D12_Init == nullptr || _DLSSG_D3D12_CreateFeature == nullptr || _DLSSG_D3D12_EvaluateFeature == nullptr)
+    if (ngx.D3D12_Init == nullptr || ngx.D3D12_CreateFeature == nullptr || ngx.D3D12_EvaluateFeature == nullptr)
         LOG_WARN("NVIDIA FG Lite: the DLL lacks NVSDK_NGX_D3D12 entry points");
 }

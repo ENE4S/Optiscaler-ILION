@@ -1,81 +1,120 @@
 #include "pch.h"
 #include "FSR4DriverProvider.h"
-#include "FSR4Models.h"
 
-#include <State.h>
-#include <Util.h>
+#include "FSR4Models.h"
+#include "FSR4Presets.h"
+
 #include <proxies/KernelBase_Proxy.h>
 #include <proxies/Ntdll_Proxy.h>
+#include <misc/IdentifyGpu.h>
+
 #include <detours/detours.h>
+
 #include <ffx_upscale.h>
 
 namespace
 {
-typedef HRESULT(STDMETHODCALLTYPE* PFN_DriverUpdateProvider)(void* pData, uint32_t dataSizeInBytes);
-
-typedef HRESULT(STDMETHODCALLTYPE* PFN_DriverUpdateProviderEx)(void* pData, uint32_t dataSizeInBytes, void* options);
-
-// Options of UpdateFfxApiProviderEx, chained through next (upstream ProviderOption); only the upscaler is asked here
-struct ProviderOption
-{
-    uint32_t type = 0;
-    uint32_t effect = 0; // 0 upscale
-    bool enable = true;
-    ProviderOption* next = nullptr;
-};
-static_assert(sizeof(ProviderOption) == 0x18);
-
 struct PatchedDll
 {
     HMODULE module;
     decltype(&GetModuleHandleW) o_GetModuleHandleW;
-    std::vector<std::wstring> sdkModules; // the FFX SDK dlls this driver dll looks for
 };
 
 std::vector<PatchedDll> patchedDlls;
-std::mutex patchMutex;
+std::mutex patchedDllsMutex;
 
-// Only the driver dlls call it, through their patched imports: an SDK dll that isn't loaded is answered with the
-// driver dll itself
+// Driver dll that gets itself for every FFX SDK dll it looks up while it sets its SDK version
+std::atomic<HMODULE> primingDll = nullptr;
+
+std::vector<FSR4DriverDll*>& DriverDlls()
+{
+    static std::vector<FSR4DriverDll*> dlls;
+    return dlls;
+}
+
+HMODULE LoadDriverDll(const wchar_t* name)
+{
+    auto module = KernelBaseProxy::GetModuleHandleW_()(name);
+
+    if (module != nullptr)
+    {
+        LOG_INFO(L"{} already in memory", name);
+        return module;
+    }
+
+    // A copy next to Opti overrides the driver's. Only explicit paths are tried, a search by name can find an old copy
+    // that a previous driver left in System32
+    auto optiPath = std::filesystem::path(Config::Instance()->MainDllPath.value()) / name;
+
+    if (std::filesystem::exists(optiPath))
+    {
+        module = NtdllProxy::LoadLibraryExW_Ldr(optiPath.c_str(), NULL, 0);
+
+        if (module != nullptr)
+        {
+            LOG_INFO(L"{} loaded from {}", name, optiPath.wstring());
+            return module;
+        }
+    }
+
+    // Systems with two GPUs of a vendor have a driver package for each, the primary GPU's goes first
+    auto primaryStore = IdentifyGpu::getPrimaryGpu().driverStore;
+    std::vector<std::filesystem::path> storePaths;
+
+    if (!primaryStore.empty())
+        storePaths.push_back(primaryStore);
+
+    for (const auto& [luid, path] : Util::GetDriverStore())
+    {
+        if (path != primaryStore)
+            storePaths.push_back(path);
+    }
+
+    for (const auto& path : storePaths)
+    {
+        auto dllPath = path / name;
+        LOG_DEBUG("Trying to load: {}", wstring_to_string(dllPath.c_str()));
+
+        module = NtdllProxy::LoadLibraryExW_Ldr(dllPath.c_str(), NULL, 0);
+
+        if (module != nullptr)
+        {
+            LOG_INFO(L"{} loaded from {}", name, dllPath.wstring());
+            return module;
+        }
+    }
+
+    LOG_WARN(L"Failed to load {}", name);
+    return nullptr;
+}
+
+// Only the driver dlls call it, through their patched imports
 HMODULE WINAPI hkGetModuleHandleW(LPCWSTR lpModuleName)
 {
     auto caller = Util::GetCallerModule(_ReturnAddress());
-    decltype(&GetModuleHandleW) original = nullptr;
+    HMODULE module = nullptr;
+
+    if (caller != nullptr && caller == primingDll && lpModuleName != nullptr &&
+        _wcsnicmp(lpModuleName, L"amd_fidelityfx_", 15) == 0)
+    {
+        return caller;
+    }
 
     {
-        std::scoped_lock guard(patchMutex);
+        std::scoped_lock lock(patchedDllsMutex);
+
         auto patched = std::ranges::find(patchedDlls, caller, &PatchedDll::module);
-        if (patched != patchedDlls.end())
-            original = patched->o_GetModuleHandleW;
+        module = patched != patchedDlls.end() ? patched->o_GetModuleHandleW(lpModuleName)
+                                              : KernelBaseProxy::GetModuleHandleW_()(lpModuleName);
     }
 
-    std::vector<std::wstring> sdkModules;
-
-    {
-        std::scoped_lock guard(patchMutex);
-        auto patched = std::ranges::find(patchedDlls, caller, &PatchedDll::module);
-        if (patched != patchedDlls.end())
-            sdkModules = patched->sdkModules;
-    }
-
-    HMODULE module = original != nullptr ? original(lpModuleName) : KernelBaseProxy::GetModuleHandleW_()(lpModuleName);
-
-    if (module == nullptr && original != nullptr && lpModuleName != nullptr)
-    {
-        for (const auto& sdkModule : sdkModules)
-        {
-            if (_wcsicmp(lpModuleName, sdkModule.c_str()) == 0)
-            {
-                LOG_DEBUG(L"Giving the driver dll its own HMODULE for {}", lpModuleName);
-                return caller;
-            }
-        }
-    }
+    if (module == nullptr)
+        module = FSR4DriverDll::SdkModuleStandIn(lpModuleName, caller);
 
     return module;
 }
 
-BOOL CALLBACK PatchGetModuleHandleW(PVOID pContext, DWORD, LPCSTR pszFunc, PVOID* ppvFunc)
+BOOL CALLBACK PatchGetModuleHandleW(PVOID pContext, DWORD nOrdinal, LPCSTR pszFunc, PVOID* ppvFunc)
 {
     if (pszFunc == nullptr || ppvFunc == nullptr || strcmp(pszFunc, "GetModuleHandleW") != 0)
         return TRUE;
@@ -86,88 +125,173 @@ BOOL CALLBACK PatchGetModuleHandleW(PVOID pContext, DWORD, LPCSTR pszFunc, PVOID
 
     static_cast<PatchedDll*>(pContext)->o_GetModuleHandleW = reinterpret_cast<decltype(&GetModuleHandleW)>(*ppvFunc);
     *ppvFunc = reinterpret_cast<PVOID>(&hkGetModuleHandleW);
+
     VirtualProtect(ppvFunc, sizeof(PVOID), oldProtect, &oldProtect);
+
     return FALSE;
 }
+
 } // namespace
 
-bool FSR4DriverProvider::LoadUpscaler(const std::wstring& path, Upscaler& out, std::string& problem)
+void AddDriverToVersionList(std::vector<uint64_t>& ids, std::vector<const char*>& names, uint64_t driverId,
+                            const char* driverName, DriverListing listing)
 {
-    // Struct version 1 asks for a signed amd_fidelityfx_dx12.dll, newer ones for the upscaler dll and a signed or
-    // missing loader; FFX SDK 2.0+ sends version 2, the first drivers with FSR 4 only fill in version 1
-    return LoadUpscaler(path, { L"amd_fidelityfx_dx12.dll", L"amd_fidelityfx_upscaler_dx12.dll" }, { 2u, 1u }, false, out,
-                        problem);
+    // FFX SDK modules can get the driver provider on their own
+    if (std::ranges::find(ids, driverId) != ids.end())
+        return;
+
+    auto driverVersion = ProviderVersion(driverId);
+    auto isOlder = [driverVersion](uint64_t id) { return ProviderVersion(id) < driverVersion; };
+
+    if (listing == DriverListing::WhenNewestUpscaler && !std::ranges::all_of(ids, isOlder))
+    {
+        LOG_DEBUG("Not listing driver provider {}, the FFX SDK has a newer or equal one", driverName);
+        return;
+    }
+
+    auto index = std::distance(ids.begin(), std::ranges::find_if(ids, isOlder));
+    ids.insert(ids.begin() + index, driverId);
+    names.insert(names.begin() + index, driverName);
 }
 
-bool FSR4DriverProvider::LoadUpscaler(const std::wstring& path, std::initializer_list<const wchar_t*> sdkModules,
-                                      std::initializer_list<uint32_t> structVersions, bool useEx, Upscaler& out,
-                                      std::string& problem)
+FSR4DriverDll::FSR4DriverDll(const wchar_t* name, std::vector<std::wstring> sdkModules)
+    : _name(name), _sdkModules(std::move(sdkModules))
 {
-    HMODULE module = NtdllProxy::LoadLibraryExW_Ldr(path.c_str(), NULL, 0);
-    if (module == nullptr)
-    {
-        problem = "dll can't be loaded";
-        return false;
-    }
+    DriverDlls().push_back(this);
+}
 
-    auto update = reinterpret_cast<PFN_DriverUpdateProvider>(KernelBaseProxy::GetProcAddress_()(module, "UpdateFfxApiProvider"));
-    auto updateEx =
-        reinterpret_cast<PFN_DriverUpdateProviderEx>(KernelBaseProxy::GetProcAddress_()(module, "UpdateFfxApiProviderEx"));
-    if (update == nullptr)
-    {
-        problem = "not an AMD driver FSR provider";
-        return false;
-    }
+HMODULE FSR4DriverDll::Load()
+{
+    std::call_once(_loadOnce,
+                   [this]
+                   {
+                       auto module = LoadDriverDll(_name.c_str());
+                       if (module == nullptr)
+                           return;
 
-    // Once per dll: the SDK stand-in and its model checks
-    {
-        std::scoped_lock guard(patchMutex);
+                       _updateFfxApiProvider = reinterpret_cast<PFN_UpdateFfxApiProvider>(
+                           KernelBaseProxy::GetProcAddress_()(module, "UpdateFfxApiProvider"));
+                       _updateFfxApiProviderEx = reinterpret_cast<PFN_UpdateFfxApiProviderEx>(
+                           KernelBaseProxy::GetProcAddress_()(module, "UpdateFfxApiProviderEx"));
 
-        if (std::ranges::find(patchedDlls, module, &PatchedDll::module) == patchedDlls.end())
-        {
-            PatchedDll patched { module, nullptr, {} };
-            for (auto sdkModule : sdkModules)
-                patched.sdkModules.emplace_back(sdkModule);
-            DetourEnumerateImportsEx(module, &patched, nullptr, PatchGetModuleHandleW);
+                       if (_updateFfxApiProvider == nullptr)
+                       {
+                           LOG_ERROR(L"Failed to get UpdateFfxApiProvider of {}", _name);
+                           return;
+                       }
 
-            if (patched.o_GetModuleHandleW == nullptr)
-                LOG_WARN("Couldn't patch GetModuleHandleW of {}", wstring_to_string(path));
+                       if (!_sdkModules.empty())
+                       {
+                           PatchedDll patched { module, nullptr };
+                           DetourEnumerateImportsEx(module, &patched, nullptr, PatchGetModuleHandleW);
 
-            patchedDlls.push_back(patched);
-        }
-    }
+                           if (patched.o_GetModuleHandleW != nullptr)
+                           {
+                               {
+                                   std::scoped_lock lock(patchedDllsMutex);
+                                   patchedDlls.push_back(patched);
+                               }
 
-    FSR4Models::Hook(module);
+                               // The driver keeps the SDK version of the first FFX dll it checks for the rest of
+                               // the process. An old one, like the legacy amd_fidelityfx_dx12.dll that struct
+                               // version 1 requests check, rules out frame generation and its swapchain. This
+                               // request runs before any other and has the driver dll check itself, its file
+                               // version counts as the newest SDK
+                               ExternalProviderData data {};
+                               data.structVersion = 2;
+                               data.descType = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
 
-    for (uint32_t structVersion : structVersions)
+                               primingDll = module;
+                               auto result = UpdateFfxApiProvider(&data, ExternalProviderData::SizeFor(2));
+                               primingDll = nullptr;
+
+                               LOG_DEBUG(L"Set the SDK version of {}, result: 0x{:X}", _name, (UINT) result);
+                           }
+                           else
+                           {
+                               LOG_WARN(L"Couldn't patch GetModuleHandleW of {}", _name);
+                           }
+                       }
+
+                       FSR4Presets::Hook(module);
+                       FSR4Models::Hook(module);
+
+                       _module = module;
+                   });
+
+    return _module;
+}
+
+std::optional<DriverProvider> FSR4DriverDll::QueryProvider(uint64_t descType,
+                                                           std::initializer_list<uint32_t> structVersions,
+                                                           ProviderOption* options) const
+{
+    if (_module == nullptr)
+        return std::nullopt;
+
+    for (auto structVersion : structVersions)
     {
         ExternalProviderData data {};
         data.structVersion = structVersion;
-        data.descType = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
+        data.descType = descType;
 
-        auto owner = State::GetOwner();
-        State::DisableChecks(owner);
-        ProviderOption upscale {};
-        const HRESULT result = useEx && updateEx != nullptr ? updateEx(&data, ExternalProviderData::SizeFor(structVersion), &upscale)
-                                                            : update(&data, ExternalProviderData::SizeFor(structVersion));
-        State::EnableChecks(owner);
+        auto result = UpdateFfxApiProvider(&data, ExternalProviderData::SizeFor(structVersion), options);
 
-        if (SUCCEEDED(result) && data.provider.createContext != nullptr && data.provider.destroyContext != nullptr &&
-            data.provider.configure != nullptr && data.provider.query != nullptr && data.provider.dispatch != nullptr)
+        if (SUCCEEDED(result) && data.provider.createContext != nullptr)
         {
-            out.module = module;
-            out.versionName = data.provider.versionName != nullptr ? data.provider.versionName : "";
-            out.functions = data.provider;
-            out.functions.versionName = nullptr; // the driver reuses that buffer
-            out.isSupported = structVersion >= 3 ? data.isSupported : nullptr;
-            LOG_INFO("Driver upscaler provider {} (id {:X}, struct version {}) from {}", out.versionName,
-                     out.functions.versionId, structVersion, wstring_to_string(path));
-            return true;
+            DriverProvider provider { data.provider, data.provider.versionName ? data.provider.versionName : "",
+                                      structVersion >= 3 ? data.isSupported : nullptr };
+            provider.functions.versionName = nullptr;
+
+            LOG_INFO(L"{} provider for {:X}: {}, id: {:X}, struct version: {}", _name, descType,
+                     string_to_wstring(provider.versionName), provider.functions.versionId, structVersion);
+
+            return provider;
         }
 
-        LOG_DEBUG("UpdateFfxApiProvider struct version {}: 0x{:X}", structVersion, (UINT) result);
+        LOG_DEBUG(L"{} UpdateFfxApiProvider for {:X} with struct version {}, result: 0x{:X}", _name, descType,
+                  structVersion, (UINT) result);
     }
 
-    problem = "the driver gave no upscaler provider (GPU or driver without FSR 4)";
-    return false;
+    return std::nullopt;
+}
+
+HRESULT FSR4DriverDll::UpdateFfxApiProvider(void* data, uint32_t dataSizeInBytes, ProviderOption* options) const
+{
+    if (_updateFfxApiProvider == nullptr)
+        return E_NOINTERFACE;
+
+    auto owner = State::GetOwner();
+    State::DisableChecks(owner);
+
+    auto result = options != nullptr && _updateFfxApiProviderEx != nullptr
+                      ? _updateFfxApiProviderEx(data, dataSizeInBytes, options)
+                      : _updateFfxApiProvider(data, dataSizeInBytes);
+
+    State::EnableChecks(owner);
+
+    return result;
+}
+
+HMODULE FSR4DriverDll::SdkModuleStandIn(const wchar_t* moduleName, HMODULE caller)
+{
+    if (moduleName == nullptr || caller == nullptr)
+        return nullptr;
+
+    for (auto dll : DriverDlls())
+    {
+        if (dll->_module != caller)
+            continue;
+
+        for (const auto& sdkModule : dll->_sdkModules)
+        {
+            if (_wcsicmp(moduleName, sdkModule.c_str()) == 0)
+            {
+                LOG_DEBUG(L"Giving {} its own HMODULE for {}", dll->_name, moduleName);
+                return dll->_module;
+            }
+        }
+    }
+
+    return nullptr;
 }

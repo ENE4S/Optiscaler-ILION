@@ -49,8 +49,9 @@ inline int FrameLimit::combined_sleep(int64_t ns)
     else
         status = timer_sleep((ns - busywait_threshold) / 100);
 
-    if (int64_t sleep_deviation = ns - (Util::GetTimestamp() - current_time); sleep_deviation > 0 && !status)
-        status = busywait_sleep(sleep_deviation);
+    // Busy wait also covers a failed timer
+    if (int64_t sleep_deviation = ns - (Util::GetTimestamp() - current_time); sleep_deviation > 0)
+        busywait_sleep(sleep_deviation);
 
     return status;
 }

@@ -23,6 +23,7 @@ struct Dx12Resource
     ID3D12GraphicsCommandList* cmdList = nullptr;
     D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON;
     FG_ResourceValidity validity = FG_ResourceValidity::ValidNow;
+    bool flip = false; // The game asks for a flipped hudless
 
     // TODO: make private?
     ID3D12Resource* copy = nullptr;
@@ -68,8 +69,12 @@ class IFGFeature_Dx12 : public virtual IFGFeature
     ID3D12CommandAllocator* _scCommandAllocator[BUFFER_COUNT] {};
     bool _scCommandListResetted[BUFFER_COUNT] { false, false, false, false };
     UINT64 _scAllocatorFenceValues[BUFFER_COUNT] {};
+
+    // Signaled after our submits on the game queue, an allocator waits for its last submit before reset
     ID3D12Fence* _scFence = nullptr;
     HANDLE _scFenceEvent = nullptr;
+    UINT64 _scFenceValue = 0;
+    std::mutex _scFenceMutex; // FG dispatch and present signal it from different threads
 
     ID3D12GraphicsCommandList* _uiCommandList[BUFFER_COUNT] {};
     ID3D12CommandAllocator* _uiCommandAllocator[BUFFER_COUNT] {};
@@ -83,17 +88,16 @@ class IFGFeature_Dx12 : public virtual IFGFeature
     std::unordered_map<FG_ResourceType, ID3D12Resource*> _resourceCopy[BUFFER_COUNT] {};
     std::shared_mutex _resourceMutex[BUFFER_COUNT];
 
-    uint64_t _timeSinceSimStart = 0;
-    bool _reprojectionActive = false;
-
     std::unique_ptr<RF_Dx12> _mvFlip;
     std::unique_ptr<RF_Dx12> _depthFlip;
+    std::unique_ptr<RF_Dx12> _hudlessFlip;
     std::unique_ptr<HC_Dx12> _hudlessCompare;
     std::unique_ptr<RUI_Dx12> _renderUI;
     std::unique_ptr<Reproject_Dx12> _reproject;
 
     bool CreateBufferResource(ID3D12Device* InDevice, ID3D12Resource* InSource, D3D12_RESOURCE_STATES InState,
-                              ID3D12Resource** OutResource, bool UAV = false, bool depth = false);
+                              ID3D12Resource** OutResource, bool UAV = false, bool depth = false,
+                              DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN);
     bool CreateBufferResourceWithSize(ID3D12Device* device, ID3D12Resource* source, D3D12_RESOURCE_STATES state,
                                       ID3D12Resource** target, UINT width, UINT height, bool UAV, bool depth);
     void ResourceBarrier(ID3D12GraphicsCommandList* InCommandList, ID3D12Resource* InResource,
@@ -102,7 +106,11 @@ class IFGFeature_Dx12 : public virtual IFGFeature
                       D3D12_RESOURCE_STATES sourceState);
 
     void NewFrame() override final;
-    void FlipResource(Dx12Resource* resource);
+    bool WillFlip(const Dx12Resource* resource) const;
+    void FlipResource(Dx12Resource* resource, int fIndex);
+
+    // Frees per frame copies and helper buffers, they get recreated on demand
+    virtual void ReleaseResourceCopies();
 
     virtual bool CreateSwapchainInternal(IDXGIFactory* factory, ID3D12CommandQueue* cmdQueue,
                                          DXGI_SWAP_CHAIN_DESC* desc, IDXGISwapChain** swapChain) = 0;
@@ -112,6 +120,10 @@ class IFGFeature_Dx12 : public virtual IFGFeature
 
   protected:
     virtual void ReleaseObjects() = 0;
+    void ReleaseFences();
+    bool WaitForFenceValue(ID3D12Fence* fence, HANDLE event, UINT64 value);
+    UINT64 SignalSCFence();
+    void SubmitSCCommandList(UINT index);
     virtual void CreateObjects(ID3D12Device* InDevice) = 0;
 
   public:
@@ -140,9 +152,7 @@ class IFGFeature_Dx12 : public virtual IFGFeature
 
     bool HasResource(FG_ResourceType type, int index = -1) override final;
 
-    virtual bool HasReprojection() { return false; };
-    bool IsReprojectionActive() const { return _reprojectionActive; };
-    uint64_t GetLastTimeSinceSimStartNs() const { return _timeSinceSimStart; };
+    const Reproject* GetReproject() const override { return _reproject.get(); };
 
     IFGFeature_Dx12() = default;
     virtual ~IFGFeature_Dx12() { DestroyCopyCmdList(); }

@@ -1,12 +1,10 @@
 #include "pch.h"
 
-// ILION v1.4.0: OptiScaler v10's plugins/PluginApi.cpp (GPL-3.0, optiscaler/OptiScaler 07aa9da), with ILION's
-// config (Config raw values) and menu (ScopedCard, MenuCommon); the API itself is unchanged
-
 #include "PluginApi.h"
 
 #include "Config.h"
 #include "menu/menu_common.h"
+#include "misc/CustomProviders.h"
 
 #include <imgui/imgui_internal.h>
 
@@ -102,31 +100,6 @@ void WrappedText(const char* text, const ImVec4* color)
 
     if (color != nullptr)
         ImGui::PopStyleColor();
-}
-
-// ILION: a plugin's labelled widget stays inside its card. The widget takes the room its label leaves, at most as wide
-// as ILION's FG selectors; when the label leaves less than 8 em, the label goes on its own line above and the widget
-// takes the line. Returns the label to pass to ImGui (the same, or "##label" when it was drawn above)
-const char* FitItem(const char* label, std::string& hidden)
-{
-    const char* end = ImGui::FindRenderedTextEnd(label);
-    const ImGuiStyle& style = ImGui::GetStyle();
-    const float font = ImGui::GetFontSize();
-    const float labelWidth = end > label ? ImGui::CalcTextSize(label, end).x + style.ItemInnerSpacing.x : 0.0f;
-    const float avail = ImGui::GetContentRegionAvail().x;
-    const float maxWidth = font * 17.0f;
-
-    if (avail - labelWidth >= font * 8.0f)
-    {
-        ImGui::SetNextItemWidth(std::floor(std::min(avail - labelWidth, maxWidth)));
-        return label;
-    }
-
-    if (end > label)
-        ImGui::TextWrapped("%.*s", (int) (end - label), label);
-    ImGui::SetNextItemWidth(std::floor(std::min(avail, maxWidth)));
-    hidden = std::string("##") + label;
-    return hidden.c_str();
 }
 
 // Copies at most bufferSize - 1 bytes without cutting a UTF-8 character in half
@@ -304,19 +277,7 @@ bool Api_Button(const char* label) { return _draw != nullptr && label != nullptr
 
 bool Api_Checkbox(const char* label, bool* value)
 {
-    if (_draw == nullptr || label == nullptr || value == nullptr)
-        return false;
-
-    // ILION: a label longer than the card wraps beside its box instead of running past the edge
-    const char* end = ImGui::FindRenderedTextEnd(label);
-    const float box = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x;
-    if (end == label || box + ImGui::CalcTextSize(label, end).x <= ImGui::GetContentRegionAvail().x)
-        return ImGui::Checkbox(label, value);
-
-    const bool changed = ImGui::Checkbox((std::string("##") + label).c_str(), value);
-    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-    ImGui::TextWrapped("%.*s", (int) (end - label), label);
-    return changed;
+    return _draw != nullptr && label != nullptr && value != nullptr && ImGui::Checkbox(label, value);
 }
 
 bool Api_SliderFloat(const char* label, float* value, float min, float max, const char* format)
@@ -324,8 +285,7 @@ bool Api_SliderFloat(const char* label, float* value, float min, float max, cons
     if (_draw == nullptr || label == nullptr || value == nullptr)
         return false;
 
-    std::string hidden;
-    return ImGui::SliderFloat(FitItem(label, hidden), value, min, max, format != nullptr ? format : "%.3f",
+    return ImGui::SliderFloat(label, value, min, max, format != nullptr ? format : "%.3f",
                               ImGuiSliderFlags_AlwaysClamp);
 }
 
@@ -334,9 +294,7 @@ bool Api_SliderInt(const char* label, int32_t* value, int32_t min, int32_t max, 
     if (_draw == nullptr || label == nullptr || value == nullptr)
         return false;
 
-    std::string hidden;
-    return ImGui::SliderInt(FitItem(label, hidden), value, min, max, format != nullptr ? format : "%d",
-                            ImGuiSliderFlags_AlwaysClamp);
+    return ImGui::SliderInt(label, value, min, max, format != nullptr ? format : "%d", ImGuiSliderFlags_AlwaysClamp);
 }
 
 bool Api_ItemDeactivatedAfterEdit() { return _draw != nullptr && ImGui::IsItemDeactivatedAfterEdit(); }
@@ -351,8 +309,7 @@ bool Api_Combo(const char* label, int32_t* current, const char* const* items, in
     const char* preview = validIndex ? items[*current] : "";
     bool changed = false;
 
-    std::string hidden;
-    if (ImGui::BeginCombo(FitItem(label, hidden), preview))
+    if (ImGui::BeginCombo(label, preview))
     {
         for (int32_t i = 0; i < itemCount; i++)
         {
@@ -385,8 +342,7 @@ bool Api_InputText(const char* label, char* buffer, size_t bufferSize)
     if (_draw == nullptr || label == nullptr || buffer == nullptr || bufferSize == 0)
         return false;
 
-    std::string hidden;
-    return ImGui::InputText(FitItem(label, hidden), buffer, bufferSize);
+    return ImGui::InputText(label, buffer, bufferSize);
 }
 
 bool Api_ColorEdit(const char* label, float* rgba, bool withAlpha)
@@ -394,9 +350,7 @@ bool Api_ColorEdit(const char* label, float* rgba, bool withAlpha)
     if (_draw == nullptr || label == nullptr || rgba == nullptr)
         return false;
 
-    std::string hidden;
-    const char* fitted = FitItem(label, hidden);
-    return withAlpha ? ImGui::ColorEdit4(fitted, rgba) : ImGui::ColorEdit3(fitted, rgba);
+    return withAlpha ? ImGui::ColorEdit4(label, rgba) : ImGui::ColorEdit3(label, rgba);
 }
 
 bool Api_IsMenuOpen() { return MenuCommon::IsVisible(); }
@@ -513,6 +467,16 @@ bool Api_ReInitUpscalers(OptiPlugin* plugin)
     return true;
 }
 
+bool Api_RegisterProvider(OptiPlugin* plugin, const char* name, OptiProviderKind kind, OptiGetProcFn getProc,
+                          void* userData)
+{
+    if (plugin == nullptr || name == nullptr)
+        return false;
+
+    LOG_INFO("[{}] Registering provider {}", plugin->name, name);
+    return CustomProviders::Register(name, (CustomProviders::Kind) kind, getProc, userData);
+}
+
 const OptiPluginApi _api = {
     .size = sizeof(OptiPluginApi),
     .version = OPTI_PLUGIN_API_VERSION,
@@ -555,6 +519,8 @@ const OptiPluginApi _api = {
     .Log = Api_Log,
 
     .ReInitUpscalers = Api_ReInitUpscalers,
+
+    .RegisterProvider = Api_RegisterProvider,
 };
 } // namespace
 
@@ -635,7 +601,7 @@ std::vector<PluginApi::TabInfo> PluginApi::GetTabs()
     tabs.reserve(_tabs.size());
 
     for (const auto& tab : _tabs)
-        tabs.push_back({ tab->plugin->name, tab->name, tab->description });
+        tabs.push_back({ tab->name, tab->description, tab->plugin != nullptr ? tab->plugin->name : std::string() });
 
     return tabs;
 }
@@ -654,8 +620,7 @@ void PluginApi::DrawTab(size_t index, float menuScale, ImVec4 (*colorMap)(const 
 
     if (tab->faulted)
     {
-        const ImVec4 red(1.0f, 0.4f, 0.4f, 1.0f);
-        ImGui::TextColored(colorMap != nullptr ? colorMap(red) : red, "%s",
+        ImGui::TextColored(colorMap != nullptr ? colorMap(ImVec4(1.0f, 0.4f, 0.4f, 1.0f)) : ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s",
                            "This plugin crashed while drawing its tab and was disabled.\nCheck the log for details.");
         return;
     }

@@ -2,14 +2,10 @@
 #include "FSR4DriverProviderVk.h"
 
 #include "FSR4PipelineLayouts.h"
-#include "FSR4Versions.h"
 
-#include <Config.h>
-#include <State.h>
-#include <Util.h>
 #include <misc/IdentifyGpu.h>
-#include <ffx_upscale.h>
-#include "vk/ffx_api_vk.h"
+#include <proxies/D3D12_Proxy.h>
+#include <proxies/FfxApi_Proxy.h>
 
 #include <mutex>
 #include <optional>
@@ -20,7 +16,6 @@
 #include "../../external/FidelityFX-SDK/sdk/tools/ffx_shader_compiler/libs/SPIRV-Reflect/include/spirv/unified1/spirv.h"
 #undef SPV_ENABLE_UTILITY_CODE
 
-// From upstream: the shader rewrite the driver provider's contexts go through
 // What the providers receive in IsSupported, same as ffxCreateBackendVKDesc without the header
 struct ProviderBackendVk
 {
@@ -43,6 +38,7 @@ struct DriverDeviceFunctions
 std::mutex driverDevicesMutex;
 std::unordered_map<VkDevice, DriverDeviceFunctions> driverDevices;
 PfnFfxCreateContext driverCreateContext = nullptr;
+PfnFfxCreateContext driverCreateFgContext = nullptr;
 
 DriverDeviceFunctions GetDriverDeviceFunctions(VkDevice device)
 {
@@ -296,55 +292,62 @@ ffxReturnCode_t CreateDriverContext(ffxContext* context, ffxCreateContextDescHea
     return CreateWithDriverShaders(driverCreateContext, context, desc, allocator);
 }
 
-} // namespace
-
-
-namespace
+ffxReturnCode_t CreateDriverFgContext(ffxContext* context, ffxCreateContextDescHeader* desc,
+                                      const ffxAllocationCallbacks* allocator)
 {
-// The first amdvkffx64.dll of ILION's FSR 4 folders, the OptiScaler folder or the installed driver whose file passes
-// the check (64 bit dll exporting UpdateFfxApiProvider)
-std::wstring FindDriverDll()
-{
-    std::vector<std::filesystem::path> candidates;
-    std::error_code ec;
-
-    const auto ilionFsr4 = Util::ExePath().parent_path() / L"ILION" / L"Escaladores" / L"FSR4";
-    if (std::filesystem::is_directory(ilionFsr4, ec))
-    {
-        std::vector<std::filesystem::path> folders;
-        for (const auto& sub : std::filesystem::directory_iterator(ilionFsr4, ec))
-        {
-            if (sub.is_directory(ec))
-                folders.push_back(sub.path());
-        }
-
-        std::ranges::sort(folders);
-        for (const auto& folder : folders)
-            candidates.push_back(folder / L"amdvkffx64.dll");
-    }
-
-    candidates.push_back(std::filesystem::path(Config::Instance()->MainDllPath.value_or(L"")) / L"amdvkffx64.dll");
-
-    for (const auto& [luid, path] : Util::GetDriverStore())
-        candidates.push_back(path / L"amdvkffx64.dll");
-
-    for (const auto& candidate : candidates)
-    {
-        if (!std::filesystem::exists(candidate, ec))
-            continue;
-
-        bool driverProvider = false;
-        std::string problem;
-
-        if (FSR4Versions::Validate(candidate.wstring(), &problem, &driverProvider) && driverProvider)
-            return candidate.wstring();
-
-        LOG_INFO("{} not used: {}", wstring_to_string(candidate.wstring()), problem.empty() ? "not a provider" : problem);
-    }
-
-    return L"";
+    return CreateWithDriverShaders(driverCreateFgContext, context, desc, allocator);
 }
 } // namespace
+
+// amdvkffx64 only gives out providers when it sees a signed FFX SDK dll loaded in the process.
+static FSR4DriverDll amdvkffx64 { L"amdvkffx64.dll",
+                                  { L"amd_fidelityfx_loader_vk.dll", L"amd_fidelityfx_upscaler_vk.dll",
+                                    L"amd_fidelityfx_framegeneration_vk.dll" } };
+
+static std::optional<DriverProvider> GetProvider(uint64_t descType)
+{
+    if (amdvkffx64.Load() == nullptr)
+        return std::nullopt;
+
+    FSR4PipelineLayouts::Hook(amdvkffx64.Module());
+
+    // Frame generation and its swapchain are only given out when enabled through the options
+    ProviderOption swapchain { .effect = ProviderEffect::FrameGenerationSwapchain };
+    ProviderOption frameGeneration { .effect = ProviderEffect::FrameGeneration, .next = &swapchain };
+    ProviderOption upscale { .effect = ProviderEffect::Upscale, .next = &frameGeneration };
+
+    ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
+    auto provider = amdvkffx64.QueryProvider(descType, { 3u }, &upscale);
+
+    if (!provider.has_value())
+        LOG_ERROR("amdvkffx64 has no provider for {:X}", descType);
+
+    return provider;
+}
+
+static void FillModule(FfxModule& module, const DriverProvider& provider)
+{
+    module.dll = amdvkffx64.Module();
+    module.CreateContext = provider.functions.createContext;
+    module.DestroyContext = provider.functions.destroyContext;
+    module.Configure = provider.functions.configure;
+    module.Query = provider.functions.query;
+    module.Dispatch = provider.functions.dispatch;
+    module.version.parse_version(provider.versionName.c_str());
+    module.vkBackendV2 = true;
+}
+
+static bool CallIsSupported(const DriverProvider& provider, VkDevice device, VkPhysicalDevice physicalDevice,
+                            PFN_vkGetDeviceProcAddr gdpa)
+{
+    if (provider.isSupported == nullptr)
+        return true;
+
+    ProviderBackendVk backend { device, physicalDevice, gdpa };
+
+    ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
+    return provider.isSupported(&backend);
+}
 
 bool FSR4DriverProviderVk::Init()
 {
@@ -355,58 +358,85 @@ bool FSR4DriverProviderVk::Init()
 
     initTried = true;
 
-    // ILION: the AMD driver's code only runs on an AMD GPU; an AMD iGPU's driver next to another GPU isn't used.
-    // A GPU not identified (Invalid) keeps the previous behaviour
-    if (const auto vendor = IdentifyGpu::getPrimaryGpu().vendorId; vendor != VendorId::AMD && vendor != VendorId::Invalid)
-    {
-        LOG_INFO("AMD Vulkan driver FSR provider not used: the primary GPU isn't AMD");
+    auto upscaler = GetProvider(FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE);
+    if (!upscaler.has_value())
         return false;
-    }
 
-    const auto path = FindDriverDll();
-    if (path.empty())
-    {
-        LOG_INFO("No AMD Vulkan driver FSR provider (amdvkffx64.dll) found");
-        return false;
-    }
+    _upscaler = std::move(*upscaler);
 
-    FSR4DriverProvider::Upscaler upscaler;
-    std::string problem;
+    FillModule(_module, _upscaler);
+    driverCreateContext = _upscaler.functions.createContext;
+    _module.CreateContext = &CreateDriverContext;
 
-    {
-        // amdvkffx64 only gives out providers when it sees signed FFX SDK dlls; it stands in for them when missing
-        ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
-
-        if (!FSR4DriverProvider::LoadUpscaler(path,
-                                              { L"amd_fidelityfx_loader_vk.dll", L"amd_fidelityfx_upscaler_vk.dll",
-                                                L"amd_fidelityfx_framegeneration_vk.dll" },
-                                              { 3u }, true, upscaler, problem))
-        {
-            LOG_WARN("AMD Vulkan driver provider {} not used: {}", wstring_to_string(path), problem);
-            return false;
-        }
-    }
-
-    FSR4PipelineLayouts::Hook(upscaler.module);
-
-    _upscaler = std::move(upscaler);
-    _path = path;
-    driverCreateContext = reinterpret_cast<PfnFfxCreateContext>(_upscaler.functions.createContext);
     return true;
 }
 
-PfnFfxCreateContext FSR4DriverProviderVk::CreateContext() { return IsAvailable() ? &CreateDriverContext : nullptr; }
-
 bool FSR4DriverProviderVk::IsSupported(VkDevice device, VkPhysicalDevice physicalDevice, PFN_vkGetDeviceProcAddr gdpa)
 {
-    if (!IsAvailable())
+    return IsAvailable() && CallIsSupported(_upscaler, device, physicalDevice, gdpa);
+}
+
+void FSR4DriverProviderVk::AddToVersionList(std::vector<uint64_t>& ids, std::vector<const char*>& names,
+                                            DriverListing listing)
+{
+    if (Init())
+        AddDriverToVersionList(ids, names, VersionId(), VersionName(), listing);
+}
+
+bool FSR4DriverProviderVk::InitFg()
+{
+    static bool initTried = false;
+
+    if (initTried)
+        return IsFgAvailable();
+
+    initTried = true;
+
+    // Real FP8 support comes from the D3D12 checks, the game's Vulkan device can be created before anything ran them
+    // or even loaded d3d12.dll, which the checks need
+    if (IdentifyGpu::getPrimaryGpu().vendorId == VendorId::AMD)
+    {
+        D3d12Proxy::Init();
+        IdentifyGpu::updateD3d12Capabilities();
+    }
+
+    if (IdentifyGpu::getPrimaryGpu().realFsr4Support != FSR4Support::FP8)
+    {
+        LOG_INFO("GPU doesn't support FP8, not using the driver FG");
+        return false;
+    }
+
+    auto fg = GetProvider(FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATION);
+    if (!fg.has_value())
         return false;
 
-    if (_upscaler.isSupported == nullptr)
-        return true;
+    auto swapchain = GetProvider(FFX_API_CREATE_CONTEXT_DESC_TYPE_FGSWAPCHAIN_VK);
+    if (!swapchain.has_value())
+        return false;
 
-    ProviderBackendVk backend { device, physicalDevice, gdpa };
+    _fg = std::move(*fg);
 
-    ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
-    return _upscaler.isSupported(&backend);
+    // FG shaders are FP8 too, they get the same rewrites as the upscaler ones
+    FillModule(_fgModule, _fg);
+    driverCreateFgContext = _fg.functions.createContext;
+    _fgModule.CreateContext = &CreateDriverFgContext;
+
+    FillModule(_fgSwapchainModule, *swapchain);
+
+    return true;
+}
+
+bool FSR4DriverProviderVk::IsFgSupported(VkDevice device, VkPhysicalDevice physicalDevice, PFN_vkGetDeviceProcAddr gdpa)
+{
+    return IsFgAvailable() && CallIsSupported(_fg, device, physicalDevice, gdpa);
+}
+
+void FSR4DriverProviderVk::AddFgToVersionList(std::vector<uint64_t>& ids, std::vector<const char*>& names)
+{
+    // FFX SDK modules can get the driver FG on their own
+    if (!InitFg() || std::ranges::find(ids, FgVersionId()) != ids.end())
+        return;
+
+    ids.push_back(FgVersionId());
+    names.push_back(FgVersionName());
 }

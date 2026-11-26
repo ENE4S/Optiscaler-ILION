@@ -18,6 +18,7 @@
 #include <fsr4/FSR4Comparison.h>
 #include <fsr4/FSR4Models.h>
 #include <fsr4/FSR4DriverProviderVk.h>
+#include <hooks/Vulkan_Hooks.h>
 #include <misc/HwTelemetry.h>
 #include <misc/IlionBenchmark.h>
 #include <misc/IlionAdvisor.h>
@@ -32,6 +33,7 @@
 #include <with_dx12/vk_xefg_diagnostics.h>
 #include <misc/IlionDynamicNrReason.h>
 #include <misc/IlionOverlay.h>
+#include <misc/IlionOpenRr.h>
 #include <misc/IlionVisual.h>
 #include <misc/IlionVisualInterpret.h>
 #include "ilion_lang.h"
@@ -78,7 +80,7 @@
 #include <misc/IdentifyGpu.h>
 #include <misc/IlionExternalFg.h>
 #include <misc/IlionAfmf.h>
-#include <hooks/Xell_Hooks.h>
+#include <low_latency/input/input_common.h>
 #include <low_latency/input/input_common.h>
 
 enum class UiTargetMode
@@ -254,6 +256,8 @@ static bool shellSimple = false;                // ILION dev.71: the new interfa
                                                 // the Compact presentation): some technical controls are hidden (they keep
                                                 // working and keep their values)
 static bool shellCompact = false;               // ILION dev.73: the new interface draws its Compact presentation
+static int dmfgHomePart = 0;                   // ILION 1.5 beta 9: Home's Dynamic MFG row, 1 the mode (left zone), 2 the target (right zone), 0 both
+static bool fgHomeLabelsAbove = false;         // ILION 1.5 beta 7: Home's FG card, each name above its combo, combos as wide as the zone
 static float fgHomeComboWidth = 0.0f;           // ILION dev.71: width of the FG selectors, the XeMFG variant and the multiplier
                                                 // in the Home card when it is split in two zones (0: their usual width)
 static float fgCompactComboWidth = 0.0f;        // ILION dev.77: Compact's Generation: width of the FG selectors (0: usual)
@@ -271,15 +275,13 @@ static const char* ShellText(const char* en, const char* es, const char* pt, con
 
 // ILION dev.70: the theme of the interface. 0 Industrial, 1 Clean Olive (both the new interface), 2 ILION Traditional
 // (the classic layout). ClassicLayout=true from earlier versions still means Traditional.
+// ILION 1.5: ILION Traditional is retired, a saved "traditional" (or ClassicLayout=true) opens Industrial. The new
+// interface is Industrial or Clean Olive, presented Full, Compact or Sputnik
 static int UiThemeIndex(Config* config)
 {
-    if (config->MenuClassicLayout.value_or_default())
-        return 2;
     const std::string theme = config->MenuUiTheme.value_or_default();
     if (theme == "olive")
         return 1;
-    if (theme == "traditional")
-        return 2;
     return 0;
 }
 
@@ -296,6 +298,9 @@ static bool UiSputnik(Config* config)
     return UiThemeIndex(config) != 2 && config->MenuUiPresentation.value_or_default() == "sputnik";
 }
 
+// ILION 1.5.0: the interface that has Ray Reconstruction (OpenRR), menu/ilion_openrr_panel.inl
+static bool OpenRrUiAllowed(Config* config);
+
 static void DedupeSrVariants(std::vector<FfxApiProxy::SrVariant>& list);
 
 // The FSR upscaler dlls that can be selected. One list and one way of selecting for the Upscaling tab and for
@@ -309,6 +314,39 @@ static std::vector<FfxApiProxy::SrVariant>& SharedSrVariants()
         return list;
     }();
     return variants;
+}
+
+// ILION 1.5: the FSR version of the AMD driver's DX12 provider and of the default dll, "4.1.2" style; empty when unknown
+static std::string Fsr3Parts(const std::string& text)
+{
+    int parts[3] = { -1, -1, -1 };
+    if (std::sscanf(text.c_str(), "%d.%d.%d", &parts[0], &parts[1], &parts[2]) < 3)
+        return {};
+    return std::to_string(parts[0]) + "." + std::to_string(parts[1]) + "." + std::to_string(parts[2]);
+}
+
+static std::string DriverFsrVersionDx12()
+{
+    const auto& versions = State::Instance().ffxUpscalerVersionsDx12;
+    const auto id = FSR4DriverProviderDx12::VersionId();
+    for (size_t i = 0; id != 0 && i < versions.ids.size() && i < versions.names.size(); i++)
+    {
+        if (versions.ids[i] == id && versions.names[i] != nullptr)
+            return Fsr3Parts(versions.names[i]);
+    }
+    return {};
+}
+
+static std::wstring& SharedDefaultSrDll();
+
+// ILION 1.5: DX12, the default dll and the driver give the same FSR 4 version: one entry is enough
+static std::string DefaultSameAsDriverDx12()
+{
+    if (State::Instance().api != DX12)
+        return {};
+    const auto driver = DriverFsrVersionDx12();
+    const auto dll = Fsr3Parts(IlionUpscalers::FileVersionOf(SharedDefaultSrDll()));
+    return !driver.empty() && driver == dll ? driver : std::string();
 }
 
 static std::wstring& SharedDefaultSrDll()
@@ -820,6 +858,17 @@ static UpscalerStatus StatusOf(const IlionUpscalers::Entry* entry, IFeature* fea
         const bool nativeDlssChosen = ConfiguredUpscaler() == Upscaler::DLSS && !config->DLSSAllowExternalBackend.value_or_default();
         status.selected = !dlssChosen && !nativeDlssChosen && _wcsicmp(saved.c_str(), key.c_str()) == 0 &&
                           (State::Instance().api == DX12 || ConfiguredUpscaler() == Upscaler::FFX_on12);
+        // ILION 1.5: the AMD driver entry runs through the default dll's version list (upstream's driver provider)
+        const bool driverEntry = entry != nullptr && FfxApiProxy::SrVariantIsDriver(entry->key);
+        if (State::Instance().api == DX12 && (driverEntry || entry == nullptr) && FfxApiProxy::SrVariantIsDriver(saved))
+        {
+            const bool driverRuns = FfxApiProxy::DriverEntryChosenDx12() && feature != nullptr &&
+                                    RunsSwitchedFfx(feature->GetUpscalerType()) && feature->Version().major >= 4;
+            status.loaded = driverEntry && FfxApiProxy::DriverEntryChosenDx12();
+            status.active = driverEntry && driverRuns;
+            return status;
+        }
+
         status.loaded = !path.empty() && FfxApiProxy::IsActiveSrDll(path);
 
         if (status.loaded && feature != nullptr && RunsSwitchedFfx(feature->GetUpscalerType()))
@@ -871,6 +920,14 @@ static const char* StatusWord(const UpscalerStatus& status)
 // Continue chooses it as usual, Cancel leaves the upscaler as it is. Nothing is blocked.
 static std::wstring d4rWarningKey;
 static bool d4rWarningOpen = false;
+
+// ILION 1.5: FSR FG's module of the API in use: DX12 (also the interop) or Vulkan (FFX Vulkan dll or the driver's FG)
+static bool IlionFsrFgReady()
+{
+    if (State::Instance().swapchainApi == API::Vulkan)
+        return FfxApiProxy::IsFGReadyVk() || FSR4DriverProviderVk::IsFgAvailable();
+    return FfxApiProxy::IsFGReady();
+}
 
 static bool GameGpuIsRdna3()
 {
@@ -1105,6 +1162,7 @@ struct UpscalerVariant
     bool vkDriver = false; // an FSR 4 of the Vulkan native list (the AMD Vulkan driver's)
     bool vkDirect = false; // through ILION's own provider of amdvkffx64, not handed over by amd_fidelityfx_vk.dll
     int family = 0;        // FamilyId
+    std::string shortName; // ILION 1.5 beta 7: what the closed combo shows, when it differs from the name
 };
 
 // Every upscaler of every family with its state, as the selector shows them (ILION dev.57: the catalogue of the
@@ -1301,12 +1359,12 @@ static UpscalerCatalog GatherUpscalers(IFeature* feature)
         if (entry.kind == IlionUpscalers::Kind::Provider && vendor != VendorId::AMD && vendor != VendorId::Invalid)
             return std::string(Tr("Hardware not compatible")) + ": " + Tr("FSR 4 through the AMD driver needs an AMD GPU");
 
-        // Only AMD's own FSR 4 dll keeps AMD's hardware rule, unless an INT8 model is forced (Fsr4ForceModel), which is
+        // Only AMD's own FSR 4 dll keeps AMD's hardware rule, unless an INT8 model is forced (Fsr4GpuSupport), which is
         // how OptiScaler runs it on other GPUs; community builds decide by themselves whether they run
         if (entry.family == IlionUpscalers::Family::Fsr4 && entry.amdOfficial && vendor != VendorId::AMD &&
-            !IsFsr4Int8(Config::Instance()->Fsr4ForceModel.value_or_default()))
+            !IsFsr4Int8(Config::Instance()->Fsr4GpuSupport.value_or_default()))
             return std::string(Tr("Hardware not compatible")) + ": " +
-                   Tr("AMD's official FSR 4 needs an AMD GPU, or an INT8 model forced with Fsr4ForceModel");
+                   Tr("AMD's official FSR 4 needs an AMD GPU, or an INT8 model forced with Fsr4GpuSupport");
 
         if (!entry.valid)
             return std::string(Tr("DLL not available")) + ": " + Tr(entry.problem.c_str());
@@ -1319,7 +1377,16 @@ static UpscalerCatalog GatherUpscalers(IFeature* feature)
     if (showDefault)
     {
         // Usable on any GPU: it also provides FSR 3.1, and FSR 4 runs only where the dll itself allows it
-        Variant variant { nullptr, Upscaler::Reset, true, Tr("FSR (default dll)"), StatusOf(nullptr, feature) };
+        // ILION 1.5: native Vulkan, the default is AMD's SDK dll (amd_fidelityfx_vk.dll), which runs the driver's FSR 4;
+        // "Driver" calls the driver directly. Same FSR 4, the names say which path
+        const bool vulkanNativeDefault = api == Vulkan && VulkanBackendChoice() == VulkanBackend::Native;
+        Variant variant { nullptr, Upscaler::Reset, true,
+                          vulkanNativeDefault    ? std::string(Tr("FSR (AMD SDK dll, uses the driver's FSR 4)"))
+                                                 : std::string(Tr("FSR (default dll)")),
+                          StatusOf(nullptr, feature) };
+        // Closed, the default dll says which FSR it is
+        if (!vulkanNativeDefault)
+            variant.shortName = Tr("FSR4 default dll");
 
         if (api == Vulkan && VulkanBackendChoice() == VulkanBackend::Native && NativeVulkanIndexFor(nullptr) < 0)
         {
@@ -1331,9 +1398,15 @@ static UpscalerCatalog GatherUpscalers(IFeature* feature)
         variants.push_back(variant);
     }
 
+    const std::string defaultEqualsDriver = DefaultSameAsDriverDx12();
     for (const auto& entry : entries)
     {
         auto status = StatusOf(&entry, feature);
+
+        // ILION 1.5: the driver's FSR 4 is the default dll's version: listed once (the default), unless it is the one
+        // chosen, so a saved choice never disappears
+        if (!defaultEqualsDriver.empty() && entry.key == L"FSR4/AMD driver" && !status.selected)
+            continue;
 
         // The default dll is this file: its state is this entry's
         if (entry.key == SharedDefaultTwin())
@@ -2199,7 +2272,13 @@ ScopedCard::~ScopedCard()
         return;
     }
 
-    const float bottom = _window->DC.CursorPos.y - style.ItemSpacing.y + _pad.y;
+    float bottom = _window->DC.CursorPos.y - style.ItemSpacing.y + _pad.y;
+    if (stretchTo > bottom)
+    {
+        stretchAdded += stretchTo - bottom;
+        bottom = stretchTo;
+    }
+    stretchTo = 0.0f;
     const ImVec2 max(_min.x + _width, bottom);
 
     if (_flowSlot >= 0 && _flowSlot < 64)
@@ -2613,7 +2692,7 @@ static void RenderFsr4ModelControls(Upscaler currentBackend, IFeature* feature, 
     // The module whose networks are offered: native Vulkan FFX runs the AMD Vulkan driver's (directly or through
     // amd_fidelityfx_vk.dll, the same amdvkffx64 module); DX12 and the Vulkan to DX12 interop the DX12 dll in use
     const bool vulkanNative = state.api == Vulkan && target == Upscaler::FFX;
-    const HMODULE srModule = vulkanNative ? (FSR4DriverProviderVk::IsAvailable() ? FSR4DriverProviderVk::Module() : nullptr)
+    const HMODULE srModule = vulkanNative ? (FSR4DriverProviderVk::IsAvailable() ? FSR4DriverProviderVk::Module()->dll : nullptr)
                                           : FfxApiProxy::Dx12Module_SR();
 
     if (auto models = FSR4Models::SelectableModels(srModule); !models.empty())
@@ -3133,6 +3212,21 @@ template <HasDefaultValue B> void MenuCommon::AddDLSSDRenderPreset(std::string n
     PopulateCombo(name, *value, presets);
 }
 
+// ILION 1.5 beta 7: what a closed combo of the new interface shows. The open list keeps the full names; closed, a long
+// name keeps the part that tells it apart ("DLSSG via Streamline" -> "Streamline", "DLSSG-XeFG (FakeMichau)" -> "FakeMichau")
+static std::string ShortComboPreview(const std::string& label)
+{
+    static const std::pair<const char*, const char*> known[] = {
+        { "DLSSG via Streamline", "Streamline" },     { "DLSSG via Nvngx", "NVNGX" },
+        { "DLSSG-XeFG (FakeMichau)", "FakeMichau" }, { "None (Real DLSSG)", "Real DLSSG" },
+        { "OptiFG (Upscaler)", "OptiFG" },            { "Reprojection (WIP)", "Reprojection" },
+    };
+    for (const auto& [full, shortName] : known)
+        if (label == full)
+            return shortName;
+    return label;
+}
+
 template <typename TStorage, typename T>
 void MenuCommon::PopulateCombo(const std::string& name, TStorage& currentValue,
                                const std::vector<MenuOption<T>>& options)
@@ -3154,8 +3248,8 @@ void MenuCommon::PopulateCombo(const std::string& name, TStorage& currentValue,
     {
         if (opt.value == currentVal)
         {
-            preview = opt.label;
-            previewAccent = opt.accent;
+            preview = IlionTheme::shell ? ShortComboPreview(opt.label) : opt.label;
+            previewAccent = preview == opt.label ? opt.accent : std::string();
             break;
         }
     }
@@ -3756,6 +3850,11 @@ struct MenuCommon::RenderMenuContext
 
 static std::string splashMessage;
 
+// ILION 1.5: every interval between the Vulkan FG output's presents since the last call (false while it doesn't
+// present), defined at the end. The frames that reach the display, one by one: nothing averaged
+static bool TakeFGOutputIntervals(std::vector<double>& intervals);
+static std::vector<double> gOutputIntervals;
+
 void MenuCommon::UpdateRenderTiming(RenderMenuContext& ctx)
 {
     auto& state = ctx.state;
@@ -3789,6 +3888,24 @@ void MenuCommon::UpdateRenderTiming(RenderMenuContext& ctx)
         frameRate = 1000.0 / frameTime;
     }
 
+    // ILION 1.5: a Vulkan FG output presents its generated frames itself, the game's presents are only the real ones.
+    // The frames that reach the display are then the output's: each measured interval between its presents goes into
+    // the frame times as it is (graph, average, 1% low), good or bad
+    gOutputIntervals.clear();
+    if (TakeFGOutputIntervals(gOutputIntervals) && !gOutputIntervals.empty())
+    {
+        for (const double interval : gOutputIntervals)
+        {
+            state.frameTimes.pop_front();
+            state.frameTimes.push_back(interval);
+        }
+
+        frameTime = gOutputIntervals.back();
+        frameRate = 1000.0 / frameTime;
+        return;
+    }
+
+    gOutputIntervals.clear();
     state.frameTimes.pop_front();
     state.frameTimes.push_back(frameTime);
 }
@@ -7499,7 +7616,7 @@ static void UpdateBenchmark(State& state, double frameTime, double now)
     // Hardware readings are taken during a test even when the overlay doesn't show them
     HwTelemetry::KeepAlive();
 
-    const auto fg = state.currentFG;
+    const auto fg = state.CurrentFG();
     const bool fgActive = fg != nullptr && fg->IsActive() && !fg->IsPaused();
 
     IlionBenchmark::OnFrame(frameTime, now, active.module, dispatched, fgActive,
@@ -7968,7 +8085,7 @@ static void UpdateFsr4Comparison(State& state, double frameTime, double now)
         return;
 
     const auto active = FfxApiProxy::SrDiagGetActive();
-    const auto fg = state.currentFG;
+    const auto fg = state.CurrentFG();
     const bool fgActive = fg != nullptr && fg->IsActive() && !fg->IsPaused();
 
     const auto feature = state.currentFeature;
@@ -8544,7 +8661,17 @@ void MenuCommon::UpdateFrameTimeAverages(RenderMenuContext& ctx)
 
         float lastFT = static_cast<float>(state.frameTimes.empty() ? 0.0f : state.frameTimes.back());
         float lastUT = static_cast<float>(state.upscaleTimes.empty() ? 0.0f : state.upscaleTimes.back());
-        gFrameTimes.Push(lastFT);
+        // ILION 1.5: every frame that reached the display since the last menu frame (the Vulkan FG output's), else the
+        // game's present
+        if (!gOutputIntervals.empty())
+        {
+            for (const double interval : gOutputIntervals)
+                gFrameTimes.Push(static_cast<float>(interval));
+        }
+        else
+        {
+            gFrameTimes.Push(lastFT);
+        }
         gUpscalerTimes.Push(lastUT);
 
         averageFrameTime = gFrameTimes.Average();
@@ -8763,11 +8890,11 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
             std::string secondLine = "";
             std::string thirdLine = "";
 
-            auto fg = state.currentFG;
+            auto fg = state.CurrentFG();
             auto fgText = (fg != nullptr && fg->IsActive() && !fg->IsPaused()) ? (" (" + std::string(fg->Name()) + ")")
                                                                                : std::string();
 
-            const int fakeFramesCount = state.dlssgDetectedInterpolationCount;
+            const int fakeFramesCount = state.DlssgDetectedInterpolationCount();
             const FGNvngxReplacement activeNvngxFg = state.activeFgNvngx;
 
             // ILION: the game's DLSSG through a replacement (DLSS Enabler...): the multiplier it really applies, kept
@@ -9320,7 +9447,6 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                 static auto previousPoll = 0.0;
                 static bool gotData = false;
 
-#ifdef LOW_LATENCY_INPUTS
                 static TimingData timingData {};
 
                 if (previousPoll <= 0.001 || previousPoll + delayBetweenPollsMs < now)
@@ -9368,7 +9494,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                         if (!timingOpt.has_value())
                             return;
 
-                        auto toneMappedColor = State::Instance().isHdrActive ? toneMapColor(color) : color;
+                        auto toneMappedColor = toneMapColor(color);
 
                         const auto& timing = timingOpt.value();
                         float duration = static_cast<float>(timing.length * rangeInNs / 1000.0);
@@ -9408,92 +9534,19 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                     drawTiming(timingData.driver, "Driver", ImVec4(0.263f, 0.388f, 0.847f, 1.0f));
                     drawTiming(timingData.osRenderQueue, "RenderQueue", ImVec4(0.76f, 0.51f, 0.188f, 1.0f));
                     drawTiming(timingData.gpuRender, "GpuRender", ImVec4(0.569f, 0.117f, 0.705f, 1.0f));
-                }
-#else
-                if (previousPoll <= 0.001 || previousPoll + delayBetweenPollsMs < now)
-                {
-                    gotData = ReflexHooks::updateTimingData();
-                    previousPoll = now;
-                }
-
-                auto& timingData = ReflexHooks::timingData;
-
-                if (gotData && timingData[TimingType::TimeRange].has_value())
-                {
-                    ImDrawList* drawList = ImGui::GetWindowDrawList();
-                    constexpr float offsetForText = 155;
-
-                    const auto& rangeInNs = timingData[TimingType::TimeRange].value().length;
-
-                    UINT64 localFrameCount = 0;
-
-                    if (fg != nullptr)
-                        localFrameCount = fg->FrameCount();
-
-                    // Frame ids are shown in Help / Status instead, they only added noise here
-                    if (industrialVertical)
+                    // ILION 1.5: without the driver's latency reports these three aren't measured (input_common.cpp),
+                    // they are left out instead of drawn from placeholder values
+                    if (!timingData.driver.has_value() && !timingData.gpuRender.has_value())
                     {
-                        rowWidth = std::max(rowWidth, ImGui::CalcTextSize("Reflex timings").x);
-                        OverlayBlockTitle("Reflex timings", rowWidth, false);
-                        OverlayRow(Tr("Frame markers (CPU)"), StrFmt("%.1f ms", rangeInNs / 1000.0), rowWidth, &mainFigureYellow);
-                    }
-                    else if (industrialHorizontal)
-                    {
-                        OverlayCellRowTitle("Reflex timings");
-                        OverlayCell(Tr("Frame markers (CPU)"), StrFmt("%.1f ms", rangeInNs / 1000.0), &mainFigureYellow);
-                    }
-                    else
-                    {
-                        ImGui::TextUnformatted(Tr("Reflex timings, frame markers (CPU):"));
-                        ImGui::SameLine();
-                        ImGui::TextColored(mainFigureYellow, "%.1fms", rangeInNs / 1000.0);
-                    }
-
-                    const auto maxWidth =
-                        config->FpsOverlayHorizontal.value_or_default() ? ImGui::GetWindowWidth() : plotSize.x;
-
-                    const auto drawTiming = [&](TimingType type, const char* desc, ImVec4 color)
-                    {
-                        if (!timingData[type].has_value())
-                            return;
-
-                        auto toneMappedColor = toneMapColor(color);
-
-                        auto& timing = timingData[type].value();
-                        float duration = static_cast<float>(timing.length * rangeInNs / 1000.0);
-
-                        // The value in its row, without the bar
+                        const char* notMeasured = Tr("Driver / RenderQueue / GpuRender: not measurable without the driver's latency reports");
                         if (industrialVertical)
-                        {
-                            OverlayRow(desc, StrFmt("%.1f ms", duration), rowWidth);
-                            return;
-                        }
-
-                        if (industrialHorizontal)
-                        {
-                            OverlayCell(desc, StrFmt("%.1f ms", duration));
-                            return;
-                        }
-
-                        ImGui::TextColored(toneMappedColor, "%-12s %4.1fms", desc, duration);
-                        auto leftLimit = ImGui::GetItemRectMin().x + offsetForText * fpsScale;
-                        auto start = static_cast<float>(leftLimit + (ImGui::GetItemRectMin().x + maxWidth - leftLimit) *
-                                                                        timing.position);
-                        auto end = static_cast<float>(start + (ImGui::GetItemRectMin().x + maxWidth - leftLimit) *
-                                                                  timing.length);
-                        auto pos = ImVec2(start, ImGui::GetItemRectMin().y);
-                        auto size = ImVec2(end, ImGui::GetItemRectMax().y);
-                        drawList->AddRectFilled(pos, size, ImGui::ColorConvertFloat4ToU32(toneMappedColor));
-                    };
-
-                    drawTiming(TimingType::Simulation, "Simulation", ImVec4(0.768f, 0.169f, 0.169f, 1.0f));
-                    drawTiming(TimingType::RenderSubmit, "RenderSubmit", ImVec4(0.235f, 0.705f, 0.294f, 1.0f));
-                    drawTiming(TimingType::Present, "Present", ImVec4(1.0f, 0.88f, 0.098f, 1.0f));
-                    drawTiming(TimingType::Driver, "Driver", ImVec4(0.263f, 0.388f, 0.847f, 1.0f));
-                    drawTiming(TimingType::OsRenderQueue, "RenderQueue", ImVec4(0.76f, 0.51f, 0.188f, 1.0f));
-                    drawTiming(TimingType::GpuRender, "GpuRender", ImVec4(0.569f, 0.117f, 0.705f, 1.0f));
+                            OverlayRow(Tr("Driver / Queue / GPU"), Tr("not measurable"), rowWidth);
+                        else if (industrialHorizontal)
+                            OverlayCell(Tr("Driver / Queue / GPU"), Tr("not measurable"));
+                        else
+                            ImGui::TextDisabled("%s", notMeasured);
+                    }
                 }
-#endif
             }
 
             // ILION estimated latency (misc/IlionLatency.h): measured times of each frame in DirectX 12. Separate
@@ -9504,8 +9557,8 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
 
                 // The active reducer and whether it is on: a change makes the meter drop its frames and start again
                 int reducerId = 0;
-                if (fakenvapi::isUsingAsMainNvapi())
-                    reducerId = 1 + (int) fakenvapi::getCurrentMode() * 2 + (fakenvapi::isLowLatencyActive() ? 1 : 0);
+                if (true /* ILION 1.5: with or without fakenvapi */)
+                    reducerId = 1 + (int) InputCommon::active_output() * 2 + ((InputCommon::active_output() != LowLatencyMode::None) ? 1 : 0);
 
                 // ILION dev.51: the latency regulator's level too
                 reducerId += 1000 * IlionRegulator::CurrentLevel();
@@ -9593,7 +9646,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                         rows.push_back({ Tr("Presentation"), Tr("independent flip") });
 
                     // Frame generation holds the real frame and paces the shown ones after this point: not in the figure
-                    if ((fg != nullptr && fg->IsActive() && !fg->IsPaused()) || state.dlssgDetectedInterpolationCount > 0)
+                    if ((fg != nullptr && fg->IsActive() && !fg->IsPaused()) || state.DlssgDetectedInterpolationCount() > 0)
                         rows.push_back({ Tr("With FG: partial figure, not end-to-end"), "" });
 
                     if (why != nullptr)
@@ -9654,6 +9707,97 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                                 ImGui::TextColored(latencyYellow, "%s", rows[i].second.c_str());
                             else
                                 ImGui::TextUnformatted(rows[i].second.c_str());
+                        }
+                    }
+                }
+            }
+
+            // ILION 1.5.0: OpenRR's Ray Reconstruction, only while the game uses it and only in the Industrial interface
+            // presented Full. The figures are the plugin's own (its last frame and the p50 / p95 of its 64 samples, one line
+            // every 600 network frames), with their age: nothing is filled in between
+            if ((overlayElements & IlionOverlay::RayReconstruction) != 0 && OpenRrUiAllowed(config) && IlionOpenRr::Loaded())
+            {
+                const auto rrSnap = IlionOpenRr::Get();
+                const auto& rr = rrSnap.telemetry;
+                if (rr.featureAlive)
+                {
+                    std::vector<std::pair<std::string, std::string>> rows;
+                    bool rrMeasured = false;
+                    if (rr.state == IlionOpenRr::RunState::Building)
+                        rows.push_back({ ShellText("Building the network", "Compilando la red", "Compilando a rede", "Сборка сети"), "" });
+                    else if (rr.haveStats)
+                    {
+                        rows.push_back({ ShellText("Network", "Red", "Rede", "Сеть"), StrFmt("%.2f ms", rr.rawLast) });
+                        rows.push_back({ "p50 / p95", StrFmt("%.2f / %.2f ms", rr.rawP50, rr.rawP95) });
+                        rrMeasured = true;
+                    }
+                    else
+                        rows.push_back({ ShellText("Network", "Red", "Rede", "Сеть"),
+                                         ShellText("no figure yet", "sin cifra aún", "sem valor ainda", "нет значения") });
+
+                    const std::string rrMode = !rr.haveModeLine ? std::string("-")
+                                               : !rr.fastModeOn ? std::string("Legacy")
+                                               : rr.experimentalOn ? std::string("Fast")
+                                                                   : std::string("New");
+                    rows.push_back({ ShellText("Mode", "Modo", "Modo", "Режим"), rr.backend.empty() ? rrMode : rrMode + " · " + rr.backend });
+                    if (rr.renderW > 0)
+                        rows.push_back({ ShellText("Resolution", "Resolución", "Resolução", "Разрешение"),
+                                         StrFmt("%ux%u -> %ux%u", rr.renderW, rr.renderH, rr.outputW, rr.outputH) });
+                    if (rr.haveStats)
+                        rows.push_back({ ShellText("Sample", "Muestra", "Amostra", "Выборка"),
+                                         StrFmt(ShellText("%d s ago", "hace %d s", "há %d s", "%d с назад"), IlionOpenRr::StatAgeSeconds(rr)) });
+
+                    const char* rrTitle = "RAY RECONSTRUCTION";
+                    if (industrialVertical)
+                    {
+                        const float gap = ImGui::CalcTextSize("  ").x;
+                        rowWidth = std::max(rowWidth, ImGui::CalcTextSize(rrTitle).x);
+                        for (const auto& [label, value] : rows)
+                        {
+                            if (!value.empty())
+                                rowWidth = std::max(rowWidth, ImGui::CalcTextSize(label.c_str()).x + gap + ImGui::CalcTextSize(value.c_str()).x);
+                        }
+
+                        OverlayBlockTitle(rrTitle, rowWidth, false);
+
+                        for (size_t i = 0; i < rows.size(); i++)
+                        {
+                            if (rows[i].second.empty())
+                            {
+                                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + rowWidth);
+                                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                                ImGui::TextWrapped("%s", rows[i].first.c_str());
+                                ImGui::PopStyleColor();
+                                ImGui::PopTextWrapPos();
+                                continue;
+                            }
+                            OverlayRow(rows[i].first.c_str(), rows[i].second, rowWidth, i == 0 && rrMeasured ? &mainFigureYellow : nullptr);
+                        }
+                    }
+                    else if (industrialHorizontal)
+                    {
+                        OverlayCellRowTitle(rrTitle);
+
+                        for (size_t i = 0; i < rows.size(); i++)
+                            OverlayCell(rows[i].first.c_str(), rows[i].second, i == 0 && rrMeasured ? &mainFigureYellow : nullptr);
+                    }
+                    else
+                    {
+                        ImGui::TextUnformatted("Ray Reconstruction");
+
+                        for (size_t i = 0; i < rows.size(); i++)
+                        {
+                            ImGui::TextUnformatted(rows[i].first.c_str());
+
+                            if (!rows[i].second.empty())
+                            {
+                                ImGui::SameLine();
+
+                                if (i == 0 && rrMeasured)
+                                    ImGui::TextColored(mainFigureYellow, "%s", rows[i].second.c_str());
+                                else
+                                    ImGui::TextUnformatted(rows[i].second.c_str());
+                            }
                         }
                     }
                 }
@@ -10520,7 +10664,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
                 ImGui::SameLine();
                 if (state.currentFsr4Preset.has_value())
                     ImGui::TextDisabled(Tr("(Active: %d)"), state.currentFsr4Preset.value());
-                else if (FSR4ModelSelection::IsInt8FsrHooked())
+                else if (FSR4Presets::IsAnyModuleHooked())
                     ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(1.f, 0.8f, 0.f, 1.f), IlionTheme::Role::Warn)), Tr("(Potential FSR3 fallback)"));
                 else
                     ImGui::TextDisabled(Tr("(Failed to hook)"));
@@ -10960,7 +11104,7 @@ static XeMfgFile ReadXeMfgFile(const std::wstring& path)
 static FgCrtData GatherFgCrt(State& state)
 {
     FgCrtData d;
-    auto fg = state.currentFG;
+    auto fg = state.CurrentFG();
 
     // The DLSSG replacement is the generator when the game's DLSSG is redirected
     const auto nvngx = state.activeFgNvngx;
@@ -10975,10 +11119,10 @@ static FgCrtData GatherFgCrt(State& state)
         d.status = 4;
         d.multiplier = StrFmt("%ux", (unsigned) fg->GetInterpolatedFrameCount() + 1);
     }
-    else if (state.dlssgDetectedInterpolationCount > 0)
+    else if (state.DlssgDetectedInterpolationCount() > 0)
     {
         d.status = 4;
-        d.multiplier = StrFmt("%dx", state.dlssgDetectedInterpolationCount + 1);
+        d.multiplier = StrFmt("%dx", state.DlssgDetectedInterpolationCount() + 1);
     }
     else if (fg != nullptr && fg->IsActive())
     {
@@ -11106,7 +11250,7 @@ static FgCrtData GatherFgCrt(State& state)
         std::vector<std::wstring> asis;
         {
             std::scoped_lock lock(state.loadedAsiMutex);
-            asis = state.loadedAsiPlugins;
+            asis = state.loadedAsiPaths;
         }
 
         for (const auto& asi : asis)
@@ -11471,7 +11615,7 @@ static void UpdateMfgCost(State& state, double nowMs)
 {
     using S = MfgCostState;
     auto& m = mfgCost;
-    IFGFeature* fg = state.currentFG;
+    IFGFeature* fg = state.CurrentFG();
     IFeature* upscaler = state.currentFeature;
 
     // The FG session: OptiScaler's FG set up, or the game calling its DLSSG in the last half second (it calls it every
@@ -11487,14 +11631,14 @@ static void UpdateMfgCost(State& state, double nowMs)
         m.multiplier = fg->GetInterpolatedFrameCount() + 1;
         m.multiplierAsked = false;
     }
-    else if (dlssgFg && state.dlssgDetectedInterpolationCount > 0)
+    else if (dlssgFg && state.DlssgDetectedInterpolationCount() > 0)
     {
         // The game's DLSSG: the multiplier measured at the presents (IlionDynamicMfg), else the one asked for.
         // Its counter (State::dlssgFgEvaluations) counts real frames, the first evaluation of each one
         IlionDynamicMfg::AppliedSource source = IlionDynamicMfg::AppliedSource::None;
         const int applied = IlionDynamicMfg::ExternalApplied(nullptr, &source);
         m.multiplierAsked = source != IlionDynamicMfg::AppliedSource::Measured;
-        m.multiplier = m.multiplierAsked ? state.dlssgDetectedInterpolationCount + 1 : (unsigned) applied;
+        m.multiplier = m.multiplierAsked ? state.DlssgDetectedInterpolationCount() + 1 : (unsigned) applied;
     }
 
     const uint64_t counts[S::SourceCount] = { upscaler != nullptr ? (uint64_t) upscaler->FrameCount() : 0,
@@ -11980,10 +12124,22 @@ static void RenderXeMfgVariantSelector(decltype(Config::Instance()) config)
             preview = variant.label;
     }
 
-    ImGui::Spacing();
     ImGui::BeginDisabled(!config->LoadAsiPlugins.value_or_default());
+    if (fgHomeLabelsAbove)
+    {
+        // Home: the name above, the combo as wide as the zone, the folder's name only while closed
+        const char* name = TrL("XeMFG variant");
+        ImGui::TextDisabled("%.*s", (int) (ImGui::FindRenderedTextEnd(name) - name), name);
+        if (const auto cut = preview.find("  ("); cut != std::string::npos)
+            preview.erase(cut);
+        ImGui::SetNextItemWidth(-FLT_MIN);
+    }
+    else
+        ImGui::Spacing();
     // ILION dev.62: in the new interface as wide as the FG selectors above it, their labels in one column
-    if (IlionTheme::shell && (fgHomeComboWidth > 0.0f || fgCompactComboWidth > 0.0f))
+    if (fgHomeLabelsAbove)
+        ;
+    else if (IlionTheme::shell && (fgHomeComboWidth > 0.0f || fgCompactComboWidth > 0.0f))
         ImGui::SetNextItemWidth(fgHomeComboWidth > 0.0f ? fgHomeComboWidth : fgCompactComboWidth);
     else if (IlionTheme::shell)
         ImGui::SetNextItemWidth(std::min(ImGui::GetFontSize() * 17.0f, std::max(ImGui::GetFontSize() * 8.0f, ImGui::GetContentRegionAvail().x - ImGui::GetFontSize() * 9.0f)));
@@ -11992,7 +12148,7 @@ static void RenderXeMfgVariantSelector(decltype(Config::Instance()) config)
 
     static std::wstring startVariant = chosen;
 
-    if (IlionTheme::BeginCombo(TrL("XeMFG variant"), preview.c_str()))
+    if (IlionTheme::BeginCombo(fgHomeLabelsAbove ? "##homeXeMfgVariant" : TrL("XeMFG variant"), preview.c_str()))
     {
         if (ImGui::Selectable(Tr("Plugins folder as it is"), chosen.empty()) && !chosen.empty())
         {
@@ -12097,7 +12253,7 @@ static void FgModeValue(const CustomOptional<int>* countConfig)
     ImGui::TextDisabled("|");
     ImGui::SameLine();
 
-    const auto fg = State::Instance().currentFG;
+    const auto fg = State::Instance().CurrentFG();
     if (fg != nullptr && fg->IsActive() && !fg->IsPaused())
     {
         ImGui::TextDisabled("%s:", ShellText("Effective", "Efectivo", "Efetivo", "Фактически"));
@@ -12202,11 +12358,17 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
     // ILION dev.50: the XeMFG Vulkan bridge is suspended; Available() (which loads XeFG / XeLL) is asked only with
     // [Plugins] XeMfgVulkanExperimental=true, else Vulkan is as before the bridge
     const bool vulkanBridgeAllowed = config->XeMfgVulkanExperimental.value_or_default();
-    inputOptions[optiFgIndex].set_disabled(state.swapchainApi == API::Vulkan &&
-        !(state.activeFgOutput == FGOutput::XeFG && vulkanBridgeAllowed && VkwDx12SC::Available()), "Unsupported API");
+    // ILION 1.5: on Vulkan OptiFG feeds XeFG through the bridge, upstream's native FSR FG (FSRFG_Vk) or, on NVIDIA,
+    // DLSSG (DLSSG_Vk)
+    const bool vulkanOptiFgOutput =
+        (state.activeFgOutput == FGOutput::XeFG && vulkanBridgeAllowed && VkwDx12SC::Available()) ||
+        state.activeFgOutput == FGOutput::FSRFG ||
+        (state.activeFgOutput == FGOutput::DLSSG && primaryGpu.vendorId == VendorId::Nvidia);
+    inputOptions[optiFgIndex].set_disabled(state.swapchainApi == API::Vulkan && !vulkanOptiFgOutput, "Unsupported API");
 
-    if (!inputOptions[optiFgIndex].disabled && state.activeFgOutput == FGOutput::FSRFG && !FfxApiProxy::IsFGReady() &&
-        !ffxInitTried)
+    // FSR FG's Vulkan dll is loaded with the device
+    if (state.swapchainApi != API::Vulkan && !inputOptions[optiFgIndex].disabled &&
+        state.activeFgOutput == FGOutput::FSRFG && !FfxApiProxy::IsFGReady() && !ffxInitTried)
     {
         ffxInitTried = true;
         FfxApiProxy::InitFfxDx12();
@@ -12265,7 +12427,9 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             "No real DLSSG, unsupported hardware\nOnly Nvngx FG replacements available";
     }
 
-    outputOptions[dlssgOutputIndex].set_disabled(state.swapchainApi == API::Vulkan, "Unsupported API");
+    // ILION 1.5: DLSSG on Vulkan (upstream's DLSSG_Vk) is NVIDIA's; ILION's DLSSG replacements are DX12 only
+    outputOptions[dlssgOutputIndex].set_disabled(state.swapchainApi == API::Vulkan && !maySupportDlssg,
+                                                 "Unsupported API");
     outputOptions[dlssgOutputIndex].set_disabled(!maySupportDlssg && !hasDlssgReplacement,
                                                  "Unsupported hardware and no replacements");
 
@@ -12278,7 +12442,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
     // FSR FG output requirements
     auto constexpr fsrfgOutputIndex = (uint32_t) FGOutput::FSRFG;
-    outputOptions[fsrfgOutputIndex].set_disabled(state.swapchainApi == API::Vulkan, "Unsupported API");
+    // ILION 1.5: every API, Vulkan too (upstream's native FSRFG_Vk; FG 4 from the driver on RDNA 4)
 
     // XeFG output requirements
     auto constexpr xefgOutputIndex = (uint32_t) FGOutput::XeFG;
@@ -12476,13 +12640,32 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
         const ImVec2 selectionStart = ImGui::GetCursorScreenPos();
         const float selectionWidth = crtBeside ? selectionAvail - crtSize.x - crtGap : 0.0f;
 
+        // ILION 1.5 beta 7: Home names each selector above it and the combo takes the zone's width; elsewhere the name
+        // stays at the right of a combo as wide as before
+        const auto selector = [&](const char* label) -> std::string
+        {
+            if (fgHomeLabelsAbove)
+            {
+                // Home: one heading over the selectors ("FG input / output"), the combos under it with no text between
+                // them (their tooltips name each one)
+                if (strcmp(label, "FG Input") == 0)
+                {
+                    ImGui::GetCurrentWindow()->DC.CurrLineTextBaseOffset = 0.0f;
+                    ImGui::TextDisabled("%s", Tr("FG input / output"));
+                }
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                return std::string("##home") + label;
+            }
+            ImGui::SetNextItemWidth(fgHomeComboWidth > 0.0f ? fgHomeComboWidth : fgCompactComboWidth > 0.0f ? fgCompactComboWidth : FgSelectorWidth(selectorLabel));
+            return label;
+        };
+
         if (ImGui::BeginTable("fgSelection", 1, ImGuiTableFlags_SizingStretchSame, ImVec2(selectionWidth, 0.0f)))
         {
             ImGui::TableNextColumn();
 
             // The combo fills its column minus its label: neither the names nor the label are cut
-            ImGui::SetNextItemWidth(fgHomeComboWidth > 0.0f ? fgHomeComboWidth : fgCompactComboWidth > 0.0f ? fgCompactComboWidth : FgSelectorWidth(selectorLabel));
-            PopulateCombo(TrL("FG Input"), config->FGInput, inputOptions);
+            PopulateCombo(selector("FG Input"), config->FGInput, inputOptions);
             ShowTooltip("The data source to be used for FG\n"
                         "The native FG which the game supports");
 
@@ -12492,8 +12675,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             {
                 // Disable None?
                 // The combo fills its column minus its label: neither the names nor the label are cut
-                ImGui::SetNextItemWidth(fgHomeComboWidth > 0.0f ? fgHomeComboWidth : fgCompactComboWidth > 0.0f ? fgCompactComboWidth : FgSelectorWidth(selectorLabel));
-                PopulateCombo(TrL("FG Nvngx"), config->FGNvngxReplacement, nvngxOptions);
+                PopulateCombo(selector("FG Nvngx"), config->FGNvngxReplacement, nvngxOptions);
                 ShowTooltip("What backend to use instead of the real DLSSG");
                 if (config->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::HelixSR)
                     DrawFgLiteState();
@@ -12503,8 +12685,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             else
             {
                 // The combo fills its column minus its label: neither the names nor the label are cut
-                ImGui::SetNextItemWidth(fgHomeComboWidth > 0.0f ? fgHomeComboWidth : fgCompactComboWidth > 0.0f ? fgCompactComboWidth : FgSelectorWidth(selectorLabel));
-                PopulateCombo(TrL("FG Output"), config->FGOutput, outputOptions);
+                PopulateCombo(selector("FG Output"), config->FGOutput, outputOptions);
                 ShowTooltip("The FG that you will actually be using");
             }
 
@@ -12513,8 +12694,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                 ImGui::TableNextColumn();
 
                 // The combo fills its column minus its label: neither the names nor the label are cut
-                ImGui::SetNextItemWidth(fgHomeComboWidth > 0.0f ? fgHomeComboWidth : fgCompactComboWidth > 0.0f ? fgCompactComboWidth : FgSelectorWidth(selectorLabel));
-                PopulateCombo(TrL("FG Nvngx Replacement"), config->FGNvngxReplacement, nvngxOptions);
+                PopulateCombo(selector("FG Nvngx Replacement"), config->FGNvngxReplacement, nvngxOptions);
                 ShowTooltip("What backend to use instead of the real DLSSG");
                 if (config->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::HelixSR)
                     DrawFgLiteState();
@@ -12557,9 +12737,13 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             RenderXeMfgVariantSelector(config);
 
         // ILION v1.4.0: what plugins registered through OptiScaler v10's plugin API
-        if (config->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::XeMfgXmx)
-            DrawPluginTabs(true);
-        DrawPluginTabs(false);
+        // Home keeps the selectors only: the plugins' own tabs stay in Frame Gen
+        if (!fgHomeLabelsAbove)
+        {
+            if (config->FGNvngxReplacement.value_or_default() == FGNvngxReplacement::XeMfgXmx)
+                DrawPluginTabs(true);
+            DrawPluginTabs(false);
+        }
 
         // ILION dev.78: Compact's two columns: the switch and the multiplier under the selectors, the states at the right
         if (compactColumns)
@@ -12645,7 +12829,14 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
                 ImGui::PushItemWidth(95.0f * menuResScale);
 
-                if (IlionTheme::BeginCombo(TrL("Override DLSSG Ratio"), currentIntCountStr.c_str()))
+                // ILION 1.5.0: with ILION's dynamic MFG this setting is its maximum (the multiplier selector of the
+                // Generation card shows and sets the same value): named so, same ImGui id
+                const bool ilionDynamicMax = IlionDynamicMfg::ExternalDynamicMode() == IlionDynamicMfg::ExternalMode::Ilion;
+                const std::string ratioLabel = std::string(ilionDynamicMax ? ShellText("Dynamic MFG maximum", "Máximo de MFG dinámico",
+                                                                                       "Máximo do MFG dinâmico", "Максимум динамического MFG")
+                                                                           : TrL("Override DLSSG Ratio")) +
+                                               "###OverrideDlssgRatio";
+                if (IlionTheme::BeginCombo(ratioLabel.c_str(), currentIntCountStr.c_str()))
                 {
                     for (int i = 0; i <= maxInterpolationCount + 1; i++)
                     {
@@ -12705,7 +12896,7 @@ bool MenuCommon::FgUiAdvancedHasContent(RenderMenuContext& ctx)
     const auto& state = ctx.state;
     const bool uiOptions = state.activeFgOutput != FGOutput::Reprojection && state.activeFgOutput != FGOutput::NoFG &&
                            state.activeFgInput != FGInput::NoFG && state.activeFgInput != FGInput::NvngxFG &&
-                           state.currentFG != nullptr && !EssentialView() && !shellSimple;
+                           state.CurrentFG() != nullptr && !EssentialView() && !shellSimple;
     const bool advanced = (state.activeFgInput == FGInput::DLSSG || state.activeFgInput == FGInput::FSRFG ||
                            state.activeFgInput == FGInput::FSRFG30 || state.activeFgInput == FGInput::NvngxFG ||
                            state.activeFgOutput == FGOutput::FSRFG) &&
@@ -13066,6 +13257,7 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
     const auto drawTarget = [&](float maxWidth)
     {
         const char* label = Tr("Final FPS target##dmfg");
+        ImGui::GetCurrentWindow()->DC.CurrLineTextBaseOffset = 0.0f; // level with the mode's name in the other zone
         ImGui::TextUnformatted(label, ImGui::FindRenderedTextEnd(label));
         ShowTooltip("Final frames per second. 0 = automatic (XeFG: the FPS limit, else just under the refresh rate).\n"
                     "It is not a cap unless \"Use target as cap\" is on.");
@@ -13127,7 +13319,7 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
         ShowTooltip("Highest multiplier Dynamic may use. It is the same setting as the manual multiplier.");
     };
 
-    const auto drawSwitch = [&]()
+    const auto drawSwitch = [&](bool home)
     {
         // The game's DLSSG: which Dynamic, ILION's own controller (eOn, real ceiling with the cap) or the backend's
         // eDynamic (its own count and maximum, no ceiling), each named as what it is
@@ -13137,9 +13329,18 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
             const bool ilionPossible = ctx.state.dlssgMfgMax.value_or(0) >= 2;
             const bool nativePossible = ctx.state.dlssgGameDMFGSupported;
             const char* names[] = { "Off (fixed FPS)", "ILION Dynamic (FPS cap)", "Automatic Dynamic (no FPS cap)" };
+            // Home: the name above, the combo as wide as the zone, a short name while closed
+            const char* shortNames[] = { "Off", "ILION", "Automatic" };
+            if (home)
+            {
+                ImGui::GetCurrentWindow()->DC.CurrLineTextBaseOffset = 0.0f;
+                const char* name = TrL("Dynamic MFG##dmfgMode");
+                ImGui::TextDisabled("%.*s", (int) (ImGui::FindRenderedTextEnd(name) - name), name);
+            }
             ImGui::BeginDisabled(!supported);
-            ImGui::SetNextItemWidth(260.0f * scale);
-            if (IlionTheme::BeginCombo(TrL("Dynamic MFG##dmfgMode"), Tr(names[(int) mode])))
+            ImGui::SetNextItemWidth(home ? -FLT_MIN : 260.0f * scale);
+            if (IlionTheme::BeginCombo(home ? "##dmfgModeHome" : TrL("Dynamic MFG##dmfgMode"),
+                                       home ? Tr(shortNames[(int) mode]) : Tr(names[(int) mode])))
             {
                 for (int i = 0; i < 3; ++i)
                 {
@@ -13174,20 +13375,19 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
 
     if (compact)
     {
-        // Home: the switch with the maximum beside it (while Dynamic is on), then the target across the card
-        drawSwitch();
-        if (enabled)
+        // Home: the mode (name above, combo across the zone), then the target. The maximum is the multiplier already in
+        // the card (the same setting), so it isn't repeated here
+        // ILION 1.5 beta 9: Home draws the mode in the left zone and the target in the right one, on the same row
+        if (dmfgHomePart != 2)
         {
-            const char* maxLabel = Tr("Maximum multiplier##dmfg");
-            const float maxWidth = 70.0f * scale + ImGui::GetStyle().ItemInnerSpacing.x +
-                                   ImGui::CalcTextSize(maxLabel, ImGui::FindRenderedTextEnd(maxLabel)).x;
-            if (ImGui::GetContentRegionAvail().x - ImGui::GetItemRectSize().x > maxWidth + 24.0f * scale)
-                ImGui::SameLine(0.0f, 24.0f * scale);
-            drawMax(70.0f * scale);
+            drawSwitch(true);
+            if (!supported && reason != nullptr)
+                TextWrappedDisabled("%s", Tr(reason));
         }
-        if (!supported && reason != nullptr)
-            TextWrappedDisabled("%s", Tr(reason));
-        ImGui::Spacing(); // the target apart from the mode and the maximum
+        if (dmfgHomePart == 1)
+            return;
+        if (dmfgHomePart == 0)
+            ImGui::Spacing(); // the target apart from the mode
         drawTarget(0.0f);
         return;
     }
@@ -13200,7 +13400,7 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
     {
         ImGui::TextDisabled("%s %s", Tr("Provider:"), status.name);
 
-        drawSwitch();
+        drawSwitch(false);
         if (!supported && reason != nullptr)
             TextWrappedDisabled("%s", Tr(reason));
 
@@ -13339,10 +13539,31 @@ void MenuCommon::RenderDynamicMfgPanel(RenderMenuContext& ctx, bool compact)
     else
         TextWrappedDisabled("%s", Tr("Base and final FPS: unavailable"));
 
-    const char* limiter = status.limiter == Dmfg::Limiter::Reflex  ? "Reflex"
-                          : status.limiter == Dmfg::Limiter::XeLL  ? "XeLL"
-                          : status.limiter == Dmfg::Limiter::OptiScaler ? "OptiScaler"
-                                                                        : Tr("none");
+    // ILION 1.5: the low latency output that limits, by its real name
+    const auto outputName = [](LowLatencyMode mode) -> const char*
+    {
+        switch (mode)
+        {
+        case LowLatencyMode::XeLL:
+            return "XeLL";
+        case LowLatencyMode::AntiLag2:
+            return "Anti-Lag 2";
+        case LowLatencyMode::AntiLagVk:
+            return "AntiLag Vk";
+        case LowLatencyMode::LatencyFlex:
+            return "LatencyFlex";
+        case LowLatencyMode::Reflex:
+            return "Reflex";
+        case LowLatencyMode::FpsLimiter:
+            return "FPS Limiter";
+        default:
+            return "OptiScaler";
+        }
+    };
+    const char* limiter = status.limiter == Dmfg::Limiter::Reflex             ? "Reflex"
+                          : status.limiter == Dmfg::Limiter::LowLatencyOutput ? outputName(InputCommon::active_output())
+                          : status.limiter == Dmfg::Limiter::OptiScaler       ? "OptiScaler"
+                                                                              : Tr("none");
     if (status.limitFps > 0.0f)
         TextValues({ nullptr, &cyan }, Tr("Limiter: %s at %.0f final FPS"), limiter, status.limitFps);
     else
@@ -13398,7 +13619,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
     auto& currentFeature = ctx.currentFeature;
     auto& menuResScale = ctx.menuResScale;
     auto& primaryGpu = *ctx.primaryGpu;
-    auto fgOutput = state.currentFG;
+    auto fgOutput = state.CurrentFG();
 
     const UiTargetMode uiTargetMode = getUiTargetMode();
     const bool outputIsHdr = uiTargetMode != UiTargetMode::SDR;
@@ -13408,7 +13629,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         state.activeFgInput != FGInput::NoFG && state.currentFGSwapchain != nullptr)
     {
         if (state.activeFgInput != FGInput::Upscaler ||
-            (currentFeature != nullptr && !currentFeature->IsFrozen()) && FfxApiProxy::IsFGReady())
+            (currentFeature != nullptr && !currentFeature->IsFrozen()) && IlionFsrFgReady())
         {
             ScopedCard card { "FSR FG Settings" };
 
@@ -13490,7 +13711,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
             ImGui::SameLine(0.0f, 16.0f);
 
-            if (state.currentFG && state.currentFG->Version().major > 3)
+            if (state.CurrentFG() && state.CurrentFG()->Version().major > 3)
             {
                 if (bool fgwm = config->FSRFGEnableWatermark.value_or_default();
                     IlionTheme::Checkbox(TrL("Enable Watermark"), &fgwm))
@@ -13583,7 +13804,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                     ImGui::TreePop();
                 }
 
-                auto fg = state.currentFG;
+                auto fg = state.CurrentFG();
                 if (fg != nullptr && strcmp(fg->Name(), "FSR-FG") == 0 &&
                     FfxApiProxy::VersionDx12_FG() >= feature_version { 3, 1, 3 })
                 {
@@ -13853,7 +14074,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
         ImGui::Text(Tr("Current DLSSG state:"));
         ImGui::SameLine();
-        if (auto count = state.dlssgDetectedInterpolationCount; count > 0)
+        if (auto count = state.DlssgDetectedInterpolationCount(); count > 0)
         {
             ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.f, 1.f, 0.25f, 1.f), IlionTheme::Role::Good)), std::format("ON {}x", count + 1).c_str());
         }
@@ -13973,7 +14194,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         ScopedCard card { "OptiFG Settings" };
 
         if (currentFeature != nullptr && !currentFeature->IsFrozen() &&
-            ((state.activeFgOutput == FGOutput::FSRFG && FfxApiProxy::IsFGReady()) ||
+            ((state.activeFgOutput == FGOutput::FSRFG && IlionFsrFgReady()) ||
              (state.activeFgOutput == FGOutput::XeFG && XeFGProxy::Module() != nullptr) ||
              (state.activeFgOutput == FGOutput::DLSSG && StreamlineProxy::Module() != nullptr) ||
              state.activeFgOutput == FGOutput::Reprojection))
@@ -13994,6 +14215,13 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             if (IlionTheme::Checkbox(TrL("Flip (Unity)"), &resourceFlip))
                 config->FGResourceFlip = resourceFlip;
             ShowTooltip("Flip Velocity & Depth resources of Unity games");
+
+            // ILION 1.5 (upstream)
+            SameLineIfRoom(CheckboxWidth(TrL("Flip HUDless")), 16.0f);
+            bool hudlessFlip = config->FGHudlessFlip.value_or_default();
+            if (IlionTheme::Checkbox(TrL("Flip HUDless"), &hudlessFlip))
+                config->FGHudlessFlip = hudlessFlip;
+            ShowTooltip("Flip the HUDless texture\nGames can also request it with the Opti.Hudless.Flip parameter");
 
             SameLineIfRoom(CheckboxWidth(TrL("Flip Use Offset")), 16.0f);
 
@@ -14216,7 +14444,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         {
             ImGui::Text(Tr("Upscaler is not active")); // Probably never will be visible
         }
-        else if (state.activeFgOutput == FGOutput::FSRFG && !FfxApiProxy::IsFGReady())
+        else if (state.activeFgOutput == FGOutput::FSRFG && !IlionFsrFgReady())
         {
             ImGui::TextColored(toneMapColor({ 1.0f, 0.0f, 0.0f, 1.0f }),
                                Tr("amd_fidelityfx_dx12.dll is missing!")); // Probably never will be visible
@@ -14289,7 +14517,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             {
                 ImGui::Text(Tr("Current DLSSG state:"));
                 ImGui::SameLine();
-                if (auto count = state.dlssgDetectedInterpolationCount; count > 0)
+                if (auto count = state.DlssgDetectedInterpolationCount(); count > 0)
                 {
                     ImGui::TextColored(toneMapColor(IlionTheme::Themed(ImVec4(0.f, 1.f, 0.25f, 1.f), IlionTheme::Role::Good)),
                                        std::format("ON {}x", count + 1).c_str());
@@ -14430,12 +14658,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                 }
             }
 
-            if (bool disableHudless = config->NvngxFGDisableHudless.value_or_default();
-                IlionTheme::Checkbox(TrL("Disable HUDless"), &disableHudless))
-            {
-                config->NvngxFGDisableHudless = disableHudless;
-            }
-            ShowTooltip("Might be required for some sets of DispatchFlags");
+            // ILION 1.5: upstream removed NvngxFGDisableHudless (DLSSG.DispatchFlags handle the HUD)
         }
     }
 
@@ -14635,7 +14858,7 @@ void MenuCommon::RenderFramerateSettings(RenderMenuContext& ctx)
         LowLatencyMode fakenvapiMode = {};
         if (state.reflexLimitsFps)
         {
-            fakenvapiMode = fakenvapi::getCurrentMode();
+            fakenvapiMode = InputCommon::active_output();
 
             if (fakenvapiMode == LowLatencyMode::AntiLag2)
                 currentMethod = "FSR Anti-Lag 2.0";
@@ -14661,7 +14884,7 @@ void MenuCommon::RenderFramerateSettings(RenderMenuContext& ctx)
         }
         else
         {
-            if (XellHooks::canLimit())
+            if (InputCommon::can_limit_fps())
                 currentMethod = Tr("Game's XeLL");
             else
                 currentMethod = Tr("Fallback");
@@ -14671,7 +14894,7 @@ void MenuCommon::RenderFramerateSettings(RenderMenuContext& ctx)
             currentMethod.append(" (RTSS)");
 
         const bool fakenvapiInactive = (fakenvapi::isUsingAsMainNvapi() || fakenvapiMode == LowLatencyMode::XeLL) &&
-                                       !fakenvapi::isLowLatencyActive() && state.reflexLimitsFps;
+                                       !(InputCommon::active_output() != LowLatencyMode::None) && state.reflexLimitsFps;
 
         if (fakenvapiInactive)
             currentMethod.append(Tr(" (inactive)"));
@@ -14721,7 +14944,7 @@ void MenuCommon::RenderFramerateSettings(RenderMenuContext& ctx)
 
             float refreshRateF = static_cast<float>(refreshRate);
             // it's fine to use with real reflex, we only care about antilag
-            auto fpsLimitTech = fakenvapi::getCurrentMode();
+            auto fpsLimitTech = InputCommon::active_output();
             constexpr float margin = 0.3f; // in ms
             float frameCap = std::round(10000.f / (1000.f / refreshRateF + margin)) / 10.f;
 
@@ -14741,86 +14964,6 @@ void MenuCommon::RenderFramerateSettings(RenderMenuContext& ctx)
     }
 }
 
-void MenuCommon::RenderFakenvapiSettings(RenderMenuContext& ctx)
-{
-    auto& state = ctx.state;
-    auto config = ctx.config;
-
-    // Using state.reflexLimitsFps as a detection for Reflex being used on Nvidia
-    const bool showLatencyFlex =
-        fakenvapi::isUsingAsMainNvapi() || (state.activeFgOutput == FGOutput::XeFG && state.reflexLimitsFps);
-    const bool showForceXell = state.swapchainApi != API::Vulkan;
-
-    if (!showLatencyFlex && !showForceXell)
-        return;
-
-    // FAKENVAPI ---------------------------
-    SectionTitle("fakenvapi");
-
-    if (showLatencyFlex)
-    {
-        ImGui::BeginDisabled(state.activeFgOutput == FGOutput::XeFG || state.activeFgInput == FGInput::ForceXeLL);
-        if (bool forceLFX = config->FN_ForceLatencyFlex.value_or_default();
-            IlionTheme::Checkbox(TrL("Force LatencyFlex"), &forceLFX))
-        {
-            config->FN_ForceLatencyFlex = forceLFX;
-        }
-        ShowTooltip("By default FSR Anti-Lag 2.0, or else XeLL, is used when available; neither is used with Multi Frame "
-                    "Generation or dynamic DLSS-G.\nThis forces LatencyFleX instead, without restarting the game");
-        ImGui::EndDisabled();
-    }
-
-    if (showForceXell)
-    {
-        if (showLatencyFlex)
-            SameLineIfFits(TrL("Force XeLL"), 16.0f);
-
-        bool forceXell = config->ForceXeLL.value_or_default();
-        static bool activeForceXeLL = forceXell;
-
-        if (IlionTheme::Checkbox(TrL("Force XeLL"), &forceXell))
-        {
-            config->ForceXeLL = forceXell;
-        }
-        ShowTooltip("Allows XeLL to work without FG on non-Intel cards.\n\nDisables FG "
-                    "options\n\nRequires a restart");
-
-        if (activeForceXeLL != forceXell)
-        {
-            ImGui::Spacing();
-            TextWrappedColored(toneMapColor(ImVec4(1.f, 0.f, 0.0f, 1.f)), "%s", Tr("Save INI and restart to apply the changes"));
-            ImGui::Spacing();
-        }
-    }
-
-    if (showLatencyFlex)
-    {
-        // clang-format off
-        const std::vector<MenuOption<LFXMode>> lfx_modes = {
-            { LFXMode::Conservative, Tr("Conservative"),
-                Tr("The safest, but might not reduce latency well") },
-            { LFXMode::Aggressive, Tr("Aggressive"),
-                Tr("Improves latency, but in some cases will lower FPS more than expected") },
-            { LFXMode::ReflexIDs, Tr("Reflex ID"),
-                "Best when can be used, some games are not compatible (e.g. Cyberpunk)\n"
-                "and will fallback to Aggressive" }
-        };
-
-        bool usingLFX = fakenvapi::getCurrentMode() == LowLatencyMode::LatencyFlex;
-
-        ImGui::BeginDisabled(!usingLFX);
-        PopulateCombo(TrL("LatencyFlex mode"), config->FN_LatencyFlexMode, lfx_modes);
-        ImGui::EndDisabled();
-
-        const std::vector<MenuOption<ForceReflex>> reflex_modes = { { ForceReflex::InGame, Tr("Follow in-game") },
-                                                                { ForceReflex::ForceDisable, Tr("Force Disable") },
-                                                                { ForceReflex::ForceEnable, Tr("Force Enable") } };
-
-        PopulateCombo(TrL("Force Reflex"), config->FN_ForceReflex, reflex_modes);
-        // clang-format on
-    }
-}
-
 template <typename T> std::string GetMenuOptionLabel(const std::vector<MenuOption<T>>& options, T targetValue)
 {
     auto it = std::find_if(options.begin(), options.end(),
@@ -14834,100 +14977,281 @@ template <typename T> std::string GetMenuOptionLabel(const std::vector<MenuOptio
     return "Unknown";
 }
 
-void MenuCommon::RenderLowLatencySettings(RenderMenuContext& ctx)
+// ILION 1.5: Automatic / Manual / Off of ILION's intelligent latency activation, and whether it locks the controls.
+// Defined after namespace IlionLatency
+static void DrawLatencyModeSelector();
+static bool LatencyControlsLocked();
+static bool LatencyModeAuto();
+
+void MenuCommon::RenderLowLatencySettings(RenderMenuContext& ctx, bool compact)
 {
     auto& state = ctx.state;
     auto config = ctx.config;
 
-    // Low Latency ---------------------------
+    // ILION 1.5: upstream's low latency (InputCommon) with ILION's look, the same in Home, Sputnik and Latency & FPS:
+    //   1. the intelligent activation (Automatic / Manual / Off)
+    //   2. one line with the real state: on or off and the technique in use
+    //   3. Input | Output, 4. Force State | LatencyFlex mode, two columns of the same width
+    // What the engine can run decides what is enabled; an option it can't use is greyed with the reason.
     SectionTitle("Low Latency");
 
+    DrawLatencyModeSelector();
+    const bool locked = LatencyControlsLocked();
+
     static std::vector<MenuOption<LowLatencyInput>> lowLatencyInput = {
-        { LowLatencyInput::None, "None (Off)" },    { LowLatencyInput::Auto, "Auto" },
-        { LowLatencyInput::AntiLag2, "AntiLag 2" }, { LowLatencyInput::Reflex, "Reflex" },
-        { LowLatencyInput::XeLL, "XeLL" },          { LowLatencyInput::UeLowLatency, "UeLowLatency" },
+        { LowLatencyInput::None, "None" },
+        { LowLatencyInput::Auto, "Auto" },
+        { LowLatencyInput::AntiLag2, "FSR Anti-Lag 2.0" },
+        { LowLatencyInput::Reflex, "Reflex" },
+        { LowLatencyInput::XeLL, "XeLL" },
+        { LowLatencyInput::UeLowLatency, "UeLowLatency" },
+        { LowLatencyInput::OptiScaler, "OptiScaler" },
     };
 
     static std::vector<MenuOption<LowLatencyMode>> lowLatencyOutput = {
-        { LowLatencyMode::None, "None (Off)" },
+        { LowLatencyMode::None, "None" },
         { LowLatencyMode::Auto, "Auto" },
         { LowLatencyMode::LatencyFlex, "LatencyFlex" },
-        { LowLatencyMode::AntiLag2, "AntiLag 2" },
+        { LowLatencyMode::AntiLag2, "FSR Anti-Lag 2.0" },
         { LowLatencyMode::XeLL, "XeLL" },
         { LowLatencyMode::AntiLagVk, "AntiLag Vk" },
         { LowLatencyMode::Reflex, "Reflex" },
+        { LowLatencyMode::FpsLimiter, "FPS Limiter" },
     };
 
     LowLatencyInput activeInput {};
     LowLatencyMode activeOutput {};
+    InputCommon::get_currently_active(activeInput, activeOutput);
 
-    if (ImGui::BeginTable("lowLatencyActive", 2, ImGuiTableFlags_SizingStretchSame))
+    // 2. The real state: the output's low latency on or off right now (the game's request with the forced state)
     {
-        InputCommon::get_currently_active(activeInput, activeOutput);
+        const bool on = InputCommon::low_latency_on();
+        const ImVec4 lamp = toneMapColor(on ? ImVec4(0.30f, 0.85f, 0.35f, 1.0f) : ImVec4(0.45f, 0.45f, 0.45f, 1.0f));
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const float h = ImGui::GetTextLineHeight();
+        ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(p.x + h * 0.35f, p.y + h * 0.55f), h * 0.22f,
+                                                    ImGui::ColorConvertFloat4ToU32(lamp));
+        ImGui::Dummy(ImVec2(h * 0.8f, h));
+        ImGui::SameLine();
 
-        ImGui::TableNextColumn();
+        if (on)
+            ImGui::Text(Tr("Low latency on: %s"), GetMenuOptionLabel(lowLatencyOutput, activeOutput).c_str());
+        else
+            ImGui::TextDisabled("%s", Tr("Low latency off."));
 
-        ImGui::Text(Tr("Active input: %s"), GetMenuOptionLabel(lowLatencyInput, activeInput).c_str());
-
-        ImGui::TableNextColumn();
-
-        ImGui::Text(Tr("Active output: %s"), GetMenuOptionLabel(lowLatencyOutput, activeOutput).c_str());
-
-        ImGui::EndTable();
+        if (activeInput != LowLatencyInput::None)
+        {
+            ImGui::SameLine();
+            ImGui::TextDisabled(Tr("(input %s)"), GetMenuOptionLabel(lowLatencyInput, activeInput).c_str());
+        }
     }
 
+    // ILION 1.5 beta 7: each name above its combo and every combo as wide as its column, so the four have the same
+    // size wherever the section is drawn (Home, Sputnik, Latency & FPS) and no name or value is cut
+    // Every cell starts its name on the same baseline: a table carries the previous cell's text offset (the combo's
+    // frame padding) into the next one, which put the right column a few pixels lower
+    const auto fitNext = [](const char* label)
+    {
+        ImGui::GetCurrentWindow()->DC.CurrLineTextBaseOffset = 0.0f;
+        const char* name = TrL(label);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextUnformatted(name, ImGui::FindRenderedTextEnd(name));
+        ImGui::PopStyleColor();
+        ImGui::SetNextItemWidth(-FLT_MIN);
+    };
+
+    ImGui::BeginDisabled(locked);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(ImGui::GetStyle().ItemSpacing.x, ImGui::GetStyle().ItemSpacing.y * 0.8f));
     if (ImGui::BeginTable("lowLatencySelection", 2, ImGuiTableFlags_SizingStretchSame))
     {
         ImGui::TableNextColumn();
 
         auto avalibleInputs = InputCommon::get_avaliable_inputs();
 
-        lowLatencyInput[(uint32_t) LowLatencyInput::AntiLag2].set_disabled(!avalibleInputs[LowLatencyInput::AntiLag2]);
-        lowLatencyInput[(uint32_t) LowLatencyInput::Reflex].set_disabled(!avalibleInputs[LowLatencyInput::Reflex]);
-        lowLatencyInput[(uint32_t) LowLatencyInput::XeLL].set_disabled(!avalibleInputs[LowLatencyInput::XeLL]);
-        lowLatencyInput[(uint32_t) LowLatencyInput::UeLowLatency].set_disabled(
-            !avalibleInputs[LowLatencyInput::UeLowLatency]);
+        // Inputs become available as the game starts sending them
+        for (auto type : { LowLatencyInput::AntiLag2, LowLatencyInput::Reflex, LowLatencyInput::XeLL,
+                           LowLatencyInput::UeLowLatency })
+        {
+            auto& option = lowLatencyInput[(uint32_t) type];
+            option.disabled = !avalibleInputs[type];
+            option.tooltip = option.disabled ? Tr("The game doesn't send it") : "";
+        }
 
-        // need to have a value before combo
-        if (!config->LowLatencyInput.has_value())
-            config->LowLatencyInput = config->LowLatencyInput.value_or_default();
+        lowLatencyInput[(uint32_t) LowLatencyInput::None].set_hidden(true);
 
-        PopulateCombo(TrL("Input"), config->LowLatencyInput, lowLatencyInput);
+        // Only the default when the game has nothing of its own
+        lowLatencyInput[(uint32_t) LowLatencyInput::OptiScaler].set_hidden(true);
+        lowLatencyInput[(uint32_t) LowLatencyInput::Auto].tooltip =
+            Tr("The best input the game sends: Reflex, XeLL when enabled in the game, AntiLag 2, UE, XeLL.\n"
+               "AntiLag 2 first while the game's FSR-FG reports its frames through it.\n"
+               "Without any, OptiScaler's own with the DLSSG output.");
+
+        auto forcedInput = InputCommon::forced_input();
+        auto input = forcedInput.value_or(config->LowLatencyInput.value_or_default());
+
+        if (input == LowLatencyInput::None)
+            input = LowLatencyInput::Auto;
+
+        auto selectedInput = input;
+
+        ImGui::BeginDisabled(forcedInput.has_value());
+        fitNext("Input");
+        PopulateCombo("##llInput", selectedInput, lowLatencyInput);
+        ImGui::EndDisabled();
+
+        if (forcedInput.has_value() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", Tr("Set by XeFG: the game's own keeps its XeLL"));
+        else if (selectedInput != input)
+            config->LowLatencyInput = selectedInput;
 
         ImGui::TableNextColumn();
 
-        lowLatencyOutput[(uint32_t) LowLatencyMode::AntiLagVk].set_disabled(true, "No support");
-        lowLatencyOutput[(uint32_t) LowLatencyMode::Reflex].set_disabled(true, "No support");
+        lowLatencyOutput[(uint32_t) LowLatencyMode::None].set_hidden(true);
 
-        // need to have a value before combo
-        if (!config->LowLatencyOutput.has_value())
-            config->LowLatencyOutput = config->LowLatencyOutput.value_or_default();
+        // Each API has its own, the other API's selection maps to it. The API can change, so no sticky setters.
+        const auto api = InputCommon::uses_api();
+        const bool vulkan = api == API::Vulkan;
+        const bool outputForced = InputCommon::forced_output().has_value();
 
-        PopulateCombo(TrL("Output"), config->LowLatencyOutput, lowLatencyOutput);
+        // OptiScaler's XeFG paces with XeLL on D3D12 (also for D3D11 games through interop), the GPU's Reflex or
+        // AntiLag 2 output can sleep instead while XeFG keeps an XeLL context of its own
+        const bool optiXefg = state.activeFgOutput == FGOutput::XeFG;
+
+        lowLatencyOutput[(uint32_t) LowLatencyMode::AntiLag2].hidden = vulkan;
+        lowLatencyOutput[(uint32_t) LowLatencyMode::XeLL].hidden =
+            !outputForced && !optiXefg && (vulkan || api == API::DX11);
+        lowLatencyOutput[(uint32_t) LowLatencyMode::AntiLagVk].hidden = !vulkan;
+
+        auto disable = [](MenuOption<LowLatencyMode>& option, bool condition, const char* reason)
+        {
+            option.disabled = condition;
+            option.tooltip = condition ? Tr(reason) : "";
+        };
+
+        for (auto mode : { LowLatencyMode::Reflex, LowLatencyMode::AntiLag2, LowLatencyMode::AntiLagVk })
+        {
+            auto reason = InputCommon::output_unavailable(mode, api);
+            disable(lowLatencyOutput[(uint32_t) mode], reason != nullptr, reason);
+        }
+
+        disable(lowLatencyOutput[(uint32_t) LowLatencyMode::LatencyFlex], optiXefg, "Not with XeFG");
+
+        lowLatencyOutput[(uint32_t) LowLatencyMode::FpsLimiter].tooltip = Tr("Only limits the FPS");
+        lowLatencyOutput[(uint32_t) LowLatencyMode::Auto].tooltip =
+            vulkan ? Tr("The GPU's own: AntiLag on AMD, Reflex on Nvidia, LatencyFlex otherwise")
+            : api == API::DX11
+                ? Tr("The GPU's own: AntiLag 2 on AMD, Reflex on Nvidia, LatencyFlex otherwise")
+                : Tr("The GPU's own: AntiLag 2 on AMD, Reflex on Nvidia, XeLL on Intel, LatencyFlex otherwise");
+
+        if (optiXefg)
+        {
+            auto& autoTooltip = lowLatencyOutput[(uint32_t) LowLatencyMode::Auto].tooltip;
+            autoTooltip = Tr("XeLL, XeFG paces with it.");
+
+            if (!lowLatencyOutput[(uint32_t) LowLatencyMode::Reflex].disabled)
+                autoTooltip += std::string("\n") + Tr("Reflex can do the sleeping instead, XeFG keeps an XeLL context of its own.");
+            else if (!lowLatencyOutput[(uint32_t) LowLatencyMode::AntiLag2].disabled)
+                autoTooltip += std::string("\n") + Tr("AntiLag 2 can do the sleeping instead, XeFG keeps an XeLL context of its own.");
+        }
+
+        // Frame generation decides the output it works with
+        auto forcedOutput = InputCommon::forced_output();
+        auto output = forcedOutput.value_or(config->LowLatencyOutput.value_or_default());
+
+        // An output the GPU can't run works as Auto
+        if (output == LowLatencyMode::None || InputCommon::output_unavailable(output, api))
+            output = LowLatencyMode::Auto;
+
+        // The other API's AntiLag
+        if (vulkan && output == LowLatencyMode::AntiLag2)
+            output = LowLatencyMode::AntiLagVk;
+        else if (!vulkan && output == LowLatencyMode::AntiLagVk)
+            output = LowLatencyMode::AntiLag2;
+
+        // No XeLL on D3D11 unless OptiScaler's XeFG runs it on D3D12, Auto picks the GPU's own
+        if (!forcedOutput.has_value() && !optiXefg && api == API::DX11 && output == LowLatencyMode::XeLL)
+            output = LowLatencyMode::Auto;
+
+        auto selectedOutput = output;
+
+        ImGui::BeginDisabled(forcedOutput.has_value());
+        fitNext("Output");
+        PopulateCombo("##llOutput", selectedOutput, lowLatencyOutput);
+        ImGui::EndDisabled();
+
+        if (forcedOutput.has_value() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", Tr("Set by XeFG: the game's own keeps its XeLL (only the FPS limit is OptiScaler's)"));
+        else if (selectedOutput != output)
+            config->LowLatencyOutput = selectedOutput;
+
+        // 4. Force State | LatencyFlex mode, the same widths as the row above, a new row so both start level
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+
+        const std::vector<MenuOption<ForceReflex>> lowlatency_states = { { ForceReflex::InGame, Tr("Follow in-game") },
+                                                                         { ForceReflex::ForceDisable, Tr("Force Disable") },
+                                                                         { ForceReflex::ForceEnable, Tr("Force Enable") } };
+
+        // ILION 1.5: Force Enable lit green while the engine confirms the low latency is on
+        const bool forcedOnLit = config->FN_ForceReflex.value_or_default() == ForceReflex::ForceEnable &&
+                                 InputCommon::low_latency_on();
+        if (forcedOnLit)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, toneMapColor(ImVec4(0.35f, 0.90f, 0.40f, 1.0f)));
+            ImGui::PushStyleColor(ImGuiCol_Border, toneMapColor(ImVec4(0.30f, 0.80f, 0.35f, 1.0f)));
+        }
+        fitNext("Force State");
+        PopulateCombo("##llForceState", config->FN_ForceReflex, lowlatency_states);
+        if (forcedOnLit)
+            ImGui::PopStyleColor(2);
+
+        ImGui::TableNextColumn();
+
+        if (activeOutput == LowLatencyMode::LatencyFlex)
+        {
+            const std::vector<MenuOption<LFXMode>> lfx_modes = {
+                { LFXMode::Conservative, Tr("Conservative"), Tr("The safest, but might not reduce latency well") },
+                { LFXMode::Aggressive, Tr("Aggressive"),
+                  Tr("Improves latency, but in some cases will lower FPS more than expected") },
+                { LFXMode::ReflexIDs, Tr("Reflex ID"),
+                  Tr("Best when can be used, some games are not compatible (e.g. Cyberpunk)\nand will fallback to Aggressive") }
+            };
+
+            fitNext("LatencyFlex mode");
+            PopulateCombo("##llLfxMode", config->FN_LatencyFlexMode, lfx_modes);
+        }
 
         ImGui::EndTable();
     }
+    ImGui::PopStyleVar();
 
-    if (activeOutput == LowLatencyMode::LatencyFlex)
+    // ILION: XeLL without frame generation on any D3D12 GPU (the engine still reads it), Latency & FPS only
+    if (!compact && state.swapchainApi != API::Vulkan)
     {
-        static const std::vector<MenuOption<LFXMode>> lfx_modes = {
-            { LFXMode::Conservative, "Conservative", "The safest, but might not reduce latency well" },
-            { LFXMode::Aggressive, "Aggressive",
-              "Improves latency, but in some cases will lower FPS more than expected" },
-            { LFXMode::ReflexIDs, "Reflex ID",
-              "Best when can be used, some games are not compatible (e.g. Cyberpunk)\n"
-              "and will fallback to Aggressive" }
-        };
+        bool forceXell = config->ForceXeLL.value_or_default();
+        static bool activeForceXeLL = forceXell;
 
-        PopulateCombo(TrL("LatencyFlex mode"), config->FN_LatencyFlexMode, lfx_modes);
+        if (IlionTheme::Checkbox(TrL("Force XeLL"), &forceXell))
+            config->ForceXeLL = forceXell;
+
+        ShowTooltip("Allows XeLL to work without FG on non-Intel cards.\n\nDisables FG options\n\nRequires a restart");
+
+        if (activeForceXeLL != forceXell)
+            TextWrappedColored(toneMapColor(ImVec4(1.f, 0.f, 0.0f, 1.f)), "%s", Tr("Save INI and restart to apply the changes"));
     }
 
-    static std::vector<MenuOption<ForceReflex>> lowlatency_states = { { ForceReflex::InGame, "Follow in-game" },
-                                                                      { ForceReflex::ForceDisable, "Force Disable" },
-                                                                      { ForceReflex::ForceEnable, "Force Enable" } };
+    ImGui::EndDisabled();
 
-    ImGui::SetNextItemWidth(150.0f * ctx.menuResScale);
-    PopulateCombo(TrL("Force State"), config->FN_ForceReflex, lowlatency_states);
+    // Short notes, one line each
+    if (LatencyModeAuto())
+        TextWrappedDisabled("%s", Tr("ILION chooses the technique. Use Manual to change it."));
+
+    if (InputCommon::xefg_output_change_pending())
+        TextWrappedColored(ImVec4(1.f, 0.8f, 0.f, 1.f), "%s", Tr("Save and restart the game to apply it."));
+
+    if (auto reason = InputCommon::incompatibility(activeInput, activeOutput))
+        TextWrappedColored(ImVec4(1.f, 0.8f, 0.f, 1.f), Tr("Incompatible: %s"), Tr(reason));
 }
 
 void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
@@ -14992,7 +15316,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                 selectedMode = 1;
             else if (currentShader == SharpenShader::DepthAware)
                 selectedMode = 2;
-            else if (currentShader == SharpenShader::LocalContrastDepthAware)
+            else if (currentShader == SharpenShader::DepthAwareDAS)
                 selectedMode = 3;
         }
 
@@ -15012,7 +15336,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                 else if (selectedMode == 2)
                     Config::Instance()->SharpnessShader = SharpenShader::DepthAware;
                 else if (selectedMode == 3)
-                    Config::Instance()->SharpnessShader = SharpenShader::LocalContrastDepthAware;
+                    Config::Instance()->SharpnessShader = SharpenShader::DepthAwareDAS;
             }
         }
 
@@ -15732,7 +16056,7 @@ void MenuCommon::RenderGraphicsAdvancedSettings(RenderMenuContext& ctx)
     // Depth Aware (DAS) is a local contrast sharpening too, small radius: both together can stack halos
     if (config->GfxEnabled.value_or_default() && config->GfxLocalContrastEnabled.value_or_default() &&
         config->RcasEnabled.value_or_default() &&
-        config->SharpnessShader.value_or_default() == SharpenShader::LocalContrastDepthAware)
+        config->SharpnessShader.value_or_default() == SharpenShader::DepthAwareDAS)
         WrappedText(IlionTheme::LampAmber, Tr("With Depth Aware (DAS) sharpening halos can add up"));
     else
         WrappedText(IlionTheme::TextDim, Tr("Uses the switch of Colour and image; off by default"));
@@ -15759,7 +16083,8 @@ inline Mode Current()
     if (config->IlionLatencyMode.has_value())
         return (Mode) std::clamp(config->IlionLatencyMode.value(), 0, 2);
 
-    const bool changed = config->FN_ForceLatencyFlex.value_for_config().has_value() ||
+    const bool changed = config->LowLatencyOutput.value_for_config().has_value() ||
+                         config->LowLatencyInput.value_for_config().has_value() ||
                          config->FN_ForceReflex.value_for_config().has_value() ||
                          config->ForceXeLL.value_for_config().has_value();
     return changed ? Manual : Auto;
@@ -15768,7 +16093,7 @@ inline Mode Current()
 // More than one generated frame: OptiScaler itself turns fakenvapi's Reflex off then (Reflex_Hooks)
 inline bool MultiFrameGen(const State& state)
 {
-    return state.dlssgDetectedInterpolationCount > 1 || state.dlssgLastSetMode == sl::DLSSGMode::eDynamic;
+    return state.DlssgDetectedInterpolationCount() > 1 || state.dlssgLastSetMode == sl::DLSSGMode::eDynamic;
 }
 
 inline void Apply(Mode mode)
@@ -15777,9 +16102,12 @@ inline void Apply(Mode mode)
     const bool mfg = MultiFrameGen(State::Instance());
     config->IlionLatencyMode = (int) mode;
 
+    // ILION 1.5: Auto lets the engine pick the input and the output (upstream's InputCommon), Manual brings back the
+    // user's saved ones
     if (mode == Auto)
     {
-        config->FN_ForceLatencyFlex.set_volatile_value(false);
+        config->LowLatencyInput.set_volatile_value(LowLatencyInput::Auto);
+        config->LowLatencyOutput.set_volatile_value(LowLatencyMode::Auto);
         if (!mfg)
             config->FN_ForceReflex.set_volatile_value(ForceReflex::InGame);
     }
@@ -15790,7 +16118,8 @@ inline void Apply(Mode mode)
     else
     {
         // Manual: the user's saved values back. With more generated frames OptiScaler's own Force Disable stays.
-        config->FN_ForceLatencyFlex = config->FN_ForceLatencyFlex.value_for_config();
+        config->LowLatencyInput = config->LowLatencyInput.value_for_config();
+        config->LowLatencyOutput = config->LowLatencyOutput.value_for_config();
         if (!mfg)
             config->FN_ForceReflex = config->FN_ForceReflex.value_for_config();
     }
@@ -15820,6 +16149,33 @@ inline const char* SwapchainApiName(API api)
     return api == DX11 ? "DX11" : api == DX12 ? "DX12" : api == Vulkan ? "Vulkan" : "?";
 }
 } // namespace IlionLatency
+
+static bool LatencyControlsLocked() { return IlionLatency::Current() != IlionLatency::Manual; }
+static bool LatencyModeAuto() { return IlionLatency::Current() == IlionLatency::Auto; }
+
+static void DrawLatencyModeSelector()
+{
+    const auto mode = IlionLatency::Current();
+    const char* labels[] = { Tr("Automatic"), Tr("Manual"), Tr("Off") };
+    const char* tips[] = { "ILION picks the low latency input and output the GPU and the game can use",
+                           "You choose the input, the output and the forced state below",
+                           "Low latency is forced off (Force State: Force Disable)" };
+
+    ImGui::TextDisabled("%s", Tr("Intelligent activation"));
+    for (int i = 0; i < 3; i++)
+    {
+        ImGui::SameLine();
+        const std::string label = std::string(labels[i]) + "##IlionLatencyMode" + std::to_string(i);
+        const bool selected = (int) mode == i;
+        if (selected)
+            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        if (IlionTheme::Button(label.c_str()) && !selected)
+            IlionLatency::Apply((IlionLatency::Mode) i);
+        if (selected)
+            ImGui::PopStyleColor();
+        UpscalerTip(tips[i]);
+    }
+}
 
 // ILION dev.51: keys and state of the latency regulator (misc/IlionRegulator.h). In Latency & FPS and in Neural
 // Rendering; id keeps the two copies apart. details: the hint below the state (Neural Rendering folds it away)
@@ -15867,6 +16223,11 @@ static void DrawLatencyRegulatorControls(const char* id, bool details)
         colour = IlionTheme::LampAmber;
         text = Tr("Paused while frame generation is active: the generator paces the frames");
     }
+    else if (state == Status::LowLatency)
+    {
+        colour = IlionTheme::LampAmber;
+        text = Tr("Paused: the low latency in use already keeps the queue short");
+    }
     else if (state == Status::NotSupported)
     {
         colour = IlionTheme::LampAmber;
@@ -15892,7 +16253,12 @@ void MenuCommon::RenderLatencyRegulator(RenderMenuContext& ctx)
     WrappedText(IlionTheme::TextDim,
                 Tr("Keeps the game from running frames ahead of the GPU: each frame waiting in the queue adds a whole "
                    "frame of latency. Works with any DirectX 12 game, with or without Reflex"));
+    // ILION 1.5 beta 9: a little more air between its parts (the Latency tab's right column has room for it)
+    ImGui::Spacing();
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, ImGui::GetStyle().ItemSpacing.y * 1.6f));
     DrawLatencyRegulatorControls("L", true);
+    ImGui::PopStyleVar();
+    ImGui::Spacing();
 }
 
 void MenuCommon::RenderIntelligentLatency(RenderMenuContext& ctx)
@@ -15934,9 +16300,9 @@ void MenuCommon::RenderIntelligentLatency(RenderMenuContext& ctx)
     if (!IlionTheme::shell || latencyReportOnly)
     {
     const auto vendor = IdentifyGpu::getPrimaryGpu().vendorId;
-    const bool fakenvapiInUse = fakenvapi::isUsingAsMainNvapi();
-    const LowLatencyMode tech = fakenvapiInUse ? fakenvapi::getCurrentMode() : LowLatencyMode::None;
-    const bool enabled = fakenvapiInUse && fakenvapi::isLowLatencyActive();
+    const bool fakenvapiInUse = true; // ILION 1.5: the low latency output runs with or without fakenvapi as main nvapi
+    const LowLatencyMode tech = fakenvapiInUse ? InputCommon::active_output() : LowLatencyMode::None;
+    const bool enabled = fakenvapiInUse && (InputCommon::active_output() != LowLatencyMode::None);
     const bool mfg = MultiFrameGen(state);
     const char* api = SwapchainApiName(state.swapchainApi);
     const std::optional<bool> gameRequest = ReflexHooks::gameLowLatencyRequest();
@@ -16014,9 +16380,9 @@ void MenuCommon::RenderIntelligentLatency(RenderMenuContext& ctx)
             reason = xellForced ? Tr("Forced by XeFG or Force XeLL")
                                 : StrFmt(Tr("Chosen for %s: Anti-Lag 2 not available"), api);
         else if (tech == LowLatencyMode::LatencyFlex)
-            reason = config->FN_ForceLatencyFlex.value_or_default() ? Tr("Forced with Force LatencyFlex")
-                     : mfg ? Tr("Anti-Lag 2 and XeLL are not used with multi frame generation")
-                           : Tr("General fallback: Anti-Lag 2 and XeLL not available");
+            reason = config->LowLatencyOutput.value_or_default() == LowLatencyMode::LatencyFlex
+                         ? Tr("Chosen as the low latency output")
+                         : Tr("General fallback: the GPU has no low latency of its own for this API");
     }
 
     // What the game asked for, from its own SetSleepMode calls
@@ -16078,15 +16444,13 @@ void MenuCommon::RenderIntelligentLatency(RenderMenuContext& ctx)
                     markersMoving ? Tr("moving") : Tr("still"));
         ImGui::Text(Tr("More than one generated frame: %s"), mfg ? yes : no);
 
-        // fakenvapi's own order (nvapi/fakenvapi/low_latency_d3d.cpp, low_latency_vk.cpp), not ILION's
+        // ILION 1.5: the engine's own order for the Auto output (InputCommon::default_output), not ILION's
         ImGui::Spacing();
-        WrappedText(IlionTheme::Text, Tr("fakenvapi's order, picked when the game uses Reflex:"));
-        WrappedText(IlionTheme::TextDim, Tr("DX11/DX12: forced XeLL (XeFG, Force XeLL), Anti-Lag 2, XeLL, LatencyFleX"));
-        WrappedText(IlionTheme::TextDim, Tr("Vulkan: AntiLag Vk, LatencyFleX"));
-        WrappedText(IlionTheme::TextDim,
-                    Tr("More than one generated frame or dynamic DLSS-G: no Anti-Lag 2 or XeLL, Reflex off"));
-        WrappedText(IlionTheme::TextDim, Tr("Force LatencyFlex skips Anti-Lag 2 and XeLL"));
-        WrappedText(IlionTheme::TextDim, Tr("NVIDIA GPU: native Reflex, fakenvapi not used"));
+        WrappedText(IlionTheme::Text, Tr("Auto output, the GPU's own:"));
+        WrappedText(IlionTheme::TextDim, Tr("DX12: XeLL on Intel, Anti-Lag 2 on AMD, Reflex on NVIDIA, else LatencyFleX"));
+        WrappedText(IlionTheme::TextDim, Tr("DX11: Anti-Lag 2 on AMD, Reflex on NVIDIA, else LatencyFleX"));
+        WrappedText(IlionTheme::TextDim, Tr("Vulkan: AntiLag Vk on AMD, Reflex on NVIDIA, else LatencyFleX"));
+        WrappedText(IlionTheme::TextDim, Tr("OptiScaler's XeFG paces with XeLL; Force XeLL keeps XeLL without frame generation"));
     }
     }
 }
@@ -16417,28 +16781,28 @@ void MenuCommon::RenderThemeSettings(RenderMenuContext& ctx)
 #pragma execution_character_set(push, "utf-8")
         {
             const int uiTheme = UiThemeIndex(config);
-            const char* uiNames[] = { "Industrial", "Clean Olive", ShellText("ILION Traditional", "ILION Tradicional", "ILION Tradicional", "ILION Классический") };
-            static const char* uiKeys[] = { "industrial", "olive", "traditional" };
+            const char* uiNames[] = { "Industrial", "Clean Olive" };
+            static const char* uiKeys[] = { "industrial", "olive" };
 
             ImGui::SetNextItemWidth(180.0f * ctx.menuResScale);
             if (IlionTheme::BeginCombo(ShellText("Interface", "Interfaz", "Interface", "Интерфейс"), uiNames[uiTheme]))
             {
-                for (int n = 0; n < 3; n++)
+                for (int n = 0; n < 2; n++)
                 {
                     if (ImGui::Selectable(uiNames[n], uiTheme == n) && uiTheme != n)
                     {
                         config->MenuUiTheme = std::string(uiKeys[n]);
-                        config->MenuClassicLayout = n == 2;
+                        config->MenuClassicLayout = false;
                         ApplyThemeStyle();
                         config->SaveMenuPreferences();
                     }
                 }
                 ImGui::EndCombo();
             }
-            ShowTooltip(ShellText("Industrial and Clean Olive: the new interface in two palettes. ILION Traditional: the earlier menu with its Basic, Essential and Advanced modes and its own themes. Saved at once; nothing is restarted.",
-                                  "Industrial y Clean Olive: la interfaz nueva con dos paletas. ILION Tradicional: el menú anterior, con sus modos Básico, Esencial y Avanzado y sus propios temas. Se guarda al momento; no se reinicia nada.",
-                                  "Industrial e Clean Olive: a nova interface em duas paletas. ILION Tradicional: o menu anterior, com os modos Básico, Essencial e Avançado e os seus próprios temas. Guardado na hora; nada é reiniciado.",
-                                  "Industrial и Clean Olive: новый интерфейс в двух палитрах. ILION Классический: прежнее меню с режимами Базовый, Основной и Расширенный и своими темами. Сохраняется сразу; ничего не перезапускается."));
+            ShowTooltip(ShellText("Industrial and Clean Olive: the ILION interface in two palettes. Saved at once; nothing is restarted.",
+                                  "Industrial y Clean Olive: la interfaz de ILION con dos paletas. Se guarda al momento; no se reinicia nada.",
+                                  "Industrial e Clean Olive: a interface do ILION em duas paletas. Guardado na hora; nada é reiniciado.",
+                                  "Industrial и Clean Olive: интерфейс ILION в двух палитрах. Сохраняется сразу; ничего не перезапускается."));
 
             // ILION dev.73: the presentation of the new interface (Full or Compact), apart from its theme. Only the
             // drawing changes, from the next frame: no technology is restarted
@@ -17045,6 +17409,7 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
                 { "Frame time graph", "Graph of the last frame times", IlionOverlay::FrameGraph },
                 { "Upscaler time", "GPU time of the upscaler and its average", IlionOverlay::UpscalerTime },
                 { "Upscaler time graph", "Graph of the last upscaler times", IlionOverlay::UpscalerGraph },
+                { "Ray Reconstruction##element", "Ray Reconstruction of OpenRR: network time, mode and resolution, when the game uses it (Industrial interface, Full)", IlionOverlay::RayReconstruction },
                 { "Reflex timings##element", "OptiScaler's Reflex timings: the frame report of Reflex or fakenvapi. With fakenvapi only its CPU times "
                   "are real: Frame markers (CPU) goes from the first to the last marker of one frame on the CPU. It includes "
                   "neither the GPU queue nor the screen, so it is not comparable with ILION's latency. With ILION's latency "
@@ -17080,7 +17445,7 @@ void MenuCommon::RenderFpsOverlaySettings(RenderMenuContext& ctx)
                     bool on = (shown & option.element) != 0;
                     if (IlionTheme::Checkbox(TrL(option.label), &on))
                     {
-                        config->FpsOverlayElements = on ? (shown | option.element) : (shown & (IlionOverlay::AllElements ^ (uint32_t) option.element));
+                        config->FpsOverlayElements = IlionOverlay::ToStored(on ? (shown | option.element) : (shown & (IlionOverlay::AllElements ^ (uint32_t) option.element)));
                         config->FpsOverlayType = FpsOverlay_Custom;
                     }
                     ShowTooltip(option.tip);
@@ -17410,11 +17775,66 @@ void MenuCommon::RenderVsyncSettings(RenderMenuContext& ctx)
 
             ShowTooltip("Force V-Sync On/Off & Sync Interval options");
 
-            if (vsyncChanged && state.activeFgOutput == FGOutput::XeFG && state.currentFG != nullptr)
+            if (vsyncChanged && state.activeFgOutput == FGOutput::XeFG && state.CurrentFG() != nullptr)
             {
                 // To prevent XeLL issues
                 LOG_DEBUG("V-Sync change detected, forcing XeFG reset");
                 state.WAR_xefgRequestFGToggle = true;
+            }
+        }
+    }
+    else
+    {
+        // ILION 1.5 (upstream): native Vulkan, also its FSR FG output, presents in the game's Vulkan present mode;
+        // the override makes the game recreate its swapchain with the chosen one
+        SectionTitle("V-Sync Settings");
+        {
+            ScopedID sectionId { "Vulkan V-Sync Settings" };
+
+            const auto& forced = config->VulkanPresentMode;
+            const char* preview = forced.has_value() ? VulkanHooks::PresentModeName(forced.value()) : Tr("Game's");
+            bool changed = false;
+
+            if (ImGui::BeginCombo(TrL("Present Mode"), preview))
+            {
+                if (ImGui::Selectable(Tr("Game's"), !forced.has_value()))
+                {
+                    config->VulkanPresentMode.reset();
+                    changed = true;
+                }
+
+                for (uint32_t i = 0; i < std::size(VulkanHooks::PresentModes); i++)
+                {
+                    const auto& entry = VulkanHooks::PresentModes[i];
+
+                    if ((state.vkPresentModeMask & (1u << i)) == 0)
+                        continue;
+
+                    if (ImGui::Selectable(entry.name, forced.has_value() && forced.value() == entry.mode))
+                    {
+                        config->VulkanPresentMode = (int) entry.mode;
+                        changed = true;
+                    }
+                }
+
+                ImGui::EndCombo();
+            }
+
+            ShowTooltip("Overrides the game's Vulkan present mode, the game recreates its swapchain to apply it.\n\n"
+                        "Immediate: no V-Sync, tears.\n"
+                        "Mailbox: no tearing, newest frame replaces the queued one.\n"
+                        "FIFO: V-Sync.\n"
+                        "FIFO Relaxed: V-Sync, tears when below the refresh rate.\n"
+                        "FIFO Latest Ready: V-Sync, shows the newest ready frame at each refresh.\n\n"
+                        "Mailbox and FIFO Latest Ready can drop generated frames above the refresh rate.\n"
+                        "Only modes the display supports are listed.");
+
+            if (state.vkGamePresentMode >= 0)
+                ImGui::Text(Tr("Game's present mode: %s"), VulkanHooks::PresentModeName(state.vkGamePresentMode));
+
+            if (changed)
+            {
+                state.vkPresentModeChanged = true;
             }
         }
     }
@@ -17764,7 +18184,7 @@ void MenuCommon::RenderDetectedInfo(RenderMenuContext& ctx)
     });
 
     // Frame ids that used to be in the performance overlay
-    const auto statusFg = state.currentFG;
+    const auto statusFg = state.CurrentFG();
     ImGui::TextDisabled(Tr("FGId: %llu, RfxId: %llu"), statusFg != nullptr ? (UINT64) statusFg->FrameCount() : 0ull,
                         (UINT64) state.reflexFrameId);
 
@@ -17820,7 +18240,7 @@ void MenuCommon::RenderStatusSummary(RenderMenuContext& ctx)
     const bool upscaling = currentFeature != nullptr && currentFeature->IsInited() && !currentFeature->IsFrozen();
     row("Upscaler", upscaling ? UpscalerLabel(currentFeature) : std::string(Tr("None")));
 
-    auto fg = state.currentFG;
+    auto fg = state.CurrentFG();
     // ILION v1.4.1.1: also the game's DLSSG through a replacement (DLSS Enabler, XeMFG XMX, ANR FG...): its multiplier as
     // IlionDynamicMfg has it (measured at the presents, else the one asked for), the same figure as FRAME GEN
     const auto fgSummary = IlionDynamicMfg::Get();
@@ -17835,9 +18255,9 @@ void MenuCommon::RenderStatusSummary(RenderMenuContext& ctx)
     else
         row("Frame Gen", Tr("Off"));
 
-    const LowLatencyMode tech = fakenvapi::isUsingAsMainNvapi() ? fakenvapi::getCurrentMode() : LowLatencyMode::None;
+    const LowLatencyMode tech = true /* ILION 1.5: with or without fakenvapi */ ? InputCommon::active_output() : LowLatencyMode::None;
     const char* techName = IlionLatency::TechName(tech);
-    row("Latency", techName != nullptr ? std::string(techName) + (fakenvapi::isLowLatencyActive() ? "" : Tr(" (not enabled)"))
+    row("Latency", techName != nullptr ? std::string(techName) + ((InputCommon::active_output() != LowLatencyMode::None) ? "" : Tr(" (not enabled)"))
                                        : std::string(Tr("None")));
 
     ImGui::EndTable();
@@ -17865,7 +18285,7 @@ void MenuCommon::RenderEssentialStrip(RenderMenuContext& ctx)
 
     screens[0] = { "UPSCALER", currentFeature != nullptr && !currentFeature->IsFrozen() ? UpscalerLabel(currentFeature) : std::string("-") };
 
-    auto fg = state.currentFG;
+    auto fg = state.CurrentFG();
     if (fg != nullptr && fg->IsActive() && !fg->IsPaused())
     {
         // Some names already end with the multiplier ("XeFG 2x"): written once, as in the sidebar
@@ -17876,15 +18296,15 @@ void MenuCommon::RenderEssentialStrip(RenderMenuContext& ctx)
             fgName.erase(fgName.size() - suffix.size());
         screens[1] = { "FRAME GEN", StrFmt("%s %ux", fgName.c_str(), multiplier) };
     }
-    else if (state.dlssgDetectedInterpolationCount > 0)
-        screens[1] = { "FRAME GEN", StrFmt("DLSSG %dx", state.dlssgDetectedInterpolationCount + 1) };
+    else if (state.DlssgDetectedInterpolationCount() > 0)
+        screens[1] = { "FRAME GEN", StrFmt("DLSSG %dx", state.DlssgDetectedInterpolationCount() + 1) };
     else
         screens[1] = { "FRAME GEN", Tr("Off"), false };
 
-    const bool fakenvapiInUse = fakenvapi::isUsingAsMainNvapi();
-    const char* tech = fakenvapiInUse ? IlionLatency::TechName(fakenvapi::getCurrentMode()) : nullptr;
+    const bool fakenvapiInUse = true; // ILION 1.5: the low latency output runs with or without fakenvapi as main nvapi
+    const char* tech = fakenvapiInUse ? IlionLatency::TechName(InputCommon::active_output()) : nullptr;
     if (tech != nullptr)
-        screens[2] = { "LATENCY", tech, fakenvapi::isLowLatencyActive() };
+        screens[2] = { "LATENCY", tech, (InputCommon::active_output() != LowLatencyMode::None) };
     else
         screens[2] = { "LATENCY", "-", false };
 
@@ -18146,10 +18566,10 @@ void MenuCommon::RenderStatusInfo(RenderMenuContext& ctx)
             if (const char* nvngxFg = NvngxFgName(state.activeFgNvngx); nvngxFg != nullptr)
                 pair("FG Nvngx", nvngxFg);
 
-            if (state.activeFgNvngx != FGNvngxReplacement::None || state.dlssgDetectedInterpolationCount > 0)
+            if (state.activeFgNvngx != FGNvngxReplacement::None || state.DlssgDetectedInterpolationCount() > 0)
             {
-                if (state.dlssgDetectedInterpolationCount > 0)
-                    pair("DLSSG", StrFmt("ON %dx", state.dlssgDetectedInterpolationCount + 1));
+                if (state.DlssgDetectedInterpolationCount() > 0)
+                    pair("DLSSG", StrFmt("ON %dx", state.DlssgDetectedInterpolationCount() + 1));
                 else if (state.swapchainApi == DX12)
                     pair("DLSSG", "Off", true);
                 else
@@ -19067,18 +19487,7 @@ const MenuCommon::MenuBox* MenuCommon::GetMenuBoxes(size_t& count)
         { "fg_sl_inputs", "Frame Gen", "Streamline FG Inputs", nullptr, RenderFrameGenerationRuntimeSettings },
 
         { "framerate", "Latency & FPS", "Framerate", [](RenderMenuContext& c) { RenderCard(c, RenderFramerateSettings); } },
-#ifdef LOW_LATENCY_INPUTS
-        { "low_latency", "Latency & FPS", "Low Latency", [](RenderMenuContext& c) { RenderCard(c, RenderLowLatencySettings); } },
-#else
-        { "ilion_latency", "Latency & FPS", "Intelligent Activation", [](RenderMenuContext& c) { RenderCard(c, RenderIntelligentLatency); } },
-        { "low_latency", "Latency & FPS", "fakenvapi",
-          [](RenderMenuContext& c)
-          {
-              ImGui::BeginDisabled(IlionLatency::Current() != IlionLatency::Manual);
-              RenderCard(c, RenderFakenvapiSettings);
-              ImGui::EndDisabled();
-          } },
-#endif
+        { "low_latency", "Latency & FPS", "Low Latency", [](RenderMenuContext& c) { RenderCard(c, [](RenderMenuContext& x) { RenderLowLatencySettings(x); }); } },
         { "ilion_regulator", "Latency & FPS", "Latency regulator", [](RenderMenuContext& c) { RenderCard(c, RenderLatencyRegulator); } },
         { "vsync", "Latency & FPS", "V-Sync", [](RenderMenuContext& c) { RenderCard(c, RenderVsyncSettings); } },
 
@@ -19292,7 +19701,7 @@ bool MenuCommon::RenderOptiFgHudFix(RenderMenuContext& ctx)
         return false;
 
     if (currentFeature == nullptr || currentFeature->IsFrozen() ||
-        !((state.activeFgOutput == FGOutput::FSRFG && FfxApiProxy::IsFGReady()) ||
+        !((state.activeFgOutput == FGOutput::FSRFG && IlionFsrFgReady()) ||
           (state.activeFgOutput == FGOutput::XeFG && XeFGProxy::Module() != nullptr) ||
           (state.activeFgOutput == FGOutput::DLSSG && StreamlineProxy::Module() != nullptr) ||
           state.activeFgOutput == FGOutput::Reprojection))
@@ -19362,6 +19771,22 @@ bool MenuCommon::RenderOptiFgHudFix(RenderMenuContext& ctx)
         }
         ShowTooltip("Enables capturing of resources before shader execution.\nIncrease HUDless "
                     "capture chances, but might cause capturing of unnecessary resources.");
+
+        // ILION 1.5 (upstream): the game's UI texture, and the HUDless rebuilt by taking it off the frame
+        auto uiTexture = config->FGHUDFixUITexture.value_or_default();
+        if (IlionTheme::Checkbox(TrL("UI Texture"), &uiTexture))
+            config->FGHUDFixUITexture = uiTexture;
+        ShowTooltip("Use the UI texture the game blends on the frame in its last compute pass");
+
+        const bool dlssgOutput = state.activeFgOutput == FGOutput::DLSSG;
+        SameLineIfRoom(CheckboxWidth(TrL("Unblend UI")), 16.0f);
+        ImGui::BeginDisabled(!uiTexture || dlssgOutput);
+        auto uiUnblend = !dlssgOutput && config->FGHUDFixUIUnblend.value_or(true);
+        if (IlionTheme::Checkbox(TrL("Unblend UI"), &uiUnblend))
+            config->FGHUDFixUIUnblend = uiUnblend;
+        ShowTooltip("Rebuild the HUDless by removing the UI texture from the frame\n"
+                    "FSR-FG gets the UI only this way, DLSSG takes the UI texture directly");
+        ImGui::EndDisabled();
 
         ImGui::PopItemWidth();
 
@@ -20070,7 +20495,7 @@ void MenuCommon::RenderExternalFgTab(RenderMenuContext& ctx)
     const auto status = engine.GetStatus();
     const bool running = status.running;
 
-    const auto fg = ctx.state.currentFG;
+    const auto fg = ctx.state.CurrentFG();
     const bool optiFgOn = fg != nullptr && fg->IsActive() && !fg->IsPaused();
 
     // Two segments: MFG SUPER MOTION (a program) and AMD AFMF (the Radeon driver)
@@ -21188,6 +21613,7 @@ void MenuCommon::RenderNeuralRendering(RenderMenuContext& ctx)
 // ILION: pestaña PERFILES (prototipo experimental)
 #include "ilion_profiles.inl"
 #include "ilion_community.inl"
+#include "ilion_openrr_panel.inl"
 
 // Tabs of the menu, in their order. Boxes of a tab come from GetMenuBoxes, by the label of the tab
 struct MenuCommon::MenuTab
@@ -21218,6 +21644,9 @@ const MenuCommon::MenuTab* MenuCommon::MenuTabs(size_t& count)
           RenderAntiGhostingTab },
         { "MAIN", "Latency & FPS", "Frame limiter, low latency and V-Sync." },
         { "MAIN", "Neural Rendering", "AMD Neural Rendering.", RenderNeuralRendering },
+        // ILION 1.5.0: OpenRR-ASI managed from ILION, only in the Industrial interface presented Full
+        { "MAIN", "Ray Reconstruction", "OpenRR-ASI: DLSS Ray Reconstruction on Radeon.", RenderRayReconstructionTab, false,
+          [](RenderMenuContext& c) { return shellActive && !shellCompact && OpenRrUiAllowed(c.config); } },
         { "MAIN", "Graphics", "Colour, sharpness, textures and detail of the picture." },
         { "MAIN", "Overlay", "Real-time metrics over the game: FPS, frame times and hardware sensors." },
         { "MAIN", "Benchmark", "Manual performance tests of the upscaler in use." },
@@ -21396,7 +21825,7 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
 
         ImGui::TextDisabled(Tr("FG"));
         ImGui::SameLine(0.0f, 8.0f * menuResScale);
-        auto fg = state.currentFG;
+        auto fg = state.CurrentFG();
         if (fg != nullptr && fg->IsActive() && !fg->IsPaused())
         {
             const UINT multiplier = fg->GetInterpolatedFrameCount() + 1;
@@ -21413,7 +21842,7 @@ void MenuCommon::RenderMainMenuTabs(RenderMenuContext& ctx)
         {
             // Not OptiScaler's own FG: the DLSSG of the game, or what replaces it. The same count the Frame Gen
             // tab shows as "Current DLSSG state".
-            const auto external = GetExternalFgStatus(state.dlssgDetectedInterpolationCount, state.activeFgNvngx,
+            const auto external = GetExternalFgStatus(state.DlssgDetectedInterpolationCount(), state.activeFgNvngx,
                                                       state.swapchainApi == DX12);
 
             if (external.kind == ExternalFgStatus::Kind::Active)
@@ -21461,6 +21890,7 @@ struct MenuCommon::ShellLayout
     const char* left[12];
     const char* right[12];
     bool settings = false;
+    bool even = false; // ILION 1.5: the last card of the shorter column ends level with the other column
 };
 
 // ILION dev.60: the texts below are UTF-8 in the binary (accents, Cyrillic), as in ilion_lang.h
@@ -21569,9 +21999,9 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
             ScopedCard card(ShellText("Latency status", "Estado de la latencia", "Estado da latência", "Состояние задержки"));
             ScopedID monitorId { "latency_monitor" };
             const auto mode = IlionLatency::Current();
-            const bool fakenvapiInUse = fakenvapi::isUsingAsMainNvapi();
-            const char* tech = fakenvapiInUse ? IlionLatency::TechName(fakenvapi::getCurrentMode()) : nullptr;
-            const bool lowLatency = fakenvapiInUse && fakenvapi::isLowLatencyActive();
+            const bool fakenvapiInUse = true; // ILION 1.5: the low latency output runs with or without fakenvapi as main nvapi
+            const char* tech = fakenvapiInUse ? IlionLatency::TechName(InputCommon::active_output()) : nullptr;
+            const bool lowLatency = fakenvapiInUse && (InputCommon::active_output() != LowLatencyMode::None);
             const auto regulator = IlionRegulator::CurrentState();
             const float limit = ctx.config->FramerateLimit.value_or_default();
 
@@ -21582,12 +22012,16 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
                                         : regulator == IlionRegulator::Status::Off  ? ShellText("Off", "Apagado", "Desligado", "Выкл.")
                                         : regulator == IlionRegulator::Status::FrameGeneration
                                             ? ShellText("Paused: frame generation", "En pausa: generación de fotogramas", "Em pausa: geração de quadros", "Пауза: генерация кадров")
+                                        : regulator == IlionRegulator::Status::LowLatency
+                                            ? ShellText("Paused: low latency in use", "En pausa: baja latencia activa", "Em pausa: baixa latência ativa", "Пауза: активна низкая задержка")
                                         : regulator == IlionRegulator::Status::NotSupported
                                             ? ShellText("Not supported here", "No compatible aquí", "Não compatível aqui", "Здесь не поддерживается")
                                         : regulator == IlionRegulator::Status::Failed ? ShellText("Failed", "Falló", "Falhou", "Ошибка")
                                                                                       : ShellText("Waiting for frames", "Esperando fotogramas", "Aguardando quadros", "Ожидание кадров");
             const auto& cfg = *ctx.config;
-            const std::string vsync = !cfg.OverrideVsync.value_or_default()
+            // ILION 1.5: Force V-Sync acts by itself at each present (wrapped swapchain), Override V-Sync only changes
+            // how the swapchain is created
+            const std::string vsync = !cfg.ForceVsync.has_value()
                                           ? std::string(ShellText("as the game sets it", "como lo pone el juego", "como o jogo define", "как в игре"))
                                       : cfg.ForceVsync.has_value() && cfg.ForceVsync.value()
                                           ? StrFmt("%s (%u)", ShellText("forced on", "forzado activado", "forçado ligado", "принудительно вкл."), cfg.VsyncInterval.value_or_default())
@@ -21615,6 +22049,7 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
                 const bool regulatorLit = regulator != IlionRegulator::Status::Off && regulator != IlionRegulator::Status::NoFrames;
                 const ImVec4 regulatorColour = regulator == IlionRegulator::Status::Active            ? IlionTheme::ShellPal::Green
                                                : regulator == IlionRegulator::Status::FrameGeneration ? IlionTheme::ShellPal::Yellow
+                                               : regulator == IlionRegulator::Status::LowLatency      ? IlionTheme::ShellPal::Yellow
                                                : regulator == IlionRegulator::Status::Failed          ? IlionTheme::ShellPal::Red
                                                                                                       : IlionTheme::ShellPal::Orange;
                 row(regulatorLit, ShellText("Latency regulator", "Regulador de latencia", "Regulador de latência", "Регулятор задержки"),
@@ -21653,15 +22088,9 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
             if (lastPoll <= 0.001 || lastPoll + 500.0 < ctx.now)
             {
                 reflexMs = -1.0;
-#ifdef LOW_LATENCY_INPUTS
                 static TimingData timing {};
                 if (InputCommon::get_timing_data(timing) && timing.timeRange.has_value() && timing.timeRange.value().length > 0)
                     reflexMs = (double) timing.timeRange.value().length / 1000.0; // the overlay's own unit and scale
-#else
-                if (ReflexHooks::updateTimingData() && ReflexHooks::timingData[TimingType::TimeRange].has_value() &&
-                    ReflexHooks::timingData[TimingType::TimeRange].value().length > 0)
-                    reflexMs = (double) ReflexHooks::timingData[TimingType::TimeRange].value().length / 1000.0; // as the overlay
-#endif
                 lastPoll = ctx.now;
             }
 
@@ -21669,8 +22098,8 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
             // measured only while something shows it: this panel asks for it while it is on screen
             IlionLatency::MenuWants();
             int reducerId = 0;
-            if (fakenvapi::isUsingAsMainNvapi())
-                reducerId = 1 + (int) fakenvapi::getCurrentMode() * 2 + (fakenvapi::isLowLatencyActive() ? 1 : 0);
+            if (true /* ILION 1.5: with or without fakenvapi */)
+                reducerId = 1 + (int) InputCommon::active_output() * 2 + ((InputCommon::active_output() != LowLatencyMode::None) ? 1 : 0);
             reducerId += 1000 * IlionRegulator::CurrentLevel();
             const auto latency = IlionLatency::Get(reducerId);
             const bool ilionValid = ctx.state.swapchainApi == DX12 && latency.valid && latency.system >= 0.0;
@@ -21750,7 +22179,7 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
             ScopedID statusId { "fg_status" };
             const auto& state = ctx.state;
             const auto& cfg = *ctx.config;
-            auto fg = state.currentFG;
+            auto fg = state.CurrentFG();
             const bool running = fg != nullptr && fg->IsActive() && !fg->IsPaused();
             ImGui::Text("%s: %s / %s", ShellText("Chosen", "Elegido", "Escolhido", "Выбрано"),
                         std::string(magic_enum::enum_name(cfg.FGInput.value_or_default())).c_str(),
@@ -21865,23 +22294,51 @@ bool MenuCommon::RenderShellColumns(RenderMenuContext& ctx, const MenuTab& tab, 
         // One box alone keeps the whole width (its own controls keep a proportionate length)
         const bool table = columns && layout->right[0] != nullptr && ImGui::BeginTable("##ShellColumns", 2, tableFlags);
 
+        // ILION 1.5: even columns. The natural height of each column is measured on the last frame (what a stretch
+        // added is taken off), and the last card of the shorter one grows to the bottom of the other
+        static const ShellLayout* evenLayout = nullptr;
+        static float evenNatural[2] = { 0.0f, 0.0f };
+        const bool even = table && layout->even;
+        if (evenLayout != layout)
+        {
+            evenLayout = layout;
+            evenNatural[0] = evenNatural[1] = 0.0f;
+        }
+
+        const auto drawColumn = [&](const char* const* ids, int column)
+        {
+            int last = -1;
+            for (int i = 0; i < 12; i++)
+                if (ids[i] != nullptr)
+                    last = i;
+
+            const float top = ImGui::GetCursorScreenPos().y;
+            ScopedCard::stretchAdded = 0.0f;
+            for (int i = 0; i <= last; i++)
+            {
+                if (ids[i] == nullptr)
+                    continue;
+                const float target = (std::max)(evenNatural[0], evenNatural[1]);
+                if (even && i == last && evenNatural[column] > 0.0f && target > evenNatural[column] + 1.0f)
+                    ScopedCard::stretchTo = top + target - ImGui::GetStyle().ItemSpacing.y;
+                drawBox(ids[i]);
+                ScopedCard::stretchTo = 0.0f;
+            }
+
+            if (even)
+                evenNatural[column] = ImGui::GetCursorScreenPos().y - top - ScopedCard::stretchAdded;
+            ScopedCard::stretchAdded = 0.0f;
+        };
+
         if (table)
             ImGui::TableNextColumn();
 
-        for (const char* id : layout->left)
-        {
-            if (id != nullptr)
-                drawBox(id);
-        }
+        drawColumn(layout->left, 0);
 
         if (table)
             ImGui::TableNextColumn();
 
-        for (const char* id : layout->right)
-        {
-            if (id != nullptr)
-                drawBox(id);
-        }
+        drawColumn(layout->right, 1);
 
         if (table)
             ImGui::EndTable();
@@ -22364,8 +22821,24 @@ void MenuCommon::RenderMainMenuBottomBar(RenderMenuContext& ctx)
     if (avail > rightButtonsWidth)
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail - rightButtonsWidth);
 
+    // ILION 1.5: short confirmation of the save, green if SaveIni wrote the file, red if not
+    static double saveAt = -10.0;
+    static bool saveOk = true;
     if (IlionTheme::Button(TrL("Save Settings")))
-        config->SaveIni();
+    {
+        saveOk = config->SaveIni();
+        saveAt = ImGui::GetTime();
+    }
+    if (const double t = ImGui::GetTime() - saveAt; t >= 0.0 && t <= 0.6)
+    {
+        const float fade = 1.0f - (float) (t / 0.6);
+        const ImVec4 c = saveOk ? ImVec4(0.30f, 0.80f, 0.40f, 1.0f) : ImVec4(0.90f, 0.25f, 0.20f, 1.0f);
+        auto* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+                          ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, 0.12f * fade)), style.FrameRounding);
+        dl->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+                    ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, 0.9f * fade)), style.FrameRounding, 0, 2.0f);
+    }
 
     SameLineIfRoom(ButtonWidth(TrL("Close")), 6.0f);
 
@@ -22561,7 +23034,7 @@ void MenuCommon::RenderHudlessResourcesWindow(RenderMenuContext& ctx, ImGuiWindo
     auto config = ctx.config;
     auto& io = ctx.io;
 
-    auto fg = state.currentFG;
+    auto fg = state.CurrentFG();
     if (_showHudlessWindow && config->FGHUDFix.value_or_default() && fg != nullptr && fg->IsActive())
     {
         auto posX = (io.DisplaySize.x - 400.0f) / 2.0f;
@@ -22815,7 +23288,7 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
                                            currentFeature->TargetWidth(), currentFeature->TargetHeight());
         }
 
-        if (const auto fg = state.currentFG; fg != nullptr && fg->IsActive() && !fg->IsPaused())
+        if (const auto fg = state.CurrentFG(); fg != nullptr && fg->IsActive() && !fg->IsPaused())
             conditions.frameGeneration = StrFmt("%s %ux", fg->Name(), fg->GetInterpolatedFrameCount() + 1);
 
         if (fsrObservable && active.module != nullptr)
@@ -23114,7 +23587,7 @@ void MenuCommon::RenderBenchmark(RenderMenuContext& ctx)
                                      currentFeature->TargetWidth(), currentFeature->TargetHeight());
         }
 
-        if (const auto fg = state.currentFG; fg != nullptr && fg->IsActive() && !fg->IsPaused())
+        if (const auto fg = state.CurrentFG(); fg != nullptr && fg->IsActive() && !fg->IsPaused())
             meta.frameGeneration = StrFmt("%s %ux", fg->Name(), fg->GetInterpolatedFrameCount() + 1);
 
         if (fsrObservable && active.module != nullptr)
@@ -23255,11 +23728,7 @@ void MenuCommon::RenderBasicPanel(RenderMenuContext& ctx)
 
         // 3 - Latency
         ImGui::Spacing();
-#ifdef LOW_LATENCY_INPUTS
         RenderLowLatencySettings(ctx);
-#else
-        RenderFakenvapiSettings(ctx);
-#endif
 
         ScopedCard::SetStrictFilter(false);
         basicView = false;
@@ -23305,9 +23774,9 @@ void MenuCommon::RenderBasicPanel(RenderMenuContext& ctx)
         // The same sources as the sidebar of the full menu: OptiScaler's own frame generation when it is the
         // one running, otherwise the DLSSG of the game or what stands in for it, by its evaluations. What is
         // only selected or loaded doesn't count as on.
-        const auto fg = state.currentFG;
+        const auto fg = state.CurrentFG();
         const bool ownFgOn = fg != nullptr && fg->IsActive() && !fg->IsPaused();
-        const auto externalFg = GetExternalFgStatus(state.dlssgDetectedInterpolationCount, state.activeFgNvngx,
+        const auto externalFg = GetExternalFgStatus(state.DlssgDetectedInterpolationCount(), state.activeFgNvngx,
                                                     state.swapchainApi == DX12);
         const bool fgOn = ownFgOn || externalFg.kind == ExternalFgStatus::Kind::Active;
 
@@ -23322,7 +23791,7 @@ void MenuCommon::RenderBasicPanel(RenderMenuContext& ctx)
 
         statusRow(fgOn, "Frame Generation", fgValue);
 
-        const auto latencyMode = fakenvapi::getCurrentMode();
+        const auto latencyMode = InputCommon::active_output();
         const bool latencyOn = latencyMode != LowLatencyMode::None;
 
         statusRow(latencyOn, "Latency",
@@ -23845,4 +24314,20 @@ void MenuCommon::HideMenu()
     io.MouseDrawCursor = _isVisible;
     io.WantCaptureKeyboard = _isVisible;
     io.WantCaptureMouse = _isVisible;
+}
+
+// ILION 1.5 (upstream): the Vulkan FG outputs' present cadence. Measured for the overlay (port of upstream's use pending)
+#pragma push_macro("min")
+#pragma push_macro("max")
+#undef min
+#undef max
+#include "PresentRateMeter.h"
+#pragma pop_macro("max")
+#pragma pop_macro("min")
+static PresentRateMeter fgOutputPresentRate;
+void MenuCommon::FGOutputPresent() { fgOutputPresentRate.Present(Util::MillisecondsNow()); }
+void MenuCommon::FGOutputPresents(bool presents) { fgOutputPresentRate.SetEnabled(presents); }
+static bool TakeFGOutputIntervals(std::vector<double>& intervals)
+{
+    return fgOutputPresentRate.TakeIntervals([&intervals](double ms) { intervals.push_back(ms); });
 }

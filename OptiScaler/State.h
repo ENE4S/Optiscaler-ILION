@@ -5,13 +5,17 @@
 #include "misc/SkipSpoof.h"
 #include "framegen/IFGFeature_Dx12.h"
 #include <framegen/xefg/XeFG_PresentTelemetry.h>
-#include <inputs/FG/Streamline_Inputs_Dx12.h>
+#include "framegen/IFGFeature_Vk.h"
+#include <inputs/FG/Streamline_Inputs.h>
 #include <inputs/FG/Streamline_Inputs_Sl1_Dx12.h>
 
 #include <atomic>
+#include <menu/PresentRateMeter.h>
+#include <chrono>
 #include <set>
 #include <deque>
 #include <mutex>
+#include <shared_mutex>
 #include <sl_dlss_g.h>
 #include <vulkan/vulkan.h>
 #include <ankerl/unordered_dense.h>
@@ -60,7 +64,8 @@ enum class FGOutput : uint32_t
     FSRFG,
     DLSSG,
     XeFG,
-    Reprojection
+    Reprojection,
+    FlipMeter, // AMD flip meter + NvngxFX
 };
 
 template <> struct EnumConfig<FGOutput>
@@ -73,6 +78,7 @@ template <> struct EnumConfig<FGOutput>
         { FGOutput::DLSSG, "DLSSG" },
         { FGOutput::XeFG, "XeFG" },
         { FGOutput::Reprojection, "Reprojection" },
+        { FGOutput::FlipMeter, "FlipMeter" },
     };
 };
 
@@ -87,6 +93,19 @@ enum class FGNvngxReplacement : uint32_t
     XeMfgXmx, // ILION v1.4.0: realdody's XeMFG XMX, XeSS frame generation up to 6X (Nvngx_XeMfgXmx.h)
     ApexFg,   // ILION v1.4.1.1: Apex Neural Rendering FG (ANR FG), neural frame generation up to 6X (Nvngx_ApexFg.h)
     FakeMichauXeFG, // ILION v1.4.1.2: FakeMichau's DLSSG-XeFG, XeSS frame generation up to 6X (Nvngx_FakeMichau.h)
+    Custom, // State::fgNvngxCustom folder in custom
+};
+
+template <> struct EnumConfig<FGNvngxReplacement>
+{
+    // Any other value is the name of a custom folder
+    static constexpr auto default_value = FGNvngxReplacement::Custom;
+
+    static constexpr std::pair<FGNvngxReplacement, std::string_view> mapping[] = {
+        { FGNvngxReplacement::None, "None" },     { FGNvngxReplacement::Nukems, "Nukems" },
+        { FGNvngxReplacement::Arturs, "Arturs" }, { FGNvngxReplacement::FFX, "FFX" },
+        { FGNvngxReplacement::Combo, "Combo" },
+    };
 };
 
 enum class WorkingMode : uint32_t
@@ -178,8 +197,11 @@ class State
 
     std::string gameExe;
     std::string gameName;
+    // Counts from when the dll is attached to the process
+    std::chrono::steady_clock::time_point startTime { std::chrono::steady_clock::now() };
     std::string gameVersion;
     GameEngineType gameEngine = GameEngineType::Other;
+    bool isWindows10 = false;
 
     bool nvngxDx11Inited = false;
     bool nvngxDx12Inited = false;
@@ -191,6 +213,9 @@ class State
     // Reseting on creation of new feature
     std::optional<bool> autoExposure;
 
+    // Passed through from the game's FFX create flags
+    bool dynamicResolution = false;
+
     // FG
     uint64_t fgLastFrame = 0;
 
@@ -200,7 +225,6 @@ class State
     bool dlssgDebugView = false;
     bool dlssgInterpolatedOnly = false;
     uint64_t dlssgLastFrame = 0;
-    uint32_t delayMenuRenderBy = 0;
 
     // FSR Common
     float lastFsrCameraNear = 0.0f;
@@ -209,20 +233,22 @@ class State
     // Frame Generation
     FGInput activeFgInput = FGInput::NoFG;
     FGOutput activeFgOutput = FGOutput::NoFG;
-    // This should be set to a non-None value only if all other requirements are met and nvngx can be used
     FGNvngxReplacement activeFgNvngx = FGNvngxReplacement::None;
+    std::string fgNvngxCustom;
+    std::string activeFgNvngxCustom;
+    // Config::FSRFGProvider FSR FG was started with, applied after a restart
+    std::string activeFsrFgProvider;
 
     // Streamline FG inputs
-    Sl_Inputs_Dx12 slFGInputs = {};
+    Sl_Inputs slFGInputs = {};
     Sl1_Inputs_Dx12 s_sl1FGInputs {};
 
     // OptiFG
-    bool fgPresentIsCalled = false;
     bool fgOnlyGenerated = false;
     bool fgHudlessCompare = false;
     bool fgChanged = false;
     bool scChanged = false;
-    bool skipHeapCapture = false;
+    inline static thread_local bool skipHeapCapture = false;
 
     bool fgCaptureResources = false;
     size_t fgCapturedResourceCount = 0;
@@ -233,6 +259,7 @@ class State
     bool fsrfgInputActive = false;
 
     ankerl::unordered_dense::map<void*, CapturedHudlessInfo> capturedHudlesses;
+    std::mutex capturedHudlessesMutex; // Changes and the menu, lookups also rely on the hudfix check lock
     bool clearCapturedHudlesses = false;
 
     // NVNGX init parameters
@@ -240,8 +267,6 @@ class State
     std::wstring NVNGX_ApplicationDataPath;
     std::string NVNGX_ProjectId;
     NVSDK_NGX_Version NVNGX_Version {};
-    const NVSDK_NGX_FeatureCommonInfo* NVNGX_FeatureInfo = nullptr;
-    std::vector<std::wstring> NVNGX_FeatureInfo_Paths;
     NVSDK_NGX_LoggingInfo NVNGX_Logger { nullptr, NVSDK_NGX_LOGGING_LEVEL_OFF, false };
     NVSDK_NGX_EngineType NVNGX_Engine = NVSDK_NGX_ENGINE_TYPE_CUSTOM;
     std::string NVNGX_EngineVersion;
@@ -256,6 +281,14 @@ class State
     HMODULE optiSlReflex = nullptr;
     HMODULE optiSlPCL = nullptr;
     HMODULE optiDLSSG = nullptr;
+
+    // One of the modules of OptiScaler's own Streamline (DLSSG output)
+    bool IsOptiStreamlineModule(HMODULE module) const
+    {
+        return module != nullptr && optiSlInterposer != nullptr &&
+               (module == optiSlInterposer || module == optiSlCommon || module == optiSlDLSSG ||
+                module == optiSlReflex || module == optiSlPCL || module == optiDLSSG);
+    }
 
     // NGX OTA
     std::string NGX_OTA_Dlss;
@@ -278,15 +311,27 @@ class State
     // ILION: the .asi plugins OptiScaler loaded from its plugins folder (full paths), for the FG diagnosis screen.
     // Late loading writes from another thread: read and write under loadedAsiMutex
     std::mutex loadedAsiMutex;
-    std::vector<std::wstring> loadedAsiPlugins;
+    std::vector<std::wstring> loadedAsiPaths;
     bool fakenvapiReloadLowLatency = false;
     UINT64 reflexFrameId = 0;
     UINT64 frameCount = 0;
     bool vkAntiLagSupported = false;
 
+    // AMD driver flip metering
+    bool amdFlipMeterCreated = false;
+    uint32_t amdFlipMeterMode = 0;
+    std::optional<bool> amdFlipMeterSupported {}; // Set once the flip meter output has asked the driver
+
     // for realtime changes
     ankerl::unordered_dense::map<unsigned int, bool> changeBackend;
     Upscaler newBackend = Upscaler::Reset;
+
+    // Handles of the game's ray reconstruction, they run on a DLSSD picked by Nvngx_RR
+    ankerl::unordered_dense::set<unsigned int> rrHandles;
+
+    // The game looked for ray reconstruction: loaded Streamline's DLSSD plugin, asked NGX for its requirements
+    // or read its parameters
+    bool rrRequested = false;
 
     // XeSS debug stuff
     bool xessDebug = false;
@@ -296,9 +341,17 @@ class State
 
     bool WAR_xefgRequestFGToggle = false;
 
+    // Vulkan present mode override: modes the game's surface supports (bit per VulkanHooks::PresentModeBit), the
+    // mode the game asked for, and a request for the game to recreate its swapchain with the new override
+    uint32_t vkPresentModeMask = 0;
+    int vkGamePresentMode = -1;
+    bool vkPresentModeChanged = false;
+
+    // XeFG Dynamic MFG with "Use target as cap": its target while it runs (0 = no cap), the FPS limit when lower
+    float xefgDynamicCapFps = 0.0f;
+
     bool dlssgGameDMFGSupported = false;
     sl::DLSSGMode dlssgLastSetMode = sl::DLSSGMode::eOff;
-    int dlssgDetectedInterpolationCount = 0;
     // ILION: real frames the game's DLSSG evaluated and the tick of the last call. Streamline evaluates once per
     // generated frame (DLSSG.MultiFrameIndex 1..MultiFrameCount): only the first call of each real frame is counted
     std::atomic<uint64_t> dlssgFgEvaluations { 0 };
@@ -308,8 +361,31 @@ class State
     std::atomic<uint32_t> dlssgFramesActuallyPresented { 0 };
     std::atomic<uint64_t> dlssgFramesPresentedTick { 0 };
 
+    // The game's DLSSG frame count from its DLSSG evaluates. It stops calling them in menus and loading screens,
+    // so the count expires instead of staying at the last value
+    // ponytail: time based, a game below 2 FPS reads as FG off
+    int DlssgDetectedInterpolationCount() const
+    {
+        return std::chrono::steady_clock::now() - _dlssgDetectedTime < std::chrono::milliseconds(500)
+                   ? _dlssgDetectedCount
+                   : 0;
+    }
+
+    void SetDlssgDetectedInterpolationCount(int count)
+    {
+        _dlssgDetectedCount = count;
+        _dlssgDetectedTime = std::chrono::steady_clock::now();
+    }
+
+    int _dlssgDetectedCount = 0;
+    std::chrono::steady_clock::time_point _dlssgDetectedTime {};
+
+    // The game's own frames, for the base frame rate of frame generation. Timed where they arrive instead of
+    // the output rate divided by the FG ratio, that would be wrong whenever FG doesn't generate what it's set to
+    PresentRateMeter gameFrameRate { 500.0 };
+
     // What the game requested from DLSSG when it's used as FG Input
-    // This might need to get moved to Sl_Inputs_Dx12
+    // This might need to get moved to Sl_Inputs
     bool dlssgInputGameEnabled = false;
     int dlssgInputGameInterpolationCount = 1;
 
@@ -344,6 +420,15 @@ class State
     // quirks
     std::vector<std::string> detectedQuirks {};
 
+    // ASI plugins loaded from the plugins folder, late-load ones are added from another thread
+    struct LoadedAsiPlugin
+    {
+        std::string name;
+        std::string version;
+    };
+    std::vector<LoadedAsiPlugin> loadedAsiPlugins {};
+    std::mutex loadedAsiPluginsMutex;
+
     // FFX
     // Separate lists as DX12 (incl. w/Dx12) and Vulkan FFX can report different upscalers
     struct FfxVersionList
@@ -368,7 +453,9 @@ class State
     // ILION dev.53: the Vulkan bridge (VkwDx12SC) is creating its D3D12 FG swapchain: XeFG's own chain gets this many
     // back buffers (0 = untouched), see DxgiFactoryHooks::CreateSwapChainForHwnd
     UINT vkwDx12FGBuffers = 0;
-    bool creatingD3DDevice = false;
+    // Per thread, it's only meant for the call chain of the thread creating the device
+    // and overlapping ScopedCreatingD3DDevice from different threads could leave it stuck
+    inline static thread_local bool creatingD3DDevice = false;
     bool vulkanSkipHooks = false;
     VkInstance VulkanInstance = nullptr;
 
@@ -377,10 +464,10 @@ class State
     std::deque<double> frameTimes;
     std::vector<DetailedGpuTime> detailedGpuTimes;
     double lastFGFrameTime = 0.0;
-    double lastFGPresentMs = 0.0;
-    float xefgDynamicCapFps = 0.0f;
     XeFG_PresentTelemetry xefgPresentTelemetry;
     double presentFrameTime = 0.0;
+    // Time the game's last present to the FG swapchain took, with the FPS limiter's sleep (V-Sync, a full queue)
+    double lastFGPresentMs = 0.0;
     std::mutex frameTimeMutex;
 
     // Opti checking if everything is setup correctly on game launch
@@ -403,20 +490,22 @@ class State
     float screenHeight = 450.0;
     bool realExclusiveFullscreen = false;
     bool SCExclusiveFullscreen = false;
+    // Requested by the swapchain being created, applied when it gets the FG swapchain
+    bool SCExclusiveFullscreenRequested = false;
     bool SCAllowTearing = false;
     UINT SCLastFlags = 0;
 
     // HDR
-    std::vector<IUnknown*> scBuffers;
     OutputColorSpace outputColorSpace {};
     bool hdrOutputActive = false;
+    bool menuTargetSrgb = false;
 
     std::optional<ApiUpscalerInput> setInputApiName;
     ApiUpscalerInput currentInputApiName;
 
     bool isShuttingDown = false;
     std::set<PVOID> modulesToFree;
-    std::mutex modulesToFreeMutex; // OptiScaler 83e18f1a: FreeLibrary runs on any thread
+    std::mutex modulesToFreeMutex;
 
     // menu warnings
     bool fgSettingsChanged = false;
@@ -429,6 +518,7 @@ class State
 
     IFeature* currentFeature = nullptr;
     IFGFeature_Dx12* currentFG = nullptr;
+    IFGFeature_Vk* currentVkFG = nullptr;
     IDXGISwapChain* currentSwapchain = nullptr;
     IDXGISwapChain* currentWrappedSwapchain = nullptr;
     IDXGISwapChain* currentRealSwapchain = nullptr;
@@ -439,8 +529,19 @@ class State
     VkDevice currentVkDevice = nullptr;
     DXGI_SWAP_CHAIN_DESC currentSwapchainDesc {};
 
-    std::vector<ID3D12Device*> d3d12Devices;
-    std::vector<ID3D11Device*> d3d11Devices;
+    // The FG output of whichever API the game uses
+    IFGFeature* CurrentFG() const
+    {
+        if (currentFG != nullptr)
+            return currentFG;
+
+        return currentVkFG;
+    }
+
+    bool FGSwapchainExists() const
+    {
+        return currentFGSwapchain != nullptr || (currentVkFG != nullptr && currentVkFG->HasSwapchain());
+    }
 
     static UINT GetOwner()
     {
@@ -488,7 +589,7 @@ class State
         if (_serveOwner == 0 || _serveOwner == owner)
         {
             _serveOriginal = false;
-            _skipOwner = 0;
+            _serveOwner = 0;
         }
     };
 
@@ -497,7 +598,7 @@ class State
         if (_serveOwner == 0 || _serveOwner == owner)
         {
             _serveOriginal = true;
-            _skipOwner = owner;
+            _serveOwner = owner;
         }
     };
 
@@ -508,7 +609,88 @@ class State
     }
     static bool ServeOriginal() { return _serveOriginal; }
 
+    // Back buffers of the game's swapchain, read from view creation on any thread
+    bool IsSCBuffer(IUnknown* resource)
+    {
+        std::shared_lock<std::shared_mutex> lock(_scBuffersMutex);
+        return std::find(_scBuffers.begin(), _scBuffers.end(), resource) != _scBuffers.end();
+    }
+
+    void SetSCBuffers(std::vector<IUnknown*> buffers)
+    {
+        std::unique_lock<std::shared_mutex> lock(_scBuffersMutex);
+        _scBuffers = std::move(buffers);
+    }
+
+    // The game's live D3D12 devices, created and destroyed on any thread
+    void AddD3D12Device(ID3D12Device* device)
+    {
+        std::scoped_lock lock(_d3d12DevicesMutex);
+        _d3d12Devices.push_back(device);
+        _d3d12DeviceCreated = true;
+    }
+
+    void RemoveD3D12Device(IUnknown* device)
+    {
+        std::scoped_lock lock(_d3d12DevicesMutex);
+        std::erase(_d3d12Devices, device);
+    }
+
+    bool IsD3D12Device(IUnknown* device)
+    {
+        std::scoped_lock lock(_d3d12DevicesMutex);
+        return std::find(_d3d12Devices.begin(), _d3d12Devices.end(), device) != _d3d12Devices.end();
+    }
+
+    ID3D12Device* LastD3D12Device()
+    {
+        std::scoped_lock lock(_d3d12DevicesMutex);
+        return _d3d12Devices.empty() ? nullptr : _d3d12Devices.back();
+    }
+
+    // Stays set after the devices are destroyed
+    bool D3D12DeviceCreated()
+    {
+        std::scoped_lock lock(_d3d12DevicesMutex);
+        return _d3d12DeviceCreated;
+    }
+
+    // The game's D3D11 devices, removed only when the device Release hook is installed
+    void AddD3D11Device(ID3D11Device* device)
+    {
+        std::scoped_lock lock(_d3d11DevicesMutex);
+        _d3d11Devices.push_back(device);
+    }
+
+    void RemoveD3D11Device(IUnknown* device)
+    {
+        std::scoped_lock lock(_d3d11DevicesMutex);
+        std::erase(_d3d11Devices, device);
+    }
+
+    bool IsD3D11Device(IUnknown* device)
+    {
+        std::scoped_lock lock(_d3d11DevicesMutex);
+        return std::find(_d3d11Devices.begin(), _d3d11Devices.end(), device) != _d3d11Devices.end();
+    }
+
+    ID3D11Device* LastD3D11Device()
+    {
+        std::scoped_lock lock(_d3d11DevicesMutex);
+        return _d3d11Devices.empty() ? nullptr : _d3d11Devices.back();
+    }
+
   private:
+    std::vector<IUnknown*> _scBuffers;
+    std::shared_mutex _scBuffersMutex;
+
+    std::vector<ID3D12Device*> _d3d12Devices;
+    std::mutex _d3d12DevicesMutex;
+    bool _d3d12DeviceCreated = false;
+
+    std::vector<ID3D11Device*> _d3d11Devices;
+    std::mutex _d3d11DevicesMutex;
+
     inline static bool _skipChecks = false;
     inline static std::map<UINT, std::string> _skipDllName;
     inline static UINT _skipOwner = 0;

@@ -65,7 +65,7 @@ XeFG_DynamicMFG::Result XeFG_DynamicMFG::Update(int targetCount, int framesToInt
             LOG_INFO("Dynamic MFG: the game's window is back in front, starting over at {}X", current + 1);
             _unfocused = false;
             _count.Reset();
-            _cap.Reset();
+            _cap.Restart(); // ILION 1.5 (nightly): keeps what failed step downs taught
             _capActive = false;
         }
         const double waitMs = sleepMs + presentWaitMs;
@@ -145,7 +145,7 @@ void XeFG_DynamicMFG::Restart()
 {
     _active = false;
     _count.Restart();
-    _cap.Reset();
+    _cap.Restart(); // ILION 1.5 (nightly): keeps what failed step downs taught
 }
 
 int XeFG_DynamicMFG::Focused(HWND window)

@@ -6,16 +6,17 @@
 #include <hudfix/Hudfix_Dx11.h>
 #include <menu/menu_overlay_dx.h>
 
+#include <misc/DeferredRelease.h>
 #include <magic_enum.hpp>
 
 void Reprojection_Dx12::ReleaseObjects()
 {
     for (size_t i = 0; i < BUFFER_COUNT; i++)
     {
-        SAFE_RELEASE(_uiCommandAllocator[i]);
-        SAFE_RELEASE(_uiCommandList[i]);
-        SAFE_RELEASE(_scCommandAllocator[i]);
-        SAFE_RELEASE(_scCommandList[i]);
+        DeferredRelease::Release(_uiCommandAllocator[i]);
+        DeferredRelease::Release(_uiCommandList[i]);
+        DeferredRelease::Release(_scCommandAllocator[i]);
+        DeferredRelease::Release(_scCommandList[i]);
 
         _scCommandListResetted[i] = false;
         _scAllocatorFenceValues[i] = 0;
@@ -24,10 +25,14 @@ void Reprojection_Dx12::ReleaseObjects()
         _uiAllocatorFenceValues[i] = 0;
     }
 
+    ReleaseFences();
+
     _renderUI.reset();
     _hudlessCompare.reset();
     _mvFlip.reset();
     _depthFlip.reset();
+
+    ReleaseResourceCopies();
 }
 
 void Reprojection_Dx12::CreateObjects(ID3D12Device* InDevice)
@@ -82,10 +87,10 @@ bool Reprojection_Dx12::CreateSwapchainInternal(IDXGIFactory* factory, ID3D12Com
     IDXGISwapChain* realSwapchain {};
     auto result = factory->CreateSwapChain(cmdQueue, desc, &realSwapchain);
 
-    if (result == S_OK && swapChain)
+    if (SUCCEEDED(result) && swapChain)
     {
         auto reprojectionSwapchain =
-            new ReprojectionDXGISwapChain(realSwapchain, _device, desc->OutputWindow, 0, false);
+            new ReprojectionDXGISwapChain(realSwapchain, cmdQueue, desc->OutputWindow, 0, false);
 
         *swapChain = reprojectionSwapchain;
 
@@ -111,9 +116,9 @@ bool Reprojection_Dx12::CreateSwapchain1Internal(IDXGIFactory* factory, ID3D12Co
     auto result = factory2->CreateSwapChainForHwnd(cmdQueue, hwnd, desc, pFullscreenDesc, nullptr, &realSwapchain1);
     factory2->Release();
 
-    if (result == S_OK && swapChain)
+    if (SUCCEEDED(result) && swapChain)
     {
-        auto reprojectionSwapchain1 = new ReprojectionDXGISwapChain(realSwapchain1, _device, hwnd, 0, false);
+        auto reprojectionSwapchain1 = new ReprojectionDXGISwapChain(realSwapchain1, cmdQueue, hwnd, 0, false);
 
         *swapChain = reprojectionSwapchain1;
 
@@ -192,6 +197,8 @@ void Reprojection_Dx12::EvaluateState(ID3D12Device* device, FG_Constants& fgCons
     else
     {
         Deactivate();
+        ReleaseResourceCopies();
+        _reproject.reset();
     }
 
     if (State::Instance().fgChanged)
@@ -266,6 +273,7 @@ bool Reprojection_Dx12::Present()
     {
         auto hudless = GetResource(FG_ResourceType::HudlessColor, fIndex);
         auto depth = GetResource(FG_ResourceType::Depth, fIndex);
+        auto velocity = GetResource(FG_ResourceType::Velocity, fIndex);
         if (hudless && (hudless->validity != FG_ResourceValidity::ValidNow) && depth &&
             (depth->validity != FG_ResourceValidity::ValidNow))
         {
@@ -276,34 +284,41 @@ bool Reprojection_Dx12::Present()
             else if (_reproject->IsInit())
             {
                 auto commandList = GetSCCommandList(fIndex);
-                auto previousIndex = (fIndex + BUFFER_COUNT - 1) % BUFFER_COUNT;
-
-                auto mouseDeltaSimToSim = InputCollection::getInstance().readSimsDelta(_frameCount);
 
                 ReprojectionParams params {};
 
                 FilloutData data {};
-                data.diffThreshold = 0.01f;
-                data.mouseDeltaSinceSim = mouseDeltaSinceSim;
-                data.mouseDeltaSimToSim = mouseDeltaSimToSim;
-                data.lateLatch = Config::Instance()->ReprojectionLateLatch.value_or_default();
-                data.simStartMouse = InputCollection::getInstance().readCumulativeAtSim(_frameCount);
-                data.screenWidth = (uint32_t) _interpolationWidth[fIndex];
-                data.screenHeight = (uint32_t) _interpolationHeight[fIndex];
+                FilloutReprojectionData(data, fIndex);
                 data.depthWidth = (uint32_t) depth->width;
                 data.depthHeight = (uint32_t) depth->height;
-                data.invertedDepth = _constants.flags[FG_Flags::InvertedDepth];
 
-                data.cameraVFov = _cameraVFov[fIndex];
-                data.cameraAspectRatio = _cameraAspectRatio[fIndex];
-                std::memcpy(data.cameraUp, _cameraUp[fIndex], 3 * sizeof(float));
-                std::memcpy(data.cameraRight, _cameraRight[fIndex], 3 * sizeof(float));
-                std::memcpy(data.cameraForward, _cameraForward[fIndex], 3 * sizeof(float));
-                std::memcpy(data.cameraPrevForward, _cameraForward[previousIndex], 3 * sizeof(float));
+                ID3D12Resource* velocityResource = nullptr;
+                D3D12_RESOURCE_STATES velocityState = D3D12_RESOURCE_STATE_COMMON;
+
+                if (velocity && velocity->validity != FG_ResourceValidity::ValidNow)
+                {
+                    velocityResource = velocity->GetResource();
+                    velocityState = velocity->state;
+
+                    data.hasMotionVectors = velocityResource != nullptr;
+                    data.mvWidth = (uint32_t) velocity->width;
+                    data.mvHeight = velocity->height;
+
+                    // Not every input provides the size
+                    if (velocityResource && (data.mvWidth == 0 || data.mvHeight == 0))
+                    {
+                        auto mvDesc = velocityResource->GetDesc();
+                        data.mvWidth = (uint32_t) mvDesc.Width;
+                        data.mvHeight = mvDesc.Height;
+                    }
+                }
 
                 _reproject->FilloutStruct(data, params);
                 _reproject->Dispatch((IDXGISwapChain3*) _swapChain, commandList, params, hudless->GetResource(),
-                                     hudless->state, depth->GetResource(), depth->state);
+                                     hudless->state, depth->GetResource(), depth->state, velocityResource,
+                                     velocityState);
+
+                _reprojectionActive = !_reproject->IsBypassed();
             }
         }
     }
@@ -318,13 +333,7 @@ bool Reprojection_Dx12::Present()
         _uiCommandListResetted[fIndex] = false;
     }
 
-    if (_scCommandListResetted[fIndex])
-    {
-        if (_scCommandList[fIndex]->Close() == S_OK)
-            _gameCommandQueue->ExecuteCommandLists(1, (ID3D12CommandList**) &_scCommandList[fIndex]);
-
-        _scCommandListResetted[fIndex] = false;
-    }
+    SubmitSCCommandList(fIndex);
 
     // Returning false usually means "I didn't present, the caller still needs to call original Present",
     // which aligns with standard pass-through logic if you are purely injecting shaders before Present.
@@ -361,7 +370,7 @@ bool Reprojection_Dx12::SetResource(Dx12Resource* inputResource)
             return false;
         }
     }
-    else if (type == FG_ResourceType::Depth)
+    else if (type == FG_ResourceType::Depth || type == FG_ResourceType::Velocity)
     {
         // Making a copy if it's just valid now to be able to use it later
         if (IsActive() && inputResource->validity == FG_ResourceValidity::ValidNow)
@@ -379,6 +388,10 @@ bool Reprojection_Dx12::SetResource(Dx12Resource* inputResource)
     fResource->left = inputResource->left;
     fResource->width = inputResource->width;
     fResource->height = inputResource->height;
+
+    // A new resource for the slot, its old copy is stale. A re-tag passes the slot itself
+    if (inputResource != fResource)
+        fResource->copy = nullptr;
 
     if (inputResource->cmdList != nullptr && fResource->validity == FG_ResourceValidity::ValidButMakeCopy)
     {

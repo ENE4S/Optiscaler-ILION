@@ -95,7 +95,7 @@ class XeFG_DynamicCap
             {
                 _backoffMs = std::min(_backoffMs * 2.0, kMaxBackoffMs);
                 _downBlockedUntilMs = s.nowMs + _backoffMs;
-                _failedReachable = _downReachable;
+                _failedReachable = std::max(_failedReachable, _downReachable); // ILION 1.5 (nightly)
                 return Change(count + 1, s.nowMs, Reason::Undo, reachable);
             }
 
@@ -109,7 +109,7 @@ class XeFG_DynamicCap
             {
                 _backoffMs = std::min(_backoffMs * 2.0, kMaxBackoffMs);
                 _downBlockedUntilMs = s.nowMs + _backoffMs;
-                _failedReachable = _downReachable;
+                _failedReachable = std::max(_failedReachable, _downReachable); // ILION 1.5 (nightly)
                 return Change(count + 1, s.nowMs, Reason::Undo, reachable);
             }
 
@@ -187,6 +187,25 @@ class XeFG_DynamicCap
     }
 
     void Reset() { *this = XeFG_DynamicCap {}; }
+
+    // ILION 1.5 (nightly): FG back on or the game back in front: the averages start over, what failed step downs
+    // taught stays (the back-off, the highest rate a step down failed at, the low latency sleep share)
+    void Restart()
+    {
+        const auto blockedUntil = _downBlockedUntilMs;
+        const auto backoff = _backoffMs;
+        const auto failed = _failedReachable;
+        const auto sleepShare = _sleepShare;
+        const auto sleepSeen = _sleepSeen;
+
+        Reset();
+
+        _downBlockedUntilMs = blockedUntil;
+        _backoffMs = backoff;
+        _failedReachable = failed;
+        _sleepShare = sleepShare;
+        _sleepSeen = sleepSeen;
+    }
 
     Reason LastReason() const { return _reason; }
     // The reachable real frame rate the last change was decided on

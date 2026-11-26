@@ -41,7 +41,8 @@ enum class Status : int
 {
     Off,
     NoFrames,        // no DirectX 12 Present seen yet
-    FrameGeneration, // frame generation is presenting
+    FrameGeneration, // frame generation is presenting (ILION's or the game's DLSSG)
+    LowLatency,      // ILION 1.5: a low latency output (Anti-Lag, Reflex, XeLL, LatencyFlex) already keeps the queue short
     NotSupported,    // DX11, DXVK or a bridge
     Failed,          // the fence could not be made
     Active

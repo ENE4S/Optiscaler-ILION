@@ -329,6 +329,30 @@ static bool Button(const char* id, const char* label, ImVec2 size, bool on = fal
     return pressed;
 }
 
+// ILION 1.5: Save Settings with a short confirmation. The button just drawn gets its border lit for half a second:
+// green when SaveIni wrote the file, red when it couldn't. Nothing moves, it only fades
+static double saveFlashAt = -10.0;
+static bool saveFlashOk = true;
+
+static void SaveSettingsNow()
+{
+    saveFlashOk = Config::Instance()->SaveIni();
+    saveFlashAt = ImGui::GetTime();
+}
+
+static void DrawSaveFlash()
+{
+    const double t = ImGui::GetTime() - saveFlashAt;
+    if (t < 0.0 || t > 0.6)
+        return;
+    const float fade = 1.0f - (float) (t / 0.6);
+    const ImVec4 colour = saveFlashOk ? pal::Green : ImVec4(0.90f, 0.25f, 0.20f, 1.0f);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+    dl->AddRectFilled(a, b, Col(colour, 0.12f * fade), U(4.f));
+    dl->AddRect(a, b, Col(colour, 0.9f * fade), U(4.f), 0, U(2.f));
+}
+
 // Style of the drop-down lists of the system, around BeginCombo
 static void PushComboStyle()
 {
@@ -1074,7 +1098,7 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
     using namespace IlionShell;
     auto& state = ctx.state;
     auto config = ctx.config;
-    auto fg = state.currentFG;
+    auto fg = state.CurrentFG();
     const bool running = fg != nullptr && fg->IsActive() && !fg->IsPaused();
     const bool homeLayout = fgQuickHome; // ILION dev.67: the Home card's own arrangement (Generation keeps its own)
 
@@ -1136,7 +1160,12 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
             const int limit = IlionDynamicMfg::MaxCountLimit();
             const bool overridden = config->FGDLSSGOverrideInterpolationCount.has_value() &&
                                     config->FGDLSSGOverrideInterpolationCount.value() > 0;
-            const std::string preview = fgStatus.multiplier > 0 ? StrFmt("%dX", fgStatus.multiplier)
+            // ILION 1.5.0: with ILION's dynamic MFG the list sets the maximum and the controller picks the count under
+            // it, so the closed combo shows that maximum (the count applied is in the states below); it showed the
+            // applied count before, and choosing 4X while it kept showing 2X looked like the choice didn't work
+            const bool ilionDynamic = IlionDynamicMfg::ExternalDynamicMode() == IlionDynamicMfg::ExternalMode::Ilion;
+            const std::string preview = ilionDynamic ? StrFmt(Lx("Max %dX", "Máx. %dX", "Máx. %dX", "Макс. %dX"), IlionDynamicMfg::MaxCount() + 1)
+                                        : fgStatus.multiplier > 0 ? StrFmt("%dX", fgStatus.multiplier)
                                         : overridden ? StrFmt("%dX", config->FGDLSSGOverrideInterpolationCount.value() + 1)
                                                      : std::string(Lx("Game", "Juego", "Jogo", "Игра"));
             ImGui::SetNextItemWidth(width);
@@ -1160,6 +1189,18 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
                 ImGui::EndCombo();
             }
             ImGui::EndDisabled();
+            if (ilionDynamic && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                WrappedTooltip("%s", (fgStatus.multiplier > 0
+                                          ? StrFmt(Lx("ILION's dynamic MFG: this is the most it may use; it applies %dX now to hold the target.",
+                                                      "MFG dinámico de ILION: esto es lo máximo que puede usar; ahora aplica %dX para mantener el objetivo.",
+                                                      "MFG dinâmico do ILION: isto é o máximo que pode usar; agora aplica %dX para manter o alvo.",
+                                                      "Динамический MFG ILION: это максимум; сейчас применяется %dX, чтобы держать цель."),
+                                                   fgStatus.multiplier)
+                                          : std::string(Lx("ILION's dynamic MFG: this is the most it may use.",
+                                                           "MFG dinámico de ILION: esto es lo máximo que puede usar.",
+                                                           "MFG dinâmico do ILION: isto é o máximo que pode usar.",
+                                                           "Динамический MFG ILION: это максимум.")))
+                                         .c_str());
         }
         else
         {
@@ -1208,15 +1249,25 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
             ImGui::TextWrapped("%s", value.c_str());
     };
 
+    // ILION 1.5 beta 8: with the game's DLSSG through Nvngx the output is the replacement chosen, not "NoFG"
+    const char* chosenNvngx = config->FGInput.value_or_default() == FGInput::NvngxFG && config->FGOutput.value_or_default() == FGOutput::NoFG
+                                  ? NvngxFgName(config->FGNvngxReplacement.value_or_default())
+                                  : nullptr;
     const std::string chosen = StrFmt("%s / %s", std::string(magic_enum::enum_name(config->FGInput.value_or_default())).c_str(),
-                                      std::string(magic_enum::enum_name(config->FGOutput.value_or_default())).c_str());
+                                      chosenNvngx != nullptr ? chosenNvngx
+                                                             : std::string(magic_enum::enum_name(config->FGOutput.value_or_default())).c_str());
     // With the game's DLSSG generating there is no output of ILION ("NoFG"): the generator is named instead
+    // Home and Compact: the generator's name only, "external" would push the value to a second line (its pilot and
+    // "Generating" already tell it)
     const std::string loaded =
-        externalFg ? StrFmt("%s / %s (%s)", std::string(magic_enum::enum_name(state.activeFgInput)).c_str(), fgStatus.name,
+        externalFg && tightStates ? StrFmt("%s / %s", std::string(magic_enum::enum_name(state.activeFgInput)).c_str(), fgStatus.name)
+        : externalFg ? StrFmt("%s / %s (%s)", std::string(magic_enum::enum_name(state.activeFgInput)).c_str(), fgStatus.name,
                             Lx("external", "externa", "externa", "внешняя"))
                    : StrFmt("%s / %s", std::string(magic_enum::enum_name(state.activeFgInput)).c_str(),
                             std::string(magic_enum::enum_name(state.activeFgOutput)).c_str());
-    const bool same = config->FGOutput.value_or_default() == state.activeFgOutput && config->FGInput.value_or_default() == state.activeFgInput;
+    // The game's DLSSG through a replacement: ILION has no output of its own, the input is what must match
+    const bool same = externalFg ? config->FGInput.value_or_default() == state.activeFgInput
+                                 : config->FGOutput.value_or_default() == state.activeFgOutput && config->FGInput.value_or_default() == state.activeFgInput;
 
     std::string active = Tr("Off");
     Led activeLed = Led::Off;
@@ -1254,10 +1305,17 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
         }
     }
 
+    const char* pendingNote = Lx("The choice is not the one loaded yet: it applies when OptiScaler creates the FG again (in some games, after a restart).",
+                                 "La elección aún no es la cargada: se aplica cuando OptiScaler vuelve a crear la FG (en algunos juegos, tras reiniciar).",
+                                 "A escolha ainda não é a carregada: aplica-se quando o OptiScaler recria a FG (em alguns jogos, após reiniciar).",
+                                 "Выбор ещё не загружен: применится, когда OptiScaler заново создаст FG (в некоторых играх — после перезапуска).");
+
     const auto drawStates = [&]()
     {
         row(Led::Off, names[0], chosen);
         row(same ? Led::Green : Led::Orange, names[1], loaded);
+        if (!same && ImGui::IsItemHovered())
+            WrappedTooltip("%s", pendingNote);
         row(activeLed, names[2], active);
 
         // Streamline FG (DLSSG of the game as input): its state, read the same way as its card of the classic menu
@@ -1280,10 +1338,6 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
         }
     };
 
-    const char* pendingNote = Lx("The choice is not the one loaded yet: it applies when OptiScaler creates the FG again (in some games, after a restart).",
-                                 "La elección aún no es la cargada: se aplica cuando OptiScaler vuelve a crear la FG (en algunos juegos, tras reiniciar).",
-                                 "A escolha ainda não é a carregada: aplica-se quando o OptiScaler recria a FG (em alguns jogos, após reiniciar).",
-                                 "Выбор ещё не загружен: применится, когда OptiScaler заново создаст FG (в некоторых играх — после перезапуска).");
 
     if (homeLayout)
     {
@@ -1309,6 +1363,35 @@ void MenuCommon::RenderFgQuickControls(RenderMenuContext& ctx)
         }
         const float blockWidth = std::ceil(h + U(6) + labelWidth + U(10) + valueWidth);
         fgHomeStatesWidth = blockWidth;
+
+        if (fgHomePart == 2 && fgHomeLabelsAbove)
+        {
+            // ILION 1.5 beta 8: the states under a heading level with the selectors' one, a little air between rows
+            ImGui::GetCurrentWindow()->DC.CurrLineTextBaseOffset = 0.0f;
+            ImGui::TextDisabled("%s", Lx("State", "Estado", "Estado", "Состояние"));
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, ImGui::GetStyle().ItemSpacing.y + U(2)));
+            drawStates();
+            ImGui::PopStyleVar();
+            return;
+        }
+
+        if (fgHomePart == 1 && fgHomeLabelsAbove)
+        {
+            // The multiplier (named above, like the selectors) and the switch on one row
+            const bool multiplierCombo = externalFg || (fg != nullptr && (state.activeFgOutput == FGOutput::XeFG ||
+                                                                          state.activeFgOutput == FGOutput::DLSSG ||
+                                                                          state.activeFgOutput == FGOutput::FSRFG));
+            if (multiplierCombo)
+                ImGui::TextDisabled("%s", Lx("Multiplier", "Multiplicador", "Multiplicador", "Множитель"));
+            // The switch's real width (the toggle is wider than a frame) and a margin from the right zone
+            const char* switchLabel = Lx("On###QuickFg", "Activada###QuickFg", "Ativada###QuickFg", "Вкл.###QuickFg");
+            const float switchWidth = CheckboxWidth(switchLabel) + U(8);
+            drawMultiplier((std::max)(U(70), ImGui::GetContentRegionAvail().x - switchWidth - U(16)), "##HomeMult", true);
+            ImGui::SameLine(0.0f, U(16));
+            drawSwitch(switchLabel);
+            // "not loaded yet": the pilot of "Loaded" tells it, its explanation is in that row's tooltip
+            return;
+        }
 
         if (fgHomePart == 2)
         {
@@ -1503,7 +1586,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                                          { "@fg_instruments", "@fg_state", "fg_xefg", "fg_fsrfg", "fg_dlssg", "fg_nvngx", "fg_optifg",
                                            "fg_reprojection", "fg_fsrfg_inputs" } };
     static const ShellLayout lLatency { { "framerate", "vsync", "low_latency" },
-                                        { "ilion_latency", "ilion_regulator", "@latency_combined" } };
+                                        { "ilion_latency", "ilion_regulator", "@latency_combined" }, false, true };
     static const ShellLayout lImage { { "gfx_color", "gfx_advanced" }, { "sharpness", "mipmap", "anisotropy" } };
     static const ShellLayout lReShade { { "reshade", "@reshade_manage" }, {} };
     static const ShellLayout lCompare { { "@compare_info", "gfx_compare" }, { "magnifier" } };
@@ -1544,6 +1627,9 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         { 3, { "Latency & FPS", "Latencia y FPS", "Latência e FPS", "Задержка и FPS" }, "Latency & FPS", &lLatency, 0 },
         { 4, { "Image", "Imagen", "Imagem", "Изображение" }, "Graphics", &lImage, 0 },
         { 4, { "Neural Rendering", "Neural Rendering", "Neural Rendering", "Neural Rendering" }, "Neural Rendering", nullptr, 4 },
+        // ILION 1.5.0: OpenRR, only in Industrial Full (its tab is hidden elsewhere). One card a column, no scrollbar:
+        // left the settings and the state, right the guides and the advanced execution
+        { 4, { "Ray Reconstruction", "Ray Reconstruction", "Ray Reconstruction", "Ray Reconstruction" }, "Ray Reconstruction", nullptr, 1 },
         { 4, { "ReShade", "ReShade", "ReShade", "ReShade" }, "Graphics", &lReShade, 0 },
         { 4, { "Comparison", "Comparación", "Comparação", "Сравнение" }, "Graphics", &lCompare, 0 },
         { 5, { "Overlay", "Overlay", "Overlay", "Оверлей" }, "Overlay", &lOverlay, 0 },
@@ -1558,7 +1644,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
     };
     // clang-format on
     constexpr int subCount = (int) std::size(subs);
-    constexpr int subReShade = 6, subCompare = 7, subBenchmark = 9;
+    constexpr int subReShade = 7, subCompare = 8, subBenchmark = 10; // ILION 1.5.0: Ray Reconstruction is sub 6
 
     // A tab asked for by another part of the menu: the first sub-section that shows it
     if (requestedMenuTab != nullptr)
@@ -1644,7 +1730,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
     std::string fgText = Tr("Off");
     Led fgLed = Led::Off;
     {
-        auto fg = state.currentFG;
+        auto fg = state.CurrentFG();
         if (fg != nullptr && fg->IsActive() && !fg->IsPaused())
         {
             const unsigned multiplier = (unsigned) fg->GetInterpolatedFrameCount() + 1;
@@ -1657,7 +1743,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         }
         else
         {
-            const auto external = GetExternalFgStatus(state.dlssgDetectedInterpolationCount, state.activeFgNvngx,
+            const auto external = GetExternalFgStatus(state.DlssgDetectedInterpolationCount(), state.activeFgNvngx,
                                                       state.swapchainApi == DX12);
             if (external.kind == ExternalFgStatus::Kind::Active)
             {
@@ -1672,20 +1758,22 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         }
     }
 
-    const bool fakenvapiInUse = fakenvapi::isUsingAsMainNvapi();
-    const char* latencyTech = fakenvapiInUse ? IlionLatency::TechName(fakenvapi::getCurrentMode()) : nullptr;
-    const bool latencyOn = latencyTech != nullptr && fakenvapi::isLowLatencyActive();
+    const bool fakenvapiInUse = true; // ILION 1.5: the low latency output runs with or without fakenvapi as main nvapi
+    const char* latencyTech = fakenvapiInUse ? IlionLatency::TechName(InputCommon::active_output()) : nullptr;
+    const bool latencyOn = latencyTech != nullptr && (InputCommon::active_output() != LowLatencyMode::None);
     const float fpsLimit = config->FramerateLimit.value_or_default();
 
     const bool nrEnabled = config->DlssNrEnabled.value_or_default();
     const bool nrRunning = DlssNr::AmdBridge::RecentlyActive();
+    // ILION 1.5.0: OpenRR running lights Mejoras too (Industrial Full only)
+    const bool rrRunning = OpenRrUiAllowed(config) && IlionOpenRr::Loaded() && IlionOpenRr::RrRunning(IlionOpenRr::Get().telemetry);
 
     const Led sectionLed[kSectionCount] = {
         Led::Off,
         upscalerOn ? Led::Green : upscalerIdle ? Led::Yellow : Led::Off,
         fgLed,
         latencyOn || fpsLimit > 0.0f ? Led::Green : Led::Off,
-        nrRunning ? Led::Green : nrEnabled ? Led::Yellow : Led::Off,
+        nrRunning || rrRunning ? Led::Green : nrEnabled ? Led::Yellow : Led::Off,
         config->ShowFps.value_or_default() ? Led::Green : Led::Off,
         Led::Off,
         Led::Off,
@@ -1748,7 +1836,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
             }
 
             // Frame generation: what generates now, the real frames MFG cost counts, the copy of the FG options
-            auto fg = state.currentFG;
+            auto fg = state.CurrentFG();
             const bool ownFg = fg != nullptr && fg->IsActive() && !fg->IsPaused();
             const bool dynamicMfg = state.dlssgLastSetMode == sl::DLSSGMode::eDynamic;
             if (ownFg)
@@ -1758,10 +1846,10 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                 f.fgMultiplierReliable = !dynamicMfg && (state.activeFgOutput == FGOutput::XeFG || state.activeFgOutput == FGOutput::FSRFG ||
                                                          state.activeFgOutput == FGOutput::DLSSG);
             }
-            else if (state.dlssgDetectedInterpolationCount > 0)
+            else if (state.DlssgDetectedInterpolationCount() > 0)
             {
                 f.fgGenerating = true;
-                f.fgEffectiveMultiplier = state.dlssgDetectedInterpolationCount + 1;
+                f.fgEffectiveMultiplier = state.DlssgDetectedInterpolationCount() + 1;
                 f.fgMultiplierReliable = !dynamicMfg;
             }
             if (mfgCost.generating && !mfgCost.unmeasurable && mfgCost.current > 0.0)
@@ -2043,7 +2131,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                      if (value > previewRank)
                      {
                          previewRank = value;
-                         preview = v.name;
+                         preview = v.shortName.empty() ? v.name : v.shortName;
                      }
                  }
 
@@ -2161,35 +2249,21 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                  // Now the states' block is measured with what it shows, the labels counted are only the ones shown,
                  // and in the two zones the selectors (and the variant and the multiplier, so their arrows stay in one
                  // line) take the left column's room minus their label: narrower, same font and height
-                 const auto& style = ImGui::GetStyle();
-                 const FGOutput outputNow = config->FGOutput.value_or_default();
-                 float shownLabel = ImGui::CalcTextSize(Tr("FG Input")).x;
-                 if (config->FGInput.value_or_default() == FGInput::NvngxFG)
-                     shownLabel = (std::max)(shownLabel, ImGui::CalcTextSize(Tr("FG Nvngx")).x);
-                 else
-                     shownLabel = (std::max)(shownLabel, ImGui::CalcTextSize(Tr("FG Output")).x);
-                 if (outputNow == FGOutput::DLSSG)
-                     shownLabel = (std::max)(shownLabel, ImGui::CalcTextSize(Tr("FG Nvngx Replacement")).x);
-                 if (outputNow == FGOutput::XeFG)
-                     shownLabel = (std::max)(shownLabel, ImGui::CalcTextSize(Tr("XeMFG variant")).x);
-                 shownLabel += style.ItemInnerSpacing.x * 2.0f;
-
-                 const float statesWidth = fgHomeStatesWidth > 0.0f ? fgHomeStatesWidth : U(260);
-                 const float gap = U(12);
-                 const float leftRoom = ImGui::GetContentRegionAvail().x - statesWidth - gap - style.CellPadding.x * 4.0f;
-                 const float comboMin = ImGui::GetFontSize() * 8.0f;
-                 const bool zones = leftRoom - shownLabel >= comboMin &&
-                                    ImGui::BeginTable("##HomeFgZones", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings);
-
-                 if (zones)
+                 // ILION 1.5 beta 7: two zones of the same width. Left, what is chosen: input, output (and the
+                 // replacement or the XeMFG variant), then the multiplier with the switch; every name above its combo
+                 // and every combo as wide as the zone. Right, what runs: the states, then Dynamic MFG (mode and target).
+                 // Too narrow for two zones (sidebar open, big scale): the same blocks one under the other
+                 const bool dynamicShown = !sputnikDrawing && IlionDynamicMfg::Current() != IlionDynamicMfg::Provider::None;
+                 const bool zones = ImGui::GetContentRegionAvail().x >= ImGui::GetFontSize() * 26.0f;
+                 ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(U(10), 0.0f));
+                 const bool table = zones && ImGui::BeginTable("##HomeFgZones", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings);
+                 if (table)
                  {
-                     ImGui::TableSetupColumn("##left", ImGuiTableColumnFlags_WidthStretch);
-                     ImGui::TableSetupColumn("##right", ImGuiTableColumnFlags_WidthFixed, statesWidth + gap);
                      ImGui::TableNextRow();
                      ImGui::TableSetColumnIndex(0);
-                     fgHomeComboWidth = (std::min)(ImGui::GetFontSize() * 17.0f, std::floor(leftRoom - shownLabel));
                  }
 
+                 fgHomeLabelsAbove = true;
                  shellFgInstrumentsApart = true;
                  fgSelectorsOnly = true;
                  RenderFrameGenerationSelection(ctx);
@@ -2197,29 +2271,50 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                  shellFgInstrumentsApart = false;
 
                  fgQuickHome = true;
-                 fgHomePart = zones ? 1 : 0;
+                 ImGui::Spacing();
+                 fgHomePart = 1;
                  RenderFgQuickControls(ctx);
-                 if (zones)
-                 {
+
+                 if (table)
                      ImGui::TableSetColumnIndex(1);
-                     fgHomePart = 2;
-                     RenderFgQuickControls(ctx);
-                     ImGui::EndTable();
+                 else
+                     ImGui::Spacing();
+
+                 fgHomePart = 2;
+                 RenderFgQuickControls(ctx);
+
+                 // ILION 1.5 beta 9: Dynamic MFG on a row of its own across both zones: the mode at the left, under
+                 // the multiplier, the final FPS target at the right, level with it
+                 if (dynamicShown)
+                 {
+                     ScopedID dynamicId { "home_dmfg" };
+                     if (table)
+                     {
+                         ImGui::TableNextRow();
+                         ImGui::TableSetColumnIndex(0);
+                         ImGui::Dummy(ImVec2(0.0f, U(4)));
+                         dmfgHomePart = 1;
+                         RenderDynamicMfgPanel(ctx, true);
+                         ImGui::TableSetColumnIndex(1);
+                         ImGui::Dummy(ImVec2(0.0f, U(4)));
+                         dmfgHomePart = 2;
+                         RenderDynamicMfgPanel(ctx, true);
+                         dmfgHomePart = 0;
+                     }
+                     else
+                     {
+                         ImGui::Spacing();
+                         RenderDynamicMfgPanel(ctx, true);
+                     }
                  }
+
+                 if (table)
+                     ImGui::EndTable();
+                 ImGui::PopStyleVar();
                  fgHomePart = 0;
                  fgQuickHome = false;
+                 fgHomeLabelsAbove = false;
                  fgHomeComboWidth = 0.0f;
-
-                 // ILION: Dynamic MFG from Home (switch, final FPS target, maximum while Dynamic is on): the very settings
-                 // of the Dynamic MFG card, no copy of its own (IlionDynamicMfg)
-                 if (!sputnikDrawing && IlionDynamicMfg::Current() != IlionDynamicMfg::Provider::None)
-                 {
-                     ImGui::Spacing();
-                     if (compact)
-                         ImGui::Dummy(ImVec2(0.0f, U(4.f)));
-                     ScopedID dynamicId { "home_dmfg" };
-                     RenderDynamicMfgPanel(ctx, true);
-                 }
              };
 
     const auto homeLatency = [&]()
@@ -2227,42 +2322,23 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                  // SPUTNIK: the latency reducer only (its selector, on/off and state), as Home's first column draws it
                  if (sputnikDrawing)
                  {
-                     ImGui::BeginDisabled(IlionLatency::Current() != IlionLatency::Manual);
-#ifdef LOW_LATENCY_INPUTS
-                     RenderLowLatencySettings(ctx);
-#else
-                     RenderFakenvapiSettings(ctx);
-#endif
-                     ImGui::EndDisabled();
-                     if (IlionLatency::Current() != IlionLatency::Manual)
-                         TextWrappedColored(Tone(pal::Text2), "%s",
-                                            Lx("Intelligent activation chooses these: set it to Manual in Latency & FPS to change them.",
-                                               "La activación inteligente los elige: ponla en Manual en Latencia y FPS para cambiarlos.",
-                                               "A ativação inteligente os escolhe: coloque em Manual em Latência e FPS para alterá-los.",
-                                               "Их выбирает умная активация: переключите её в Ручной режим в «Задержка и FPS»."));
+                     RenderLowLatencySettings(ctx, true); // ILION 1.5: selector, lock and note are its own
                      return;
                  }
-                 if (ImGui::BeginTable("##HomeLatCols", 3, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings))
+                 // ILION 1.5 beta 7: two zones of the same width with air between them. Left, the low latency (its
+                 // four combos of one size); right, V-Sync and, under it, the FPS limit and the overlay
+                 ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(U(14), 0.0f));
+                 if (ImGui::BeginTable("##HomeLatCols", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings |
+                                                              ImGuiTableFlags_BordersInnerV))
                  {
                      ImGui::TableNextColumn();
-                     ImGui::BeginDisabled(IlionLatency::Current() != IlionLatency::Manual);
-#ifdef LOW_LATENCY_INPUTS
-                     RenderLowLatencySettings(ctx);
-#else
-                     RenderFakenvapiSettings(ctx);
-#endif
-                     ImGui::EndDisabled();
-                     if (IlionLatency::Current() != IlionLatency::Manual)
-                         TextWrappedColored(Tone(pal::Text2), "%s",
-                                            Lx("Intelligent activation chooses these: set it to Manual in Latency & FPS to change them.",
-                                               "La activación inteligente los elige: ponla en Manual en Latencia y FPS para cambiarlos.",
-                                               "A ativação inteligente os escolhe: coloque em Manual em Latência e FPS para alterá-los.",
-                                               "Их выбирает умная активация: переключите её в Ручной режим в «Задержка и FPS»."));
+                     RenderLowLatencySettings(ctx, true); // ILION 1.5: selector, lock and note are its own
 
                      ImGui::TableNextColumn();
                      RenderVsyncSettings(ctx);
 
-                     ImGui::TableNextColumn();
+                     ImGui::Spacing();
+                     ImGui::Spacing();
                      // FPS limit: the same value and key as Latency & FPS
                      if (std::isinf(_limitFps))
                          _limitFps = config->FramerateLimit.value_or_default();
@@ -2282,6 +2358,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                          config->ShowFps = shown;
                      ImGui::EndTable();
                  }
+                 ImGui::PopStyleVar();
              };
 
 
@@ -2474,7 +2551,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         const auto fgNow = IlionDynamicMfg::Get();
         const bool upActive = feature != nullptr && feature->IsInited() && !feature->IsFrozen();
         const bool fgActive = !fgNow.backendError && (fgNow.gen == IlionDynamicMfg::Gen::Confirmed || fgNow.gen == IlionDynamicMfg::Gen::Detected);
-        const bool latActive = fakenvapi::isUsingAsMainNvapi() && fakenvapi::isLowLatencyActive();
+        const bool latActive = true /* ILION 1.5: with or without fakenvapi */ && (InputCommon::active_output() != LowLatencyMode::None);
         const auto blockHeight = [&](int i) { return (std::max)(118.f, std::ceil(sputnikContent[i]) + 28.f); };
         float by = 166;
         const auto sputnikUpscaling = [&]()
@@ -2507,7 +2584,8 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         dl->AddLine(P(0, footer), P(SW, footer), Col(frame), 1.f);
         if (bigKey("##SputnikSave", Lx("SAVE", "GUARDAR", "SALVAR", "СОХРАНИТЬ"), ImVec2(SW * 0.5f - 260, footer + 16), ImVec2(SW * 0.5f + 260, footer + 78),
                    rust, sand))
-            config->SaveIni();
+            SaveSettingsNow();
+        DrawSaveFlash();
         {
             // Back to the Industrial presentation, settings kept: small, in the bottom right corner
             const char* back = "INDUSTRIAL";
@@ -2828,13 +2906,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
 
                     ImGui::TableSetColumnIndex(0);
                     ImGui::PushItemWidth(std::floor(ImGui::GetContentRegionAvail().x * 0.5f));
-                    ImGui::BeginDisabled(IlionLatency::Current() != IlionLatency::Manual);
-#ifdef LOW_LATENCY_INPUTS
-                    RenderLowLatencySettings(ctx);
-#else
-                    RenderFakenvapiSettings(ctx);
-#endif
-                    ImGui::EndDisabled();
+                    RenderLowLatencySettings(ctx, true); // ILION 1.5: selector, lock and note are its own
                     ImGui::PopItemWidth();
 
                     ImGui::TableSetColumnIndex(1);
@@ -2851,17 +2923,6 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                                  : nrEnabled ? Lx("On, not running yet", "Activado, aún sin ejecutarse", "Ativado, ainda sem executar", "Включён, ещё не работает")
                                              : Lx("Off", "Desactivado", "Desligado", "Выкл."));
                         ImGui::EndTable();
-                    }
-                    if (IlionLatency::Current() != IlionLatency::Manual)
-                    {
-                        ImGui::Dummy(ImVec2(0.0f, U(4.f)));
-                        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, Sz(8.f, 4.f));
-                        TextWrappedColored(Tone(pal::Text2), "%s",
-                                           Lx("Intelligent activation chooses these: set it to Manual in Latency & FPS to change them.",
-                                              "La activación inteligente los elige: ponla en Manual en Latencia y FPS para cambiarlos.",
-                                              "A ativação inteligente os escolhe: coloque em Manual em Latência e FPS para alterá-los.",
-                                              "Их выбирает умная активация: переключите её в Ручной режим в «Задержка и FPS»."));
-                        ImGui::PopStyleVar();
                     }
                     ImGui::EndTable();
                 }
@@ -3167,7 +3228,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                                              "DLSSG do jogo como entrada de FG (carregada)", "DLSSG игры как вход FG (загружен)"),
                                 state.activeFgInput == FGInput::DLSSG ? yes : no);
                     ImGui::Text("%s: %s", Lx("DLSSG frames detected", "Fotogramas DLSSG detectados", "Quadros DLSSG detectados", "Обнаружены кадры DLSSG"),
-                                state.dlssgDetectedInterpolationCount > 0 ? StrFmt("x%d", state.dlssgDetectedInterpolationCount + 1).c_str() : no);
+                                state.DlssgDetectedInterpolationCount() > 0 ? StrFmt("x%d", state.DlssgDetectedInterpolationCount() + 1).c_str() : no);
                 }
                 part(Lx("Neural Rendering: state###DiagNr", "Neural Rendering: estado###DiagNr", "Neural Rendering: estado###DiagNr",
                         "Neural Rendering: состояние###DiagNr"), &dNr, statusTab);
@@ -3191,7 +3252,8 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
         // Footer: save, close and the state of the last change
         At(16, CH - 52);
         if (Button("##CompactSave", Tr("Save Settings"), ImVec2(160, 40), false, pal::Green, 15.f))
-            config->SaveIni();
+            SaveSettingsNow();
+        DrawSaveFlash();
         At(CW - 16 - 130, CH - 52);
         if (Button("##CompactClose", Tr("Close"), ImVec2(130, 40), false, pal::Green, 15.f))
             CloseMainMenu(io);
@@ -3584,7 +3646,8 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
             ImGui::GetPlatformIO().Platform_OpenInShellFn(ImGui::GetCurrentContext(), "https://github.com/optiscaler/OptiScaler/wiki");
         At(ib.x - 160 - 12 - 130 - 20, midY - 22);
         if (Button("##ShellSave", Tr("Save Settings"), ImVec2(160, 44)))
-            config->SaveIni();
+            SaveSettingsNow();
+        DrawSaveFlash();
         At(ib.x - 130 - 20, midY - 22);
         if (Button("##ShellClose", Tr("Close"), ImVec2(130, 44)))
             CloseMainMenu(io);
@@ -3637,11 +3700,26 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
     }
     else if (section == 0)
     {
-        // Home: Upscaling and Frame Generation on top, latency and FPS under them; the same functions as the modules
-        const float rowSplit = a.y + 300, rowBottom = b.y - 100;
+        // Home: Upscaling and Frame Generation on top, latency and FPS under them; the same functions as the modules.
+        // ILION 1.5: each card measures what its controls need (last frame) and the two rows share the height by it,
+        // so no card scrolls while everything fits; the top row keeps at least its former 300
+        static float homeNeed[3] = { 0.0f, 0.0f, 0.0f }; // content heights of Upscaling, Frame Generation, Latency
+        const float rowBottom = b.y - 100;
+        const float chrome = 54.f + 10.f; // title row above the controls and the margin under them
+        const float available = rowBottom - a.y - 16.f;
+        const float topNeed = (std::max)(homeNeed[0], homeNeed[1]) + chrome;
+        const float bottomNeed = homeNeed[2] + chrome;
+        // ILION 1.5 beta 8: each row gets what it needs and the room left is split in two, so neither row scrolls nor
+        // keeps a band of empty space; short of room the latency row keeps what it needs first
+        float topHeight = topNeed + (std::max)(0.f, available - topNeed - bottomNeed) * 0.5f;
+        if (topHeight + bottomNeed > available)
+            topHeight = (std::max)(200.f, available - bottomNeed);
+        topHeight = (std::min)(topHeight, available - 120.f);
+        const float rowSplit = a.y + topHeight;
         const float half = a.x + (b.x - a.x) * 0.5f;
 
-        const auto card = [&](const char* id, int icon, const char* title, Led led, ImVec2 p, ImVec2 q, const auto& controls)
+        const auto card = [&](const char* id, int icon, const char* title, Led led, ImVec2 p, ImVec2 q, float& need,
+                              const auto& controls)
         {
             PanelRect(p, q);
             Icon(icon, ImVec2(p.x + 30, p.y + 26), 26.f, Col(pal::Green));
@@ -3654,7 +3732,10 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, Sz(10.f, 6.f));
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, Sz(10.f, 5.f));
             if (BeginArea(id, ImVec2(p.x + 16, p.y + 54), ImVec2(q.x - 12, q.y - 6)))
+            {
                 controls();
+                need = ImGui::GetCursorPosY() / IlionShell::U(1.f); // in layout units, as the panel coordinates
+            }
             ImGui::PopStyleVar(2);
             ImGui::EndChild();
             ImGui::PopFont();
@@ -3663,16 +3744,16 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
 
         // Upscaling: technology and implementation, the catalogue and selection of the module
         card("##HomeUp", 1, kSections[1].name[li], sectionLed[1], ImVec2(a.x, a.y), ImVec2(half - 8, rowSplit),
-             homeUpscaling);
+             homeNeed[0], homeUpscaling);
 
         // Frame generation: input, output and variant (the module's selectors and their conditions), then on/off,
         // the multiplier and the states
         card("##HomeFg", 2, kSections[2].name[li], fgLed, ImVec2(half + 8, a.y), ImVec2(b.x, rowSplit),
-             homeFrameGen);
+             homeNeed[1], homeFrameGen);
 
         // Latency and FPS: the quick switches of fakenvapi (XeLL, LatencyFleX, Reflex), V-Sync, the FPS limit and the overlay
         card("##HomeLat", 3, kSections[3].name[li], sectionLed[3], ImVec2(a.x, rowSplit + 16), ImVec2(b.x, rowBottom),
-             homeLatency);
+             homeNeed[2], homeLatency);
 
         infoBar(ImVec2(a.x, b.y - 84), b);
     }
@@ -3994,7 +4075,7 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
             if (value > previewRank)
             {
                 previewRank = value;
-                preview = value > 0 ? v.name : std::string(Lx("Choose one", "Elige uno", "Escolha um", "Выберите"));
+                preview = value > 0 ? (v.shortName.empty() ? v.name : v.shortName) : std::string(Lx("Choose one", "Elige uno", "Escolha um", "Выберите"));
             }
         }
 
@@ -4127,14 +4208,24 @@ void MenuCommon::RenderIlionShell(RenderMenuContext& ctx)
                 reshadePanelAmount = 0.0f;
             }
 
+            // ILION 1.5.0: the sub-sections as one centred row of equal tabs, as wide as the longest name; the
+            // natural widths from the left edge only when equal tabs don't fit
             float x = a.x;
+            float tabW = 0.0f;
             if (shownCount > 1)
             {
+                for (int n = 0; n < shownCount; n++)
+                    tabW = (std::max)(tabW, Measure(fUi, 18.f, subs[shown[n]].name[li]).x + 40);
+                const float rowW = tabW * shownCount + 8.0f * (shownCount - 1);
+                if (rowW <= b.x - a.x)
+                    x = a.x + ((b.x - a.x) - rowW) * 0.5f;
+                else
+                    tabW = 0.0f;
                 for (int n = 0; n < shownCount; n++)
                 {
                     const int k = shown[n];
                     const char* label = subs[k].name[li];
-                    const float w = Measure(fUi, 18.f, label).x + 40;
+                    const float w = tabW > 0.0f ? tabW : Measure(fUi, 18.f, label).x + 40;
                     At(x, a.y);
                     ImGui::PushID(k);
                     if (Button("##sub", label, ImVec2(w, 44), subTab[section] == k, pal::Yellow, 18.f))

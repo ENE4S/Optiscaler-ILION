@@ -26,4 +26,5 @@ class FrameLimit
     // The game's DLSSG (DLSS Enabler...) with a target cap: once per real frame (first DLSSG evaluation), with the
     // frames that real frame generates. Returns the time slept, in ms
     static double sleepExternalFg(int framesToGenerate);
+
 };

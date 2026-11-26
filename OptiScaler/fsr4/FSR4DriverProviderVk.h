@@ -1,57 +1,18 @@
 #pragma once
 
-// ILION: FSR 4 of AMD's Vulkan driver (amdvkffx64.dll) as a native Vulkan upscaler, next to the FSR 3.1 of
-// amd_fidelityfx_vk.dll. Adapted from OptiScaler upstream d8aebe45 (fsr4/FSR4DriverProviderVk, GPL-3.0).
-//
-//   where        ILION\Escaladores\FSR4\<folder>\amdvkffx64.dll first (the multi-folder layout), then the OptiScaler
-//                folder, then the installed driver; the file is checked (UpdateFfxApiProvider) before it's loaded
-//   listing      its provider is appended to the Vulkan FFX version list, after the SDK's own ones (their indexes and
-//                the default don't move); the universal selector picks it by that index
-//   context      the driver only takes the SDK 2.x backend type and wants the upscaler version; its shaders get the
-//                half float image rewrite of upstream, its pipelines the pipeline layout fix (FSR4PipelineLayouts)
-//   models       hooked by FSR4Models, chosen with the menu's FSR 4 model
-// Frame generation of this dll (FP8 ML FG) isn't used: ILION has no Vulkan frame generation path.
-
 #include "FSR4DriverProvider.h"
+
+#include <proxies/FfxModule.h>
 
 #include <vulkan/vulkan.h>
 
-class FSR4DriverProviderVk
-{
-  public:
-    // Finds and loads the dll and gets its upscaler provider, once; false when there's none
-    static bool Init();
-    static bool IsAvailable() { return _upscaler.functions.createContext != nullptr; }
+// Descriptors of FFX SDK 2.x for Vulkan, used with the driver and the SDK 2.x dlls
 
-    static HMODULE Module() { return _upscaler.module; }
-    static uint64_t VersionId() { return _upscaler.functions.versionId; }
-    static const char* VersionName() { return _upscaler.versionName.c_str(); }
-    static const std::wstring& Path() { return _path; }
-
-    // The provider's own check for the game's device (struct version 3); true when the driver has none
-    static bool IsSupported(VkDevice device, VkPhysicalDevice physicalDevice, PFN_vkGetDeviceProcAddr gdpa);
-
-    // The five FFX functions; createContext gives the driver its shaders through the half float image rewrite
-    static PfnFfxCreateContext CreateContext();
-    static PfnFfxDestroyContext DestroyContext() { return reinterpret_cast<PfnFfxDestroyContext>(_upscaler.functions.destroyContext); }
-    static PfnFfxConfigure Configure() { return reinterpret_cast<PfnFfxConfigure>(_upscaler.functions.configure); }
-    static PfnFfxQuery Query() { return reinterpret_cast<PfnFfxQuery>(_upscaler.functions.query); }
-    static PfnFfxDispatch Dispatch() { return reinterpret_cast<PfnFfxDispatch>(_upscaler.functions.dispatch); }
-
-    // Set by the Vulkan FFX feature while a context of this provider exists, for the menu's labels
-    static void SetInUse(bool inUse) { _inUse = inUse; }
-    static bool InUse() { return _inUse; }
-
-  private:
-    inline static FSR4DriverProvider::Upscaler _upscaler {};
-    inline static std::wstring _path;
-    inline static std::atomic<bool> _inUse { false };
-};
-
-// Vulkan FFX backend description type the driver providers take (SDK 2.x id), same layout as ffxCreateBackendVKDesc
+// Backend description type of SDK 2.x, layout is the same as ffxCreateBackendVKDesc. The type of older SDKs
+// (FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_VK) is still accepted by SDK 2.x but no backend gets created with it
 #define FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_VK_V2 0x01000003u
 
-// From SDK 2.x ffx_upscale.h: the driver complains without it and accepts versions 4.0.0 - 4.1.2
+// From SDK 2.x ffx_upscale.h, the driver complains without it and accepts versions 4.0.0 - 4.1.2
 #define FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE_VERSION_V2 0x0001000Bu
 #define FFX_UPSCALER_VERSION_V2 ((4u << 22) | (1u << 12) | 2u)
 
@@ -59,4 +20,79 @@ struct ffxCreateContextDescUpscaleVersionV2
 {
     ffxCreateContextDescHeader header;
     uint32_t version;
+};
+
+// From SDK 2.x ffx_framegeneration.h, the driver logs an error without it and accepts versions 4.0.0 - 4.0.2
+#define FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATION_VERSION_V2 0x0002000Eu
+#define FFX_FRAMEGENERATION_VERSION_V2 ((4u << 22) | 2u)
+
+struct ffxCreateContextDescFrameGenerationVersionV2
+{
+    ffxCreateContextDescHeader header;
+    uint32_t version;
+};
+
+// Optional for the driver's swapchain, has to be at least 3.1.5
+#define FFX_API_CREATE_CONTEXT_DESC_TYPE_FGSWAPCHAIN_VERSION_VK_V2 0x0004000Au
+#define FFX_FGSWAPCHAIN_VERSION_VK_V2 (4u << 22)
+
+struct ffxCreateContextDescFrameGenerationSwapChainVersionVKV2
+{
+    ffxCreateContextDescHeader header;
+    uint32_t version;
+};
+
+// Uses the upscaler and frame generation providers of amdvkffx64.dll (AMD Vulkan driver) directly,
+// without needing amd_fidelityfx_loader_vk.dll / amd_fidelityfx_upscaler_vk.dll / amd_fidelityfx_framegeneration_vk.dll
+class FSR4DriverProviderVk
+{
+  public:
+    static bool Init();
+    static bool IsAvailable() { return _module.CreateContext != nullptr; }
+
+    static FfxModule* Module() { return &_module; }
+    static uint64_t VersionId() { return _upscaler.functions.versionId; }
+    static const char* VersionName() { return _upscaler.versionName.c_str(); }
+    // ILION: whether the running Vulkan FFX upscaler is this driver provider (FFXFeature_Vk sets it), and its dll
+    static bool InUse() { return _inUse; }
+    static void SetInUse(bool inUse) { _inUse = inUse; }
+    static std::wstring Path()
+    {
+        if (!_module.filePath.empty() || _module.dll == nullptr)
+            return _module.filePath;
+        wchar_t path[MAX_PATH] {};
+        GetModuleFileNameW(_module.dll, path, MAX_PATH);
+        return path;
+    }
+
+    static bool IsSupported(VkDevice device, VkPhysicalDevice physicalDevice, PFN_vkGetDeviceProcAddr gdpa);
+
+    // Adds the driver upscaler to a version list from the FFX SDK, keeping it sorted newest first
+    static void AddToVersionList(std::vector<uint64_t>& ids, std::vector<const char*>& names, DriverListing listing);
+
+    // ML frame generation (FP8 only) and the swapchain it needs, both have to come from the driver
+    static bool InitFg();
+    static bool IsFgAvailable()
+    {
+        return _fgModule.CreateContext != nullptr && _fgSwapchainModule.CreateContext != nullptr;
+    }
+
+    static FfxModule* FgModule() { return &_fgModule; }
+    static FfxModule* FgSwapchainModule() { return &_fgSwapchainModule; }
+    static uint64_t FgVersionId() { return _fg.functions.versionId; }
+    static const char* FgVersionName() { return _fg.versionName.c_str(); }
+
+    static bool IsFgSupported(VkDevice device, VkPhysicalDevice physicalDevice, PFN_vkGetDeviceProcAddr gdpa);
+
+    // Adds the driver FG to the end of a version list from the FFX SDK
+    static void AddFgToVersionList(std::vector<uint64_t>& ids, std::vector<const char*>& names);
+
+  private:
+    inline static DriverProvider _upscaler {};
+    inline static FfxModule _module {};
+
+    inline static DriverProvider _fg {};
+    inline static FfxModule _fgModule {};
+    inline static FfxModule _fgSwapchainModule {};
+    inline static bool _inUse = false;
 };

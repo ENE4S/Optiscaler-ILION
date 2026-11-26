@@ -8,7 +8,7 @@
 #include <framegen/xefg/XeFG_DynamicMFG.h>
 #include <framegen/xefg/XeFG_DynamicCount.h>
 #include <hooks/Streamline_Hooks.h>
-#include <hooks/Xell_Hooks.h>
+#include <low_latency/input/input_common.h>
 #include <misc/FrameLimit.h>
 #include <misc/IlionDynamicCapRule.h>
 #include <framegen/nvngx/Nvngx_XeMfgXmx.h>
@@ -51,7 +51,7 @@ int IlionMaxCount()
 
 bool OwnRunning()
 {
-    auto fg = State::Instance().currentFG;
+    auto fg = State::Instance().CurrentFG();
     return fg != nullptr && fg->IsActive() && !fg->IsPaused();
 }
 
@@ -116,7 +116,7 @@ bool DynamicSupported(const char** reason)
     {
     case Provider::XeFG:
     {
-        auto fg = state.currentFG;
+        auto fg = state.CurrentFG();
         if (fg == nullptr || fg->GetMaxInterpolationCount() < 1)
             why = "XeFG isn't loaded yet";
         else if (XeFGProxy::SetNumInterpolatedFrames() == nullptr || XeFGProxy::SetEnabled() == nullptr)
@@ -135,7 +135,7 @@ bool DynamicSupported(const char** reason)
             why = "The DLSSG backend in use generates one frame at most and doesn't report Dynamic MFG support";
         break;
     case Provider::DlssgOutput:
-        if (state.currentFG == nullptr || !state.currentFG->GetDMFGSupport())
+        if (state.CurrentFG() == nullptr || !state.CurrentFG()->GetDMFGSupport())
             why = "This DLSSG doesn't report Dynamic MFG support";
         break;
     case Provider::FsrFg:
@@ -233,7 +233,7 @@ int MaxCountLimit()
     {
     case Provider::XeFG:
     case Provider::DlssgOutput:
-        return state.currentFG != nullptr ? std::max(state.currentFG->GetMaxInterpolationCount(), 0) : 0;
+        return state.CurrentFG() != nullptr ? std::max(state.CurrentFG()->GetMaxInterpolationCount(), 0) : 0;
     case Provider::DlssgGame:
         return state.dlssgMfgMax.value_or(0);
     case Provider::FsrFg:
@@ -262,7 +262,7 @@ int MaxCount()
 
         // No override: the game's own choice, as far as ILION saw it
         if (!config->FGDLSSGOverrideInterpolationCount.has_value() || config->FGDLSSGOverrideInterpolationCount.value() <= 0)
-            return std::clamp(State::Instance().dlssgDetectedInterpolationCount, 1, limit);
+            return std::clamp(State::Instance().DlssgDetectedInterpolationCount(), 1, limit);
         return std::clamp(config->FGDLSSGOverrideInterpolationCount.value(), 1, limit);
     }
     default:
@@ -304,7 +304,7 @@ bool ExternalGenerating(int* multiplier)
     const auto& state = State::Instance();
     const uint64_t last = state.dlssgFgLastEvaluateTick.load();
     const bool recent = last != 0 && GetTickCount64() - last < kExternalWindowMs;
-    const int count = state.dlssgDetectedInterpolationCount;
+    const int count = state.DlssgDetectedInterpolationCount();
 
     if (multiplier != nullptr)
         *multiplier = recent && count > 0 ? count + 1 : 0;
@@ -377,7 +377,7 @@ void NoteWrappedPresent()
             unsettled = 0;
             if (measuredPerFrameX100.exchange(rounded * 100) != rounded * 100)
                 LOG_INFO("ILION external FG: applies {}X (asked {}X), {:.2f} presents per real DLSSG frame", rounded,
-                         State::Instance().dlssgDetectedInterpolationCount + 1, perFrameX100 / 100.0);
+                         State::Instance().DlssgDetectedInterpolationCount() + 1, perFrameX100 / 100.0);
         }
         else
         {
@@ -713,7 +713,7 @@ Status Get()
     const auto& state = State::Instance();
     Status s;
     s.provider = Current();
-    auto fg = state.currentFG;
+    auto fg = state.CurrentFG();
     const double now = Util::MillisecondsNow();
 
     switch (s.provider)
@@ -847,7 +847,7 @@ Status Get()
     }
 
     // The limiter FG_Hooks / the wrapped swapchain choose: a target cap is always OptiScaler's own (it knows the
-    // multiplier); else Reflex, else XeLL, else OptiScaler's
+    // multiplier); else Reflex, else the low latency output that limits (InputCommon), else OptiScaler's
     s.limitFps = FrameLimit::targetFps();
     const bool externalCapWaits = s.provider == Provider::DlssgGame && FrameLimit::targetCapActive() &&
                                   ExternalCapRealFps() <= 0.0f;
@@ -858,8 +858,8 @@ Status Get()
         s.capWaiting = true;
         if (state.reflexLimitsFps)
             s.limiter = Limiter::Reflex;
-        else if (XellHooks::canLimit())
-            s.limiter = Limiter::XeLL;
+        else if (InputCommon::can_limit_fps())
+            s.limiter = Limiter::LowLatencyOutput;
         else if (s.limitFps > 0.0f)
             s.limiter = Limiter::OptiScaler;
     }
@@ -867,8 +867,8 @@ Status Get()
         s.limiter = Limiter::OptiScaler;
     else if (state.reflexLimitsFps)
         s.limiter = Limiter::Reflex;
-    else if (XellHooks::canLimit())
-        s.limiter = Limiter::XeLL;
+    else if (InputCommon::can_limit_fps())
+        s.limiter = Limiter::LowLatencyOutput;
     else if (s.limitFps > 0.0f)
         s.limiter = Limiter::OptiScaler;
 

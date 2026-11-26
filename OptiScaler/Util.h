@@ -32,12 +32,15 @@ struct Luid
 std::filesystem::path ExePath();
 std::filesystem::path DllPath();
 std::optional<std::filesystem::path> NvngxPath();
+std::filesystem::path ReShadePath();
 
 double MillisecondsNow();
 std::wstring ToLower(std::wstring value);
 
 HWND GetProcessWindow();
+bool IsOverlaySwapchain(HWND hwnd, UINT width, UINT height);
 bool GetFileVersion(std::wstring dllPath, version_t* fileVersionOut, version_t* productVersionOut = nullptr);
+std::string GetFileVersionString(std::wstring dllPath);
 bool IsSubpath(const std::filesystem::path& path, const std::filesystem::path& base);
 bool GetRealWindowsVersion(OSVERSIONINFOW& osInfo);
 std::string GetWindowsName(const OSVERSIONINFOW& os);
@@ -47,10 +50,17 @@ std::optional<std::filesystem::path> FindFilePath(const std::filesystem::path& s
                                                   const std::filesystem::path& fileName);
 std::string WhoIsTheCaller(void* returnAddress);
 HMODULE GetCallerModule(void* returnAddress);
+std::filesystem::path ModulePath(HMODULE module);
 MonitorInfo GetMonitorInfoForWindow(HWND hwnd);
 MonitorInfo GetMonitorInfoForOutput(IDXGIOutput* pOutput);
 int GetActiveRefreshRate(HWND hwnd);
 bool CheckForRealObject(std::string functionName, IUnknown* pObject, IUnknown** ppRealObject);
+
+// Warns when the object is a ReShade or Special K proxy
+void WarnIfProxy(std::string functionName, IUnknown* pObject);
+
+// Original object behind a ReShade 6.7+ proxy with a reference, nullptr when it isn't one
+IUnknown* GetReShadeOriginal(IUnknown* pObject);
 void GetDeviceRemovedReason(ID3D11Device* pDevice);
 void GetDeviceRemovedReason(ID3D12Device* pDevice);
 void LoadProxyLibrary(const std::wstring& name, const std::wstring& optiPath, const std::wstring& overridePath,
@@ -58,6 +68,8 @@ void LoadProxyLibrary(const std::wstring& name, const std::wstring& optiPath, co
 
 std::map<Luid, std::filesystem::path> GetDriverStore();
 uint64_t GetTimestamp();
+
+void SetFlagEnvVar(const wchar_t* name, bool enabled);
 
 template <typename T> void DelayedDestroy(std::unique_ptr<T> ptr)
 {

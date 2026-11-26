@@ -1,15 +1,15 @@
 {
  "formato": 1,
- "nombre": "Base congelada de OptiScaler para ILION 1.5.0",
+ "nombre": "Base congelada de OptiScaler para ILION 1.5.0.1",
  "fecha": "2026-11-26",
  "motor": {
   "nombre": "OptiScaler ILION",
-  "version": "1.5.0",
+  "version": "1.5.0.1",
   "destino": "dxgi.dll",
-  "sha256": "3118186e16805b5bb20017a39084f3d691a7fa4113252807571eae5d019bc088",
-  "codigo": "rama ilion-1.5.0, commit 22014a2",
+  "sha256": "f491727edcb187e28380ee4c964694d9cc37e07644a800149ac8d5d4406a1158",
+  "codigo": "rama ilion-1.5.0, commit 5a8c665",
   "base": "OptiScaler nightly-20261121 (1c4e484) + cambios de ILION",
-  "nota": "Fuente oficial: publicación ilion-v1.5.0 de ENE4S/Optiscaler-ILION (grupo «motor»). Un paquete o DLL local sigue siendo opción avanzada."
+  "nota": "Fuente oficial: publicación ilion-v1.5.0.1 de ENE4S/Optiscaler-ILION (grupo «motor»). Un paquete o DLL local sigue siendo opción avanzada."
  },
  "paquetes": [
   {
@@ -67,6 +67,13 @@
    "url": "https://github.com/ENE4S/Optiscaler-ILION/releases/download/ilion-v1.5.0/OptiScaler-ILION-1.5.0.zip",
    "sha256": "8139a448a38e07199ae985aeea50d693a7b57ac586d9753205c95a7091d41f33",
    "nota": "Publicación oficial de ILION 1.5.0 (ENE4S/Optiscaler-ILION): dxgi.dll y OptiScaler.ini. Código: rama ilion-1.5.0 (22014a2), GPL-3.0."
+  },
+  {
+   "id": "ilion-v1.5.0.1",
+   "tipo": "archivo-zip",
+   "url": "https://github.com/ENE4S/Optiscaler-ILION/releases/download/ilion-v1.5.0.1/OptiScaler-ILION-1.5.0.1.zip",
+   "sha256": "416c0fc96a42850dd1aba52c5c44149eaef4ec26be5654f3ae282c0554d1a9d2",
+   "nota": "Publicación oficial de ILION 1.5.0.1 (ENE4S/Optiscaler-ILION): dxgi.dll y OptiScaler.ini. Código: rama ilion-1.5.0 (5a8c665), GPL-3.0."
   }
  ],
  "archivos": [
@@ -340,16 +347,16 @@
   },
   {
    "destino": "dxgi.dll",
-   "origen": "ilion-v1.5.0",
+   "origen": "ilion-v1.5.0.1",
    "entrada": "dxgi.dll",
-   "sha256": "3118186e16805b5bb20017a39084f3d691a7fa4113252807571eae5d019bc088",
-   "tamano": 32235520,
+   "sha256": "f491727edcb187e28380ee4c964694d9cc37e07644a800149ac8d5d4406a1158",
+   "tamano": 32237568,
    "firmante": null,
    "grupo": "motor"
   },
   {
    "destino": "OptiScaler.ini",
-   "origen": "ilion-v1.5.0",
+   "origen": "ilion-v1.5.0.1",
    "entrada": "OptiScaler.ini",
    "sha256": "5dd746cae395a7478691091d6fff63863844314a7bd355811b0361ed0b798832",
    "tamano": 66926,
@@ -467,6 +474,7 @@
   "D3D12Core.dll (Agility SDK) viene en la compilación oficial pero no en el paquete probado: opcional, solo para [FSR] FsrAgilitySDKUpgrade.",
   "Variantes: FSR 4.1.1 oficial = FidelityFX SDK v2.3.0 (blob idéntico); Exact/Lossy/Lossy2 = zgauthier2000 dll-2026-10-22 (idénticas); 4.1.1B, XeMFG Clásica/WMMA y runtime de lmxxf en ilion-componentes-1.",
   "ILION 1.5.0: motor sobre OptiScaler nightly-20261121; probado en juego (Cyberpunk 2077, RX 7900 XTX) sobre esta misma base de 1.4.1.2 (XeSS 2.0.2, XeFG 1.3.1.78, XeLL 1.3.2, FidelityFX DX12 de v2.4.0, Streamline 2.14.1).",
-  "ILION 1.5.0: su módulo Vulkan de FSR usa el cargador de FidelityFX SDK 2.4: amd_fidelityfx_loader/upscaler/framegeneration_vk.dll de v2.4.0 signedbin (firmadas por AMD; idénticas byte a byte a las del SDK 7539ae8 con el que se compila ILION 1.5)."
+  "ILION 1.5.0: su módulo Vulkan de FSR usa el cargador de FidelityFX SDK 2.4: amd_fidelityfx_loader/upscaler/framegeneration_vk.dll de v2.4.0 signedbin (firmadas por AMD; idénticas byte a byte a las del SDK 7539ae8 con el que se compila ILION 1.5).",
+  "ILION 1.5.0.1: solo cambia el motor (telemetría de Ray Reconstruction); misma base y mismo OptiScaler.ini que la 1.5.0."
  ]
 }

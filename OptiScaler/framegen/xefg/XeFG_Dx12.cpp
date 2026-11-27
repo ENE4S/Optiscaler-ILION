@@ -85,6 +85,7 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
     }
 
     auto createResult = false;
+    auto xellAcquired = false;
 
 #ifndef DONT_USE_XMX
     ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
@@ -97,6 +98,7 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
         if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
         {
             LOG_ERROR("D3D12CreateContext error: {} ({})", magic_enum::enum_name(result), (UINT) result);
+            _swapChainContext = nullptr;
             return false;
         }
 
@@ -115,23 +117,36 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
         // AntiLag 2 output. Either stays valid until this context is destroyed.
         if (auto xellContext = InputCommon::acquire_xefg_xell(device); xellContext != nullptr)
         {
+            xellAcquired = true;
             result = XeFGProxy::SetLatencyReduction()(_swapChainContext, xellContext);
 
             if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
             {
                 LOG_ERROR("SetLatencyReduction error: {} ({})", magic_enum::enum_name(result), (UINT) result);
-                return false;
+                break;
             }
         }
         else
         {
             LOG_ERROR("Couldn't create XeLL");
-            return false;
+            break;
         }
 
         createResult = true;
 
     } while (false);
+
+    // Callers take a context as created, a half initialized one is destroyed so the next try starts over
+    if (!createResult && _swapChainContext != nullptr)
+    {
+        auto result = XeFGProxy::Destroy()(_swapChainContext);
+        LOG_DEBUG("Destroyed the half initialized context: {} ({})", magic_enum::enum_name(result), (UINT) result);
+        _swapChainContext = nullptr;
+
+        // After the context, like DestroySwapchainContext
+        if (xellAcquired)
+            InputCommon::release_xefg_xell();
+    }
 
     return createResult;
 }
@@ -1285,8 +1300,6 @@ void XeFG_Dx12::CreateObjects(ID3D12Device* InDevice)
     do
     {
         HRESULT result;
-        ID3D12CommandAllocator* allocator = nullptr;
-        ID3D12GraphicsCommandList* cmdList = nullptr;
         ID3D12CommandQueue* cmdQueue = nullptr;
 
         // FG
@@ -1308,8 +1321,7 @@ void XeFG_Dx12::CreateObjects(ID3D12Device* InDevice)
             }
 
             _uiCommandAllocator[i]->SetName(std::format(L"_uiCommandAllocator[{}]", i).c_str());
-            if (CheckForRealObject(__FUNCTION__, _uiCommandAllocator[i], (IUnknown**) &allocator))
-                _uiCommandAllocator[i] = allocator;
+            ReplaceWithRealObject(__FUNCTION__, _uiCommandAllocator[i]);
 
             result = InDevice->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, _uiCommandAllocator[i], NULL,
                                                  IID_PPV_ARGS(&_uiCommandList[i]));
@@ -1319,8 +1331,7 @@ void XeFG_Dx12::CreateObjects(ID3D12Device* InDevice)
                 break;
             }
             _uiCommandList[i]->SetName(std::format(L"_uiCommandList[{}]", i).c_str());
-            if (CheckForRealObject(__FUNCTION__, _uiCommandList[i], (IUnknown**) &cmdList))
-                _uiCommandList[i] = cmdList;
+            ReplaceWithRealObject(__FUNCTION__, _uiCommandList[i]);
 
             result = _uiCommandList[i]->Close();
             if (result != S_OK)
@@ -1358,8 +1369,7 @@ void XeFG_Dx12::CreateObjects(ID3D12Device* InDevice)
             }
 
             _scCommandAllocator[i]->SetName(std::format(L"_scCommandAllocator[{}]", i).c_str());
-            if (CheckForRealObject(__FUNCTION__, _scCommandAllocator[i], (IUnknown**) &allocator))
-                _scCommandAllocator[i] = allocator;
+            ReplaceWithRealObject(__FUNCTION__, _scCommandAllocator[i]);
 
             result = InDevice->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, _scCommandAllocator[i], NULL,
                                                  IID_PPV_ARGS(&_scCommandList[i]));
@@ -1369,8 +1379,7 @@ void XeFG_Dx12::CreateObjects(ID3D12Device* InDevice)
                 break;
             }
             _scCommandList[i]->SetName(std::format(L"_scCommandList[{}]", i).c_str());
-            if (CheckForRealObject(__FUNCTION__, _scCommandList[i], (IUnknown**) &cmdList))
-                _scCommandList[i] = cmdList;
+            ReplaceWithRealObject(__FUNCTION__, _scCommandList[i]);
 
             result = _scCommandList[i]->Close();
             if (result != S_OK)

@@ -616,7 +616,10 @@ static VkResult hkvkCreateInstance(const VkInstanceCreateInfo* pCreateInfo, cons
     VkResult result;
     {
         ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
+        const bool previousCreatingInstance = State::Instance().creatingVulkanInstance;
+        State::Instance().creatingVulkanInstance = true;
         result = o_vkCreateInstance(&localCreateInfo, pAllocator, pInstance);
+        State::Instance().creatingVulkanInstance = previousCreatingInstance;
     }
 
     // OptiScaler's own Streamline only makes short lived ones
@@ -1346,6 +1349,21 @@ static VkResult hkvkGetSwapchainImagesKHR(VkDevice device, VkSwapchainKHR swapch
         fg != nullptr && fg->OwnsSwapchain(swapchain) && !FromFGOutput(_ReturnAddress()))
     {
         ScopedFGCall fgCall {};
+
+        // A count above the swapchain's is legal, Streamline's proxy swapchain then
+        // leaves null images in the array and the game's vkCreateImageView crashes the driver
+        if (pSwapchainImages != nullptr && pSwapchainImageCount != nullptr)
+        {
+            uint32_t available = 0;
+
+            if (fg->GetSwapchainImages(device, swapchain, &available, nullptr) == VK_SUCCESS &&
+                *pSwapchainImageCount > available)
+            {
+                LOG_DEBUG("Clamping the requested swapchain image count {} to {}", *pSwapchainImageCount, available);
+                *pSwapchainImageCount = available;
+            }
+        }
+
         auto result = fg->GetSwapchainImages(device, swapchain, pSwapchainImageCount, pSwapchainImages);
 
         if (result == VK_SUCCESS && pSwapchainImages != nullptr)

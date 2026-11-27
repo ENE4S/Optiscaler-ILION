@@ -25,7 +25,28 @@ void RCAS_Common::FillMotionConstants(InternalConstants& OutConstants, const Rca
     OutConstants.ScaleLimit = Config::Instance()->MotionScaleLimit.value_or_default();
 }
 
-void RCAS_Common::SetTimedShader(SharpenShader InShader)
+int RCAS_Common::OptiModelSetting()
+{
+    return std::clamp(Config::Instance()->OptiSharpenModel.value_or_default(), 0, 3);
+}
+
+OptiVariant RCAS_Common::GetOptiVariant(int InModel, bool InDx11)
+{
+    // Dx11 has the fp32 ones only, Natural / Crisp is kept
+    if (InDx11)
+        InModel &= 1;
+
+    return (OptiVariant) std::clamp(InModel, 0, (int) OptiVariant::Count - 1);
+}
+
+const char* RCAS_Common::OptiVariantName(OptiVariant InVariant)
+{
+    static const char* names[] = { "Natural fp32", "Crisp fp32", "Natural fp16 packed", "Crisp fp16 packed" };
+    static_assert(std::size(names) == (size_t) OptiVariant::Count);
+    return names[(size_t) InVariant];
+}
+
+void RCAS_Common::SetTimedShader(SharpenShader InShader, OptiVariant InVariant)
 {
     // Same names as the Method combo of the menu
     const char* name = "RCAS";
@@ -42,8 +63,14 @@ void RCAS_Common::SetTimedShader(SharpenShader InShader)
         name = "Neural (BaBa)";
         break;
     case SharpenShader::OptiSharpen:
-        name = "OptiSharpen";
+    {
+        // The variant is part of the name, timings are compared between them
+        static const char* names[] = { "OptiSharpen (Natural fp32)", "OptiSharpen (Crisp fp32)",
+                                       "OptiSharpen (Natural fp16 packed)", "OptiSharpen (Crisp fp16 packed)" };
+        static_assert(std::size(names) == (size_t) OptiVariant::Count);
+        name = names[(size_t) InVariant];
         break;
+    }
     default:
         break;
     }
@@ -93,7 +120,8 @@ void RCAS_Common::FillMotionConstants(InternalConstantsBaba& OutConstants, const
 
     if (InShader == SharpenShader::OptiSharpen)
     {
-        OutConstants.Model = Config::Instance()->OptiSharpenModel.value_or_default();
+        // Natural / Crisp, the precompiled pipelines have it compiled in and ignore it
+        OutConstants.Model = _optiModel & 1;
         OutConstants.ViewMode = Config::Instance()->OptiSharpenDebugView.value_or_default();
     }
     else

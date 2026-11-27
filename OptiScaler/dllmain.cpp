@@ -72,46 +72,6 @@ typedef const char*(CDECL* PFN_wine_get_version)(void);
 typedef void (*PFN_InitializeASI)(void);
 typedef bool (*PFN_PatchResult)(void);
 
-static inline void* ManualGetProcAddress(HMODULE hModule, const char* functionName)
-{
-    if (!hModule)
-        return nullptr;
-
-    // Verify the alignment
-    auto dosHeader = (IMAGE_DOS_HEADER*) hModule;
-    if (dosHeader->e_magic != IMAGE_DOS_SIGNATURE)
-        return nullptr;
-
-    auto ntHeaders = (IMAGE_NT_HEADERS*) ((BYTE*) hModule + dosHeader->e_lfanew);
-    if (ntHeaders->Signature != IMAGE_NT_SIGNATURE)
-        return nullptr;
-
-    // Look at the export directory
-    IMAGE_DATA_DIRECTORY exportData = ntHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
-    if (!exportData.VirtualAddress)
-        return nullptr;
-
-    auto exportDir = (IMAGE_EXPORT_DIRECTORY*) ((BYTE*) hModule + exportData.VirtualAddress);
-
-    DWORD* nameRvas = (DWORD*) ((BYTE*) hModule + exportDir->AddressOfNames);
-    WORD* ordinalTable = (WORD*) ((BYTE*) hModule + exportDir->AddressOfNameOrdinals);
-    DWORD* functionTable = (DWORD*) ((BYTE*) hModule + exportDir->AddressOfFunctions);
-
-    // Iterate over exported names
-    for (DWORD i = 0; i < exportDir->NumberOfNames; ++i)
-    {
-        const char* name = (const char*) hModule + nameRvas[i];
-        if (_stricmp(name, functionName) == 0)
-        {
-            WORD ordinal = ordinalTable[i];
-            DWORD funcRva = functionTable[ordinal];
-            return (BYTE*) hModule + funcRva;
-        }
-    }
-
-    return nullptr; // Not found
-}
-
 static bool IsRunningOnWine()
 {
     LOG_FUNC();
@@ -220,9 +180,16 @@ static void RunAgilityUpgrade(HMODULE dx12Module)
                 pathSet = true;
             }
 
+            auto corePath =
+                std::filesystem::path(Config::Instance()->MainDllPath.value()) / L"D3D12_OptiScaler" / L"D3D12Core.dll";
+
             if (path.empty())
             {
                 LOG_ERROR("Can't upgrade Agility SDK, Opti folder isn't reachable from the exe folder");
+            }
+            else if (std::error_code ec; !std::filesystem::exists(corePath, ec))
+            {
+                LOG_ERROR("Can't upgrade Agility SDK, {} is missing", wstring_to_string(corePath.wstring()));
             }
             else
             {
@@ -673,6 +640,18 @@ void LoadAsiPlugins()
 
     if (!std::filesystem::exists(pluginPath))
         return;
+
+    // ILION 1.5.1: no XeMFG variant in the ini (auto) and the Clasica folder installed: Clasica, as the 1.4.1.2 ini had it.
+    // 1.5.0's ini left it on auto, which loaded no variant: XeFG stayed at 2X and the variant selector was empty
+    if (!Config::Instance()->XeMfgVariant.has_value())
+    {
+        std::error_code ec;
+        if (std::filesystem::is_directory(pluginPath / L"XeMFG" / L"Clasica", ec))
+        {
+            Config::Instance()->XeMfgVariant.set_volatile_value(L"Clasica");
+            LOG_INFO("XeMFG variant not set: Clasica");
+        }
+    }
 
     // ILION: XeMFG variants live in plugins/XeMFG/<variant>/. Only the chosen one is loaded, after the plugins of the
     // folder itself, and a plugin of the same file name in the folder itself is then left out: never two copies
@@ -1855,10 +1834,21 @@ static void CheckWorkingMode()
     if (State::Instance().isWindows10 && !State::Instance().isRunningOnLinux &&
         !Config::Instance()->FsrAgilitySDKUpgrade.has_value())
     {
+        auto corePath =
+            std::filesystem::path(Config::Instance()->MainDllPath.value()) / L"D3D12_OptiScaler" / L"D3D12Core.dll";
+
         if (gameAgilityVersion < customD3D12SDKVersion)
         {
-            LOG_INFO("Enabling AgilitySDKUpgrade");
-            Config::Instance()->FsrAgilitySDKUpgrade.set_volatile_value(true);
+            if (std::error_code ec; std::filesystem::exists(corePath, ec))
+            {
+                LOG_INFO("Enabling AgilitySDKUpgrade");
+                Config::Instance()->FsrAgilitySDKUpgrade.set_volatile_value(true);
+            }
+            else
+            {
+                LOG_WARN("Game's Agility SDK is older than {}, but AgilitySDKUpgrade can't be enabled, {} is missing",
+                         customD3D12SDKVersion, wstring_to_string(corePath.wstring()));
+            }
         }
     }
 

@@ -146,6 +146,7 @@ constexpr uint64_t debounceThreshold = 1000;
 
 static bool hasGamepad = false;
 static bool ffxInitTried = false;
+static bool ffxVkInitTried = false;
 static bool xefgInitTried = false;
 static std::string windowTitle;
 static std::string selectedUpscalerName = "";

@@ -62,7 +62,13 @@ bool FeatureProvider_Dx11::GetFeature(Upscaler upscaler, UINT handleId, NVSDK_NG
         break;
 
     case Upscaler::DLSS:
-        if (primaryGpu.dlssCapable && state.NVNGX_DLSS_Path.has_value())
+        // A custom DLSS doesn't need a DLSS capable GPU
+        if (!custom.empty())
+        {
+            *feature = std::make_unique<DLSSFeatureDx11>(handleId, parameters, custom);
+            break;
+        }
+        else if (primaryGpu.dlssCapable && state.NVNGX_DLSS_Path.has_value())
         {
             *feature = std::make_unique<DLSSFeatureDx11>(handleId, parameters);
             break;
@@ -116,6 +122,10 @@ bool FeatureProvider_Dx11::GetFeature(Upscaler upscaler, UINT handleId, NVSDK_NG
         *feature = std::make_unique<FSR2FeatureDx11>(handleId, parameters);
         upscaler = Upscaler::FSR22;
         loaded = true; // Assuming the fallback always loads successfully
+    }
+    else if (!custom.empty())
+    {
+        (*feature)->SetCustomName(custom);
     }
 
     if (!rayReconstruction)

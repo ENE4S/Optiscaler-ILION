@@ -469,7 +469,7 @@ class Config
     CustomOptional<int> BabaNeuralDebugView { 0 };         // 0 = normal, 1 = sharpening map, 2 = residual map
 
     // OptiSharpen
-    // 0 = Clean, 1 = TAA, 2 = TAA Wide, 3 = TAA Wide 12 (default), 4 = Punch 10, 5 = Punch 15
+    // 0 / 1 = Natural / Crisp D10, 2 / 3 the same in fp16 packed (own pipeline)
     CustomOptional<int> OptiSharpenModel { 3 };
     CustomOptional<int> OptiSharpenDebugView { 0 }; // 0 = normal, 1 = sharpening map, 2 = change magnitude
 
@@ -781,7 +781,7 @@ class Config
     CustomOptional<std::wstring, NoDefault> XeMfgVariant; // ILION: folder of plugins/XeMFG loaded as the XeMFG variant, empty = none
     // ILION dev.50: the XeMFG Vulkan bridge (with_dx12/vk_with_dx12_sc) is suspended; it runs only when this is true,
     // never because an FGOutput=XeFG came with the ini
-    CustomOptional<bool> XeMfgVulkanExperimental { false };
+    CustomOptional<bool> XeMfgVulkanExperimental { true }; // ILION 1.5.1: on, as the 1.4.1.2 ini had it (auto read as off in 1.5.0 hid XeFG on Vulkan)
     // ILION dev.53: back buffers of the bridge's D3D12 FG swapchain (Vulkan games), 3-16. XeMFG's flip queue paces a
     // batch of generated frames only when the chain has room for it (MFG Unlocker: "native_chain_too_small" with 3)
     CustomOptional<int> XeMfgVulkanBuffers { 8 };
@@ -789,7 +789,7 @@ class Config
     CustomOptional<bool> LoadReShade { false };
     CustomOptional<std::string, NoDefault> ReShadeAddedEffects; // ILION: effects added to the ReShade panel, "file|technique;..."
     CustomOptional<bool> LoadCustomAmdxc64OnRdna2 { false };
-    CustomOptional<bool> LoadAsiPlugins { false };
+    CustomOptional<bool> LoadAsiPlugins { true }; // ILION 1.5.1: on, as the 1.4.1.2 ini had it (XeMFG variants, MFG-Unlocker, OptiPatcher)
     // ILION v1.4.1.3: NVIDIA's DLSS FG stays at 2X on RTX 40/30/20 (Streamline reports one generated frame), and so do the
     // DLSSG replacements (XMX, DLSSG-XeFG, ANR FG). MFG-Unlocker (dashdogy, its XeMFG variant folder) lifts that limit.
     // Unset (auto): loaded on RTX 40 only; true: also RTX 30/20 (its author calls that route experimental); false: never.

@@ -1,15 +1,15 @@
 {
  "formato": 1,
- "nombre": "Base congelada de OptiScaler para ILION 1.5.0.1",
- "fecha": "2026-11-26",
+ "nombre": "Base congelada de OptiScaler para ILION 1.5.1",
+ "fecha": "2026-11-27",
  "motor": {
   "nombre": "OptiScaler ILION",
-  "version": "1.5.0.1",
+  "version": "1.5.1",
   "destino": "dxgi.dll",
-  "sha256": "f491727edcb187e28380ee4c964694d9cc37e07644a800149ac8d5d4406a1158",
-  "codigo": "rama ilion-1.5.0, commit 5a8c665",
-  "base": "OptiScaler nightly-20261121 (1c4e484) + cambios de ILION",
-  "nota": "Fuente oficial: publicación ilion-v1.5.0.1 de ENE4S/Optiscaler-ILION (grupo «motor»). Un paquete o DLL local sigue siendo opción avanzada."
+  "sha256": "1d499f74096a3a8ce1dcc7fa3a25266be75049e3a887ce0dedbf4aa95b95e2e6",
+  "codigo": "rama ilion-1.5.1, commit e0e153a",
+  "base": "OptiScaler nightly-20261126 (a1e0e19) + cambios de ILION",
+  "nota": "Fuente oficial: publicación ilion-v1.5.1 de ENE4S/Optiscaler-ILION (grupo «motor»). Un paquete o DLL local sigue siendo opción avanzada."
  },
  "paquetes": [
   {
@@ -20,11 +20,11 @@
    "nota": "Compilación oficial de OptiScaler en el commit f6f75ddf (último cambio de esa nightly; la del 10/10 no tuvo cambios). Es la base del código de ILION (commit de importación 0986dc8)."
   },
   {
-   "id": "streamline-sdk-2.14.1",
+   "id": "streamline-sdk-2.14.16",
    "tipo": "archivo-zip",
-   "url": "https://github.com/NVIDIA-RTX/Streamline/releases/download/v2.14.1/streamline-sdk-v2.14.1.zip",
-   "sha256": "92c4d954631a1710da86ca3fa8d5034f2b9503838c95fc4ae977ae149319781b",
-   "nota": "SDK oficial de NVIDIA (lo que descarga Streamlined_fetcher_windows.bat de OptiScaler). Verificado archivo a archivo por CRC32 del índice y SHA-256 del paquete de referencia."
+   "url": "https://github.com/NVIDIA-RTX/Streamline/releases/download/v2.14.16/streamline-sdk-v2.14.16.zip",
+   "sha256": "32041e51db0cab709a271b72a352281b690c2abbd669a827809401a5dd23956b",
+   "nota": "Streamline SDK 2.14.16 de NVIDIA (DLSS 310.9.16), las mismas rutas que la 2.14.1."
   },
   {
    "id": "ilion-v1.4.1.2-beta",
@@ -74,6 +74,20 @@
    "url": "https://github.com/ENE4S/Optiscaler-ILION/releases/download/ilion-v1.5.0.1/OptiScaler-ILION-1.5.0.1.zip",
    "sha256": "416c0fc96a42850dd1aba52c5c44149eaef4ec26be5654f3ae282c0554d1a9d2",
    "nota": "Publicación oficial de ILION 1.5.0.1 (ENE4S/Optiscaler-ILION): dxgi.dll y OptiScaler.ini. Código: rama ilion-1.5.0 (5a8c665), GPL-3.0."
+  },
+  {
+   "id": "ilion-v1.5.1",
+   "tipo": "archivo-zip",
+   "url": "https://github.com/ENE4S/Optiscaler-ILION/releases/download/ilion-v1.5.1/OptiScaler-ILION-1.5.1.zip",
+   "sha256": "7d865da7d5bd2f12abab3944ee7367d3d9ba86ac1160451e6c4ecc484fa920ca",
+   "nota": "Publicación oficial de ILION 1.5.1 (ENE4S/Optiscaler-ILION): dxgi.dll y OptiScaler.ini. Código: rama ilion-1.5.1 (e0e153a), GPL-3.0."
+  },
+  {
+   "id": "fsr4-overrides-2026-11-22",
+   "tipo": "archivo-7z",
+   "url": "https://github.com/zgauthier2000/fsr4-shader-performance-overrides/releases/download/dll-2026-11-22/fsr4.1.2-cyboman-rx7000-2026-11-22.7z",
+   "sha256": "bcd719dca0bfb791aec8987bad796eceb65fc887b3d1d45a4969d7b55e6f195d",
+   "nota": "FSR 4 Exact y Lossy (antes «lossy2», reentrenada) de zgauthier2000 (GPL-2.0), publicación dll-2026-11-22."
   }
  ],
  "archivos": [
@@ -219,7 +233,7 @@
   },
   {
    "destino": "OptiScaler\\streamline\\NvLowLatencyVk.dll",
-   "origen": "streamline-sdk-2.14.1",
+   "origen": "streamline-sdk-2.14.16",
    "entrada": "bin/x64/NvLowLatencyVk.dll",
    "sha256": "2a77dc3e1c724b7eea5755be0ae7423752e79a2459fae72181a9f00e3507e5d6",
    "tamano": 57840,
@@ -227,136 +241,136 @@
   },
   {
    "destino": "OptiScaler\\streamline\\nvngx_deepdvc.dll",
-   "origen": "streamline-sdk-2.14.1",
+   "origen": "streamline-sdk-2.14.16",
    "entrada": "bin/x64/nvngx_deepdvc.dll",
-   "sha256": "dc9562c67594fa06b763fe5d78f4aa53452c5344f8b43e6e2b81264320588500",
+   "sha256": "306556a9e64b90e9f94a6645c9425980a74a6ee47ae895bc10e3937edfa77419",
    "tamano": 3104880,
    "firmante": "NVIDIA Corporation"
   },
   {
    "destino": "OptiScaler\\streamline\\nvngx_dlss.dll",
-   "origen": "streamline-sdk-2.14.1",
+   "origen": "streamline-sdk-2.14.16",
    "entrada": "bin/x64/nvngx_dlss.dll",
-   "sha256": "3975567b8943c53acce397f2b72380092f84f162d00b0d2c7d08a1025c563983",
+   "sha256": "d00b5b0ab29c3ca101b70c3a5ecb3a01b7ef33766a3383a28a18623083e6123e",
    "tamano": 58956912,
    "firmante": "NVIDIA Corporation"
   },
   {
    "destino": "OptiScaler\\streamline\\nvngx_dlssd.dll",
-   "origen": "streamline-sdk-2.14.1",
+   "origen": "streamline-sdk-2.14.16",
    "entrada": "bin/x64/nvngx_dlssd.dll",
-   "sha256": "4bc7ea5fcb2f32cf86bc2cb072e8d2860914a0be511cbdcb2fc206c1d9d83b80",
+   "sha256": "b49435ae346f227feafe7bbe937d88277ea0ee7323975ec06488f377fdb46cee",
    "tamano": 48343664,
    "firmante": "NVIDIA Corporation"
   },
   {
    "destino": "OptiScaler\\streamline\\nvngx_dlssg.dll",
-   "origen": "streamline-sdk-2.14.1",
+   "origen": "streamline-sdk-2.14.16",
    "entrada": "bin/x64/nvngx_dlssg.dll",
-   "sha256": "ff6e90eb78b827927dff5b4ecc6b1c870c2e9bca29ed9f48c7d348cc9e170b82",
-   "tamano": 7460976,
+   "sha256": "8d59d49b36410dd6b62fef2503a5871d347415bd85d943fa0848563a95dd50c7",
+   "tamano": 7506544,
    "firmante": "NVIDIA Corporation"
   },
   {
    "destino": "OptiScaler\\streamline\\sl.common.dll",
-   "origen": "streamline-sdk-2.14.1",
+   "origen": "streamline-sdk-2.14.16",
    "entrada": "bin/x64/sl.common.dll",
-   "sha256": "82924a8954dd671e09351c5de0eb87ad0eb25b944cc9f9ab955ca1d9950de15d",
-   "tamano": 843392,
+   "sha256": "38eea3b4209afc455636ea372b5933d65fcc13becec6c84d101dcfc4d8648f75",
+   "tamano": 843904,
    "firmante": "NVIDIA Corporation"
   },
   {
    "destino": "OptiScaler\\streamline\\sl.deepdvc.dll",
-   "origen": "streamline-sdk-2.14.1",
+   "origen": "streamline-sdk-2.14.16",
    "entrada": "bin/x64/sl.deepdvc.dll",
-   "sha256": "e4b7e83c9e67eab7023222af13de239241e8a09bdb63faf26f803e9fd0f3e9c9",
+   "sha256": "2d493dccfefdc0580deb85afc65e70ae36adf77c6dd3c745c60623d9b8ac54f9",
    "tamano": 376448,
    "firmante": "NVIDIA Corporation"
   },
   {
    "destino": "OptiScaler\\streamline\\sl.directsr.dll",
-   "origen": "streamline-sdk-2.14.1",
+   "origen": "streamline-sdk-2.14.16",
    "entrada": "bin/x64/sl.directsr.dll",
-   "sha256": "4b2c0c90195c3a9991b4e0b59004113511a90802c85d81fc7faa7c7c75f53927",
+   "sha256": "e3bbaf3e5eb906a63b3f00413c2d1c4c585ab3a2ee1946fcfa9ee2d804001c8e",
    "tamano": 369792,
    "firmante": "NVIDIA Corporation"
   },
   {
    "destino": "OptiScaler\\streamline\\sl.dlss.dll",
-   "origen": "streamline-sdk-2.14.1",
+   "origen": "streamline-sdk-2.14.16",
    "entrada": "bin/x64/sl.dlss.dll",
-   "sha256": "73bf52c0cfaa5900a8f3f4a91306e4625e7cca696dfb305aae44c9f97b582e1f",
+   "sha256": "18871eea87c90345da97d8109faa81ea7d5840e8d99b51b55b0e46cfa177f84e",
    "tamano": 422016,
    "firmante": "NVIDIA Corporation"
   },
   {
    "destino": "OptiScaler\\streamline\\sl.dlss_d.dll",
-   "origen": "streamline-sdk-2.14.1",
+   "origen": "streamline-sdk-2.14.16",
    "entrada": "bin/x64/sl.dlss_d.dll",
-   "sha256": "026b9f4f9ea848f2f5aa0e2024fc6b1c885f57eea5d41078124dba14f873b86b",
+   "sha256": "8dff36fd063094eb1f659e8d4dcd52c7423859a9c4a3df3796084c48412d60ac",
    "tamano": 437376,
    "firmante": "NVIDIA Corporation"
   },
   {
    "destino": "OptiScaler\\streamline\\sl.dlss_g.dll",
-   "origen": "streamline-sdk-2.14.1",
+   "origen": "streamline-sdk-2.14.16",
    "entrada": "_artifacts/sl.dlss_g/Production_x64/sl.dlss_g.dll",
-   "sha256": "f4a6b2b14dcc0b1485989e430d3b4e3a44ac1800b92ba1ad74f476e64fb2b09c",
-   "tamano": 636032,
+   "sha256": "3ed9538df724993bea8a050195a6a78b9c8c8a566d5b05ade477aab3c390e90f",
+   "tamano": 637056,
    "firmante": "NVIDIA Corporation"
   },
   {
    "destino": "OptiScaler\\streamline\\sl.interposer.dll",
-   "origen": "streamline-sdk-2.14.1",
+   "origen": "streamline-sdk-2.14.16",
    "entrada": "bin/x64/sl.interposer.dll",
-   "sha256": "8c87c9499461da561edd529aa9bf7831d67d7b94ebb1c1a5ed54ef4934e1ea4c",
+   "sha256": "b1d7395aebd7b9722841d64dcf7433680020b6a8e421f851c16d5ba0c2182edf",
    "tamano": 652928,
    "firmante": "NVIDIA Corporation"
   },
   {
    "destino": "OptiScaler\\streamline\\sl.nis.dll",
-   "origen": "streamline-sdk-2.14.1",
+   "origen": "streamline-sdk-2.14.16",
    "entrada": "bin/x64/sl.nis.dll",
-   "sha256": "556870e456d268601188919927b3b122f76b25f9b221cc4b15d3ef649f0ad27b",
+   "sha256": "f9f3873c00e2737b22df1bf7605d4fdc7978dbf2955df4e152c5b52aada13b79",
    "tamano": 1155712,
    "firmante": "NVIDIA Corporation"
   },
   {
    "destino": "OptiScaler\\streamline\\sl.nvperf.dll",
-   "origen": "streamline-sdk-2.14.1",
+   "origen": "streamline-sdk-2.14.16",
    "entrada": "bin/x64/sl.nvperf.dll",
-   "sha256": "b4ca8f8eeba653446f27d20e8b394cdaae5d518c1292b440a4b97652e0f0376b",
+   "sha256": "dc5a820b97943c4d697a9ddec59b0dcde86ecadc093b401cf55980f7f89be43b",
    "tamano": 761472,
    "firmante": "NVIDIA Corporation"
   },
   {
    "destino": "OptiScaler\\streamline\\sl.pcl.dll",
-   "origen": "streamline-sdk-2.14.1",
+   "origen": "streamline-sdk-2.14.16",
    "entrada": "bin/x64/sl.pcl.dll",
-   "sha256": "f13d51cfa05f4cd514df2026049e2db8adf359221713170ad386fd499915b582",
+   "sha256": "5698c38e722318681f215c9fe68e45b9bedd51378acc699d8eee26e961e57770",
    "tamano": 360064,
    "firmante": "NVIDIA Corporation"
   },
   {
    "destino": "OptiScaler\\streamline\\sl.reflex.dll",
-   "origen": "streamline-sdk-2.14.1",
+   "origen": "streamline-sdk-2.14.16",
    "entrada": "bin/x64/sl.reflex.dll",
-   "sha256": "0ce9725e3e03ea9e7f81d008b57f33ee365973d2e349131c8b1c3e3378fe2db0",
+   "sha256": "443577e869352436ff7ec8f4d9c90418d3e95368436ce219261e0f4f07a38122",
    "tamano": 388736,
    "firmante": "NVIDIA Corporation"
   },
   {
    "destino": "dxgi.dll",
-   "origen": "ilion-v1.5.0.1",
+   "origen": "ilion-v1.5.1",
    "entrada": "dxgi.dll",
-   "sha256": "f491727edcb187e28380ee4c964694d9cc37e07644a800149ac8d5d4406a1158",
-   "tamano": 32237568,
+   "sha256": "1d499f74096a3a8ce1dcc7fa3a25266be75049e3a887ce0dedbf4aa95b95e2e6",
+   "tamano": 32471040,
    "firmante": null,
    "grupo": "motor"
   },
   {
    "destino": "OptiScaler.ini",
-   "origen": "ilion-v1.5.0.1",
+   "origen": "ilion-v1.5.1",
    "entrada": "OptiScaler.ini",
    "sha256": "5dd746cae395a7478691091d6fff63863844314a7bd355811b0361ed0b798832",
    "tamano": 66926,
@@ -374,10 +388,10 @@
   },
   {
    "destino": "ILION\\Escaladores\\FSR4\\Exact\\amd_fidelityfx_upscaler_dx12.dll",
-   "origen": "fsr4-overrides-2026-10-22",
+   "origen": "fsr4-overrides-2026-11-22",
    "entrada": "exact/amd_fidelityfx_upscaler_dx12.dll",
-   "sha256": "6e42d8b6b67d28fafeebf2e495c1b51b85389bcdf35a5a0f1e760b9a3760abd5",
-   "tamano": 38354944,
+   "sha256": "bc0d8dafcebc44f89b98febcd45442f02231f9a5d68f3265b364a04efb96b067",
+   "tamano": 44859392,
    "firmante": null,
    "grupo": "variantes"
   },
@@ -392,10 +406,10 @@
   },
   {
    "destino": "ILION\\Escaladores\\FSR4\\Lossy2\\amd_fidelityfx_upscaler_dx12.dll",
-   "origen": "fsr4-overrides-2026-10-22",
-   "entrada": "lossy2/amd_fidelityfx_upscaler_dx12.dll",
-   "sha256": "d3388bdd60c5a04c18019d47bcb7eb73e4a8a1ab2bb5b9fca9ff0508ae4317ce",
-   "tamano": 50586112,
+   "origen": "fsr4-overrides-2026-11-22",
+   "entrada": "lossy/amd_fidelityfx_upscaler_dx12.dll",
+   "sha256": "46786d7d55eae02888d8b999774de5c0a504ce643a492037ce22dc5b72ef5e15",
+   "tamano": 56812032,
    "firmante": null,
    "grupo": "variantes"
   },
@@ -475,6 +489,7 @@
   "Variantes: FSR 4.1.1 oficial = FidelityFX SDK v2.3.0 (blob idéntico); Exact/Lossy/Lossy2 = zgauthier2000 dll-2026-10-22 (idénticas); 4.1.1B, XeMFG Clásica/WMMA y runtime de lmxxf en ilion-componentes-1.",
   "ILION 1.5.0: motor sobre OptiScaler nightly-20261121; probado en juego (Cyberpunk 2077, RX 7900 XTX) sobre esta misma base de 1.4.1.2 (XeSS 2.0.2, XeFG 1.3.1.78, XeLL 1.3.2, FidelityFX DX12 de v2.4.0, Streamline 2.14.1).",
   "ILION 1.5.0: su módulo Vulkan de FSR usa el cargador de FidelityFX SDK 2.4: amd_fidelityfx_loader/upscaler/framegeneration_vk.dll de v2.4.0 signedbin (firmadas por AMD; idénticas byte a byte a las del SDK 7539ae8 con el que se compila ILION 1.5).",
-  "ILION 1.5.0.1: solo cambia el motor (telemetría de Ray Reconstruction); misma base y mismo OptiScaler.ini que la 1.5.0."
+  "ILION 1.5.0.1: solo cambia el motor (telemetría de Ray Reconstruction); misma base y mismo OptiScaler.ini que la 1.5.0.",
+  "ILION 1.5.1: motor sobre OptiScaler nightly-20261126; Streamline 2.14.16 (firmado por NVIDIA) y FSR 4 Exact/Lossy2 de zgauthier2000 dll-2026-11-22, probados en juego (Cyberpunk 2077 DX12 y No Man's Sky Vulkan, RX 7900 XTX)."
  ]
 }

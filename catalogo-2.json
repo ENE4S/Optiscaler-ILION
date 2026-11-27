@@ -1,6 +1,6 @@
 {
  "formato": 2,
- "fecha": "2026-11-26",
+ "fecha": "2026-11-27",
  "mods": [
   {
    "id": "xmx",
@@ -82,15 +82,15 @@
    "fuente": "github.com/dashdogy/MFG-Unlocker"
   },
   {
-   "id": "mfg-unlocker-171",
-   "nombre": "MFG-Unlocker 1.7.1",
+   "id": "mfg-unlocker-172",
+   "nombre": "MFG-Unlocker 1.7.2",
    "autor": "dashdogy",
    "categoria": "variante",
    "estado": "experimental",
    "receta": "MFG-Unlocker",
-   "version": "v1.7.1",
-   "sha256": "c85cb2a9e74f39be744fada4a1a75d72c606f73315114f334ad7755a3a13005d",
-   "paquete": "MFGUnlocker-v1.7.1.zip",
+   "version": "v1.7.2",
+   "sha256": "e002d624e3e7ba5cedab7211043c096fe8f555c30ff43500235a0686c7893f22",
+   "paquete": "MFGUnlocker-v1.7.2.zip",
    "descripcion": "Variante nueva, aparte de la 1.7.0. Su autor la pide con su propio OptiScaler: sin probar con ILION.",
    "para": [
     "*"
@@ -107,9 +107,9 @@
    "categoria": "externo",
    "estado": "experimental",
    "receta": "Apex Neural Rendering FG (ANR)",
-   "version": "FG-V.B15",
-   "sha256": "717e93b3e63cb08dbaf6240cd585bae94d498c2749d8603d800d17ad97ef9e41",
-   "paquete": "anr-fg-V.B15-addon.zip",
+   "version": "FG-V.B20",
+   "sha256": "750885d982b0e58e815004da698999f3b85f20c84a28c33cc15ae54e555f70ae",
+   "paquete": "anr-fg-V.B20-addon.zip",
    "descripcion": "Generación de fotogramas neuronal (beta), hasta ×6, como reemplazo de DLSS FG. No es el Neural Rendering de escalado.",
    "para": [
     "*"
@@ -145,15 +145,15 @@
   },
   {
    "id": "hlx-fsr4",
-   "nombre": "HLX FSR 4 (HelixSR 3.3)",
+   "nombre": "HLX FSR 4",
    "autor": "lonewolf0622",
    "categoria": "externo",
    "estado": "sin verificar",
    "receta": "HLX FSR 4 (HelixSR 3.3)",
-   "version": "v3.3.0",
-   "sha256": "7d6c0a4adeb5237004fc6fbe211d39705d62d49f23c51cc8f4ea987281d0a56b",
-   "paquete": "HelixSR-3.3.0.zip",
-   "descripcion": "FSR 4 Lite sobre el motor de HelixSR, para GPU sin FSR 4. Descarga grande (266 MB); solo se instala una DLL.",
+   "version": "v3.4.1",
+   "sha256": "31ab3fcee0aa385712c123c6717dc579c60aeaeff40f705dbe91753f96ac46da",
+   "paquete": "HelixSR-3.4.1.zip",
+   "descripcion": "FSR 4 Lite sobre el motor de HelixSR, para GPU sin FSR 4. Descarga grande (295 MB); solo se instala una DLL.",
    "para": [
     "amd",
     "nv_gtx",
@@ -349,7 +349,7 @@
    "autor": "AMD · comunidad",
    "categoria": "integrado",
    "estado": "paquete local",
-   "descripcion": "Se instalan con ILION: FSR 4.1.1 oficial (FidelityFX SDK 2.3.0), Exact, Lossy y Lossy2 (zgauthier2000) y 4.1.1B (comunidad de OptiScaler). Se eligen en el menú de ILION (Escalado › Variante).",
+   "descripcion": "Se instalan con ILION: FSR 4.1.1 oficial (FidelityFX SDK 2.3.0), Exact, Lossy y Lossy2 (zgauthier2000; Exact y Lossy2 de su publicación del 22-11) y 4.1.1B (comunidad de OptiScaler). Se eligen en el menú de ILION (Escalado › Variante).",
    "para": [
     "amd"
    ],
@@ -486,6 +486,16 @@
    "Na primeira vez compila a sua rede (cerca de um minuto, com a imagem sem remover ruído); depois usa o seu cache.",
    "В первый раз собирает сеть (около минуты, изображение без шумоподавления); затем использует кэш.",
    "The first time it builds its network (about a minute, with no denoising); then it uses its cache."
+  ],
+  "FSR 4 Lite sobre el motor de HelixSR, para GPU sin FSR 4. Descarga grande (295 MB); solo se instala una DLL.": [
+   "FSR 4 Lite sobre o motor do HelixSR, para GPUs sem FSR 4. Download grande (295 MB); só uma DLL é instalada.",
+   "FSR 4 Lite на движке HelixSR для GPU без FSR 4. Большая загрузка (295 МБ); устанавливается только одна DLL.",
+   "FSR 4 Lite on HelixSR's engine, for GPUs without FSR 4. Large download (295 MB); only one DLL is installed."
+  ],
+  "Se instalan con ILION: FSR 4.1.1 oficial (FidelityFX SDK 2.3.0), Exact, Lossy y Lossy2 (zgauthier2000; Exact y Lossy2 de su publicación del 22-11) y 4.1.1B (comunidad de OptiScaler). Se eligen en el menú de ILION (Escalado › Variante).": [
+   "Instalam-se com o ILION: FSR 4.1.1 oficial (FidelityFX SDK 2.3.0), Exact, Lossy e Lossy2 (zgauthier2000; Exact e Lossy2 da publicação de 22-11) e 4.1.1B (comunidade do OptiScaler). Escolhem-se no menu do ILION (Escalonamento › Variante).",
+   "Устанавливаются с ILION: официальный FSR 4.1.1 (FidelityFX SDK 2.3.0), Exact, Lossy и Lossy2 (zgauthier2000; Exact и Lossy2 из выпуска от 22-11) и 4.1.1B (сообщество OptiScaler). Выбираются в меню ILION (Масштабирование › Вариант).",
+   "Installed with ILION: official FSR 4.1.1 (FidelityFX SDK 2.3.0), Exact, Lossy and Lossy2 (zgauthier2000; Exact and Lossy2 from its 22-11 release) and 4.1.1B (OptiScaler community). Chosen in ILION's menu (Upscaling › Variant)."
   ]
  }
 }
